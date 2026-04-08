@@ -16,13 +16,13 @@ Each task is numbered within its phase (e.g., P0.1). Dependencies reference othe
 - Initialize Go module (`github.com/MediaMolder/MediaMolder`).
 - Set up directory structure: `av/`, `pipeline/`, `graph/`, `runtime/`, `cmd/mediamolder/`, `schema/`, `internal/`, `docs/`.
 - Configure CI (GitHub Actions): Go build + test on Linux, macOS, Windows.
-- Add cgo build with pkg-config for FFmpeg 6.x detection.
+- Add cgo build with pkg-config for FFmpeg 8.1 detection.
 - Add `Makefile` with targets: `build`, `test`, `lint`, `bench`.
 - Add `.gitattributes` for Git LFS (media test corpus).
 - Add LGPL-2.1 `LICENSE` file and `LICENSING.md` guide.
 - Write `README.md` covering:
   - Project overview and goals (what MediaMolder is and why it exists).
-  - Prerequisites: Go 1.23+, FFmpeg 6.0+ shared libraries, pkg-config.
+  - Prerequisites: Go 1.23+, FFmpeg 8.1+ shared libraries, pkg-config.
   - Installation: `go install` and building from source.
   - Quickstart: a minimal JSON config and `mediamolder run` invocation.
   - Links to `LICENSING.md`, `docs/`, and the project spec.
@@ -31,9 +31,19 @@ Each task is numbered within its phase (e.g., P0.1). Dependencies reference othe
 
 ### P0.2 — FFmpeg Library Detection & Version Check
 - Implement pkg-config probe for libavcodec, libavformat, libavfilter, libavutil, libswscale, libswresample.
-- Check library versions at init time; fail with clear error if below FFmpeg 6.0 minimums.
+- Check library versions at init time; fail with clear error if below FFmpeg 8.1 minimums (libavcodec 62.x, libavformat 62.x, libavfilter 11.x, libavutil 60.x).
 - Support `-tags=static` build tag for static linking.
-- **Deliverable**: `go build` succeeds when FFmpeg 6.x+ is installed; fails with actionable message otherwise.
+- **Deliverable**: `go build` succeeds when FFmpeg 8.1+ is installed; fails with actionable message otherwise.
+- **Depends on**: P0.1
+
+### P0.3a — Analyse & Port `json_command_patches` C Implementation
+- Checkout and apply the `json_command_patches` branch from the FFmpeg repo to understand the full scope of `fftools/ffmpeg_json.c` (~1,200 lines).
+- Catalogue the three capabilities: JSON→argv builder, CLI→JSON generator, JSON→shell-command printer.
+- Identify which logic can be ported directly to Go for use in `mediamolder/compat/ffcli` (the argv grouper, option parser, and filtergraph string tokenizer are the most valuable parts).
+- Extract the 8 example JSON files from `doc/examples/json_cmd_*.json` into `testdata/ffmpeg-json-examples/` as compatibility layer test inputs.
+- Extract and adapt the FATE tests from patch 5 as initial test cases for `mediamolder/compat/ffcli`.
+- Document the schema difference: `json_command_patches` JSON is a thin CLI-arg wrapper; MediaMolder JSON is a declarative graph. Both are accepted by `mediamolder convert-cmd`.
+- **Deliverable**: A design note (added to `docs/ffmpeg-migration-guide.md` stub) describing the porting plan, schema mapping table, and the list of reusable test cases. No Go code yet.
 - **Depends on**: P0.1
 
 ### P0.3 — Core Binding Layer: Base Types
@@ -209,15 +219,17 @@ Each task is numbered within its phase (e.g., P0.1). Dependencies reference othe
 - **Depends on**: P0.9, P1.3
 
 ### P1.11 — FFmpeg CLI Compatibility Parser
-- Implement `mediamolder/compat/ffcli` package.
+- Implement `mediamolder/compat/ffcli` package, porting logic from `fftools/ffmpeg_json.c` (the `json_command_patches` branch).
+- The Go port covers:
+  - **CLI→MediaMolder JSON**: parse FFmpeg CLI args (using the argv grouper and option parser logic from `ffmpeg_json_generate()`) and produce a `pipeline.Config` with structured nodes, typed edges, and stream selection. This is the core of `ffcli.Parse()`.
+  - **FFmpeg JSON→MediaMolder JSON**: accept a `json_command_patches`-format JSON file (thin CLI-arg wrapper) and translate it to a `pipeline.Config`. Invoked via `mediamolder convert-cmd --ffmpeg-json cmd.json`.
+  - **MediaMolder JSON→shell command** (bonus, Phase 1): reverse translation for debugging.
 - Parse FFmpeg global options, `-i`, `-c:v`, `-c:a`, `-b:v`, `-vf`, `-af`, `-filter_complex`, `-map`, format options.
-- Produce `pipeline.Config` from parsed command.
-- Handle stream specifiers (e.g., `0:v:0`, `0:a:1`).
-- Handle simple filter chains (`-vf "scale=1280:720,drawtext=..."`) → nodes + edges.
-- Handle complex filtergraphs (`-filter_complex "[0:v][1:v]overlay=..."`) → nodes + edges with multi-input wiring.
+- Handle stream specifiers (e.g., `0:v:0`, `0:a:1`) and complex filtergraphs (`-filter_complex "[0:v][1:v]overlay=..."`).
+- Seed the test suite with the 8 FFmpeg JSON example files and FATE test cases extracted in P0.3a.
 - Return clear errors for unsupported/unrecognized flags.
-- **Deliverable**: ~200 initial FFmpeg CLI strings parse correctly to expected JSON output.
-- **Depends on**: P0.9
+- **Deliverable**: ~200 initial FFmpeg CLI strings (and the 8 FFmpeg JSON examples) parse correctly to expected MediaMolder JSON output.
+- **Depends on**: P0.9, P0.3a
 
 ### P1.12 — CLI: `mediamolder convert-cmd`
 - `mediamolder convert-cmd "ffmpeg -i in.mp4 -c:v libx264 out.mp4"` — prints equivalent JSON payload to stdout.
@@ -249,7 +261,7 @@ Each task is numbered within its phase (e.g., P0.1). Dependencies reference othe
 
 ### P1.16 — Cross-Platform CI Matrix
 - Add CI matrix: Linux (Ubuntu LTS) + macOS (latest) + Windows (latest).
-- Add FFmpeg version matrix: 6.x + 7.x.
+- Add FFmpeg version: 8.1 (latest stable patch release).
 - Add Go version matrix: current stable + previous stable.
 - **Deliverable**: All tests pass on all matrix combinations.
 - **Depends on**: P1.15
@@ -415,7 +427,7 @@ Each task is numbered within its phase (e.g., P0.1). Dependencies reference othe
 
 ### P3.8 — GPU CI Runners
 - Set up CI runners with NVIDIA GPU (for CUDA/NVENC tests).
-- Add test matrix entry for GPU-equipped runner.
+- Add CI matrix entry for the GPU-equipped runner.
 - Hardware tests are skipped gracefully on runners without GPU.
 - **Deliverable**: Hardware accel tests run in CI on every merge.
 - **Depends on**: P3.2, P3.3, P3.4
@@ -499,7 +511,7 @@ Each task is numbered within its phase (e.g., P0.1). Dependencies reference othe
 - **Depends on**: P1.17, P2.11, P3.10, P4.5
 
 ### P4.7 — Docker Images
-- Build Docker images with FFmpeg 6.x and 7.x libraries pre-installed.
+- Build Docker images with FFmpeg 8.1 libraries pre-installed.
 - Publish to GitHub Container Registry.
 - Include static-linked binary variant with source archive (per LGPL).
 - **Deliverable**: `docker run ghcr.io/mediamolder/mediamolder run config.json` works.

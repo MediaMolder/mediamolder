@@ -3,7 +3,7 @@
 **License:** LGPL-2.1 or later (see §14 for details)  
 **Language:** Go (top-level orchestration and public APIs)  
 **Minimum Go version:** 1.23+  
-**Minimum FFmpeg/libav version:** FFmpeg 6.0+ (libavcodec 60.x, libavformat 60.x, libavfilter 9.x, libavutil 58.x)  
+**Minimum FFmpeg/libav version:** FFmpeg 8.1+ (libavcodec 62.x, libavformat 62.x, libavfilter 11.x, libavutil 60.x)  
 **Underlying libraries:** Dynamic linking to libavcodec, libavformat, libavfilter, libavutil, libswscale, libswresample, and any hardware acceleration backends (same as FFmpeg)  
 **Repository:** github.com/MediaMolder/MediaMolder (proposed)  
 **CLI binary:** `mediamolder`
@@ -177,19 +177,47 @@ p.Seek(target time.Duration) error   // seek all inputs
 
 ### 7. FFmpeg Command-Line Compatibility Layer
 
-MediaMolder provides a parser that accepts any well-formed FFmpeg CLI command string and converts it to an equivalent JSON command payload.
+MediaMolder provides a parser that accepts FFmpeg CLI command strings and converts them to MediaMolder's structured JSON pipeline config.
 
 - **Package**: `mediamolder/compat/ffcli`
 - **Function**: `ffcli.Parse(cmdline string) (*pipeline.Config, error)`
 - **Scope**: Supports the full set of FFmpeg global options, input/output options, codec selection flags, filter graph strings (simple and complex), stream specifiers, and map directives.
 - **Mapping rules**:
-  - `-i <url>` → `inputs[].url` with structured stream selection
-  - `-vf` / `-af` / `-filter_complex` → parsed into `graph.nodes[]` and `graph.edges[]`
+  - `-i <url>` → structured `inputs[]` with typed `streams[]` selection
+  - `-vf` / `-af` / `-filter_complex` → parsed and decomposed into `graph.nodes[]` and `graph.edges[]` with typed connections
   - `-c:v`, `-c:a`, `-b:v`, etc. → `outputs[].codec_*` and `outputs[].options`
   - `-map` → explicit edge wiring
 - **Known limitations**: Device inputs (`-f avfoundation`, `-f v4l2`, etc.) are parsed but runtime behavior depends on OS support. Non-standard or undocumented FFmpeg flags may produce a parse error with context.
 - **Round-trip property**: `ffcli.Parse(cmd)` → JSON → `mediamolder run` must produce functionally equivalent output to the original `ffmpeg` command. This property is verified by the integration test suite (see §13).
 - **CLI integration**: `mediamolder convert-cmd "ffmpeg -i in.mp4 -c:v libx264 out.mp4"` prints the equivalent JSON payload to stdout.
+
+#### 7.1 Relationship to the `json_command_patches` FFmpeg Branch
+
+A reference implementation of CLI↔JSON conversion already exists in the FFmpeg source tree (branch `json_command_patches`, authored by the MediaMolder team). It provides:
+
+- **`-json_cmd <file>`**: Runs FFmpeg using a JSON command file as input instead of CLI args.
+- **`-json_cmd_print`**: Converts a MediaMolder/FFmpeg JSON command file to an equivalent shell command string.
+- **`-json_cmd_gen`**: Converts a standard FFmpeg CLI command to a JSON command file (printed to stdout).
+
+The C implementation (`fftools/ffmpeg_json.c`, ~1,200 lines) contains a self-contained JSON parser, an argv builder, and a CLI argument grouper. This logic can be ported to Go for use in `mediamolder/compat/ffcli`.
+
+**Important schema distinction**: The JSON schema in `json_command_patches` is a **thin serialization of FFmpeg CLI arguments** — it maps 1:1 to argv and retains `filter_complex` strings and flat option keys. It is intentionally different from MediaMolder's **declarative graph schema** (§9), which provides structured nodes, typed edges, and no string-escaped filtergraphs.
+
+The relationship between the two schemas:
+
+| | `json_command_patches` FFmpeg JSON | MediaMolder pipeline JSON |
+|---|---|---|
+| Purpose | CLI arg serialization | Declarative graph definition |
+| Filter graphs | String (`"filter_complex": "..."`) | Structured nodes + edges |
+| Stream selection | FFmpeg specifiers (`"0:v:0"`) | Typed `streams[]` array |
+| Validation | None (passed through to ffmpeg) | JSON Schema, type-checked edges |
+| Use in MediaMolder | Input format for `convert-cmd` | Primary config format |
+
+`mediamolder convert-cmd` accepts **both** formats as input:
+- A standard FFmpeg shell command string: `mediamolder convert-cmd "ffmpeg -i in.mp4 -c:v libx264 out.mp4"`
+- A `json_command_patches`-format JSON file: `mediamolder convert-cmd --ffmpeg-json cmd.json`
+
+Both are translated to MediaMolder's structured pipeline JSON. The `json_command_patches` FATE tests and example JSON files (8 examples covering simple, multi-I/O, complex filtergraph, image sequence, and lavfi virtual inputs) seed the MediaMolder compatibility layer test suite.
 
 ### 8. JSON Schema Versioning & Migration
 
@@ -350,7 +378,7 @@ End-to-end pipeline tests against a curated media corpus:
 
 #### 13.5 Cross-Platform / Cross-Version CI Matrix
 - **Platforms**: Linux (Ubuntu LTS), macOS (latest), Windows (latest).
-- **FFmpeg versions**: 6.x (oldest supported) and 7.x (latest stable). CI builds against both to catch binding-layer breakage from API changes.
+- **FFmpeg versions**: 8.1 (minimum supported and current stable). CI builds against the latest patch release to catch regressions.
 - **Go versions**: Current stable and previous stable release.
 - CI runs on GitHub Actions. Unlike FFmpeg's FATE (which relies on a distributed volunteer farm), standard CI runners are sufficient since we are not testing codec internals.
 
