@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/MediaMolder/MediaMolder/av"
 )
 
 // BenchmarkEngineLinearTranscode measures end-to-end pipeline throughput for
@@ -17,6 +19,8 @@ func BenchmarkEngineLinearTranscode(b *testing.B) {
 	}
 
 	outDir := b.TempDir()
+
+	codec := pickBenchEncoder(b)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -33,20 +37,32 @@ func BenchmarkEngineLinearTranscode(b *testing.B) {
 			"outputs": [{
 				"id": "out",
 				"url": %q,
-				"codec_video": "h264_videotoolbox"
+				"codec_video": %q
 			}]
-		}`, input, output)
+		}`, input, output, codec)
 
 		cfg, err := ParseConfig([]byte(rawCfg))
 		if err != nil {
 			b.Fatalf("ParseConfig: %v", err)
 		}
-		eng, err := NewEngine(cfg)
+		eng, err := NewPipeline(cfg)
 		if err != nil {
-			b.Fatalf("NewEngine: %v", err)
+			b.Fatalf("NewPipeline: %v", err)
 		}
 		if err := eng.Run(context.Background()); err != nil {
 			b.Fatalf("Run: %v", err)
 		}
 	}
+}
+
+func pickBenchEncoder(b *testing.B) string {
+	b.Helper()
+	for _, name := range []string{"h264_videotoolbox", "libx264", "mpeg4"} {
+		if av.FindEncoder(name) {
+			b.Logf("using encoder: %s", name)
+			return name
+		}
+	}
+	b.Skip("no suitable video encoder found")
+	return ""
 }

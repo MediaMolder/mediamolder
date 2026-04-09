@@ -94,11 +94,6 @@ Inspect the resolved pipeline graph without running:
 mediamolder inspect transcode.json
 ```
 
-Convert an existing FFmpeg command to a MediaMolder JSON config:
-```sh
-mediamolder convert-cmd "ffmpeg -i input.mp4 -vf scale=1280:720 -c:v libx264 output.mp4"
-```
-
 ---
 
 ## Documentation

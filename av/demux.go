@@ -14,6 +14,9 @@ package av
 // static AVRational stream_time_base(AVFormatContext *ctx, int i) {
 //     return ctx->streams[i]->time_base;
 // }
+// static AVRational stream_avg_frame_rate(AVFormatContext *ctx, int i) {
+//     return ctx->streams[i]->avg_frame_rate;
+// }
 import "C"
 
 import (
@@ -54,10 +57,12 @@ type StreamInfo struct {
 	CodecID    uint32
 	Width      int
 	Height     int
+	PixFmt     int       // AVPixelFormat (video only)
+	FrameRate  [2]int    // {num, den} average frame rate (video only)
 	SampleRate int
 	Channels   int
-	TimeBase   [2]int // {num, den}
-	Duration   int64  // in stream timebase units
+	TimeBase   [2]int    // {num, den}
+	Duration   int64     // in stream timebase units
 }
 
 // InputFormatContext opens a media file for reading and demuxing.
@@ -120,12 +125,15 @@ func (f *InputFormatContext) StreamInfo(i int) (StreamInfo, error) {
 	}
 	cp := C.stream_codecpar(f.p, C.int(i))
 	tb := C.stream_time_base(f.p, C.int(i))
+	fr := C.stream_avg_frame_rate(f.p, C.int(i))
 	return StreamInfo{
 		Index:      i,
 		Type:       MediaType(cp.codec_type),
 		CodecID:    uint32(cp.codec_id),
 		Width:      int(cp.width),
 		Height:     int(cp.height),
+		PixFmt:     int(cp.format),
+		FrameRate:  [2]int{int(fr.num), int(fr.den)},
 		SampleRate: int(cp.sample_rate),
 		Channels:   int(cp.ch_layout.nb_channels),
 		TimeBase:   [2]int{int(tb.num), int(tb.den)},

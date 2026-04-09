@@ -1,0 +1,144 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mediamolder.dev/schema/v1.0.json",
+  "title": "MediaMolder Pipeline Config",
+  "description": "Schema v1.0 for MediaMolder JSON pipeline configuration.",
+  "type": "object",
+  "required": ["schema_version", "inputs", "graph", "outputs"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1.0",
+      "description": "Must be \"1.0\"."
+    },
+    "inputs": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/input" }
+    },
+    "graph": { "$ref": "#/$defs/graph" },
+    "outputs": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/output" }
+    },
+    "global_options": { "$ref": "#/$defs/global_options" }
+  },
+  "$defs": {
+    "input": {
+      "type": "object",
+      "required": ["id", "url", "streams"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "url": { "type": "string", "minLength": 1 },
+        "streams": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/stream_select" }
+        },
+        "options": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      }
+    },
+    "stream_select": {
+      "type": "object",
+      "required": ["input_index", "type", "track"],
+      "additionalProperties": false,
+      "properties": {
+        "input_index": { "type": "integer", "minimum": 0 },
+        "type": {
+          "type": "string",
+          "enum": ["video", "audio", "subtitle", "data"]
+        },
+        "track": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "graph": {
+      "type": "object",
+      "required": ["nodes", "edges"],
+      "additionalProperties": false,
+      "properties": {
+        "nodes": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/node" }
+        },
+        "edges": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/edge" }
+        }
+      }
+    },
+    "node": {
+      "type": "object",
+      "required": ["id", "type"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "type": {
+          "type": "string",
+          "enum": ["filter", "encoder", "source", "sink"]
+        },
+        "filter": { "type": "string" },
+        "params": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "error_policy": { "$ref": "#/$defs/error_policy" }
+      }
+    },
+    "edge": {
+      "type": "object",
+      "required": ["from", "to", "type"],
+      "additionalProperties": false,
+      "properties": {
+        "from": { "type": "string", "minLength": 1 },
+        "to": { "type": "string", "minLength": 1 },
+        "type": {
+          "type": "string",
+          "enum": ["video", "audio", "subtitle", "data"]
+        }
+      }
+    },
+    "output": {
+      "type": "object",
+      "required": ["id", "url"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "url": { "type": "string", "minLength": 1 },
+        "format": { "type": "string" },
+        "codec_video": { "type": "string" },
+        "codec_audio": { "type": "string" },
+        "options": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      }
+    },
+    "global_options": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "threads": { "type": "integer", "minimum": 0 },
+        "hw_accel": { "type": "string" },
+        "realtime": { "type": "boolean" }
+      }
+    },
+    "error_policy": {
+      "type": "object",
+      "required": ["policy"],
+      "additionalProperties": false,
+      "properties": {
+        "policy": {
+          "type": "string",
+          "enum": ["abort", "skip", "retry", "fallback"]
+        },
+        "max_retries": { "type": "integer", "minimum": 0 },
+        "fallback_node": { "type": "string" }
+      }
+    }
+  }
+}

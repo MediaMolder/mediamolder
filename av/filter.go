@@ -35,21 +35,21 @@ import (
 // FilterGraph wraps an AVFilterGraph and the buffer source/sink contexts
 // for a single-input, single-output filter chain.
 type FilterGraph struct {
-	graph      *C.AVFilterGraph
-	bufSrc     *C.AVFilterContext
-	bufSink    *C.AVFilterContext
-	mediaType  MediaType
+	graph     *C.AVFilterGraph
+	bufSrc    *C.AVFilterContext
+	bufSink   *C.AVFilterContext
+	mediaType MediaType
 }
 
 // VideoFilterGraphConfig carries the parameters needed to build a video filter graph.
 type VideoFilterGraphConfig struct {
 	Width      int
 	Height     int
-	PixFmt     int // AVPixelFormat
-	TBNum      int // time_base numerator
-	TBDen      int // time_base denominator
-	SARNum     int // sample_aspect_ratio numerator
-	SARDen     int // sample_aspect_ratio denominator
+	PixFmt     int    // AVPixelFormat
+	TBNum      int    // time_base numerator
+	TBDen      int    // time_base denominator
+	SARNum     int    // sample_aspect_ratio numerator
+	SARDen     int    // sample_aspect_ratio denominator
 	FilterSpec string // e.g. "scale=1280:720"
 }
 
@@ -69,8 +69,13 @@ func NewVideoFilterGraph(cfg VideoFilterGraphConfig) (*FilterGraph, error) {
 		return nil, &Err{Code: -12, Message: "avfilter_graph_alloc: out of memory"}
 	}
 
-	buffersrc := C.avfilter_get_by_name(C.CString("buffer"))
-	buffersink := C.avfilter_get_by_name(C.CString("buffersink"))
+	cBufName := C.CString("buffer")
+	defer C.free(unsafe.Pointer(cBufName))
+	cSinkName := C.CString("buffersink")
+	defer C.free(unsafe.Pointer(cSinkName))
+
+	buffersrc := C.avfilter_get_by_name(cBufName)
+	buffersink := C.avfilter_get_by_name(cSinkName)
 	if buffersrc == nil || buffersink == nil {
 		C.avfilter_graph_free(&graph)
 		return nil, fmt.Errorf("could not find buffer/buffersink filter")
@@ -83,9 +88,14 @@ func NewVideoFilterGraph(cfg VideoFilterGraphConfig) (*FilterGraph, error) {
 		C.int(cfg.TBNum), C.int(cfg.TBDen),
 		C.int(cfg.SARNum), C.int(cfg.SARDen))
 
+	cIn := C.CString("in")
+	defer C.free(unsafe.Pointer(cIn))
+	cOut := C.CString("out")
+	defer C.free(unsafe.Pointer(cOut))
+
 	var srcCtx *C.AVFilterContext
 	ret := C.avfilter_graph_create_filter(&srcCtx, buffersrc,
-		C.CString("in"), &argsBuf[0], nil, graph)
+		cIn, &argsBuf[0], nil, graph)
 	if ret < 0 {
 		C.avfilter_graph_free(&graph)
 		return nil, fmt.Errorf("create buffer source: %w", newErr(ret))
@@ -93,7 +103,7 @@ func NewVideoFilterGraph(cfg VideoFilterGraphConfig) (*FilterGraph, error) {
 
 	var sinkCtx *C.AVFilterContext
 	ret = C.avfilter_graph_create_filter(&sinkCtx, buffersink,
-		C.CString("out"), nil, nil, graph)
+		cOut, nil, nil, graph)
 	if ret < 0 {
 		C.avfilter_graph_free(&graph)
 		return nil, fmt.Errorf("create buffersink: %w", newErr(ret))
@@ -110,12 +120,12 @@ func NewVideoFilterGraph(cfg VideoFilterGraphConfig) (*FilterGraph, error) {
 		return nil, fmt.Errorf("avfilter_inout_alloc: out of memory")
 	}
 
-	outputs.name = C.av_strdup(C.CString("in"))
+	outputs.name = C.av_strdup(cIn)
 	outputs.filter_ctx = srcCtx
 	outputs.pad_idx = 0
 	outputs.next = nil
 
-	inputs.name = C.av_strdup(C.CString("out"))
+	inputs.name = C.av_strdup(cOut)
 	inputs.filter_ctx = sinkCtx
 	inputs.pad_idx = 0
 	inputs.next = nil

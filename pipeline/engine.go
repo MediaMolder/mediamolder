@@ -3,14 +3,15 @@ package pipeline
 import (
 	"context"
 	"fmt"
+	"sort"
 	"sync"
 
 	"github.com/MediaMolder/MediaMolder/av"
 	"golang.org/x/sync/errgroup"
 )
 
-// Engine executes a linear single-input -> filter -> single-output pipeline.
-type Engine struct {
+// Pipeline executes a linear single-input -> filter -> single-output pipeline.
+type Pipeline struct {
 	cfg *Config
 
 	mu     sync.Mutex
@@ -19,23 +20,23 @@ type Engine struct {
 	eg     *errgroup.Group
 }
 
-// NewEngine creates an Engine from a validated Config.
-func NewEngine(cfg *Config) (*Engine, error) {
+// NewPipeline creates a Pipeline from a validated Config.
+func NewPipeline(cfg *Config) (*Pipeline, error) {
 	if err := av.CheckVersion(); err != nil {
 		return nil, err
 	}
-	return &Engine{cfg: cfg, state: StateNull}, nil
+	return &Pipeline{cfg: cfg, state: StateNull}, nil
 }
 
 // State returns the current pipeline state.
-func (e *Engine) State() State {
+func (e *Pipeline) State() State {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	return e.state
 }
 
 // Run executes the pipeline to completion and blocks until done.
-func (e *Engine) Run(ctx context.Context) error {
+func (e *Pipeline) Run(ctx context.Context) error {
 	e.mu.Lock()
 	if e.state != StateNull {
 		e.mu.Unlock()
@@ -58,7 +59,7 @@ func (e *Engine) Run(ctx context.Context) error {
 }
 
 // Close cancels a running pipeline and waits for goroutines to exit.
-func (e *Engine) Close() error {
+func (e *Pipeline) Close() error {
 	e.mu.Lock()
 	cancel := e.cancel
 	e.mu.Unlock()
@@ -71,12 +72,21 @@ func (e *Engine) Close() error {
 	return nil
 }
 
-func (e *Engine) runLinear(ctx context.Context, g *errgroup.Group) error {
+func (e *Pipeline) runLinear(ctx context.Context, g *errgroup.Group) error {
 	cfg := e.cfg
 	inCfg := cfg.Inputs[0]
 	outCfg := cfg.Outputs[0]
 
-	input, err := av.OpenInput(inCfg.URL, nil)
+	// Convert Input.Options (map[string]any) to map[string]string for av.OpenInput.
+	var inputOpts map[string]string
+	if len(inCfg.Options) > 0 {
+		inputOpts = make(map[string]string, len(inCfg.Options))
+		for k, v := range inCfg.Options {
+			inputOpts[k] = fmt.Sprintf("%v", v)
+		}
+	}
+
+	input, err := av.OpenInput(inCfg.URL, inputOpts)
 	if err != nil {
 		return fmt.Errorf("open input %q: %w", inCfg.URL, err)
 	}
@@ -126,7 +136,7 @@ func (e *Engine) runLinear(ctx context.Context, g *errgroup.Group) error {
 	fg, err := av.NewVideoFilterGraph(av.VideoFilterGraphConfig{
 		Width:      si.Width,
 		Height:     si.Height,
-		PixFmt:     0,
+		PixFmt:     si.PixFmt,
 		TBNum:      si.TimeBase[0],
 		TBDen:      si.TimeBase[1],
 		SARNum:     1,
@@ -138,13 +148,18 @@ func (e *Engine) runLinear(ctx context.Context, g *errgroup.Group) error {
 	}
 	defer fg.Close()
 
+	// Determine frame rate: use stream info, fall back to 25fps.
+	frameRate := si.FrameRate
+	if frameRate[0] <= 0 || frameRate[1] <= 0 {
+		frameRate = [2]int{25, 1}
+	}
+
 	enc, err := av.OpenEncoder(av.EncoderOptions{
 		CodecName:    outCfg.CodecVideo,
 		Width:        si.Width,
 		Height:       si.Height,
-		FrameRate:    [2]int{25, 1},
+		FrameRate:    frameRate,
 		GlobalHeader: true,
-		ExtraOpts:    map[string]string{"preset": "medium"},
 	})
 	if err != nil {
 		return fmt.Errorf("open encoder %q: %w", outCfg.CodecVideo, err)
@@ -394,16 +409,23 @@ func buildFilterSpec(node NodeDef) string {
 	if len(node.Params) == 0 {
 		return node.Filter
 	}
+	// Sort keys for deterministic output.
+	keys := make([]string, 0, len(node.Params))
+	for k := range node.Params {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
 	spec := node.Filter
 	first := true
-	for k, v := range node.Params {
+	for _, k := range keys {
 		if first {
 			spec += "="
 			first = false
 		} else {
 			spec += ":"
 		}
-		spec += fmt.Sprintf("%s=%v", k, v)
+		spec += fmt.Sprintf("%s=%v", k, node.Params[k])
 	}
 	return spec
 }

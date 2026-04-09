@@ -1,29 +1,27 @@
-.PHONY: build test lint bench clean
+.PHONY: build build-static test test-static lint bench bench-static clean
 
-FFMPEG_SRC ?= $(HOME)/ffmpeg
-CGO_CFLAGS  := -I$(FFMPEG_SRC)
-CGO_LDFLAGS := -L$(FFMPEG_SRC)/libavcodec \
-               -L$(FFMPEG_SRC)/libavformat \
-               -L$(FFMPEG_SRC)/libavfilter \
-               -L$(FFMPEG_SRC)/libavutil \
-               -L$(FFMPEG_SRC)/libswscale \
-               -L$(FFMPEG_SRC)/libswresample \
-               -lavcodec -lavformat -lavfilter -lavutil -lswscale -lswresample
-
-export CGO_CFLAGS
-export CGO_LDFLAGS
-
+# Default: use system FFmpeg via pkg-config (no special flags needed).
 build:
 	go build ./...
 
+# Static: link against a local FFmpeg source tree (set FFMPEG_SRC to override).
+build-static:
+	go build -tags=ffstatic ./...
+
 test:
 	go test ./...
+
+test-static:
+	go test -tags=ffstatic ./...
 
 lint:
 	golangci-lint run ./...
 
 bench:
 	go test -bench=. -benchmem ./...
+
+bench-static:
+	go test -tags=ffstatic -bench=. -benchmem ./...
 
 clean:
 	go clean ./...

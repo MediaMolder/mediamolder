@@ -19,10 +19,10 @@ type Config struct {
 
 // Input describes a single input source.
 type Input struct {
-	ID      string          `json:"id"`
-	URL     string          `json:"url"`
-	Streams []StreamSelect  `json:"streams"`
-	Options map[string]any  `json:"options,omitempty"`
+	ID      string         `json:"id"`
+	URL     string         `json:"url"`
+	Streams []StreamSelect `json:"streams"`
+	Options map[string]any `json:"options,omitempty"`
 }
 
 // StreamSelect selects a specific stream from an input.
@@ -41,7 +41,7 @@ type GraphDef struct {
 // NodeDef describes a single node in the processing graph.
 type NodeDef struct {
 	ID          string         `json:"id"`
-	Type        string         `json:"type"`   // "filter", "encoder", "source", "sink"
+	Type        string         `json:"type"` // "filter", "encoder", "source", "sink"
 	Filter      string         `json:"filter,omitempty"`
 	Params      map[string]any `json:"params,omitempty"`
 	ErrorPolicy *ErrorPolicy   `json:"error_policy,omitempty"`
@@ -73,8 +73,8 @@ type Options struct {
 
 // ErrorPolicy defines how a node handles errors.
 type ErrorPolicy struct {
-	Policy      string `json:"policy"`                 // "abort", "skip", "retry", "fallback"
-	MaxRetries  int    `json:"max_retries,omitempty"`
+	Policy       string `json:"policy"` // "abort", "skip", "retry", "fallback"
+	MaxRetries   int    `json:"max_retries,omitempty"`
 	FallbackNode string `json:"fallback_node,omitempty"`
 }
 

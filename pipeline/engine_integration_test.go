@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/MediaMolder/MediaMolder/av"
 )
 
 // TestEngineLinearTranscode runs the pipeline end-to-end against a real media
@@ -24,6 +26,8 @@ func TestEngineLinearTranscode(t *testing.T) {
 	outDir := t.TempDir()
 	output := filepath.Join(outDir, "out.mp4")
 
+	codec := pickTestEncoder(t)
+
 	rawCfg := fmt.Sprintf(`{
 		"schema_version": "1.0",
 		"inputs": [{
@@ -35,18 +39,18 @@ func TestEngineLinearTranscode(t *testing.T) {
 		"outputs": [{
 			"id": "out",
 			"url": %q,
-			"codec_video": "h264_videotoolbox"
+			"codec_video": %q
 		}]
-	}`, input, output)
+	}`, input, output, codec)
 
 	cfg, err := ParseConfig([]byte(rawCfg))
 	if err != nil {
 		t.Fatalf("ParseConfig: %v", err)
 	}
 
-	eng, err := NewEngine(cfg)
+	eng, err := NewPipeline(cfg)
 	if err != nil {
-		t.Fatalf("NewEngine: %v", err)
+		t.Fatalf("NewPipeline: %v", err)
 	}
 
 	if err := eng.Run(context.Background()); err != nil {
@@ -61,4 +65,17 @@ func TestEngineLinearTranscode(t *testing.T) {
 		t.Fatal("output file is empty")
 	}
 	t.Logf("output: %s (%d bytes)", output, info.Size())
+}
+
+// pickTestEncoder returns the first available video encoder from a preference list.
+func pickTestEncoder(t testing.TB) string {
+	t.Helper()
+	for _, name := range []string{"h264_videotoolbox", "libx264", "mpeg4"} {
+		if av.FindEncoder(name) {
+			t.Logf("using encoder: %s", name)
+			return name
+		}
+	}
+	t.Skip("no suitable video encoder found")
+	return ""
 }

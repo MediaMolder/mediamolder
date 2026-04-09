@@ -4,8 +4,8 @@ package av
 
 import "unsafe"
 
-func leakTrack(_ unsafe.Pointer, _ string)   {}
-func leakUntrack(_ unsafe.Pointer)           {}
+func leakTrack(_ unsafe.Pointer, _ string) {}
+func leakUntrack(_ unsafe.Pointer)         {}
 
 // LeakReport is a no-op in production builds.
 // Build with -tags=avleakcheck to enable resource leak detection.
