@@ -30,6 +30,14 @@ mediamolder convert-cmd "ffmpeg -i input.mp4 -c:v libx264 out.mp4"
 | 18 | `ffmpeg -i in.mp4 -vf "scale=1280:720,pad=1920:1080" -c:v libx264 out.mp4` | Letterbox |
 | 19 | `ffmpeg -i in.mp4 -vf "scale=640:480,pad=640:480,fps=24" -c:v libx264 out.mp4` | 3-filter chain |
 | 20 | `ffmpeg -i "my file.mp4" -c:v libx264 "output.mp4"` | Quoted paths |
+| 21 | `ffmpeg -hwaccel cuda -i in.mp4 -c:v h264_nvenc out.mp4` | CUDA HW accel |
+| 22 | `ffmpeg -hwaccel vaapi -hwaccel_device /dev/dri/renderD128 -i in.mp4 -c:v h264_vaapi out.mp4` | VAAPI HW accel |
+| 23 | `ffmpeg -i in.mp4 -vf "subtitles=subs.srt" -c:v libx264 out.mp4` | Burn-in SRT subs |
+| 24 | `ffmpeg -i in.mp4 -vf "ass=subs.ass" -c:v libx264 out.mp4` | Burn-in ASS subs |
+| 25 | `ffmpeg -i in.mkv -c:v copy -c:a copy -c:s srt out.mkv` | Subtitle passthrough |
+| 26 | `ffmpeg -i in.mkv -sn -c:v libx264 out.mp4` | Strip subtitles |
+| 27 | `ffmpeg -i in.mp4 -c copy -bsf:v h264_mp4toannexb out.ts` | BSF: MP4→TS remux |
+| 28 | `ffmpeg -hwaccel qsv -i in.mp4 -c:v h264_qsv -bsf:v h264_metadata=level=4.1 out.mp4` | QSV + BSF |
 
 ## Key differences from FFmpeg CLI
 

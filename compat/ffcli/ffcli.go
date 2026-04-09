@@ -30,8 +30,14 @@ type parser struct {
 	edges        []pipeline.EdgeDef
 	codecV       string
 	codecA       string
+	codecS       string
 	videoFilters string
 	audioFilters string
+	bsfVideo     string
+	bsfAudio     string
+	hwAccel      string
+	hwDevice     string
+	hwOutFmt     string
 	globalOpts   map[string]string
 }
 
@@ -61,12 +67,18 @@ func (p *parser) parse() (*pipeline.Config, error) {
 			}
 			url := p.next()
 			id := fmt.Sprintf("input%d", len(p.inputs))
+			streams := []pipeline.StreamSelect{
+				{InputIndex: 0, Type: "video", Track: 0},
+				{InputIndex: 0, Type: "audio", Track: 0},
+			}
+			// Add subtitle stream unless -sn was specified before -i.
+			if p.codecS != "none" {
+				streams = append(streams, pipeline.StreamSelect{
+					InputIndex: 0, Type: "subtitle", Track: 0,
+				})
+			}
 			p.inputs = append(p.inputs, pipeline.Input{
-				ID: id, URL: url,
-				Streams: []pipeline.StreamSelect{
-					{InputIndex: 0, Type: "video", Track: 0},
-					{InputIndex: 0, Type: "audio", Track: 0},
-				},
+				ID: id, URL: url, Streams: streams,
 			})
 		case arg == "-c:v" || arg == "-vcodec":
 			if !p.hasMore() {
@@ -125,6 +137,38 @@ func (p *parser) parse() (*pipeline.Config, error) {
 			p.codecA = "none"
 		case arg == "-vn":
 			p.codecV = "none"
+		case arg == "-sn":
+			p.codecS = "none"
+		case arg == "-c:s" || arg == "-scodec":
+			if !p.hasMore() {
+				return nil, fmt.Errorf("%s requires an argument", arg)
+			}
+			p.codecS = p.next()
+		case arg == "-bsf:v":
+			if !p.hasMore() {
+				return nil, fmt.Errorf("-bsf:v requires an argument")
+			}
+			p.bsfVideo = p.next()
+		case arg == "-bsf:a":
+			if !p.hasMore() {
+				return nil, fmt.Errorf("-bsf:a requires an argument")
+			}
+			p.bsfAudio = p.next()
+		case arg == "-hwaccel":
+			if !p.hasMore() {
+				return nil, fmt.Errorf("-hwaccel requires an argument")
+			}
+			p.hwAccel = p.next()
+		case arg == "-hwaccel_device":
+			if !p.hasMore() {
+				return nil, fmt.Errorf("-hwaccel_device requires an argument")
+			}
+			p.hwDevice = p.next()
+		case arg == "-hwaccel_output_format":
+			if !p.hasMore() {
+				return nil, fmt.Errorf("-hwaccel_output_format requires an argument")
+			}
+			p.hwOutFmt = p.next()
 		case strings.HasPrefix(arg, "-"):
 			if p.hasMore() && !strings.HasPrefix(p.peek(), "-") {
 				p.globalOpts[strings.TrimPrefix(arg, "-")] = p.next()
@@ -137,6 +181,12 @@ func (p *parser) parse() (*pipeline.Config, error) {
 			}
 			if p.codecA != "" && p.codecA != "none" {
 				out.CodecAudio = p.codecA
+			}
+			if p.bsfVideo != "" {
+				out.BSFVideo = p.bsfVideo
+			}
+			if p.bsfAudio != "" {
+				out.BSFAudio = p.bsfAudio
 			}
 			if f, ok := p.globalOpts["format"]; ok {
 				out.Format = f
@@ -152,12 +202,19 @@ func (p *parser) parse() (*pipeline.Config, error) {
 		return nil, fmt.Errorf("no output specified")
 	}
 	p.buildGraph()
-	return &pipeline.Config{
+	cfg := &pipeline.Config{
 		SchemaVersion: "1.0",
 		Inputs:        p.inputs,
 		Graph:         pipeline.GraphDef{Nodes: p.nodes, Edges: p.edges},
 		Outputs:       p.outputs,
-	}, nil
+	}
+	if p.hwAccel != "" {
+		cfg.GlobalOptions.HardwareAccel = p.hwAccel
+	}
+	if p.hwDevice != "" {
+		cfg.GlobalOptions.HardwareDevice = p.hwDevice
+	}
+	return cfg, nil
 }
 
 func (p *parser) buildGraph() {
@@ -194,6 +251,10 @@ func (p *parser) buildGraph() {
 		} else {
 			p.edges = append(p.edges, pipeline.EdgeDef{From: as, To: ad, Type: "audio"})
 		}
+	}
+	if p.codecS != "none" && p.codecS != "" {
+		ss, sd := inID+":s:0", outID+":s"
+		p.edges = append(p.edges, pipeline.EdgeDef{From: ss, To: sd, Type: "subtitle"})
 	}
 }
 

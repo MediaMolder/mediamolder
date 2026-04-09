@@ -510,19 +510,14 @@ Each task is numbered within its phase (e.g., P0.1). Dependencies reference othe
 - **Deliverable**: Comprehensive public documentation site deployed, covering every user-facing feature.
 - **Depends on**: P1.17, P2.11, P3.10, P4.5
 
-### P4.7 — Docker Images
-- Build Docker images with FFmpeg 8.1 libraries pre-installed.
-- Publish to GitHub Container Registry.
-- Include static-linked binary variant with source archive (per LGPL).
-- **Deliverable**: `docker run ghcr.io/mediamolder/mediamolder run config.json` works.
-- **Depends on**: P0.2, P1.9
 
-### P4.8 — Release Packaging
-- Set up GoReleaser for cross-platform binary builds (Linux amd64/arm64, macOS amd64/arm64, Windows amd64).
-- Publish binaries and checksums on GitHub Releases.
+### P4.8 — Release Packaging (Source-Only)
 - Ensure `go install github.com/MediaMolder/MediaMolder/cmd/mediamolder@latest` works.
-- **Deliverable**: Installable via `go install`, downloadable binaries, Docker images.
-- **Depends on**: P4.7
+- Publish source-only releases on GitHub (tagged archives with checksums).
+- Document build-from-source instructions for all supported platforms (Linux, macOS, Windows).
+- No pre-compiled binaries or Docker images are distributed (patent license restrictions on compiled codec output).
+- **Deliverable**: Installable via `go install` from source.
+- **Depends on**: P4.6
 
 ### P4.9 — Performance Validation
 - Re-run full benchmark suite; verify all performance targets from spec §15:
@@ -541,3 +536,5 @@ Each task is numbered within its phase (e.g., P0.1). Dependencies reference othe
 - Announce.
 - **Deliverable**: Stable v1.0 release.
 - **Depends on**: P4.1 through P4.9
+
+

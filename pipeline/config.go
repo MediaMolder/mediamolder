@@ -61,14 +61,17 @@ type Output struct {
 	Format     string         `json:"format,omitempty"`
 	CodecVideo string         `json:"codec_video,omitempty"`
 	CodecAudio string         `json:"codec_audio,omitempty"`
+	BSFVideo   string         `json:"bsf_video,omitempty"`
+	BSFAudio   string         `json:"bsf_audio,omitempty"`
 	Options    map[string]any `json:"options,omitempty"`
 }
 
 // Options holds global pipeline options.
 type Options struct {
-	Threads       int    `json:"threads,omitempty"`
-	HardwareAccel string `json:"hw_accel,omitempty"`
-	Realtime      bool   `json:"realtime,omitempty"`
+	Threads          int    `json:"threads,omitempty"`
+	HardwareAccel    string `json:"hw_accel,omitempty"`
+	HardwareDevice   string `json:"hw_device,omitempty"`
+	Realtime         bool   `json:"realtime,omitempty"`
 }
 
 // ErrorPolicy defines how a node handles errors.

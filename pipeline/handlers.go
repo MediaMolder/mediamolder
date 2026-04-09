@@ -43,14 +43,18 @@ func configToGraphDef(cfg *Config) *graph.Def {
 
 // sourceResources holds a demuxer and its per-stream decoders.
 type sourceResources struct {
-	input    *av.InputFormatContext
-	decoders map[int]*av.DecoderContext // keyed by stream index
-	streams  map[int]av.StreamInfo      // keyed by stream index
-	cfg      Input
+	input       *av.InputFormatContext
+	decoders    map[int]*av.DecoderContext         // keyed by stream index
+	subDecoders map[int]*av.SubtitleDecoderContext  // keyed by stream index
+	streams     map[int]av.StreamInfo               // keyed by stream index
+	cfg         Input
 }
 
 func (s *sourceResources) Close() {
 	for _, d := range s.decoders {
+		d.Close()
+	}
+	for _, d := range s.subDecoders {
 		d.Close()
 	}
 	if s.input != nil {
@@ -128,12 +132,15 @@ func (r *graphRunner) handleSource(ctx context.Context, node *graph.Node, outs [
 	// Map edge type → output channel indices.
 	videoOuts := make([]int, 0, 1)
 	audioOuts := make([]int, 0, 1)
+	subtitleOuts := make([]int, 0, 1)
 	for i, e := range node.Outbound {
 		switch e.Type {
 		case graph.PortVideo:
 			videoOuts = append(videoOuts, i)
 		case graph.PortAudio:
 			audioOuts = append(audioOuts, i)
+		case graph.PortSubtitle:
+			subtitleOuts = append(subtitleOuts, i)
 		}
 	}
 
@@ -197,13 +204,37 @@ func (r *graphRunner) handleSource(ctx context.Context, node *graph.Node, outs [
 			return err
 		}
 		dec := src.decoders[pkt.StreamIndex()]
+		subDec := src.subDecoders[pkt.StreamIndex()]
+		if dec == nil && subDec == nil {
+			continue
+		}
+		si := src.streams[pkt.StreamIndex()]
+
+		// Handle subtitle streams via subtitle decoder.
+		if subDec != nil && len(subtitleOuts) > 0 {
+			sub, got, err := subDec.Decode(pkt)
+			if err != nil {
+				return err
+			}
+			if got {
+				for _, idx := range subtitleOuts {
+					select {
+					case outs[idx] <- sub:
+					case <-ctx.Done():
+						sub.Close()
+						return ctx.Err()
+					}
+				}
+			}
+			continue
+		}
+
 		if dec == nil {
 			continue
 		}
 		if err := dec.SendPacket(pkt); err != nil {
 			return err
 		}
-		si := src.streams[pkt.StreamIndex()]
 		if err := receiveAll(dec, si.Type); err != nil {
 			return err
 		}
@@ -526,6 +557,7 @@ func (r *graphRunner) openSource(cfg Input) (*sourceResources, error) {
 	}
 
 	decoders := make(map[int]*av.DecoderContext)
+	subDecoders := make(map[int]*av.SubtitleDecoderContext)
 	streams := make(map[int]av.StreamInfo)
 
 	for _, sel := range cfg.Streams {
@@ -533,15 +565,33 @@ func (r *graphRunner) openSource(cfg Input) (*sourceResources, error) {
 		for _, si := range allStreams {
 			if si.Type.String() == sel.Type {
 				if count == sel.Track {
-					dec, err := av.OpenDecoder(input, si.Index)
-					if err != nil {
-						for _, d := range decoders {
-							d.Close()
+					if sel.Type == "subtitle" {
+						subDec, err := av.OpenSubtitleDecoder(input, si.Index)
+						if err != nil {
+							for _, d := range decoders {
+								d.Close()
+							}
+							for _, d := range subDecoders {
+								d.Close()
+							}
+							input.Close()
+							return nil, fmt.Errorf("open subtitle decoder for track %d: %w", sel.Track, err)
 						}
-						input.Close()
-						return nil, fmt.Errorf("open decoder for %s track %d: %w", sel.Type, sel.Track, err)
+						subDecoders[si.Index] = subDec
+					} else {
+						dec, err := av.OpenDecoder(input, si.Index)
+						if err != nil {
+							for _, d := range decoders {
+								d.Close()
+							}
+							for _, d := range subDecoders {
+								d.Close()
+							}
+							input.Close()
+							return nil, fmt.Errorf("open decoder for %s track %d: %w", sel.Type, sel.Track, err)
+						}
+						decoders[si.Index] = dec
 					}
-					decoders[si.Index] = dec
 					streams[si.Index] = si
 					break
 				}
@@ -551,10 +601,11 @@ func (r *graphRunner) openSource(cfg Input) (*sourceResources, error) {
 	}
 
 	return &sourceResources{
-		input:    input,
-		decoders: decoders,
-		streams:  streams,
-		cfg:      cfg,
+		input:       input,
+		decoders:    decoders,
+		subDecoders: subDecoders,
+		streams:     streams,
+		cfg:         cfg,
 	}, nil
 }
 
@@ -807,6 +858,8 @@ func portTypeToAVMediaType(pt graph.PortType) av.MediaType {
 		return av.MediaTypeVideo
 	case graph.PortAudio:
 		return av.MediaTypeAudio
+	case graph.PortSubtitle:
+		return av.MediaTypeSubtitle
 	default:
 		return av.MediaTypeUnknown
 	}
