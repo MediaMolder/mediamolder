@@ -33,12 +33,12 @@ func (m *NodeMetrics) Snapshot() NodeMetricsSnapshot {
 	}
 
 	return NodeMetricsSnapshot{
-		NodeID:   m.NodeID,
-		Frames:   frames,
-		Errors:   m.Errors.Load(),
-		Bytes:    m.Bytes.Load(),
-		FPS:      fps,
-		Elapsed:  time.Since(m.StartTime),
+		NodeID:  m.NodeID,
+		Frames:  frames,
+		Errors:  m.Errors.Load(),
+		Bytes:   m.Bytes.Load(),
+		FPS:     fps,
+		Elapsed: time.Since(m.StartTime),
 	}
 }
 

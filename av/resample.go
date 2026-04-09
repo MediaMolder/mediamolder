@@ -39,8 +39,8 @@ import (
 // ResamplerOptions configures an audio resampler.
 type ResamplerOptions struct {
 	InSampleRate  int
-	InSampleFmt  int // AVSampleFormat
-	InChannels   int
+	InSampleFmt   int // AVSampleFormat
+	InChannels    int
 	OutSampleRate int
 	OutSampleFmt  int // AVSampleFormat
 	OutChannels   int
@@ -49,7 +49,7 @@ type ResamplerOptions struct {
 // Resampler wraps a libswresample SwrContext for audio format conversion.
 // It must be closed via Close().
 type Resampler struct {
-	p   *C.SwrContext
+	p    *C.SwrContext
 	opts ResamplerOptions
 }
 

@@ -22,10 +22,10 @@ func (StateChanged) eventTag() {}
 
 // ErrorEvent is emitted when a pipeline error occurs.
 type ErrorEvent struct {
-	NodeID  string
-	Stage   string
-	Err     error
-	Time    time.Time
+	NodeID string
+	Stage  string
+	Err    error
+	Time   time.Time
 }
 
 func (ErrorEvent) eventTag() {}

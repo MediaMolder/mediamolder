@@ -15,14 +15,14 @@ import (
 type Pipeline struct {
 	cfg *Config
 
-	mu       sync.Mutex
-	state    State
-	cancel   context.CancelFunc
-	eg       *errgroup.Group
-	events   *EventBus
-	pauseCh  chan struct{} // closed when unpaused; recreated on pause
-	runErr   error        // error from the data-flow goroutines
-	runDone  chan struct{} // closed when data-flow finishes
+	mu        sync.Mutex
+	state     State
+	cancel    context.CancelFunc
+	eg        *errgroup.Group
+	events    *EventBus
+	pauseCh   chan struct{} // closed when unpaused; recreated on pause
+	runErr    error         // error from the data-flow goroutines
+	runDone   chan struct{} // closed when data-flow finishes
 	parentCtx context.Context
 
 	seekTarget  int64 // seek target in AV_TIME_BASE units
@@ -38,9 +38,9 @@ func NewPipeline(cfg *Config) (*Pipeline, error) {
 		return nil, err
 	}
 	return &Pipeline{
-		cfg:    cfg,
-		state:  StateNull,
-		events: NewEventBus(256),
+		cfg:     cfg,
+		state:   StateNull,
+		events:  NewEventBus(256),
 		metrics: NewMetricsRegistry(),
 	}, nil
 }

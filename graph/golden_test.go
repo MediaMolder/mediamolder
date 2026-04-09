@@ -32,7 +32,7 @@ var goldenGraphTests = []struct {
 	{
 		name: "chain of 5 filters",
 		def: Def{
-			Inputs:  []InputDef{{ID: "in"}},
+			Inputs: []InputDef{{ID: "in"}},
 			Nodes: []NodeDef{
 				{ID: "f1", Type: "filter", Filter: "scale"},
 				{ID: "f2", Type: "filter", Filter: "fps"},
@@ -75,7 +75,7 @@ var goldenGraphTests = []struct {
 	{
 		name: "3 inputs overlay to 1 output",
 		def: Def{
-			Inputs:  []InputDef{{ID: "bg"}, {ID: "fg1"}, {ID: "fg2"}},
+			Inputs: []InputDef{{ID: "bg"}, {ID: "fg1"}, {ID: "fg2"}},
 			Nodes: []NodeDef{
 				{ID: "ov1", Type: "filter", Filter: "overlay"},
 				{ID: "ov2", Type: "filter", Filter: "overlay"},

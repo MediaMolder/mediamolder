@@ -116,8 +116,8 @@ func (c *Pipeline) Reset() {
 // SyncCheck reports the A/V drift between two PTS values (video and audio).
 // Returns the signed drift as a Duration and whether it exceeds the tolerance.
 type SyncStatus struct {
-	Drift     time.Duration
-	Exceeded  bool
+	Drift    time.Duration
+	Exceeded bool
 }
 
 // CheckSync computes the A/V drift between two PTS values.
@@ -133,4 +133,3 @@ func (c *Pipeline) CheckSync(videoPTS, audioPTS int64) SyncStatus {
 		Exceeded: drift > SyncTolerance,
 	}
 }
-

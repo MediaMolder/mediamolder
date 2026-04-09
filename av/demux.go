@@ -60,7 +60,7 @@ type StreamInfo struct {
 	PixFmt     int    // AVPixelFormat (video only)
 	FrameRate  [2]int // {num, den} average frame rate (video only)
 	SampleRate int
-	SampleFmt  int    // AVSampleFormat (audio only)
+	SampleFmt  int // AVSampleFormat (audio only)
 	Channels   int
 	TimeBase   [2]int // {num, den}
 	Duration   int64  // in stream timebase units
