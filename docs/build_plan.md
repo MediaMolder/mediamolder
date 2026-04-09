@@ -449,11 +449,11 @@ Each task is numbered within its phase (e.g., P0.1). Dependencies reference othe
 
 ---
 
-## Phase 4 — Production Hardening, Documentation, Release
+## Phase 4 — Production Hardening & Internal Validation
 
-**Goal**: Fuzz-tested, documented, packaged, and released as v1.0.
+**Goal**: Fuzz-tested, fully validated, production-ready codebase. Repository remains **private** throughout this phase.
 
-**Exit criteria**: Fuzz testing with zero unfixed crashers. Comprehensive public documentation site. Published JSON Schema files. Package available via `go install`. Stable v1.0 release.
+**Exit criteria**: Fuzz testing with zero unfixed crashers. JSON Schema generated and validated internally. All performance targets met. Documentation consolidated and reviewed internally. No public releases, sites, or announcements.
 
 ### P4.1 — Fuzz Testing
 - Add `go test -fuzz` targets for:
@@ -480,11 +480,11 @@ Each task is numbered within its phase (e.g., P0.1). Dependencies reference othe
 - **Deliverable**: Full MMRS test suite as described in spec §13.
 - **Depends on**: P3.9
 
-### P4.4 — JSON Schema Publishing
-- Publish `schema/v1.0.json` as a standalone artifact alongside releases.
-- Validate that the schema matches Go struct definitions (automated test).
-- Test editor autocompletion (VS Code, JetBrains) with the published schema.
-- **Deliverable**: Schema file published, usable for editor autocompletion and CI validation.
+### P4.4 — JSON Schema Generation & Validation
+- Generate `schema/v1.0.json` from Go struct definitions.
+- Add automated test that validates the schema stays in sync with Go structs.
+- Test editor autocompletion (VS Code, JetBrains) with the schema locally.
+- **Deliverable**: Schema file generated, validated internally. Not published externally.
 - **Depends on**: P0.9
 
 ### P4.5 — Schema Migration Tool
@@ -493,30 +493,29 @@ Each task is numbered within its phase (e.g., P0.1). Dependencies reference othe
 - **Deliverable**: `mediamolder migrate` command works.
 - **Depends on**: P1.9
 
-### P4.6 — Documentation Site
-- Set up documentation site (Hugo, MkDocs, or similar).
-- Consolidate and publish all `docs/` markdown files written in prior phases:
+### P4.6 — Documentation Consolidation (Internal)
+- Consolidate and review all `docs/` markdown files written in prior phases for accuracy against code:
   - Getting started / installation guide (from `README.md`).
-  - JSON config reference (auto-generated from `schema/v1.0.json`).
-  - CLI reference (auto-generated from Cobra `--help` output).
-  - Go library API reference (godoc, linked from site).
+  - JSON config reference (cross-checked against `schema/v1.0.json`).
+  - CLI reference (cross-checked against Cobra `--help` output).
   - Architecture overview (from spec §4).
   - Pipeline state machine, clock/sync, event bus, error handling, dynamic reconfiguration, observability, security, hardware acceleration, subtitles, bitstream filters (all from prior phase docs).
   - FFmpeg migration guide (from `docs/ffmpeg-migration-guide.md`, expanded to 50+ examples).
   - LGPL compliance guide for embedders (from `LICENSING.md`).
-  - Benchmark results page (from P4.9 output).
-- Review all docs for consistency, accuracy, and completeness against v1.0 implementation.
-- Set up search and versioning on the site.
-- **Deliverable**: Comprehensive public documentation site deployed, covering every user-facing feature.
+  - Benchmark results (from P4.9 output).
+- Review all docs for consistency, accuracy, and completeness against implementation.
+- Documentation remains in-repo only. Public documentation site deferred to Phase 5.
+- **Deliverable**: All docs reviewed, accurate, and ready for publication when the project goes public.
 - **Depends on**: P1.17, P2.11, P3.10, P4.5
 
 
-### P4.8 — Release Packaging (Source-Only)
-- Ensure `go install github.com/MediaMolder/MediaMolder/cmd/mediamolder@latest` works.
-- Publish source-only releases on GitHub (tagged archives with checksums).
-- Document build-from-source instructions for all supported platforms (Linux, macOS, Windows).
+### P4.8 — Release Packaging Preparation (Internal)
+- Verify `go install ./cmd/mediamolder` works from the private repo.
+- Prepare build-from-source instructions for all supported platforms (Linux, macOS, Windows).
+- Create internal tagged pre-release (`v1.0.0-rc.1`) for validation.
 - No pre-compiled binaries or Docker images are distributed (patent license restrictions on compiled codec output).
-- **Deliverable**: Installable via `go install` from source.
+- Public `go install` from `github.com/MediaMolder/MediaMolder` deferred to Phase 5.
+- **Deliverable**: Release packaging validated internally; ready for public release when repo goes public.
 - **Depends on**: P4.6
 
 ### P4.9 — Performance Validation
@@ -525,16 +524,52 @@ Each task is numbered within its phase (e.g., P0.1). Dependencies reference othe
   - Scheduling latency < 100µs/frame.
   - Memory overhead < 50MB.
   - Startup time < 500ms.
-- Document benchmark results on documentation site.
-- **Deliverable**: All performance targets met and documented.
+- Document benchmark results in `docs/benchmarks.md`.
+- **Deliverable**: All performance targets met and documented internally.
 - **Depends on**: P0.12
 
-### P4.10 — v1.0 Release
+### P4.10 — Internal v1.0 Milestone
 - Final review of all spec requirements.
-- Tag `v1.0.0`.
-- Publish release notes.
-- Announce.
-- **Deliverable**: Stable v1.0 release.
+- Tag `v1.0.0-rc.1` internally.
+- Prepare release notes draft.
+- All Phase 4 exit criteria met; codebase is release-ready.
+- **Deliverable**: Internal milestone reached. Codebase ready for public release when decision is made.
 - **Depends on**: P4.1 through P4.9
+
+---
+
+## Phase 5 — Public Release (Future)
+
+**Goal**: Make the project public and release v1.0.
+
+**Pre-requisite**: Decision to go public. Repository visibility changed from private to public.
+
+**Exit criteria**: Public GitHub repo, documentation site live, `go install` works, v1.0 tagged and announced.
+
+### P5.1 — Repository Publication
+- Transfer or rename repo to `github.com/MediaMolder/MediaMolder` (or make current repo public).
+- Verify `go install github.com/MediaMolder/MediaMolder/cmd/mediamolder@latest` works.
+- Publish source-only releases on GitHub (tagged archives with checksums).
+- **Deliverable**: Public repo with tagged v1.0.0 release.
+- **Depends on**: P4.10
+
+### P5.2 — Documentation Site
+- Set up public documentation site (Hugo, MkDocs, or similar).
+- Deploy consolidated docs from Phase 4.
+- Set up search and versioning on the site.
+- Go library API reference (godoc / pkg.go.dev, linked from site).
+- **Deliverable**: Comprehensive public documentation site deployed.
+- **Depends on**: P4.6, P5.1
+
+### P5.3 — JSON Schema Publication
+- Publish `schema/v1.0.json` as a standalone artifact alongside the release.
+- **Deliverable**: Schema file publicly available for editor autocompletion and CI validation.
+- **Depends on**: P4.4, P5.1
+
+### P5.4 — Announcement
+- Publish release notes.
+- Announce on relevant channels.
+- **Deliverable**: v1.0 publicly announced.
+- **Depends on**: P5.1, P5.2, P5.3
 
 
