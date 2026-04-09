@@ -78,10 +78,10 @@ import (
 // It decodes packets using a hardware device and can optionally transfer
 // frames to software automatically.
 type HWDecoderContext struct {
-	p             *C.AVCodecContext
-	streamIndex   int
-	deviceType    HWDeviceType
-	autoTransfer  bool // if true, hw frames are automatically transferred to sw
+	p            *C.AVCodecContext
+	streamIndex  int
+	deviceType   HWDeviceType
+	autoTransfer bool // if true, hw frames are automatically transferred to sw
 }
 
 // HWDecoderOptions configures hardware decoder creation.

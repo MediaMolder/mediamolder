@@ -56,7 +56,7 @@ import (
 type HWVideoFilterGraphConfig struct {
 	Width      int
 	Height     int
-	PixFmt     int    // Can be a hardware pixel format (e.g. AV_PIX_FMT_CUDA)
+	PixFmt     int // Can be a hardware pixel format (e.g. AV_PIX_FMT_CUDA)
 	TBNum      int
 	TBDen      int
 	SARNum     int
@@ -189,13 +189,13 @@ func HWFilterName(filter string, deviceType HWDeviceType) string {
 			"overlay":   "overlay_cuda",
 		},
 		HWDeviceVAAPI: {
-			"scale":     "scale_vaapi",
+			"scale":       "scale_vaapi",
 			"deinterlace": "deinterlace_vaapi",
 			"transpose":   "transpose_vaapi",
 			"overlay":     "overlay_vaapi",
 		},
 		HWDeviceQSV: {
-			"scale":     "scale_qsv",
+			"scale":       "scale_qsv",
 			"deinterlace": "deinterlace_qsv",
 			"overlay":     "overlay_qsv",
 		},

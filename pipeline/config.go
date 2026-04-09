@@ -68,10 +68,10 @@ type Output struct {
 
 // Options holds global pipeline options.
 type Options struct {
-	Threads          int    `json:"threads,omitempty"`
-	HardwareAccel    string `json:"hw_accel,omitempty"`
-	HardwareDevice   string `json:"hw_device,omitempty"`
-	Realtime         bool   `json:"realtime,omitempty"`
+	Threads        int    `json:"threads,omitempty"`
+	HardwareAccel  string `json:"hw_accel,omitempty"`
+	HardwareDevice string `json:"hw_device,omitempty"`
+	Realtime       bool   `json:"realtime,omitempty"`
 }
 
 // ErrorPolicy defines how a node handles errors.

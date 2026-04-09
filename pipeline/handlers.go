@@ -45,8 +45,8 @@ func configToGraphDef(cfg *Config) *graph.Def {
 type sourceResources struct {
 	input       *av.InputFormatContext
 	decoders    map[int]*av.DecoderContext         // keyed by stream index
-	subDecoders map[int]*av.SubtitleDecoderContext  // keyed by stream index
-	streams     map[int]av.StreamInfo               // keyed by stream index
+	subDecoders map[int]*av.SubtitleDecoderContext // keyed by stream index
+	streams     map[int]av.StreamInfo              // keyed by stream index
 	cfg         Input
 }
 
