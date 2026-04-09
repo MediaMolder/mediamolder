@@ -257,6 +257,27 @@ func (fg *FilterGraph) OutputChannels(idx int) int {
 	return int(C.av_buffersink_get_channels(fg.bufSinks[idx]))
 }
 
+// SendCommand sends a command to a named filter in the graph.
+// This is used for live parameter reconfiguration (e.g. changing drawtext,
+// volume, etc.) without rebuilding the graph.
+// target is the filter instance name, cmd is the command, and arg is its argument.
+func (fg *FilterGraph) SendCommand(target, cmd, arg string) error {
+	cTarget := C.CString(target)
+	defer C.free(unsafe.Pointer(cTarget))
+	cCmd := C.CString(cmd)
+	defer C.free(unsafe.Pointer(cCmd))
+	cArg := C.CString(arg)
+	defer C.free(unsafe.Pointer(cArg))
+
+	var resBuf [1024]C.char
+	ret := C.avfilter_graph_send_command(fg.graph, cTarget, cCmd, cArg,
+		&resBuf[0], 1024, 0)
+	if ret < 0 {
+		return fmt.Errorf("send command %q to filter %q: %w", cmd, target, newErr(ret))
+	}
+	return nil
+}
+
 // NewAudioFilterGraph creates an audio filter graph with a single filter chain.
 // The FilterSpec is an ffmpeg audio filter string, e.g. "aresample=44100" or "anull".
 func NewAudioFilterGraph(cfg AudioFilterGraphConfig) (*FilterGraph, error) {

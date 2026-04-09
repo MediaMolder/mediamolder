@@ -30,7 +30,9 @@ type Pipeline struct {
 	seekTarget  int64 // seek target in AV_TIME_BASE units
 	seekPending bool  // true when a seek has been requested
 
-	metrics *MetricsRegistry
+	metrics     *MetricsRegistry
+	reconf      *reconfigurable // live filter parameter changes (graph mode only)
+	graphRunner *graphRunner    // running graph resources (graph mode only)
 }
 
 // NewPipeline creates a Pipeline from a validated Config.
@@ -754,7 +756,13 @@ func (p *Pipeline) runGraph(ctx context.Context) error {
 
 	// 2. Pre-open all AV resources in topological order.
 	runner := newGraphRunner(cfg, p)
-	defer runner.close()
+	defer func() {
+		runner.close()
+		p.mu.Lock()
+		p.graphRunner = nil
+		p.reconf = nil
+		p.mu.Unlock()
+	}()
 
 	for _, inp := range cfg.Inputs {
 		src, err := runner.openSource(inp)
@@ -788,6 +796,21 @@ func (p *Pipeline) runGraph(ctx context.Context) error {
 			runner.sinks[node.ID] = sink
 		}
 	}
+
+	// Register reconfigurable filters for live parameter changes.
+	reconf := &reconfigurable{filters: make(map[string]*reconfigEntry)}
+	for _, node := range cfg.Graph.Nodes {
+		if node.Type == "filter" && node.Filter != "" {
+			reconf.filters[node.ID] = &reconfigEntry{
+				filterName: node.Filter,
+				params:     copyParams(node.Params),
+			}
+		}
+	}
+	p.mu.Lock()
+	p.graphRunner = runner
+	p.reconf = reconf
+	p.mu.Unlock()
 
 	// 3. Run the scheduler — one goroutine per node, channels per edge.
 	sched := &runtime.Scheduler{BufSize: 8}

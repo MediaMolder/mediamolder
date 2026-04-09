@@ -1,6 +1,7 @@
 package pipeline
 
 import (
+	"context"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -49,6 +50,88 @@ type BufferOverflow struct {
 }
 
 func (BufferOverflow) eventTag() {}
+
+// BufferingPercent is emitted to report the buffering level of a node (0.0–1.0).
+type BufferingPercent struct {
+	NodeID  string
+	Percent float64
+	Time    time.Time
+}
+
+func (BufferingPercent) eventTag() {}
+
+// MetricsSnapshotEvent is emitted periodically with a point-in-time metrics snapshot.
+type MetricsSnapshotEvent struct {
+	Snapshot MetricsSnapshot
+	Time     time.Time
+}
+
+func (MetricsSnapshotEvent) eventTag() {}
+
+// ClockLost is emitted when the pipeline clock source becomes unavailable.
+type ClockLost struct {
+	Reason string
+	Time   time.Time
+}
+
+func (ClockLost) eventTag() {}
+
+// MetricsEmitter periodically posts MetricsSnapshotEvent to the event bus.
+type MetricsEmitter struct {
+	interval time.Duration
+	registry *MetricsRegistry
+	events   *EventBus
+	getState func() State
+	cancel   context.CancelFunc
+	done     chan struct{}
+}
+
+// NewMetricsEmitter creates an emitter that fires every interval.
+// If interval <= 0, the default of 5s is used.
+func NewMetricsEmitter(interval time.Duration, registry *MetricsRegistry, events *EventBus, getState func() State) *MetricsEmitter {
+	if interval <= 0 {
+		interval = 5 * time.Second
+	}
+	return &MetricsEmitter{
+		interval: interval,
+		registry: registry,
+		events:   events,
+		getState: getState,
+	}
+}
+
+// Start begins emitting periodic metrics snapshots.
+func (m *MetricsEmitter) Start() {
+	ctx, cancel := context.WithCancel(context.Background())
+	m.cancel = cancel
+	m.done = make(chan struct{})
+	go func() {
+		defer close(m.done)
+		ticker := time.NewTicker(m.interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				snap := m.registry.Snapshot()
+				snap.State = m.getState().String()
+				m.events.Post(MetricsSnapshotEvent{
+					Snapshot: snap,
+					Time:     time.Now(),
+				})
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+}
+
+// Stop halts the periodic emitter.
+func (m *MetricsEmitter) Stop() {
+	if m.cancel != nil {
+		m.cancel()
+		<-m.done
+	}
+}
 
 // EventBus is a non-blocking, typed event bus for pipeline events.
 // Events are posted via Post() and consumed via Chan().

@@ -11,6 +11,13 @@ MediaMolder's pipeline emits structured events for observability.
 | `EOS`           | (none)                                  | End of stream reached              |
 | `StreamStart`   | `NodeID`, `MediaType`                   | New stream started processing      |
 | `BufferOverflow`| `Dropped`                               | Events dropped due to full buffer  |
+| `BufferingPercent` | `NodeID`, `Percent`, `Time`          | Node buffer fill level (0.0–1.0)   |
+| `MetricsSnapshotEvent` | `Snapshot`, `Time`               | Periodic metrics snapshot          |
+| `ClockLost`     | `Reason`, `Time`                        | Pipeline clock source unavailable  |
+| `ReconfigureComplete` | `NodeID`, `Params`, `Time`        | Live filter parameter change done  |
+| `OutputAdded`   | `OutputID`, `Time`                      | New output added to running pipeline |
+| `NodeRestart`   | `NodeID`, `Attempt`, `Err`, `Time`      | Node restarted after transient error |
+| `ErrorPolicyApplied` | `NodeID`, `Policy`, `Err`, `Attempt`, `Backoff`, `FallbackNode` | Error policy invoked |
 
 ## Subscribing
 
@@ -34,6 +41,18 @@ go func() {
             fmt.Println("stream complete")
         case pipeline.StreamStart:
             fmt.Printf("stream started: %s (%s)\n", e.NodeID, e.MediaType)
+        case pipeline.BufferingPercent:
+            fmt.Printf("buffer %s: %.0f%%\n", e.NodeID, e.Percent*100)
+        case pipeline.MetricsSnapshotEvent:
+            fmt.Printf("metrics: %d nodes, state=%s\n", len(e.Snapshot.Nodes), e.Snapshot.State)
+        case pipeline.ClockLost:
+            fmt.Printf("clock lost: %s\n", e.Reason)
+        case pipeline.ReconfigureComplete:
+            fmt.Printf("reconfigured %s: %v\n", e.NodeID, e.Params)
+        case pipeline.OutputAdded:
+            fmt.Printf("output added: %s\n", e.OutputID)
+        case pipeline.NodeRestart:
+            fmt.Printf("node %s restart attempt %d: %v\n", e.NodeID, e.Attempt, e.Err)
         }
     }
 }()
