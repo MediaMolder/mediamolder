@@ -1,0 +1,22 @@
+{
+    "global_options": {
+        "y": true
+    },
+    "inputs": [
+        {
+            "url": "input.mp4",
+            "options": {}
+        }
+    ],
+    "outputs": [
+        {
+            "url": "output.mp4",
+            "options": {
+                "vf": "eq=brightness=0.0:contrast=1.075,unsharp=5:5:1.05:5:5:0.0",
+                "pix_fmt": "yuv420p",
+                "c:v": "libx264",
+                "crf": "18"
+            }
+        }
+    ]
+}

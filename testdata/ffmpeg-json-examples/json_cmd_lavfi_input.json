@@ -1,0 +1,28 @@
+{
+    "global_options": {
+        "y": true
+    },
+    "inputs": [
+        {
+            "url": "anullsrc=channel_layout=stereo:sample_rate=44100",
+            "options": {
+                "f": "lavfi"
+            }
+        },
+        {
+            "url": "input.mp4",
+            "options": {}
+        }
+    ],
+    "outputs": [
+        {
+            "url": "output_with_audio.mp4",
+            "options": {
+                "map": ["1:v", "0:a"],
+                "c:v": "copy",
+                "c:a": "aac",
+                "shortest": true
+            }
+        }
+    ]
+}

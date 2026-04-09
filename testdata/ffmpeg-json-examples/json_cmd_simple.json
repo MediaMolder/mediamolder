@@ -1,0 +1,22 @@
+{
+    "global_options": {
+        "y": true,
+        "loglevel": "info"
+    },
+    "inputs": [
+        {
+            "url": "input.mp4",
+            "options": {}
+        }
+    ],
+    "outputs": [
+        {
+            "url": "output.mp4",
+            "options": {
+                "c:v": "libx264",
+                "c:a": "aac",
+                "b:v": "2M"
+            }
+        }
+    ]
+}

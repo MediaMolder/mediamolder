@@ -1,0 +1,29 @@
+{
+    "global_options": {
+        "y": true,
+        "filter_complex": "[0:v]scale=1280:720[v];[0:a]volume=1.5[a]"
+    },
+    "inputs": [
+        {
+            "url": "input.mp4",
+            "options": {
+                "ss": "00:01:00",
+                "t": "30"
+            }
+        }
+    ],
+    "outputs": [
+        {
+            "url": "output.mp4",
+            "options": {
+                "map": ["[v]", "[a]"],
+                "c:v": "libx264",
+                "preset": "medium",
+                "crf": "23",
+                "c:a": "aac",
+                "b:a": "128k",
+                "movflags": "+faststart"
+            }
+        }
+    ]
+}

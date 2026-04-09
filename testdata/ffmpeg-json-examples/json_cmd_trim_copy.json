@@ -1,0 +1,23 @@
+{
+    "global_options": {
+        "y": true
+    },
+    "inputs": [
+        {
+            "url": "input.mov",
+            "options": {
+                "ss": "00:01:00",
+                "t": "30"
+            }
+        }
+    ],
+    "outputs": [
+        {
+            "url": "clip.mov",
+            "options": {
+                "codec": "copy",
+                "map": "0:v"
+            }
+        }
+    ]
+}

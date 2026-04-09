@@ -1,0 +1,17 @@
+# Media test corpus — store in Git LFS
+testdata/**/*.mp4 filter=lfs diff=lfs merge=lfs -text
+testdata/**/*.mkv filter=lfs diff=lfs merge=lfs -text
+testdata/**/*.ts filter=lfs diff=lfs merge=lfs -text
+testdata/**/*.flv filter=lfs diff=lfs merge=lfs -text
+testdata/**/*.avi filter=lfs diff=lfs merge=lfs -text
+testdata/**/*.mov filter=lfs diff=lfs merge=lfs -text
+testdata/**/*.webm filter=lfs diff=lfs merge=lfs -text
+testdata/**/*.ogg filter=lfs diff=lfs merge=lfs -text
+testdata/**/*.flac filter=lfs diff=lfs merge=lfs -text
+testdata/**/*.wav filter=lfs diff=lfs merge=lfs -text
+testdata/**/*.aac filter=lfs diff=lfs merge=lfs -text
+testdata/**/*.y4m filter=lfs diff=lfs merge=lfs -text
+testdata/**/*.yuv filter=lfs diff=lfs merge=lfs -text
+testdata/**/*.srt filter=lfs diff=lfs merge=lfs -text
+testdata/**/*.ass filter=lfs diff=lfs merge=lfs -text
+testdata/**/*.m3u8 filter=lfs diff=lfs merge=lfs -text

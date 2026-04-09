@@ -1,0 +1,34 @@
+{
+    "global_options": {
+        "y": true
+    },
+    "inputs": [
+        {
+            "url": "video_only.mp4",
+            "options": {}
+        },
+        {
+            "url": "audio_only.wav",
+            "options": {}
+        }
+    ],
+    "outputs": [
+        {
+            "url": "combined.mp4",
+            "options": {
+                "map": ["0:v", "1:a"],
+                "c:v": "copy",
+                "c:a": "aac",
+                "shortest": true
+            }
+        },
+        {
+            "url": "audio_only_output.mp3",
+            "options": {
+                "map": ["1:a"],
+                "c:a": "libmp3lame",
+                "b:a": "320k"
+            }
+        }
+    ]
+}

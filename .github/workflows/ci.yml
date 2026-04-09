@@ -1,0 +1,85 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  FFMPEG_VERSION: "8.1"
+
+jobs:
+  build-and-test:
+    name: ${{ matrix.os }} / Go ${{ matrix.go }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-latest, windows-latest]
+        go: ["1.24", "1.23"]
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.go }}
+
+      - name: Install FFmpeg (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y \
+            libavcodec-dev libavformat-dev libavfilter-dev \
+            libavutil-dev libswscale-dev libswresample-dev \
+            pkg-config
+
+      - name: Install FFmpeg (macOS)
+        if: runner.os == 'macOS'
+        run: brew install ffmpeg pkg-config
+
+      - name: Install FFmpeg (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          choco install ffmpeg --version 8.1 -y
+          echo "PKG_CONFIG_PATH=C:\ProgramData\chocolatey\lib\ffmpeg\tools\ffmpeg\lib\pkgconfig" >> $env:GITHUB_ENV
+
+      - name: Build
+        run: go build ./...
+
+      - name: Test
+        run: go test ./...
+
+      - name: Bench (smoke)
+        run: go test -bench=. -benchtime=1x ./...
+
+  asan:
+    name: ASan (Linux)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y \
+            libavcodec-dev libavformat-dev libavfilter-dev \
+            libavutil-dev libswscale-dev libswresample-dev \
+            pkg-config clang
+
+      - name: Test with ASan
+        # CGO_ENABLED=1 is the default; -asan instruments C and Go allocations.
+        # ASAN_OPTIONS=detect_leaks=1 enables LSan (included in ASan on Linux).
+        env:
+          ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
+        run: go test -asan ./...

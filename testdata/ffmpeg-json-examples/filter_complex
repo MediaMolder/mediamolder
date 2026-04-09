@@ -1,0 +1,20 @@
+{
+    "global_options": {
+        "nostdin": true,
+        "nostats": true,
+        "noauto_conversion_filters": true,
+        "cpuflags": "all",
+        "filter_complex": "color=d=1:r=5",
+        "fflags": "+bitexact",
+        "bitexact": true
+    },
+    "inputs": [],
+    "outputs": [
+        {
+            "url": "-",
+            "options": {
+                "f": "framecrc"
+            }
+        }
+    ]
+}

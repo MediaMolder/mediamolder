@@ -1,0 +1,22 @@
+{
+    "global_options": {
+        "y": true
+    },
+    "inputs": [
+        {
+            "url": "input.mp4",
+            "options": {}
+        }
+    ],
+    "outputs": [
+        {
+            "url": "side_by_side.mp4",
+            "options": {
+                "filter_complex": "[0]split[a][b]; [a]crop=iw/2:ih:0:0[left]; [b]crop=iw/2:ih:iw/2:0,eq=brightness=0.1:contrast=1.2[right]; [left][right]hstack=inputs=2[out]",
+                "map": "[out]",
+                "c:v": "libx264",
+                "crf": "20"
+            }
+        }
+    ]
+}

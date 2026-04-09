@@ -1,0 +1,19 @@
+{
+    "global_options": {
+        "y": true
+    },
+    "inputs": [
+        {
+            "url": "input.mp4",
+            "options": {}
+        }
+    ],
+    "outputs": [
+        {
+            "url": "frame_%04d.png",
+            "options": {
+                "frames:v": "100"
+            }
+        }
+    ]
+}

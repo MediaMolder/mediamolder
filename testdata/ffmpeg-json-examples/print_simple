@@ -1,0 +1,23 @@
+{
+    "global_options": {
+        "y": true,
+        "loglevel": "error"
+    },
+    "inputs": [
+        {
+            "url": "input.mp4",
+            "options": {
+                "ss": "10"
+            }
+        }
+    ],
+    "outputs": [
+        {
+            "url": "output.mkv",
+            "options": {
+                "c:v": "libx264",
+                "t": "30"
+            }
+        }
+    ]
+}

@@ -1,0 +1,30 @@
+{
+    "global_options": {
+        "y": true,
+        "nostdin": true,
+        "loglevel": "error",
+        "nostats": true
+    },
+    "inputs": [
+        {
+            "url": "input.mp4",
+            "options": {
+                "t": 30,
+                "accurate_seek": true,
+                "noautorotate": true,
+                "skip_option": false,
+                "null_option": null
+            }
+        }
+    ],
+    "outputs": [
+        {
+            "url": "output.mp4",
+            "options": {
+                "c:v": "libx264",
+                "crf": 23,
+                "movflags": "+faststart"
+            }
+        }
+    ]
+}
