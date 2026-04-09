@@ -1,4 +1,50 @@
-# FFmpeg JSON Command Format — Migration Guide
+# FFmpeg Migration Guide
+
+Convert FFmpeg CLI commands to MediaMolder JSON configs using `convert-cmd`:
+
+```sh
+mediamolder convert-cmd "ffmpeg -i input.mp4 -c:v libx264 out.mp4"
+```
+
+## Common conversions
+
+| # | FFmpeg CLI | Notes |
+|---|-----------|-------|
+| 1 | `ffmpeg -i in.mp4 -c:v libx264 -c:a aac out.mp4` | Simple transcode |
+| 2 | `ffmpeg -i in.mp4 -c copy out.mkv` | Stream copy |
+| 3 | `ffmpeg -i in.mp4 -vf scale=1280:720 -c:v libx264 out.mp4` | Scale filter |
+| 4 | `ffmpeg -i in.mp4 -vf "scale=640:480,fps=30" -c:v libx264 out.mp4` | Filter chain |
+| 5 | `ffmpeg -i in.mp4 -af "volume=2.0" -c:a aac out.mp4` | Audio filter |
+| 6 | `ffmpeg -i in.mp4 -an -c:v libx264 out.mp4` | Strip audio |
+| 7 | `ffmpeg -i in.mp4 -vn -c:a aac out.mp3` | Audio only |
+| 8 | `ffmpeg -i in.mp4 -f matroska -c:v libx264 out.mkv` | Set format |
+| 9 | `ffmpeg -i in.mp4 -b:v 2M -b:a 128k -c:v libx264 out.mp4` | Set bitrate |
+| 10 | `ffmpeg -i in.mp4 -r 30 -c:v libx264 out.mp4` | Set framerate |
+| 11 | `ffmpeg -i in.mp4 -c:v libx265 -c:a aac out.mp4` | HEVC |
+| 12 | `ffmpeg -i in.mp4 -c:v libvpx-vp9 -c:a libopus out.webm` | VP9+Opus |
+| 13 | `ffmpeg -i in.mp4 -vf "drawtext=text='Hello'" -c:v libx264 out.mp4` | Text overlay |
+| 14 | `ffmpeg -i in.mp4 -vf "crop=640:480,scale=320:240" -c:v libx264 out.mp4` | Crop+scale |
+| 15 | `ffmpeg -i in.mp4 -af loudnorm -c:a aac out.mp4` | Audio normalize |
+| 16 | `ffmpeg -i in.mp4 -vf scale=1920:1080 -af loudnorm -c:v libx264 -c:a aac out.mp4` | V+A filters |
+| 17 | `ffmpeg -y -i in.mp4 -c:v libx264 out.mp4` | Overwrite (ignored) |
+| 18 | `ffmpeg -i in.mp4 -vf "scale=1280:720,pad=1920:1080" -c:v libx264 out.mp4` | Letterbox |
+| 19 | `ffmpeg -i in.mp4 -vf "scale=640:480,pad=640:480,fps=24" -c:v libx264 out.mp4` | 3-filter chain |
+| 20 | `ffmpeg -i "my file.mp4" -c:v libx264 "output.mp4"` | Quoted paths |
+
+## Key differences from FFmpeg CLI
+
+| Feature | FFmpeg CLI | MediaMolder |
+|---------|-----------|-------------|
+| Config format | CLI arguments | JSON (structured, versionable) |
+| Filter graphs | String-based | DAG with typed edges |
+| Stream selection | `-map 0:v:0` | `"streams"` array in input |
+| Error handling | Global flags | Per-node `error_policy` |
+| Observability | stderr progress | Event bus + metrics API |
+| State control | None (run to end) | Start/Pause/Resume/Seek |
+
+---
+
+## FFmpeg JSON Command Format Reference
 
 MediaMolder drives FFmpeg via the `json_command_patches` branch, which adds
 three new options to `ffmpeg`:

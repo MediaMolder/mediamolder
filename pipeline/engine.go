@@ -5,71 +5,374 @@ import (
 	"fmt"
 	"sort"
 	"sync"
+	"time"
 
 	"github.com/MediaMolder/MediaMolder/av"
 	"golang.org/x/sync/errgroup"
 )
 
-// Pipeline executes a linear single-input -> filter -> single-output pipeline.
+// Pipeline executes a media processing pipeline driven by a Config.
 type Pipeline struct {
 	cfg *Config
 
-	mu     sync.Mutex
-	state  State
-	cancel context.CancelFunc
-	eg     *errgroup.Group
+	mu       sync.Mutex
+	state    State
+	cancel   context.CancelFunc
+	eg       *errgroup.Group
+	events   *EventBus
+	pauseCh  chan struct{} // closed when unpaused; recreated on pause
+	runErr   error        // error from the data-flow goroutines
+	runDone  chan struct{} // closed when data-flow finishes
+	parentCtx context.Context
+
+	seekTarget  int64 // seek target in AV_TIME_BASE units
+	seekPending bool  // true when a seek has been requested
+
+	metrics *MetricsRegistry
 }
 
 // NewPipeline creates a Pipeline from a validated Config.
+// The pipeline starts in StateNull.
 func NewPipeline(cfg *Config) (*Pipeline, error) {
 	if err := av.CheckVersion(); err != nil {
 		return nil, err
 	}
-	return &Pipeline{cfg: cfg, state: StateNull}, nil
+	return &Pipeline{
+		cfg:    cfg,
+		state:  StateNull,
+		events: NewEventBus(256),
+		metrics: NewMetricsRegistry(),
+	}, nil
+}
+
+// Events returns a read-only channel of pipeline events.
+func (p *Pipeline) Events() <-chan Event {
+	return p.events.Chan()
 }
 
 // State returns the current pipeline state.
-func (e *Pipeline) State() State {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	return e.state
+func (p *Pipeline) State() State {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.state
 }
 
-// Run executes the pipeline to completion and blocks until done.
-func (e *Pipeline) Run(ctx context.Context) error {
-	e.mu.Lock()
-	if e.state != StateNull {
-		e.mu.Unlock()
-		return fmt.Errorf("Run called on non-NULL pipeline (state=%s)", e.state)
+// SetState requests a state transition. Transitions are sequential:
+// NULL→READY→PAUSED→PLAYING. Intermediate states are traversed automatically.
+// Any state can transition to NULL (teardown).
+func (p *Pipeline) SetState(target State) error {
+	p.mu.Lock()
+	cur := p.state
+	p.mu.Unlock()
+
+	if cur == target {
+		return nil
 	}
-	ctx, cancel := context.WithCancel(ctx)
-	e.cancel = cancel
-	g, ctx := errgroup.WithContext(ctx)
-	e.eg = g
-	e.state = StatePlaying
-	e.mu.Unlock()
 
-	defer func() {
-		e.mu.Lock()
-		e.state = StateNull
-		e.mu.Unlock()
-		cancel()
-	}()
-	return e.runLinear(ctx, g)
+	// Any → NULL is always allowed.
+	if target == StateNull {
+		return p.transitionToNull()
+	}
+
+	// Forward transitions: walk through intermediate states.
+	if target > cur {
+		for next := cur + 1; next <= target; next++ {
+			if err := p.stepForward(next); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
+	// Backward: only PLAYING→PAUSED is allowed (besides →NULL above).
+	if cur == StatePlaying && target == StatePaused {
+		return p.stepBackward(StatePaused)
+	}
+
+	return &ErrInvalidStateTransition{From: cur, To: target}
 }
 
-// Close cancels a running pipeline and waits for goroutines to exit.
-func (e *Pipeline) Close() error {
-	e.mu.Lock()
-	cancel := e.cancel
-	e.mu.Unlock()
+// Start transitions NULL→PLAYING (through READY, PAUSED).
+func (p *Pipeline) Start(ctx context.Context) error {
+	p.mu.Lock()
+	p.parentCtx = ctx
+	p.mu.Unlock()
+	return p.SetState(StatePlaying)
+}
+
+// Pause transitions PLAYING→PAUSED.
+func (p *Pipeline) Pause() error {
+	return p.SetState(StatePaused)
+}
+
+// Resume transitions PAUSED→PLAYING.
+func (p *Pipeline) Resume() error {
+	return p.SetState(StatePlaying)
+}
+
+// SeekTo pauses the pipeline, flushes buffers, seeks all inputs to the target
+// timestamp, and leaves the pipeline in PAUSED state. The caller must call
+// Resume() to continue processing from the new position.
+// target is in AV_TIME_BASE units (microseconds).
+func (p *Pipeline) SeekTo(target int64) error {
+	p.mu.Lock()
+	cur := p.state
+	p.mu.Unlock()
+
+	if cur != StatePlaying && cur != StatePaused {
+		return fmt.Errorf("cannot seek in state %s", cur)
+	}
+
+	// Pause if currently playing.
+	if cur == StatePlaying {
+		if err := p.Pause(); err != nil {
+			return fmt.Errorf("seek pause: %w", err)
+		}
+	}
+
+	p.mu.Lock()
+	p.seekTarget = target
+	p.seekPending = true
+	p.mu.Unlock()
+
+	p.events.Post(StateChanged{
+		From: StatePaused,
+		To:   StatePaused,
+	})
+	return nil
+}
+
+// seekState returns any pending seek target and resets the flag.
+func (p *Pipeline) seekState() (int64, bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if !p.seekPending {
+		return 0, false
+	}
+	target := p.seekTarget
+	p.seekPending = false
+	return target, true
+}
+
+// GetMetrics returns a point-in-time snapshot of pipeline metrics.
+func (p *Pipeline) GetMetrics() MetricsSnapshot {
+	snap := p.metrics.Snapshot()
+	snap.State = p.State().String()
+	return snap
+}
+
+// Metrics returns the underlying MetricsRegistry for direct node updates.
+func (p *Pipeline) Metrics() *MetricsRegistry {
+	return p.metrics
+}
+
+// Wait blocks until the pipeline finishes (EOS or error) while in PLAYING state.
+// Returns nil on clean EOS, or the pipeline error.
+func (p *Pipeline) Wait() error {
+	p.mu.Lock()
+	done := p.runDone
+	p.mu.Unlock()
+	if done == nil {
+		return nil
+	}
+	<-done
+
+	p.mu.Lock()
+	err := p.runErr
+	p.mu.Unlock()
+	return err
+}
+
+// Close transitions any→NULL and releases all resources.
+func (p *Pipeline) Close() error {
+	err := p.SetState(StateNull)
+	p.events.Close()
+	return err
+}
+
+// Run is a convenience method that starts the pipeline, waits for completion,
+// then tears down. Equivalent to Start + Wait + Close.
+func (p *Pipeline) Run(ctx context.Context) error {
+	if err := p.Start(ctx); err != nil {
+		return err
+	}
+	err := p.Wait()
+	closeErr := p.Close()
+	if err != nil {
+		return err
+	}
+	return closeErr
+}
+
+// stepForward performs a single upward state transition.
+func (p *Pipeline) stepForward(target State) error {
+	p.mu.Lock()
+	cur := p.state
+	p.mu.Unlock()
+
+	start := time.Now()
+
+	switch target {
+	case StateReady:
+		// Validate config is usable (inputs/outputs present).
+		// Actual resource allocation is deferred to PAUSED to keep READY cheap.
+		if len(p.cfg.Inputs) == 0 || len(p.cfg.Outputs) == 0 {
+			return fmt.Errorf("config has no inputs or outputs")
+		}
+
+	case StatePaused:
+		// Create the pause channel (starts paused).
+		p.mu.Lock()
+		p.pauseCh = make(chan struct{})
+		p.mu.Unlock()
+
+	case StatePlaying:
+		// If coming from PAUSED and data flow not yet started, start it.
+		p.mu.Lock()
+		needsStart := p.runDone == nil
+		if p.pauseCh != nil {
+			// Signal unpause by closing the channel.
+			select {
+			case <-p.pauseCh:
+				// Already unpaused.
+			default:
+				close(p.pauseCh)
+			}
+		}
+		p.mu.Unlock()
+
+		if needsStart {
+			p.startDataFlow()
+		}
+
+	default:
+		return &ErrInvalidStateTransition{From: cur, To: target}
+	}
+
+	p.mu.Lock()
+	p.state = target
+	p.mu.Unlock()
+
+	p.events.Post(StateChanged{
+		From:     cur,
+		To:       target,
+		Duration: time.Since(start),
+	})
+	return nil
+}
+
+// stepBackward performs PLAYING→PAUSED.
+func (p *Pipeline) stepBackward(target State) error {
+	p.mu.Lock()
+	cur := p.state
+	p.mu.Unlock()
+
+	start := time.Now()
+
+	// Recreate the pause channel to suspend data flow.
+	p.mu.Lock()
+	p.pauseCh = make(chan struct{})
+	p.state = StatePaused
+	p.mu.Unlock()
+
+	p.events.Post(StateChanged{
+		From:     cur,
+		To:       target,
+		Duration: time.Since(start),
+	})
+	return nil
+}
+
+// transitionToNull tears down everything back to NULL.
+func (p *Pipeline) transitionToNull() error {
+	p.mu.Lock()
+	cur := p.state
+	cancel := p.cancel
+	// Unpause so goroutines can drain.
+	if p.pauseCh != nil {
+		select {
+		case <-p.pauseCh:
+		default:
+			close(p.pauseCh)
+		}
+	}
+	p.mu.Unlock()
+
 	if cancel != nil {
 		cancel()
 	}
-	if e.eg != nil {
-		return e.eg.Wait()
+
+	// Wait for data-flow goroutines to finish.
+	if p.eg != nil {
+		p.eg.Wait() // error already captured in runDone
+	}
+
+	start := time.Now()
+
+	p.mu.Lock()
+	p.state = StateNull
+	p.cancel = nil
+	p.eg = nil
+	p.runDone = nil
+	p.runErr = error(nil)
+	p.pauseCh = nil
+	p.seekTarget = 0
+	p.seekPending = false
+	p.mu.Unlock()
+
+	if cur != StateNull {
+		p.events.Post(StateChanged{
+			From:     cur,
+			To:       StateNull,
+			Duration: time.Since(start),
+		})
 	}
 	return nil
+}
+
+// startDataFlow launches the goroutine-per-stage pipeline.
+func (p *Pipeline) startDataFlow() {
+	p.mu.Lock()
+	ctx := p.parentCtx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	p.cancel = cancel
+	g, gctx := errgroup.WithContext(ctx)
+	p.eg = g
+	done := make(chan struct{})
+	p.runDone = done
+	p.mu.Unlock()
+
+	go func() {
+		err := p.runLinear(gctx, g)
+		p.mu.Lock()
+		p.runErr = err
+		p.mu.Unlock()
+		if err == nil {
+			p.events.Post(EOS{})
+		} else {
+			p.events.Post(ErrorEvent{Err: err, Time: time.Now()})
+		}
+		close(done)
+	}()
+}
+
+// waitIfPaused blocks until the pipeline is unpaused or ctx is cancelled.
+func (p *Pipeline) waitIfPaused(ctx context.Context) error {
+	p.mu.Lock()
+	ch := p.pauseCh
+	p.mu.Unlock()
+	if ch == nil {
+		return nil
+	}
+	select {
+	case <-ch:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 func (e *Pipeline) runLinear(ctx context.Context, g *errgroup.Group) error {

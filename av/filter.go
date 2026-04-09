@@ -183,3 +183,98 @@ func (fg *FilterGraph) Flush() error {
 	ret := C.av_buffersrc_add_frame_flags(fg.bufSrc, nil, 0)
 	return newErr(ret)
 }
+
+// NewAudioFilterGraph creates an audio filter graph with a single filter chain.
+// The FilterSpec is an ffmpeg audio filter string, e.g. "aresample=44100" or "anull".
+func NewAudioFilterGraph(cfg AudioFilterGraphConfig) (*FilterGraph, error) {
+	graph := C.avfilter_graph_alloc()
+	if graph == nil {
+		return nil, &Err{Code: -12, Message: "avfilter_graph_alloc: out of memory"}
+	}
+
+	cBufName := C.CString("abuffer")
+	defer C.free(unsafe.Pointer(cBufName))
+	cSinkName := C.CString("abuffersink")
+	defer C.free(unsafe.Pointer(cSinkName))
+
+	abuffersrc := C.avfilter_get_by_name(cBufName)
+	abuffersink := C.avfilter_get_by_name(cSinkName)
+	if abuffersrc == nil || abuffersink == nil {
+		C.avfilter_graph_free(&graph)
+		return nil, fmt.Errorf("could not find abuffer/abuffersink filter")
+	}
+
+	var argsBuf [512]C.char
+	C.make_audio_src_args(&argsBuf[0], 512,
+		C.int(cfg.SampleFmt), C.int(cfg.SampleRate), C.int(cfg.Channels))
+
+	cIn := C.CString("in")
+	defer C.free(unsafe.Pointer(cIn))
+	cOut := C.CString("out")
+	defer C.free(unsafe.Pointer(cOut))
+
+	var srcCtx *C.AVFilterContext
+	ret := C.avfilter_graph_create_filter(&srcCtx, abuffersrc,
+		cIn, &argsBuf[0], nil, graph)
+	if ret < 0 {
+		C.avfilter_graph_free(&graph)
+		return nil, fmt.Errorf("create abuffer source: %w", newErr(ret))
+	}
+
+	var sinkCtx *C.AVFilterContext
+	ret = C.avfilter_graph_create_filter(&sinkCtx, abuffersink,
+		cOut, nil, nil, graph)
+	if ret < 0 {
+		C.avfilter_graph_free(&graph)
+		return nil, fmt.Errorf("create abuffersink: %w", newErr(ret))
+	}
+
+	var inputs *C.AVFilterInOut
+	var outputs *C.AVFilterInOut
+
+	outputs = C.avfilter_inout_alloc()
+	inputs = C.avfilter_inout_alloc()
+	if outputs == nil || inputs == nil {
+		C.avfilter_graph_free(&graph)
+		return nil, fmt.Errorf("avfilter_inout_alloc: out of memory")
+	}
+
+	outputs.name = C.av_strdup(cIn)
+	outputs.filter_ctx = srcCtx
+	outputs.pad_idx = 0
+	outputs.next = nil
+
+	inputs.name = C.av_strdup(cOut)
+	inputs.filter_ctx = sinkCtx
+	inputs.pad_idx = 0
+	inputs.next = nil
+
+	cSpec := C.CString(cfg.FilterSpec)
+	defer C.free(unsafe.Pointer(cSpec))
+
+	ret = C.avfilter_graph_parse_ptr(graph, cSpec, &inputs, &outputs, nil)
+	C.avfilter_inout_free(&inputs)
+	C.avfilter_inout_free(&outputs)
+	if ret < 0 {
+		C.avfilter_graph_free(&graph)
+		return nil, fmt.Errorf("avfilter_graph_parse_ptr(%q): %w", cfg.FilterSpec, newErr(ret))
+	}
+
+	ret = C.avfilter_graph_config(graph, nil)
+	if ret < 0 {
+		C.avfilter_graph_free(&graph)
+		return nil, fmt.Errorf("avfilter_graph_config: %w", newErr(ret))
+	}
+
+	return &FilterGraph{
+		graph:     graph,
+		bufSrc:    srcCtx,
+		bufSink:   sinkCtx,
+		mediaType: MediaTypeAudio,
+	}, nil
+}
+
+// MediaType returns the media type of the filter graph (video or audio).
+func (fg *FilterGraph) MediaType() MediaType {
+	return fg.mediaType
+}

@@ -1,3 +1,4 @@
-// Package runtime provides the pipeline execution runtime, including
-// the state machine, clock/sync, and scheduling (Phase 1).
+// Package runtime provides the multi-lane scheduler for concurrent pipeline
+// execution. It takes a resolved graph.Graph and runs each node as an
+// independent goroutine connected by buffered channels.
 package runtime

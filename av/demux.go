@@ -57,12 +57,13 @@ type StreamInfo struct {
 	CodecID    uint32
 	Width      int
 	Height     int
-	PixFmt     int       // AVPixelFormat (video only)
-	FrameRate  [2]int    // {num, den} average frame rate (video only)
+	PixFmt     int    // AVPixelFormat (video only)
+	FrameRate  [2]int // {num, den} average frame rate (video only)
 	SampleRate int
+	SampleFmt  int    // AVSampleFormat (audio only)
 	Channels   int
-	TimeBase   [2]int    // {num, den}
-	Duration   int64     // in stream timebase units
+	TimeBase   [2]int // {num, den}
+	Duration   int64  // in stream timebase units
 }
 
 // InputFormatContext opens a media file for reading and demuxing.
@@ -135,6 +136,7 @@ func (f *InputFormatContext) StreamInfo(i int) (StreamInfo, error) {
 		PixFmt:     int(cp.format),
 		FrameRate:  [2]int{int(fr.num), int(fr.den)},
 		SampleRate: int(cp.sample_rate),
+		SampleFmt:  int(cp.format),
 		Channels:   int(cp.ch_layout.nb_channels),
 		TimeBase:   [2]int{int(tb.num), int(tb.den)},
 		Duration:   int64(C.stream_duration(f.p, C.int(i))),

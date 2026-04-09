@@ -89,21 +89,94 @@ Run it:
 mediamolder run transcode.json
 ```
 
+Run with JSON progress output:
+```sh
+mediamolder run --json transcode.json
+```
+
 Inspect the resolved pipeline graph without running:
 ```sh
 mediamolder inspect transcode.json
+```
+
+Convert an FFmpeg command to MediaMolder JSON:
+```sh
+mediamolder convert-cmd "ffmpeg -i input.mp4 -vf scale=1280:720 -c:v libx264 -c:a aac output.mp4"
+```
+
+List available codecs, filters, or formats:
+```sh
+mediamolder list-codecs
+mediamolder list-filters
+mediamolder list-formats
+mediamolder list-codecs --json   # JSON output
+```
+
+### Multi-input overlay example
+
+```json
+{
+  "schema_version": "1.0",
+  "inputs": [
+    { "id": "bg", "url": "background.mp4", "streams": [{"input_index": 0, "type": "video", "track": 0}] },
+    { "id": "fg", "url": "overlay.png", "streams": [{"input_index": 0, "type": "video", "track": 0}] }
+  ],
+  "graph": {
+    "nodes": [
+      { "id": "ov", "type": "filter", "filter": "overlay", "params": {"x": 10, "y": 10} }
+    ],
+    "edges": [
+      { "from": "bg:v:0", "to": "ov:default", "type": "video" },
+      { "from": "fg:v:0", "to": "ov:overlay", "type": "video" },
+      { "from": "ov:default", "to": "out:v", "type": "video" }
+    ]
+  },
+  "outputs": [
+    { "id": "out", "url": "composited.mp4", "codec_video": "libx264" }
+  ]
+}
+```
+
+### Multi-output (adaptive bitrate) example
+
+```json
+{
+  "schema_version": "1.0",
+  "inputs": [
+    { "id": "src", "url": "input.mp4", "streams": [{"input_index": 0, "type": "video", "track": 0}] }
+  ],
+  "graph": {
+    "nodes": [
+      { "id": "split", "type": "filter", "filter": "split" },
+      { "id": "hd", "type": "filter", "filter": "scale", "params": {"w": "1920", "h": "1080"} },
+      { "id": "sd", "type": "filter", "filter": "scale", "params": {"w": "640", "h": "480"} }
+    ],
+    "edges": [
+      { "from": "src:v:0", "to": "split:default", "type": "video" },
+      { "from": "split:out0", "to": "hd:default", "type": "video" },
+      { "from": "split:out1", "to": "sd:default", "type": "video" },
+      { "from": "hd:default", "to": "out_hd:v", "type": "video" },
+      { "from": "sd:default", "to": "out_sd:v", "type": "video" }
+    ]
+  },
+  "outputs": [
+    { "id": "out_hd", "url": "output_1080p.mp4", "codec_video": "libx264" },
+    { "id": "out_sd", "url": "output_480p.mp4", "codec_video": "libx264" }
+  ]
+}
 ```
 
 ---
 
 ## Documentation
 
-- [Project Specification](docs/spec_v3.md)
-- [Build & Packaging](docs/build_and_packaging.md)
-- [Roadmap](docs/roadmap.md)
-- [Future Improvements](docs/future_improvements.md)
-- [Contribution & Governance](docs/contribution_and_governance.md)
-- [Licensing Guide](LICENSING.md)
+- [JSON Config Reference](docs/json-config-reference.md)
+- [Pipeline State Machine](docs/pipeline-state-machine.md)
+- [Clock & Sync](docs/clock-and-sync.md)
+- [Event Bus](docs/event-bus.md)
+- [FFmpeg Migration Guide](docs/ffmpeg-migration-guide.md)
+- [Project Specification](docs/spec_v2.md)
+- [Build Plan](docs/build_plan.md)
 
 ---
 

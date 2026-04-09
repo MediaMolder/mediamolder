@@ -17,4 +17,5 @@ var (
 	_ io.Closer = (*InputFormatContext)(nil)
 	_ io.Closer = (*OutputFormatContext)(nil)
 	_ io.Closer = (*FilterGraph)(nil)
+	_ io.Closer = (*Resampler)(nil)
 )
