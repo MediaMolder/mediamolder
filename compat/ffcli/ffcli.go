@@ -182,6 +182,9 @@ func (p *parser) parse() (*pipeline.Config, error) {
 			if p.codecA != "" && p.codecA != "none" {
 				out.CodecAudio = p.codecA
 			}
+			if p.codecS != "" && p.codecS != "none" {
+				out.CodecSubtitle = p.codecS
+			}
 			if p.bsfVideo != "" {
 				out.BSFVideo = p.bsfVideo
 			}

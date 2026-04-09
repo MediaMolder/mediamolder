@@ -112,6 +112,9 @@
         "format": { "type": "string" },
         "codec_video": { "type": "string" },
         "codec_audio": { "type": "string" },
+        "codec_subtitle": { "type": "string" },
+        "bsf_video": { "type": "string" },
+        "bsf_audio": { "type": "string" },
         "options": {
           "type": "object",
           "additionalProperties": true
@@ -124,6 +127,7 @@
       "properties": {
         "threads": { "type": "integer", "minimum": 0 },
         "hw_accel": { "type": "string" },
+        "hw_device": { "type": "string" },
         "realtime": { "type": "boolean" }
       }
     },
