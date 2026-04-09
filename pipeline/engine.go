@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/MediaMolder/MediaMolder/av"
+	"github.com/MediaMolder/MediaMolder/graph"
+	"github.com/MediaMolder/MediaMolder/runtime"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -346,7 +348,12 @@ func (p *Pipeline) startDataFlow() {
 	p.mu.Unlock()
 
 	go func() {
-		err := p.runLinear(gctx, g)
+		var err error
+		if len(p.cfg.Graph.Edges) > 0 {
+			err = p.runGraph(gctx)
+		} else {
+			err = p.runLinear(gctx, g)
+		}
 		p.mu.Lock()
 		p.runErr = err
 		p.mu.Unlock()
@@ -731,4 +738,72 @@ func buildFilterSpec(node NodeDef) string {
 		spec += fmt.Sprintf("%s=%v", k, node.Params[k])
 	}
 	return spec
+}
+
+// runGraph executes the pipeline using the graph builder + scheduler for
+// configs with explicit edges (multi-input / multi-output support).
+func (p *Pipeline) runGraph(ctx context.Context) error {
+	cfg := p.cfg
+
+	// 1. Convert pipeline config → graph definition → validated DAG.
+	def := configToGraphDef(cfg)
+	dag, err := graph.Build(def)
+	if err != nil {
+		return fmt.Errorf("build graph: %w", err)
+	}
+
+	// 2. Pre-open all AV resources in topological order.
+	runner := newGraphRunner(cfg, p)
+	defer runner.close()
+
+	for _, inp := range cfg.Inputs {
+		src, err := runner.openSource(inp)
+		if err != nil {
+			return err
+		}
+		runner.sources[inp.ID] = src
+	}
+
+	for _, node := range dag.Order {
+		switch node.Kind {
+		case graph.KindSource:
+			// Already opened above.
+		case graph.KindFilter:
+			fg, err := runner.createFilter(dag, node)
+			if err != nil {
+				return fmt.Errorf("create filter %q: %w", node.ID, err)
+			}
+			runner.filters[node.ID] = fg
+		case graph.KindEncoder:
+			enc, err := runner.createEncoder(dag, node)
+			if err != nil {
+				return fmt.Errorf("create encoder %q: %w", node.ID, err)
+			}
+			runner.encoders[node.ID] = enc
+		case graph.KindSink:
+			sink, err := runner.openSink(dag, node)
+			if err != nil {
+				return err
+			}
+			runner.sinks[node.ID] = sink
+		}
+	}
+
+	// 3. Run the scheduler — one goroutine per node, channels per edge.
+	sched := &runtime.Scheduler{BufSize: 8}
+	if err := sched.Run(ctx, dag, runner.handle); err != nil {
+		// Abort all outputs on error.
+		for _, s := range runner.sinks {
+			s.muxer.Abort()
+		}
+		return err
+	}
+
+	// 4. Finalize outputs (atomic rename from .tmp).
+	for _, s := range runner.sinks {
+		if err := s.muxer.Close(); err != nil {
+			return err
+		}
+	}
+	return nil
 }

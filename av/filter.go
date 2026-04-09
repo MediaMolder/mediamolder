@@ -32,12 +32,13 @@ import (
 	"unsafe"
 )
 
-// FilterGraph wraps an AVFilterGraph and the buffer source/sink contexts
-// for a single-input, single-output filter chain.
+// FilterGraph wraps an AVFilterGraph and the buffer source/sink contexts.
+// Simple (1-in / 1-out) graphs are created with NewVideoFilterGraph or
+// NewAudioFilterGraph. Complex (N-in / M-out) graphs use NewComplexFilterGraph.
 type FilterGraph struct {
 	graph     *C.AVFilterGraph
-	bufSrc    *C.AVFilterContext
-	bufSink   *C.AVFilterContext
+	bufSrcs   []*C.AVFilterContext // one per input pad
+	bufSinks  []*C.AVFilterContext // one per output pad
 	mediaType MediaType
 }
 
@@ -149,8 +150,8 @@ func NewVideoFilterGraph(cfg VideoFilterGraphConfig) (*FilterGraph, error) {
 
 	return &FilterGraph{
 		graph:     graph,
-		bufSrc:    srcCtx,
-		bufSink:   sinkCtx,
+		bufSrcs:   []*C.AVFilterContext{srcCtx},
+		bufSinks:  []*C.AVFilterContext{sinkCtx},
 		mediaType: MediaTypeVideo,
 	}, nil
 }
@@ -161,27 +162,99 @@ func (fg *FilterGraph) Close() error {
 		C.avfilter_graph_free(&fg.graph)
 		fg.graph = nil
 	}
+	fg.bufSrcs = nil
+	fg.bufSinks = nil
 	return nil
 }
 
-// PushFrame sends a frame into the buffer source.
+// NumInputs returns the number of input pads.
+func (fg *FilterGraph) NumInputs() int { return len(fg.bufSrcs) }
+
+// NumOutputs returns the number of output pads.
+func (fg *FilterGraph) NumOutputs() int { return len(fg.bufSinks) }
+
+// PushFrame sends a frame into the first (index 0) buffer source.
 func (fg *FilterGraph) PushFrame(f *Frame) error {
-	ret := C.av_buffersrc_add_frame_flags(fg.bufSrc, f.raw(),
+	return fg.PushFrameAt(0, f)
+}
+
+// PushFrameAt sends a frame into the buffer source at the given index.
+func (fg *FilterGraph) PushFrameAt(idx int, f *Frame) error {
+	if idx < 0 || idx >= len(fg.bufSrcs) {
+		return fmt.Errorf("filter input index %d out of range [0, %d)", idx, len(fg.bufSrcs))
+	}
+	ret := C.av_buffersrc_add_frame_flags(fg.bufSrcs[idx], f.raw(),
 		C.AV_BUFFERSRC_FLAG_KEEP_REF)
 	return newErr(ret)
 }
 
-// PullFrame receives a filtered frame from the buffer sink.
+// PullFrame receives a filtered frame from the first (index 0) buffer sink.
 // Returns ErrEAgain if no frame is ready yet, ErrEOF when flushing is complete.
 func (fg *FilterGraph) PullFrame(f *Frame) error {
-	ret := C.av_buffersink_get_frame(fg.bufSink, f.raw())
+	return fg.PullFrameAt(0, f)
+}
+
+// PullFrameAt receives a filtered frame from the buffer sink at the given index.
+func (fg *FilterGraph) PullFrameAt(idx int, f *Frame) error {
+	if idx < 0 || idx >= len(fg.bufSinks) {
+		return fmt.Errorf("filter output index %d out of range [0, %d)", idx, len(fg.bufSinks))
+	}
+	ret := C.av_buffersink_get_frame(fg.bufSinks[idx], f.raw())
 	return newErr(ret)
 }
 
-// Flush signals end-of-stream to the buffer source so buffered frames drain.
+// Flush signals end-of-stream to the first (index 0) buffer source.
 func (fg *FilterGraph) Flush() error {
-	ret := C.av_buffersrc_add_frame_flags(fg.bufSrc, nil, 0)
+	return fg.FlushAt(0)
+}
+
+// FlushAt signals end-of-stream to the buffer source at the given index.
+func (fg *FilterGraph) FlushAt(idx int) error {
+	if idx < 0 || idx >= len(fg.bufSrcs) {
+		return fmt.Errorf("filter input index %d out of range [0, %d)", idx, len(fg.bufSrcs))
+	}
+	ret := C.av_buffersrc_add_frame_flags(fg.bufSrcs[idx], nil, 0)
 	return newErr(ret)
+}
+
+// OutputWidth returns the output video width of the sink at the given index.
+func (fg *FilterGraph) OutputWidth(idx int) int {
+	if idx < 0 || idx >= len(fg.bufSinks) {
+		return 0
+	}
+	return int(C.av_buffersink_get_w(fg.bufSinks[idx]))
+}
+
+// OutputHeight returns the output video height of the sink at the given index.
+func (fg *FilterGraph) OutputHeight(idx int) int {
+	if idx < 0 || idx >= len(fg.bufSinks) {
+		return 0
+	}
+	return int(C.av_buffersink_get_h(fg.bufSinks[idx]))
+}
+
+// OutputPixFmt returns the output pixel format of the sink at the given index.
+func (fg *FilterGraph) OutputPixFmt(idx int) int {
+	if idx < 0 || idx >= len(fg.bufSinks) {
+		return -1
+	}
+	return int(C.av_buffersink_get_format(fg.bufSinks[idx]))
+}
+
+// OutputSampleRate returns the output sample rate of the audio sink at the given index.
+func (fg *FilterGraph) OutputSampleRate(idx int) int {
+	if idx < 0 || idx >= len(fg.bufSinks) {
+		return 0
+	}
+	return int(C.av_buffersink_get_sample_rate(fg.bufSinks[idx]))
+}
+
+// OutputChannels returns the number of audio channels of the sink at the given index.
+func (fg *FilterGraph) OutputChannels(idx int) int {
+	if idx < 0 || idx >= len(fg.bufSinks) {
+		return 0
+	}
+	return int(C.av_buffersink_get_channels(fg.bufSinks[idx]))
 }
 
 // NewAudioFilterGraph creates an audio filter graph with a single filter chain.
@@ -268,8 +341,8 @@ func NewAudioFilterGraph(cfg AudioFilterGraphConfig) (*FilterGraph, error) {
 
 	return &FilterGraph{
 		graph:     graph,
-		bufSrc:    srcCtx,
-		bufSink:   sinkCtx,
+		bufSrcs:   []*C.AVFilterContext{srcCtx},
+		bufSinks:  []*C.AVFilterContext{sinkCtx},
 		mediaType: MediaTypeAudio,
 	}, nil
 }
@@ -277,4 +350,195 @@ func NewAudioFilterGraph(cfg AudioFilterGraphConfig) (*FilterGraph, error) {
 // MediaType returns the media type of the filter graph (video or audio).
 func (fg *FilterGraph) MediaType() MediaType {
 	return fg.mediaType
+}
+
+// ---------- Complex (multi-input / multi-output) filter graphs ----------
+
+// FilterPadConfig describes one input pad of a complex filter graph.
+type FilterPadConfig struct {
+	Label     string    // pad label in the filter spec, e.g. "in0"
+	MediaType MediaType // MediaTypeVideo or MediaTypeAudio
+
+	// Video parameters (only when MediaType == MediaTypeVideo).
+	Width, Height, PixFmt int
+	TBNum, TBDen          int
+	SARNum, SARDen        int
+
+	// Audio parameters (only when MediaType == MediaTypeAudio).
+	SampleFmt, SampleRate, Channels int
+}
+
+// FilterOutputConfig describes one output pad of a complex filter graph.
+type FilterOutputConfig struct {
+	Label     string    // pad label in the filter spec, e.g. "out0"
+	MediaType MediaType // MediaTypeVideo or MediaTypeAudio
+}
+
+// ComplexFilterGraphConfig configures a multi-input / multi-output filter graph.
+// The FilterSpec must reference all input/output labels, e.g.
+// "[in0][in1]overlay[out0]" or "[in0]split[out0][out1]".
+type ComplexFilterGraphConfig struct {
+	Inputs     []FilterPadConfig
+	Outputs    []FilterOutputConfig
+	FilterSpec string
+}
+
+// NewComplexFilterGraph creates a filter graph with an arbitrary number of
+// buffer sources and buffer sinks, connected by the given FilterSpec.
+func NewComplexFilterGraph(cfg ComplexFilterGraphConfig) (*FilterGraph, error) {
+	if len(cfg.Inputs) == 0 {
+		return nil, fmt.Errorf("complex filter graph requires at least one input")
+	}
+	if len(cfg.Outputs) == 0 {
+		return nil, fmt.Errorf("complex filter graph requires at least one output")
+	}
+
+	graph := C.avfilter_graph_alloc()
+	if graph == nil {
+		return nil, &Err{Code: -12, Message: "avfilter_graph_alloc: out of memory"}
+	}
+
+	// --- Create buffer sources for each input pad ---
+	bufSrcs := make([]*C.AVFilterContext, len(cfg.Inputs))
+	for i, inp := range cfg.Inputs {
+		var srcFilter *C.AVFilter
+		var argsBuf [512]C.char
+
+		switch inp.MediaType {
+		case MediaTypeVideo:
+			cName := C.CString("buffer")
+			srcFilter = C.avfilter_get_by_name(cName)
+			C.free(unsafe.Pointer(cName))
+			if srcFilter == nil {
+				C.avfilter_graph_free(&graph)
+				return nil, fmt.Errorf("buffer filter not found")
+			}
+			C.make_video_src_args(&argsBuf[0], 512,
+				C.int(inp.Width), C.int(inp.Height), C.int(inp.PixFmt),
+				C.int(inp.TBNum), C.int(inp.TBDen),
+				C.int(inp.SARNum), C.int(inp.SARDen))
+
+		case MediaTypeAudio:
+			cName := C.CString("abuffer")
+			srcFilter = C.avfilter_get_by_name(cName)
+			C.free(unsafe.Pointer(cName))
+			if srcFilter == nil {
+				C.avfilter_graph_free(&graph)
+				return nil, fmt.Errorf("abuffer filter not found")
+			}
+			C.make_audio_src_args(&argsBuf[0], 512,
+				C.int(inp.SampleFmt), C.int(inp.SampleRate), C.int(inp.Channels))
+
+		default:
+			C.avfilter_graph_free(&graph)
+			return nil, fmt.Errorf("unsupported input media type for pad %q", inp.Label)
+		}
+
+		cLabel := C.CString(inp.Label)
+		ret := C.avfilter_graph_create_filter(&bufSrcs[i], srcFilter,
+			cLabel, &argsBuf[0], nil, graph)
+		C.free(unsafe.Pointer(cLabel))
+		if ret < 0 {
+			C.avfilter_graph_free(&graph)
+			return nil, fmt.Errorf("create buffer source %q: %w", inp.Label, newErr(ret))
+		}
+	}
+
+	// --- Create buffer sinks for each output pad ---
+	bufSinks := make([]*C.AVFilterContext, len(cfg.Outputs))
+	for i, out := range cfg.Outputs {
+		var sinkFilter *C.AVFilter
+
+		switch out.MediaType {
+		case MediaTypeVideo:
+			cName := C.CString("buffersink")
+			sinkFilter = C.avfilter_get_by_name(cName)
+			C.free(unsafe.Pointer(cName))
+		case MediaTypeAudio:
+			cName := C.CString("abuffersink")
+			sinkFilter = C.avfilter_get_by_name(cName)
+			C.free(unsafe.Pointer(cName))
+		default:
+			C.avfilter_graph_free(&graph)
+			return nil, fmt.Errorf("unsupported output media type for pad %q", out.Label)
+		}
+
+		if sinkFilter == nil {
+			C.avfilter_graph_free(&graph)
+			return nil, fmt.Errorf("buffersink filter not found for %q", out.Label)
+		}
+
+		cLabel := C.CString(out.Label)
+		ret := C.avfilter_graph_create_filter(&bufSinks[i], sinkFilter,
+			cLabel, nil, nil, graph)
+		C.free(unsafe.Pointer(cLabel))
+		if ret < 0 {
+			C.avfilter_graph_free(&graph)
+			return nil, fmt.Errorf("create buffer sink %q: %w", out.Label, newErr(ret))
+		}
+	}
+
+	// --- Build AVFilterInOut linked lists ---
+	// "outputs" = graph open output pads = buffer sources.
+	// "inputs"  = graph open input pads  = buffer sinks.
+	// Linked lists are built in reverse order so index 0 is the head.
+	var outputs *C.AVFilterInOut
+	for i := len(cfg.Inputs) - 1; i >= 0; i-- {
+		io := C.avfilter_inout_alloc()
+		if io == nil {
+			C.avfilter_inout_free(&outputs)
+			C.avfilter_graph_free(&graph)
+			return nil, fmt.Errorf("avfilter_inout_alloc: out of memory")
+		}
+		cLabel := C.CString(cfg.Inputs[i].Label)
+		io.name = C.av_strdup(cLabel)
+		C.free(unsafe.Pointer(cLabel))
+		io.filter_ctx = bufSrcs[i]
+		io.pad_idx = 0
+		io.next = outputs
+		outputs = io
+	}
+
+	var inputs *C.AVFilterInOut
+	for i := len(cfg.Outputs) - 1; i >= 0; i-- {
+		io := C.avfilter_inout_alloc()
+		if io == nil {
+			C.avfilter_inout_free(&inputs)
+			C.avfilter_inout_free(&outputs)
+			C.avfilter_graph_free(&graph)
+			return nil, fmt.Errorf("avfilter_inout_alloc: out of memory")
+		}
+		cLabel := C.CString(cfg.Outputs[i].Label)
+		io.name = C.av_strdup(cLabel)
+		C.free(unsafe.Pointer(cLabel))
+		io.filter_ctx = bufSinks[i]
+		io.pad_idx = 0
+		io.next = inputs
+		inputs = io
+	}
+
+	// --- Parse, link, and configure ---
+	cSpec := C.CString(cfg.FilterSpec)
+	defer C.free(unsafe.Pointer(cSpec))
+
+	ret := C.avfilter_graph_parse_ptr(graph, cSpec, &inputs, &outputs, nil)
+	C.avfilter_inout_free(&inputs)
+	C.avfilter_inout_free(&outputs)
+	if ret < 0 {
+		C.avfilter_graph_free(&graph)
+		return nil, fmt.Errorf("avfilter_graph_parse_ptr(%q): %w", cfg.FilterSpec, newErr(ret))
+	}
+
+	ret = C.avfilter_graph_config(graph, nil)
+	if ret < 0 {
+		C.avfilter_graph_free(&graph)
+		return nil, fmt.Errorf("avfilter_graph_config: %w", newErr(ret))
+	}
+
+	return &FilterGraph{
+		graph:     graph,
+		bufSrcs:   bufSrcs,
+		bufSinks:  bufSinks,
+		mediaType: cfg.Inputs[0].MediaType,
+	}, nil
 }
