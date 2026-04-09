@@ -59,9 +59,10 @@ type Output struct {
 	ID         string         `json:"id"`
 	URL        string         `json:"url"`
 	Format     string         `json:"format,omitempty"`
-	CodecVideo string         `json:"codec_video,omitempty"`
-	CodecAudio string         `json:"codec_audio,omitempty"`
-	BSFVideo   string         `json:"bsf_video,omitempty"`
+	CodecVideo    string         `json:"codec_video,omitempty"`
+	CodecAudio    string         `json:"codec_audio,omitempty"`
+	CodecSubtitle string         `json:"codec_subtitle,omitempty"`
+	BSFVideo      string         `json:"bsf_video,omitempty"`
 	BSFAudio   string         `json:"bsf_audio,omitempty"`
 	Options    map[string]any `json:"options,omitempty"`
 }

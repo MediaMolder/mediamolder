@@ -3,7 +3,7 @@
 ## Phase 0 (MVP)
 Core binding layer + simple input→filter→output pipeline.
 
-**Exit criteria**: Successfully transcode a single-stream video file (YUV or Y4M input → H.264 output) with at least one video filter (scale) applied, driven by a JSON config file. Output passes SSIM ≥ 0.99 against equivalent `ffmpeg` output. Benchmarks show < 10% overhead vs. `ffmpeg`.
+**Exit criteria**: Successfully transcode a single-stream video file (YUV or Y4M input → H.264 output) with at least one video filter (scale) applied, driven by a JSON config file. Output passes SSIM ≥ 0.99 against equivalent `ffmpeg` output. Benchmarks show < 5% overhead vs. `ffmpeg` (see spec §15).
 
 ## Phase 1
 Full declarative graph (JSON primary), CLI, Go control API, state machine, clock/sync.

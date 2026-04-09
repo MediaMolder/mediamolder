@@ -69,17 +69,21 @@ MediaMolder pipelines are defined as JSON files conforming to schema v1.0.
 | `id`          | string | yes      | Unique output ID       |
 | `url`         | string | yes      | File path or URL       |
 | `format`      | string | no       | Container format       |
-| `codec_video` | string | no       | Video encoder name     |
-| `codec_audio` | string | no       | Audio encoder name     |
-| `options`     | object | no       | Muxer options          |
+| `codec_video`    | string | no       | Video encoder name     |
+| `codec_audio`    | string | no       | Audio encoder name     |
+| `codec_subtitle` | string | no       | Subtitle encoder name  |
+| `bsf_video`      | string | no       | Video bitstream filter |
+| `bsf_audio`      | string | no       | Audio bitstream filter |
+| `options`        | object | no       | Muxer options          |
 
 ## GlobalOptions
 
 | Field      | Type   | Required | Description                    |
 |------------|--------|----------|--------------------------------|
 | `threads`  | int    | no       | Max worker threads             |
-| `hw_accel` | string | no       | Hardware acceleration backend  |
-| `realtime` | bool   | no       | Pace output to wall-clock time |
+| `hw_accel`  | string | no       | Hardware acceleration backend  |
+| `hw_device` | string | no       | Hardware device name/path      |
+| `realtime`  | bool   | no       | Pace output to wall-clock time |
 
 ## ErrorPolicy
 

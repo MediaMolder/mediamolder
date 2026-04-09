@@ -70,8 +70,12 @@ if err != nil { return err }
 defer bsf.Close()
 
 // Filter a packet (send + receive in one call).
-outPkt, err := bsf.FilterPacket(pkt)
+outPkts, err := bsf.FilterPacket(pkt)
 if err != nil { return err }
+for _, outPkt := range outPkts {
+    // process outPkt
+    _ = outPkt
+}
 
 // Or use the two-step API for more control.
 if err := bsf.SendPacket(pkt); err != nil { return err }
