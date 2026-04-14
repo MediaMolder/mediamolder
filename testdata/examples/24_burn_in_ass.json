@@ -1,0 +1,59 @@
+{
+  "schema_version": "1.0",
+  "description": "Decode in.mp4 -> burn ASS/SSA subtitles from subs.ass into video using ass filter, encode to H.264 with libx264, encode audio to AAC -> write to out.mp4",
+  "inputs": [
+    {
+      "id": "in0",
+      "url": "in.mp4",
+      "streams": [
+        {
+          "input_index": 0,
+          "type": "video",
+          "track": 0
+        },
+        {
+          "input_index": 0,
+          "type": "audio",
+          "track": 0
+        }
+      ]
+    }
+  ],
+  "graph": {
+    "nodes": [
+      {
+        "id": "ass0",
+        "type": "filter",
+        "filter": "ass",
+        "params": {
+          "filename": "subs.ass"
+        }
+      }
+    ],
+    "edges": [
+      {
+        "from": "in0:v:0",
+        "to": "ass0",
+        "type": "video"
+      },
+      {
+        "from": "ass0",
+        "to": "out0:v",
+        "type": "video"
+      },
+      {
+        "from": "in0:a:0",
+        "to": "out0:a",
+        "type": "audio"
+      }
+    ]
+  },
+  "outputs": [
+    {
+      "id": "out0",
+      "url": "out.mp4",
+      "codec_video": "libx264",
+      "codec_audio": "aac"
+    }
+  ]
+}

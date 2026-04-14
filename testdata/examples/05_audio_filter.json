@@ -1,0 +1,59 @@
+{
+  "schema_version": "1.0",
+  "description": "Decode in.mp4 -> copy video stream, boost audio volume by 2x, encode audio to AAC -> write to out.mp4",
+  "inputs": [
+    {
+      "id": "in0",
+      "url": "in.mp4",
+      "streams": [
+        {
+          "input_index": 0,
+          "type": "video",
+          "track": 0
+        },
+        {
+          "input_index": 0,
+          "type": "audio",
+          "track": 0
+        }
+      ]
+    }
+  ],
+  "graph": {
+    "nodes": [
+      {
+        "id": "volume0",
+        "type": "filter",
+        "filter": "volume",
+        "params": {
+          "volume": "2.0"
+        }
+      }
+    ],
+    "edges": [
+      {
+        "from": "in0:v:0",
+        "to": "out0:v",
+        "type": "video"
+      },
+      {
+        "from": "in0:a:0",
+        "to": "volume0",
+        "type": "audio"
+      },
+      {
+        "from": "volume0",
+        "to": "out0:a",
+        "type": "audio"
+      }
+    ]
+  },
+  "outputs": [
+    {
+      "id": "out0",
+      "url": "out.mp4",
+      "codec_video": "copy",
+      "codec_audio": "aac"
+    }
+  ]
+}

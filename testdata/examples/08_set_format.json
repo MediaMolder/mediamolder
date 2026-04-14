@@ -1,0 +1,46 @@
+{
+  "schema_version": "1.0",
+  "description": "Decode in.mp4 -> encode video to H.264 with libx264, encode audio to AAC, set output format to Matroska -> write to out.mkv",
+  "inputs": [
+    {
+      "id": "in0",
+      "url": "in.mp4",
+      "streams": [
+        {
+          "input_index": 0,
+          "type": "video",
+          "track": 0
+        },
+        {
+          "input_index": 0,
+          "type": "audio",
+          "track": 0
+        }
+      ]
+    }
+  ],
+  "graph": {
+    "nodes": [],
+    "edges": [
+      {
+        "from": "in0:v:0",
+        "to": "out0:v",
+        "type": "video"
+      },
+      {
+        "from": "in0:a:0",
+        "to": "out0:a",
+        "type": "audio"
+      }
+    ]
+  },
+  "outputs": [
+    {
+      "id": "out0",
+      "url": "out.mkv",
+      "format": "matroska",
+      "codec_video": "libx264",
+      "codec_audio": "aac"
+    }
+  ]
+}

@@ -1,0 +1,41 @@
+# Binaries
+mediamolder
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Build output
+/bin/
+/dist/
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool
+*.out
+coverage.html
+
+# Go workspace
+go.work
+go.work.sum
+
+# IDE
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test media corpus (handled by Git LFS)
+# Keeping *.mp4, *.mkv etc. in LFS via .gitattributes
+
+# Benchmark results (tracked separately)
+bench-*.txt
+
+# Internal planning docs (not for public release)
+private_local/build_plan.md
+private_local/future_improvements.md

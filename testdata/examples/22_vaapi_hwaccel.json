@@ -1,0 +1,49 @@
+{
+  "schema_version": "1.0",
+  "description": "Decode in.mp4 using VAAPI hardware acceleration on /dev/dri/renderD128 -> encode video to H.264 with h264_vaapi, copy audio stream -> write to out.mp4",
+  "inputs": [
+    {
+      "id": "in0",
+      "url": "in.mp4",
+      "streams": [
+        {
+          "input_index": 0,
+          "type": "video",
+          "track": 0
+        },
+        {
+          "input_index": 0,
+          "type": "audio",
+          "track": 0
+        }
+      ]
+    }
+  ],
+  "graph": {
+    "nodes": [],
+    "edges": [
+      {
+        "from": "in0:v:0",
+        "to": "out0:v",
+        "type": "video"
+      },
+      {
+        "from": "in0:a:0",
+        "to": "out0:a",
+        "type": "audio"
+      }
+    ]
+  },
+  "outputs": [
+    {
+      "id": "out0",
+      "url": "out.mp4",
+      "codec_video": "h264_vaapi",
+      "codec_audio": "copy"
+    }
+  ],
+  "global_options": {
+    "hw_accel": "vaapi",
+    "hw_device": "/dev/dri/renderD128"
+  }
+}

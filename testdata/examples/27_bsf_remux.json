@@ -1,0 +1,46 @@
+{
+  "schema_version": "1.0",
+  "description": "Decode in.mp4 -> copy video and audio streams, apply h264_mp4toannexb bitstream filter to video -> write to out.ts (MPEG-TS)",
+  "inputs": [
+    {
+      "id": "in0",
+      "url": "in.mp4",
+      "streams": [
+        {
+          "input_index": 0,
+          "type": "video",
+          "track": 0
+        },
+        {
+          "input_index": 0,
+          "type": "audio",
+          "track": 0
+        }
+      ]
+    }
+  ],
+  "graph": {
+    "nodes": [],
+    "edges": [
+      {
+        "from": "in0:v:0",
+        "to": "out0:v",
+        "type": "video"
+      },
+      {
+        "from": "in0:a:0",
+        "to": "out0:a",
+        "type": "audio"
+      }
+    ]
+  },
+  "outputs": [
+    {
+      "id": "out0",
+      "url": "out.ts",
+      "codec_video": "copy",
+      "codec_audio": "copy",
+      "bsf_video": "h264_mp4toannexb"
+    }
+  ]
+}

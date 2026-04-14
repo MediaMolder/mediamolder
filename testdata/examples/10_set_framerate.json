@@ -1,0 +1,59 @@
+{
+  "schema_version": "1.0",
+  "description": "Decode in.mp4 -> convert video framerate to 30fps via fps filter (dropping or duplicating frames as needed), encode to H.264 with libx264, encode audio to AAC -> write to out.mp4",
+  "inputs": [
+    {
+      "id": "in0",
+      "url": "in.mp4",
+      "streams": [
+        {
+          "input_index": 0,
+          "type": "video",
+          "track": 0
+        },
+        {
+          "input_index": 0,
+          "type": "audio",
+          "track": 0
+        }
+      ]
+    }
+  ],
+  "graph": {
+    "nodes": [
+      {
+        "id": "fps0",
+        "type": "filter",
+        "filter": "fps",
+        "params": {
+          "fps": "30"
+        }
+      }
+    ],
+    "edges": [
+      {
+        "from": "in0:v:0",
+        "to": "fps0",
+        "type": "video"
+      },
+      {
+        "from": "fps0",
+        "to": "out0:v",
+        "type": "video"
+      },
+      {
+        "from": "in0:a:0",
+        "to": "out0:a",
+        "type": "audio"
+      }
+    ]
+  },
+  "outputs": [
+    {
+      "id": "out0",
+      "url": "out.mp4",
+      "codec_video": "libx264",
+      "codec_audio": "aac"
+    }
+  ]
+}

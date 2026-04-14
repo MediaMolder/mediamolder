@@ -1,0 +1,34 @@
+{
+  "schema_version": "1.0",
+  "description": "Decode in.mp4 -> select audio stream only (discard video), encode to AAC -> write to out.mp3",
+  "inputs": [
+    {
+      "id": "in0",
+      "url": "in.mp4",
+      "streams": [
+        {
+          "input_index": 0,
+          "type": "audio",
+          "track": 0
+        }
+      ]
+    }
+  ],
+  "graph": {
+    "nodes": [],
+    "edges": [
+      {
+        "from": "in0:a:0",
+        "to": "out0:a",
+        "type": "audio"
+      }
+    ]
+  },
+  "outputs": [
+    {
+      "id": "out0",
+      "url": "out.mp3",
+      "codec_audio": "aac"
+    }
+  ]
+}

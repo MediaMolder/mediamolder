@@ -1,0 +1,56 @@
+{
+  "schema_version": "1.0",
+  "description": "Decode in.mkv -> copy video and audio streams, passthrough subtitle track as SRT -> write to out.mkv",
+  "inputs": [
+    {
+      "id": "in0",
+      "url": "in.mkv",
+      "streams": [
+        {
+          "input_index": 0,
+          "type": "video",
+          "track": 0
+        },
+        {
+          "input_index": 0,
+          "type": "audio",
+          "track": 0
+        },
+        {
+          "input_index": 0,
+          "type": "subtitle",
+          "track": 0
+        }
+      ]
+    }
+  ],
+  "graph": {
+    "nodes": [],
+    "edges": [
+      {
+        "from": "in0:v:0",
+        "to": "out0:v",
+        "type": "video"
+      },
+      {
+        "from": "in0:a:0",
+        "to": "out0:a",
+        "type": "audio"
+      },
+      {
+        "from": "in0:s:0",
+        "to": "out0:s",
+        "type": "subtitle"
+      }
+    ]
+  },
+  "outputs": [
+    {
+      "id": "out0",
+      "url": "out.mkv",
+      "codec_video": "copy",
+      "codec_audio": "copy",
+      "codec_subtitle": "srt"
+    }
+  ]
+}

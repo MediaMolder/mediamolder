@@ -1,0 +1,45 @@
+{
+  "schema_version": "1.0",
+  "description": "Decode in.mp4 -> encode video to VP9 with libvpx-vp9, encode audio to Opus with libopus -> write to out.webm",
+  "inputs": [
+    {
+      "id": "in0",
+      "url": "in.mp4",
+      "streams": [
+        {
+          "input_index": 0,
+          "type": "video",
+          "track": 0
+        },
+        {
+          "input_index": 0,
+          "type": "audio",
+          "track": 0
+        }
+      ]
+    }
+  ],
+  "graph": {
+    "nodes": [],
+    "edges": [
+      {
+        "from": "in0:v:0",
+        "to": "out0:v",
+        "type": "video"
+      },
+      {
+        "from": "in0:a:0",
+        "to": "out0:a",
+        "type": "audio"
+      }
+    ]
+  },
+  "outputs": [
+    {
+      "id": "out0",
+      "url": "out.webm",
+      "codec_video": "libvpx-vp9",
+      "codec_audio": "libopus"
+    }
+  ]
+}

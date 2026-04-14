@@ -1,0 +1,34 @@
+{
+  "schema_version": "1.0",
+  "description": "Decode in.mp4 -> encode to H.264 with libx264 -> write video stream only to out.mp4",
+  "inputs": [
+    {
+      "id": "in0",
+      "url": "in.mp4",
+      "streams": [
+        {
+          "input_index": 0,
+          "type": "video",
+          "track": 0
+        }
+      ]
+    }
+  ],
+  "graph": {
+    "nodes": [],
+    "edges": [
+      {
+        "from": "in0:v:0",
+        "to": "out0:v",
+        "type": "video"
+      }
+    ]
+  },
+  "outputs": [
+    {
+      "id": "out0",
+      "url": "out.mp4",
+      "codec_video": "libx264"
+    }
+  ]
+}
