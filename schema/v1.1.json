@@ -1,16 +1,16 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://mediamolder.dev/schema/v1.0.json",
+  "$id": "https://mediamolder.dev/schema/v1.1.json",
   "title": "MediaMolder Pipeline Config",
-  "description": "Schema v1.0 for MediaMolder JSON pipeline configuration.",
+  "description": "Schema v1.1 for MediaMolder JSON pipeline configuration. Adds go_processor node type.",
   "type": "object",
   "required": ["schema_version", "inputs", "graph", "outputs"],
   "additionalProperties": false,
   "properties": {
     "schema_version": {
       "type": "string",
-      "const": "1.0",
-      "description": "Must be \"1.0\"."
+      "enum": ["1.0", "1.1"],
+      "description": "\"1.0\" or \"1.1\". Use \"1.1\" when go_processor nodes are present."
     },
     "description": {
       "type": "string",
@@ -83,15 +83,24 @@
         "id": { "type": "string", "minLength": 1 },
         "type": {
           "type": "string",
-          "enum": ["filter", "encoder", "source", "sink"]
+          "enum": ["filter", "encoder", "source", "sink", "go_processor"]
         },
         "filter": { "type": "string" },
-        "processor": { "type": "string" },
+        "processor": {
+          "type": "string",
+          "description": "Registered Go processor name (required for go_processor nodes)."
+        },
         "params": {
           "type": "object",
           "additionalProperties": true
         },
         "error_policy": { "$ref": "#/$defs/error_policy" }
+      },
+      "if": {
+        "properties": { "type": { "const": "go_processor" } }
+      },
+      "then": {
+        "required": ["id", "type", "processor"]
       }
     },
     "edge": {

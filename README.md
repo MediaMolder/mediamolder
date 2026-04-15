@@ -145,8 +145,42 @@ List available codecs, filters, or formats:
 mediamolder list-codecs
 mediamolder list-filters
 mediamolder list-formats
+mediamolder list-processors
 mediamolder list-codecs --json   # JSON output
 ```
+
+### Go processor node example
+
+Custom Go code can run as a first-class node in the processing graph.
+Register a processor, then reference it from JSON:
+
+```json
+{
+  "schema_version": "1.1",
+  "inputs": [
+    { "id": "src", "url": "input.mp4", "streams": [{"input_index": 0, "type": "video", "track": 0}] }
+  ],
+  "graph": {
+    "nodes": [
+      {
+        "id": "count",
+        "type": "go_processor",
+        "processor": "frame_counter",
+        "params": { "log_every": 100 }
+      }
+    ],
+    "edges": [
+      { "from": "src:v:0", "to": "count:default", "type": "video" },
+      { "from": "count:default", "to": "out:v", "type": "video" }
+    ]
+  },
+  "outputs": [
+    { "id": "out", "url": "output.mp4", "codec_video": "libx264" }
+  ]
+}
+```
+
+See the [Go Processor Nodes](docs/go-processor-nodes.md) guide for the full API, built-in processors, and how to write your own.
 
 ### Multi-input overlay example
 
@@ -207,6 +241,7 @@ mediamolder list-codecs --json   # JSON output
 ## Documentation
 
 - [JSON Config Reference](docs/json-config-reference.md)
+- [Go Processor Nodes](docs/go-processor-nodes.md)
 - [FFmpeg Migration Guide](docs/ffmpeg-migration-guide.md)
 - [Pipeline State Machine](docs/pipeline-state-machine.md)
 - [Clock & Sync](docs/clock-and-sync.md)

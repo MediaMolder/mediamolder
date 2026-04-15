@@ -194,9 +194,13 @@ var configCorpusTests = []struct {
 		wantErr: true,
 	},
 	{
-		name:    "err-schema-1.1",
-		json:    `{"schema_version":"1.1","inputs":[{"id":"in","url":"f.mp4","streams":[]}],"graph":{"nodes":[],"edges":[]},"outputs":[{"id":"out","url":"o.mp4"}]}`,
+		name:    "err-schema-2.0",
+		json:    `{"schema_version":"2.0","inputs":[{"id":"in","url":"f.mp4","streams":[]}],"graph":{"nodes":[],"edges":[]},"outputs":[{"id":"out","url":"o.mp4"}]}`,
 		wantErr: true,
+	},
+	{
+		name: "ok-schema-1.1",
+		json: `{"schema_version":"1.1","inputs":[{"id":"in","url":"f.mp4","streams":[]}],"graph":{"nodes":[],"edges":[]},"outputs":[{"id":"out","url":"o.mp4"}]}`,
 	},
 
 	// ---- Error cases: inputs ----

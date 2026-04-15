@@ -37,5 +37,4 @@ Thumbs.db
 bench-*.txt
 
 # Internal planning docs (not for public release)
-private_local/build_plan.md
-private_local/future_improvements.md
+/private_local/

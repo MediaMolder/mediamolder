@@ -23,10 +23,11 @@ const (
 type NodeKind int
 
 const (
-	KindSource  NodeKind = iota // demux + decode
-	KindFilter                  // libavfilter
-	KindEncoder                 // encode
-	KindSink                    // mux
+	KindSource      NodeKind = iota // demux + decode
+	KindFilter                      // libavfilter
+	KindEncoder                     // encode
+	KindSink                        // mux
+	KindGoProcessor                 // custom Go per-frame processor
 )
 
 func (k NodeKind) String() string {
@@ -39,6 +40,8 @@ func (k NodeKind) String() string {
 		return "encoder"
 	case KindSink:
 		return "sink"
+	case KindGoProcessor:
+		return "go_processor"
 	default:
 		return fmt.Sprintf("NodeKind(%d)", int(k))
 	}
@@ -62,10 +65,11 @@ type InputDef struct {
 
 // NodeDef describes a processing node in the graph.
 type NodeDef struct {
-	ID     string
-	Type   string         // "filter", "encoder", "source", "sink"
-	Filter string         // filter name (for filter nodes)
-	Params map[string]any // filter/encoder parameters
+	ID        string
+	Type      string         // "filter", "encoder", "source", "sink", "go_processor"
+	Filter    string         // filter name (for filter nodes)
+	Processor string         // registered processor name (for go_processor nodes)
+	Params    map[string]any // filter/encoder/processor parameters
 }
 
 // OutputDef describes an output sink.
@@ -84,10 +88,11 @@ type EdgeDef struct {
 
 // Node is a vertex in the resolved processing graph.
 type Node struct {
-	ID     string
-	Kind   NodeKind
-	Filter string         // filter name (KindFilter only)
-	Params map[string]any // filter/encoder parameters
+	ID        string
+	Kind      NodeKind
+	Filter    string         // filter name (KindFilter only)
+	Processor string         // registered processor name (KindGoProcessor only)
+	Params    map[string]any // filter/encoder/processor parameters
 
 	Inbound  []*Edge
 	Outbound []*Edge
@@ -125,7 +130,7 @@ func Build(def *Def) (*Graph, error) {
 		if inp.ID == "" {
 			return nil, fmt.Errorf("input missing id")
 		}
-		if err := g.addNode(inp.ID, KindSource, "", nil); err != nil {
+		if err := g.addNode(inp.ID, KindSource, "", "", nil); err != nil {
 			return nil, err
 		}
 	}
@@ -139,7 +144,7 @@ func Build(def *Def) (*Graph, error) {
 		if nd.ID == "" {
 			return nil, fmt.Errorf("graph node missing id")
 		}
-		if err := g.addNode(nd.ID, kind, nd.Filter, nd.Params); err != nil {
+		if err := g.addNode(nd.ID, kind, nd.Filter, nd.Processor, nd.Params); err != nil {
 			return nil, err
 		}
 	}
@@ -149,7 +154,7 @@ func Build(def *Def) (*Graph, error) {
 		if out.ID == "" {
 			return nil, fmt.Errorf("output missing id")
 		}
-		if err := g.addNode(out.ID, KindSink, "", nil); err != nil {
+		if err := g.addNode(out.ID, KindSink, "", "", nil); err != nil {
 			return nil, err
 		}
 	}
@@ -216,15 +221,16 @@ func (n *Node) Successors() []*Node {
 
 // ---------- internal helpers ----------
 
-func (g *Graph) addNode(id string, kind NodeKind, filter string, params map[string]any) error {
+func (g *Graph) addNode(id string, kind NodeKind, filter, processor string, params map[string]any) error {
 	if _, exists := g.Nodes[id]; exists {
 		return fmt.Errorf("duplicate node id %q", id)
 	}
 	g.Nodes[id] = &Node{
-		ID:     id,
-		Kind:   kind,
-		Filter: filter,
-		Params: params,
+		ID:        id,
+		Kind:      kind,
+		Filter:    filter,
+		Processor: processor,
+		Params:    params,
 	}
 	return nil
 }
@@ -307,6 +313,8 @@ func parseNodeKind(s string) (NodeKind, error) {
 		return KindSource, nil
 	case "sink":
 		return KindSink, nil
+	case "go_processor":
+		return KindGoProcessor, nil
 	default:
 		return 0, fmt.Errorf("unknown node type %q", s)
 	}

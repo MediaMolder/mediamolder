@@ -79,6 +79,17 @@ type ClockLost struct {
 
 func (ClockLost) eventTag() {}
 
+// ProcessorMetadata is emitted when a go_processor node returns non-nil
+// metadata from its Process call.
+type ProcessorMetadata struct {
+	NodeID     string
+	FrameIndex uint64
+	PTS        int64
+	Metadata   any // *processors.Metadata
+}
+
+func (ProcessorMetadata) eventTag() {}
+
 // MetricsEmitter periodically posts MetricsSnapshotEvent to the event bus.
 type MetricsEmitter struct {
 	interval time.Duration
