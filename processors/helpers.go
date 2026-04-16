@@ -5,6 +5,7 @@ package processors
 
 import (
 	"errors"
+	"fmt"
 	"image"
 	"image/color"
 	"math"
@@ -12,26 +13,23 @@ import (
 	"github.com/MediaMolder/MediaMolder/av"
 )
 
-// ErrFrameDataUnavailable is returned by helpers that require raw pixel access
-// from av.Frame. These will become functional once av.Frame exposes pixel
-// plane accessors (Data, Linesize, PixFmt).
+// ErrFrameDataUnavailable is deprecated. FrameToRGBA and FrameToFloat32Tensor
+// are now functional via libswscale. This sentinel is kept only for backward
+// compatibility with code that checks for it.
 var ErrFrameDataUnavailable = errors.New("processors: av.Frame does not yet expose raw pixel data; use image-based helpers instead")
 
-// FrameToRGBA converts a video *av.Frame to *image.RGBA.
-//
-// Currently returns [ErrFrameDataUnavailable] because av.Frame does not yet
-// expose raw pixel planes. Once those accessors are added, this function will
-// support YUV420P, RGB24, RGBA, and other common pixel formats.
-//
-// In the meantime, use [ImageToFloat32Tensor] and [Letterbox] directly if you
-// already have an image.Image from another source.
+// FrameToRGBA converts a video *av.Frame to *image.RGBA using libswscale.
+// Supports any pixel format that FFmpeg can convert (YUV420P, NV12, RGB24,
+// etc.). Hardware-surface frames must be transferred to system memory first.
 func FrameToRGBA(frame *av.Frame) (*image.RGBA, error) {
+	if frame == nil {
+		return nil, errors.New("processors: nil frame")
+	}
 	w, h := frame.Width(), frame.Height()
 	if w == 0 || h == 0 {
-		return nil, errors.New("processors: invalid frame dimensions (0×0)")
+		return nil, fmt.Errorf("processors: invalid frame dimensions %d×%d", w, h)
 	}
-	// TODO: implement pixel plane copy once av.Frame exposes Data()/Linesize()/PixFmt().
-	return nil, ErrFrameDataUnavailable
+	return frame.ToRGBA()
 }
 
 // FrameToFloat32Tensor converts a video frame to a normalised [3, H, W]
@@ -40,9 +38,6 @@ func FrameToRGBA(frame *av.Frame) (*image.RGBA, error) {
 //
 // The frame is first converted via [FrameToRGBA], then letterboxed to
 // targetSize × targetSize, then written into the tensor.
-//
-// Currently returns [ErrFrameDataUnavailable]. Use [ImageToFloat32Tensor]
-// directly if you already have an image.Image.
 func FrameToFloat32Tensor(frame *av.Frame, targetSize int) ([]float32, error) {
 	rgba, err := FrameToRGBA(frame)
 	if err != nil {

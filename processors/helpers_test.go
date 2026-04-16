@@ -4,26 +4,24 @@
 package processors
 
 import (
-	"errors"
 	"image"
 	"image/color"
 	"math"
 	"testing"
 )
 
-func TestFrameToRGBA_ReturnsErrFrameDataUnavailable(t *testing.T) {
-	// av.Frame does not yet expose pixel planes, so FrameToRGBA must return
-	// the sentinel error. We cannot easily create an av.Frame in unit tests
-	// (it requires CGo / libav), so this test is a compile-time sanity check
-	// that the function signature and error variable exist.
-	if !errors.Is(ErrFrameDataUnavailable, ErrFrameDataUnavailable) {
-		t.Fatal("sentinel error not set")
+func TestFrameToRGBA_NilFrame(t *testing.T) {
+	// FrameToRGBA should return an error for nil frame.
+	_, err := FrameToRGBA(nil)
+	if err == nil {
+		t.Fatal("expected error for nil frame")
 	}
 }
 
-func TestFrameToFloat32Tensor_ReturnsErrFrameDataUnavailable(t *testing.T) {
-	if !errors.Is(ErrFrameDataUnavailable, ErrFrameDataUnavailable) {
-		t.Fatal("sentinel error not set")
+func TestFrameToFloat32Tensor_NilFrame(t *testing.T) {
+	_, err := FrameToFloat32Tensor(nil, 640)
+	if err == nil {
+		t.Fatal("expected error for nil frame")
 	}
 }
 

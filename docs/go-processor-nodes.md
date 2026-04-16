@@ -37,6 +37,11 @@ Everything runs in-process: no subprocesses, no network calls, no Python. Your p
 		- [Frame counting with periodic metadata](#frame-counting-with-periodic-metadata)
 		- [Chained processors (filter → processor → encoder)](#chained-processors-filter--processor--encoder)
 		- [Custom AI processor](#custom-ai-processor)
+	- [YOLOv8 built-in processor (optional)](#yolov8-built-in-processor-optional)
+		- [Building with ONNX support](#building-with-onnx-support)
+		- [JSON config](#json-config-1)
+		- [Parameters](#parameters)
+		- [What it does](#what-it-does)
 	- [Schema version](#schema-version)
 
 ---
@@ -248,7 +253,9 @@ func FrameToRGBA(frame *av.Frame) (*image.RGBA, error)
 func FrameToFloat32Tensor(frame *av.Frame, targetSize int) ([]float32, error)
 ```
 
-These will convert an `*av.Frame` directly to an image or tensor in one call. They are **defined but not yet functional** — they return `ErrFrameDataUnavailable` because `av.Frame` does not yet expose raw pixel plane accessors. Once those are added, these become the primary entry point. In the meantime, use `ImageToFloat32Tensor` and `Letterbox` with images you obtain through other means.
+These convert an `*av.Frame` directly to an image or tensor in one call. Under the hood, `FrameToRGBA` uses `av.Frame.ToRGBA()` which delegates to libswscale — any pixel format FFmpeg can handle (YUV420P, NV12, RGB24, etc.) is supported. `FrameToFloat32Tensor` calls `FrameToRGBA`, then letterboxes and normalises into `[3, H, W]` NCHW float32 layout.
+
+> **Note**: Hardware-surface frames (CUDA, VAAPI) must be transferred to system memory first — see `HWDecoderContext.ReceiveFrame()` with `AutoTransfer`.
 
 ### When to use what
 
@@ -272,14 +279,18 @@ You can use none, some, or all of them — they're entirely optional.
 
 ```go
 func (p *MyDetector) Process(frame *av.Frame, ctx processors.ProcessorContext) (*av.Frame, *processors.Metadata, error) {
-    // 1. Preprocess: convert your image to a model-ready tensor
-    tensor := processors.ImageToFloat32Tensor(myImage, 640)
+    // 1. Preprocess: frame → model-ready tensor (handles any pixel format)
+    tensor, err := processors.FrameToFloat32Tensor(frame, 640)
+    if err != nil {
+        return nil, nil, err
+    }
 
     // 2. Run inference (your model, your framework)
     detections := p.model.Detect(tensor)
 
-    // 3. Postprocess: draw boxes for visual debugging
-    processors.DrawDetections(myRGBA, detections)
+    // 3. Optional: draw boxes for visual debugging
+    //    rgba, _ := processors.FrameToRGBA(frame)
+    //    processors.DrawDetections(rgba, detections)
 
     return frame, &processors.Metadata{Detections: detections}, nil
 }
@@ -618,6 +629,68 @@ processors.Register("yolo_v8_detector", func() processors.Processor {
 ```
 
 Inside `YOLODetector.Process()`, you'd use `ImageToFloat32Tensor` to prepare the frame, run your ONNX model, then return the detections as `*Metadata`.
+
+---
+
+## YOLOv8 built-in processor (optional)
+
+When built with the `with_onnx` build tag, MediaMolder includes a ready-to-use `yolo_v8` processor that runs YOLOv8 object detection via [ONNX Runtime](https://onnxruntime.ai/).
+
+### Building with ONNX support
+
+You need the ONNX Runtime shared library installed on your system. Then:
+
+```bash
+go build -tags with_onnx ./cmd/mediamolder
+```
+
+Set `ONNXRUNTIME_SHARED_LIBRARY_PATH` to the library location, or pass it via the `ort_lib` param.
+
+### JSON config
+
+```json
+{
+  "id": "detect",
+  "type": "go_processor",
+  "processor": "yolo_v8",
+  "params": {
+    "model": "/models/yolov8n.onnx",
+    "conf": 0.5,
+    "iou": 0.45,
+    "input_size": 640,
+    "num_classes": 80,
+    "labels_file": "/models/coco.names",
+    "device": "cuda"
+  }
+}
+```
+
+### Parameters
+
+| Param         | Type   | Default      | Description                                              |
+|---------------|--------|--------------|----------------------------------------------------------|
+| `model`       | string | (required)   | Path to the YOLOv8 `.onnx` model file                   |
+| `conf`        | float  | 0.5          | Minimum confidence threshold for detections              |
+| `iou`         | float  | 0.45         | IoU threshold for NMS (non-maximum suppression)          |
+| `input_size`  | int    | 640          | Model input dimension (640 for YOLOv8n/s/m/l/x)         |
+| `num_classes` | int    | 80           | Number of classes the model detects (80 for COCO)        |
+| `labels_file` | string | —            | Newline-separated file mapping class index to label name |
+| `input_name`  | string | `"images"`   | ONNX input tensor name                                   |
+| `output_name` | string | `"output0"`  | ONNX output tensor name                                  |
+| `ort_lib`     | string | (env var)    | Path to onnxruntime shared library                       |
+| `device`      | string | `"cpu"`      | `"cpu"` or `"cuda"` for GPU acceleration                 |
+| `process_every`| int   | `1`          | Run inference every N-th frame; others pass through      |
+
+### What it does
+
+1. Letterboxes the frame to `input_size × input_size` and converts it to a `[1, 3, H, W]` float32 tensor.
+2. Runs ONNX inference using pre-allocated tensors (zero allocation per frame).
+3. Parses the YOLOv8 transposed output `[1, 4+num_classes, num_predictions]`.
+4. Applies greedy NMS to remove duplicate detections.
+5. Maps bounding boxes back from model coordinates to original frame pixel coordinates (reversing the letterbox transform).
+6. Returns the frame unchanged plus `*Metadata` containing the detections.
+
+The post-processing code (`ParseYOLOv8Output`, `NMS`, `IoU`) lives in `processors/yolov8.go` with no external dependencies, so it compiles and is testable without ONNX Runtime installed.
 
 ---
 
