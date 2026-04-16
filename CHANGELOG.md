@@ -8,7 +8,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 ### Added
 - **`go_processor` node type** — custom Go per-frame processing in the MediaMolder graph (AI inference, analytics, tracking, metadata emission). Requires `schema_version: "1.1"`.
 - `processors` package with `Processor` interface (`Init`/`Process`/`Close`), thread-safe registry, `ProcessorContext`, and `Metadata`/`Detection` types.
-- Built-in processors: `null` (passthrough), `frame_counter` (counting with periodic metadata).
+- Built-in processors: `null` (passthrough), `frame_counter` (counting with periodic metadata), `frame_info` (frame dimensions/format/PTS diagnostics), `scene_change` (scene detection using the same MAFD + diff-of-MAFD algorithm as FFmpeg's `scdet` filter — zero-copy Y plane access for YUV formats, swscale GRAY8 fallback for RGB).
+- `av.Frame.Clone()` — reference-counted frame clone via `av_frame_clone()`.
+- `av.FrameSceneScore(a, b)` — computes luma MAFD between two frames (0–100 scale). For YUV planar formats, reads the Y plane directly with zero allocation; falls back to swscale GRAY8 conversion for RGB/packed formats.
 - Helper functions in `processors/helpers.go`: `Letterbox`, `ImageToFloat32Tensor`, `DrawDetections`, `FrameToRGBA`, and `FrameToFloat32Tensor`.
 - `av.Frame.ToRGBA()` — converts any video frame to `*image.RGBA` via libswscale (supports YUV420P, NV12, RGB24, and all other FFmpeg pixel formats). Also adds `Frame.PixFmt()` accessor.
 - `av.Frame.PixFmt()` — returns the frame's pixel format as an `int` (`AVPixelFormat`).

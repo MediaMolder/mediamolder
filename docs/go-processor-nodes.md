@@ -17,6 +17,8 @@ Everything runs in-process: no subprocesses, no network calls, no Python. Your p
 	- [Built-in processors](#built-in-processors)
 		- [`null`](#null)
 		- [`frame_counter`](#frame_counter)
+		- [`frame_info`](#frame_info)
+		- [`scene_change`](#scene_change)
 		- [`metadata_file_writer`](#metadata_file_writer)
 	- [Persisting metadata to files](#persisting-metadata-to-files)
 		- [CLI: --metadata-out](#cli---metadata-out)
@@ -214,6 +216,58 @@ Metadata emitted:
 
 ```json
 { "custom": { "frame_count": 100 } }
+```
+
+### `frame_info`
+
+A read-only analysis processor that passes frames through unchanged while emitting metadata about each frame's properties: dimensions, pixel format, PTS, frame index, and stream ID. Useful for diagnostics, logging, and verifying that frames arrive as expected.
+
+| Param       | Type | Default | Description                                 |
+|-------------|------|---------|---------------------------------------------|
+| `log_every` | int  | 1       | Emit metadata every N frames                |
+
+```json
+{
+  "id": "info",
+  "type": "go_processor",
+  "processor": "frame_info",
+  "params": { "log_every": 30 }
+}
+```
+
+Metadata emitted:
+
+```json
+{ "custom": { "width": 1920, "height": 1080, "pix_fmt": 0, "pts": 3003, "frame_index": 30, "stream_id": "v:0" } }
+```
+
+### `scene_change`
+
+Detects scene changes between consecutive frames using the same algorithm as FFmpeg's [`scdet`](https://ffmpeg.org/ffmpeg-filters.html#scdet) filter:
+
+- **Content change (MAFD + diff)** — computes the Mean Absolute Frame Difference on the luma channel. For YUV formats (the common case for decoded H.264/H.265), this reads the Y plane **directly** — zero pixel-format conversion, zero allocation. For RGB or packed formats, falls back to a GRAY8 conversion via libswscale. The final score is `min(mafd, |mafd − prev_mafd|)`, which suppresses false positives from gradual pans, zooms, and fades while catching hard cuts — identical to FFmpeg's scdet algorithm.
+- **PTS gap** — flags a scene change when the PTS delta between consecutive frames exceeds a threshold (useful for detecting stream discontinuities or spliced content).
+
+The frame is always passed through unchanged. Internally, the processor clones each frame (via `av_frame_clone`, reference-counted — no pixel copy) to compare against the next.
+
+| Param           | Type    | Default | Description                                         |
+|-----------------|---------|---------|-----------------------------------------------------|
+| `threshold`     | float64 | 10      | 0–100, min scdet score to trigger (same scale as FFmpeg `scdet=threshold=10`)  |
+| `pts_threshold` | int64   | 0       | Min PTS gap to flag (0 = disabled)                  |
+
+```json
+{
+  "id": "scene_detect",
+  "type": "go_processor",
+  "processor": "scene_change",
+  "params": { "threshold": 10, "pts_threshold": 90000 }
+}
+```
+
+Metadata emitted (only on detected scene changes):
+
+```json
+{ "custom": { "scene_change": true, "reasons": ["content_change"], "mafd": 42.1, "score": 38.7, "frame_index": 142 } }
 ```
 
 ### `metadata_file_writer`
