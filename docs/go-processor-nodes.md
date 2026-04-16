@@ -1,34 +1,56 @@
 # Go Processor Nodes
 
-The `go_processor` node type lets you insert **custom Go code** as a first-class node in a MediaMolder processing graph. Processors receive decoded `*av.Frame` values (video or audio) directly from upstream nodes, and their output feeds into downstream filters, encoders, or other processors — all within the same process, with zero external dependencies.
+The `go_processor` node type lets you insert **custom Go code** into a MediaMolder processing graph. Each frame (video or audio) arriving at a `go_processor` node is handed to your Go function, where you can inspect it, modify it, replace it, drop it, or attach metadata — then pass it along to the next node in the graph.
+
+Everything runs in-process: no subprocesses, no network calls, no Python. Your processor is just a Go struct with three methods.
 
 ## Contents
 
-- [When to use a go_processor](#when-to-use-a-go_processor)
-- [JSON config](#json-config)
-- [Go interface](#go-interface)
-- [Registration](#registration)
-- [Built-in processors](#built-in-processors)
-- [Writing a custom processor](#writing-a-custom-processor)
-- [Metadata and the event bus](#metadata-and-the-event-bus)
-- [Error handling](#error-handling)
-- [Lifecycle](#lifecycle)
-- [Performance tips](#performance-tips)
-- [Examples](#examples)
-- [Schema version](#schema-version)
+- [Go Processor Nodes](#go-processor-nodes)
+	- [Contents](#contents)
+	- [When to use a go\_processor](#when-to-use-a-go_processor)
+	- [JSON config](#json-config)
+	- [Go interface](#go-interface)
+		- [ProcessorContext](#processorcontext)
+		- [Metadata](#metadata)
+	- [Registration](#registration)
+	- [Built-in processors](#built-in-processors)
+		- [`null`](#null)
+		- [`frame_counter`](#frame_counter)
+	- [Helper functions](#helper-functions)
+		- [Letterbox](#letterbox)
+		- [ImageToFloat32Tensor](#imagetofloat32tensor)
+		- [DrawDetections](#drawdetections)
+		- [FrameToRGBA / FrameToFloat32Tensor](#frametorgba--frametofloat32tensor)
+		- [When to use what](#when-to-use-what)
+		- [Example](#example)
+	- [Writing a custom processor](#writing-a-custom-processor)
+		- [Step 1: Implement the interface](#step-1-implement-the-interface)
+		- [Step 2: Register it](#step-2-register-it)
+		- [Step 3: Use it in JSON](#step-3-use-it-in-json)
+	- [Metadata and the event bus](#metadata-and-the-event-bus)
+	- [Error handling](#error-handling)
+	- [Lifecycle](#lifecycle)
+	- [Performance tips](#performance-tips)
+	- [Examples](#examples)
+		- [Passthrough with logging](#passthrough-with-logging)
+		- [Frame counting with periodic metadata](#frame-counting-with-periodic-metadata)
+		- [Chained processors (filter → processor → encoder)](#chained-processors-filter--processor--encoder)
+		- [Custom AI processor](#custom-ai-processor)
+	- [Schema version](#schema-version)
 
 ---
 
 ## When to use a go_processor
 
-Use `go_processor` when:
+Use `go_processor` when you need to do something that FFmpeg's built-in filters can't:
 
-- You need per-frame logic that libavfilter does not provide (AI inference, custom analytics, metadata injection).
-- You want to run stateful algorithms across frames (object tracking, scene-change detection, running averages).
-- You want to emit structured metadata (detections, quality scores) on the pipeline event bus.
-- You want to drop or conditionally forward frames (content gating, deduplication).
+- **AI inference** — run an object detection model (YOLO, SSD), speech recogniser (Whisper), or image quality scorer (BRISQUE) on each frame.
+- **Stateful analysis** — track objects across frames, detect scene changes, compute running averages.
+- **Structured metadata** — emit detections, quality scores, or custom key-value data on the pipeline event bus so other parts of your application can react in real time.
+- **Conditional forwarding** — drop frames that don't meet criteria (content gating, deduplication, silence removal).
 
-Use a regular `"filter"` node for anything that libavfilter already does well (scaling, colour conversion, overlays, audio mixing, etc.).
+Use a regular `"filter"` node for things FFmpeg already does well (scaling, colour conversion, overlays, audio mixing, etc.). Filters are faster because they run inside libavfilter's optimised C code.
 
 ---
 
@@ -69,59 +91,66 @@ When `go_processor` nodes are present, set `"schema_version": "1.1"`.
 
 ## Go interface
 
-Every processor implements the `processors.Processor` interface defined in the `processors` package:
+Every processor implements three methods:
 
 ```go
-package processors
-
 type Processor interface {
-    // Init is called once during graph construction, before the first frame.
     Init(params map[string]any) error
-
-    // Process is called for every frame on the node's input.
-    // Return the (possibly modified) frame and optional metadata.
-    // Return nil frame to drop it entirely.
     Process(frame *av.Frame, ctx ProcessorContext) (*av.Frame, *Metadata, error)
-
-    // Close is called once on pipeline shutdown.
     Close() error
 }
 ```
 
+| Method | When it runs | What to do |
+|--------|-------------|------------|
+| `Init` | Once, before the first frame arrives. | Read your config from `params`, load models, allocate buffers. Return an error to abort the pipeline. |
+| `Process` | Once per frame. | Inspect or modify the frame, run your logic, return the frame (or a new one) plus optional metadata. Return a `nil` frame to drop it. |
+| `Close` | Once, when the pipeline shuts down (even after errors). | Release resources, flush buffers, close files. |
+
 ### ProcessorContext
+
+Every call to `Process()` includes a context struct with information about the current frame:
 
 ```go
 type ProcessorContext struct {
-    StreamID   string          // e.g. "v:0" — the node ID
-    MediaType  av.MediaType    // video, audio, subtitle
-    PTS        int64           // presentation timestamp
-    FrameIndex uint64          // zero-based frame counter
-    Context    context.Context // carries cancellation
+    StreamID   string          // which stream this frame belongs to, e.g. "v:0"
+    MediaType  av.MediaType    // video, audio, or subtitle
+    PTS        int64           // presentation timestamp (in stream timebase units)
+    FrameIndex uint64          // how many frames this node has seen so far (starts at 0)
+    Context    context.Context // standard Go context — check this for cancellation
 }
 ```
+
+You can use `MediaType` to handle video and audio frames differently, and `FrameIndex` for logic that depends on position (e.g. "skip the first 100 frames").
 
 ### Metadata
 
+If your processor produces results (detections, scores, analytics), return them as `*Metadata`. The runtime automatically publishes non-nil metadata on the pipeline event bus so the rest of your application can consume it.
+
 ```go
 type Metadata struct {
-    Detections   []Detection    `json:"detections,omitempty"`
-    QualityScore float64        `json:"quality_score,omitempty"`
-    Custom       map[string]any `json:"custom,omitempty"`
+    Detections   []Detection    // objects found in this frame
+    QualityScore float64        // e.g. BRISQUE score, SSIM, custom metric
+    Custom       map[string]any // anything else — counters, flags, labels
 }
 
 type Detection struct {
-    Label      string     `json:"label"`
-    Confidence float64    `json:"confidence"`
-    BBox       [4]float64 `json:"bbox"` // x1, y1, x2, y2
-    TrackID    int        `json:"track_id,omitempty"`
+    Label      string     // what was detected, e.g. "person", "car"
+    Confidence float64    // model confidence, 0.0–1.0
+    BBox       [4]float64 // bounding box in pixel coords: [x1, y1, x2, y2]
+    TrackID    int        // optional object tracking ID across frames
 }
 ```
+
+Return `nil` for metadata if your processor has nothing to report for a given frame.
 
 ---
 
 ## Registration
 
-Register a processor factory before the pipeline starts — typically in `init()` or `main()`:
+Before you can reference a processor by name in JSON, you need to register it. Registration maps a string name to a factory function that creates new instances.
+
+The typical place to do this is in an `init()` function, which runs automatically at startup:
 
 ```go
 import "github.com/MediaMolder/MediaMolder/processors"
@@ -133,9 +162,9 @@ func init() {
 }
 ```
 
-The factory returns a **new instance** per pipeline node. This means different nodes can safely hold independent state.
+The factory is called once per `go_processor` node in the pipeline, so if your JSON config has three nodes using `"my_proc"`, three separate instances are created. Each holds its own state — no shared-state concurrency issues to worry about.
 
-List registered processors from the CLI:
+To see which processors are available at runtime:
 
 ```sh
 mediamolder list-processors
@@ -177,6 +206,86 @@ Metadata emitted:
 ```json
 { "custom": { "frame_count": 100 } }
 ```
+
+---
+
+## Helper functions
+
+The `processors` package includes utility functions that handle common preprocessing and visualisation tasks you'd otherwise have to write yourself. These are **not called automatically** — you call them inside your `Process()` method whenever you need them.
+
+```go
+import "github.com/MediaMolder/MediaMolder/processors"
+```
+
+### Letterbox
+
+```go
+func Letterbox(src image.Image, targetW, targetH int) *image.RGBA
+```
+
+Resizes an image to fit inside `targetW × targetH` **without stretching**. The aspect ratio is preserved and any remaining space is filled with black bars — exactly like a widescreen film on a 4:3 screen. Most AI models require a fixed square input (e.g. 640×640), so this is typically the first preprocessing step.
+
+### ImageToFloat32Tensor
+
+```go
+func ImageToFloat32Tensor(img image.Image, targetSize int) []float32
+```
+
+Takes any Go `image.Image`, letterboxes it to `targetSize × targetSize`, then converts the pixels into a flat `[]float32` array in **NCHW channel-first layout** (three separate planes: R, G, B) with values normalised to [0, 1]. This is the exact format expected by ONNX Runtime, TensorRT, and most inference frameworks — you can pass the slice directly to your model.
+
+### DrawDetections
+
+```go
+func DrawDetections(img *image.RGBA, dets []Detection)
+```
+
+Draws a red bounding-box rectangle onto the image for each detection. BBox coordinates are in pixels. Useful for debugging or producing annotated video output.
+
+### FrameToRGBA / FrameToFloat32Tensor
+
+```go
+func FrameToRGBA(frame *av.Frame) (*image.RGBA, error)
+func FrameToFloat32Tensor(frame *av.Frame, targetSize int) ([]float32, error)
+```
+
+These will convert an `*av.Frame` directly to an image or tensor in one call. They are **defined but not yet functional** — they return `ErrFrameDataUnavailable` because `av.Frame` does not yet expose raw pixel plane accessors. Once those are added, these become the primary entry point. In the meantime, use `ImageToFloat32Tensor` and `Letterbox` with images you obtain through other means.
+
+### When to use what
+
+These helpers are tools you call **inside** `Process()`, at whatever stage makes sense:
+
+```
+frame arrives
+  │
+  ├─ preprocessing:  Letterbox / ImageToFloat32Tensor  → feed to AI model
+  │
+  ├─ your logic:     run inference, compute scores, make decisions
+  │
+  ├─ postprocessing: DrawDetections                    → annotate output
+  │
+  └─ return frame + metadata
+```
+
+You can use none, some, or all of them — they're entirely optional.
+
+### Example
+
+```go
+func (p *MyDetector) Process(frame *av.Frame, ctx processors.ProcessorContext) (*av.Frame, *processors.Metadata, error) {
+    // 1. Preprocess: convert your image to a model-ready tensor
+    tensor := processors.ImageToFloat32Tensor(myImage, 640)
+
+    // 2. Run inference (your model, your framework)
+    detections := p.model.Detect(tensor)
+
+    // 3. Postprocess: draw boxes for visual debugging
+    processors.DrawDetections(myRGBA, detections)
+
+    return frame, &processors.Metadata{Detections: detections}, nil
+}
+```
+
+See `processors/helpers.go` for implementation details.
 
 ---
 
@@ -272,18 +381,9 @@ func init() {
 
 ## Metadata and the event bus
 
-When `Process()` returns non-nil `*Metadata`, the runtime publishes a `ProcessorMetadataEvent` on the pipeline event bus:
+Whenever your `Process()` method returns a non-nil `*Metadata`, the runtime automatically posts it to the pipeline's event bus. You don't need to do anything special — just return the metadata and it's published.
 
-```go
-type ProcessorMetadataEvent struct {
-    NodeID     string
-    FrameIndex uint64
-    PTS        int64
-    Metadata   *Metadata
-}
-```
-
-Consumers read events from the bus:
+On the consuming side, any part of your application can listen for these events:
 
 ```go
 for ev := range pipeline.Events() {
@@ -295,7 +395,18 @@ for ev := range pipeline.Events() {
 }
 ```
 
-This enables real-time dashboards, JSONL logging, or downstream decision-making based on processor output.
+The event struct tells you which node produced the metadata, which frame it was for, and carries the full `Metadata` you returned:
+
+```go
+type ProcessorMetadataEvent struct {
+    NodeID     string     // which go_processor node emitted this
+    FrameIndex uint64     // which frame (zero-based)
+    PTS        int64      // presentation timestamp of that frame
+    Metadata   *Metadata  // your detections, scores, custom data
+}
+```
+
+This is how you wire processors into a larger system — for example, logging detections to a file, updating a real-time dashboard, triggering alerts, or feeding results into a database.
 
 ---
 
@@ -313,38 +424,40 @@ This enables real-time dashboards, JSONL logging, or downstream decision-making 
 
 ## Lifecycle
 
+A processor goes through three phases, always in this order:
+
 ```
-Pipeline created
+Pipeline starts
     │
-    ▼
-processors.Get("name")       ← factory creates a fresh instance
+    ├─ processors.Get("name")   →  factory creates a new instance of your struct
     │
-    ▼
-processor.Init(params)        ← called once, before any frames
+    ├─ processor.Init(params)   →  you read config, load models, allocate buffers
     │
-    ▼
-┌─────────────────────────┐
-│ processor.Process(frame) │  ← called once per input frame
-│       ... repeat ...     │
-└─────────────────────────┘
+    ├─ processor.Process(frame) →  called once per frame, potentially thousands of times
+    │   processor.Process(frame)
+    │   processor.Process(frame)
+    │   ...
     │
-    ▼
-processor.Close()             ← called once on shutdown
+    └─ processor.Close()        →  you release resources; always called, even after errors
 ```
 
-- Each `go_processor` node gets its own instance from the factory — safe for concurrent pipelines.
-- `Process()` is called **serially** for a given node (no concurrent calls). Ordering is guaranteed.
-- Stateful processors (trackers, running averages) can safely store state in struct fields.
+Important guarantees:
+
+- **One instance per node.** If your JSON has two `go_processor` nodes both using `"my_proc"`, each gets its own struct instance with its own state.
+- **Serial calls.** `Process()` is never called concurrently on the same instance. You don't need mutexes for per-node state.
+- **Ordering preserved.** Frames arrive in decode order. If frame 42 arrives before frame 43, your `Process()` sees them in that order.
+- **Close is guaranteed.** Even if `Process()` returns an error or the pipeline is cancelled, `Close()` still runs.
 
 ---
 
 ## Performance tips
 
-- **Avoid unnecessary copies.** If you don't modify the frame, return the same pointer.
-- **Drop frames explicitly.** Return `(nil, md, nil)` to drop a frame without error.
-- **Batch internally.** If your workload benefits from batching (e.g., GPU inference on N frames), accumulate inside `Process()` and emit results when the batch is full.
-- **Respect cancellation.** Check `ctx.Context` for long-running operations to avoid blocking pipeline shutdown.
-- **Keep Init() fast.** Heavy model loading in `Init()` blocks pipeline startup. Consider lazy initialization on the first `Process()` call if appropriate.
+- **Return the same frame pointer** if you didn't modify it. Creating a new frame when you only needed to read it wastes memory and CPU on copying.
+- **Use the provided helpers** (`ImageToFloat32Tensor`, `Letterbox`) instead of writing your own preprocessing. They're tested, correct, and safe for concurrent use.
+- **Drop frames by returning nil.** `return nil, md, nil` tells the runtime to consume the frame. No error, no forwarding — the frame just stops here.
+- **Batch if your model wants it.** If GPU inference is faster on N frames at once, accumulate frames in a buffer inside `Process()` and emit results when the batch is full.
+- **Check `ctx.Context` for cancellation.** If your processing is slow (e.g. large model inference), periodically check `ctx.Context.Done()` so the pipeline can shut down promptly.
+- **Keep `Init()` fast.** It runs before the pipeline starts, so slow model loading delays everything. For very large models, consider lazy-loading on the first `Process()` call.
 
 ---
 
@@ -457,9 +570,9 @@ processor.Close()             ← called once on shutdown
 }
 ```
 
-### Custom processor with AI inference (user-implemented)
+### Custom AI processor
 
-This example shows how a user-provided YOLO detector would be wired:
+This example shows how you'd wire a custom YOLO object detector into a pipeline. The processor itself is Go code you write; the JSON just tells MediaMolder where it sits in the graph:
 
 ```json
 {
@@ -496,7 +609,7 @@ This example shows how a user-provided YOLO detector would be wired:
 }
 ```
 
-The `yolo_v8_detector` processor would be registered in the user's application:
+The `yolo_v8_detector` name must be registered in your Go code before the pipeline runs:
 
 ```go
 processors.Register("yolo_v8_detector", func() processors.Processor {
@@ -504,10 +617,10 @@ processors.Register("yolo_v8_detector", func() processors.Processor {
 })
 ```
 
+Inside `YOLODetector.Process()`, you'd use `ImageToFloat32Tensor` to prepare the frame, run your ONNX model, then return the detections as `*Metadata`.
+
 ---
 
 ## Schema version
 
-- Pipelines using only `filter`, `encoder`, `source`, `sink` nodes continue to use `"schema_version": "1.0"`.
-- Pipelines with any `go_processor` node should use `"schema_version": "1.1"`.
-- The parser accepts both versions; `"1.0"` configs remain fully backward-compatible.
+If your pipeline JSON includes any `go_processor` node, set `"schema_version": "1.1"` at the top level. Existing pipelines that only use `filter`, `encoder`, `source`, and `sink` nodes continue to work unchanged with `"1.0"`. The parser accepts both versions.
