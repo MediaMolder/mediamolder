@@ -1,6 +1,6 @@
 # YOLOv8 Object Detection Guide
 
-MediaMolder ships an optional `yolo_v8` built-in processor that runs [YOLOv8](https://docs.ultralytics.com/) inference on every video frame via [ONNX Runtime](https://onnxruntime.ai/). Detections are emitted on the pipeline event bus so downstream code can log them, trigger alerts, draw overlays, or store results.
+MediaMolder ships an optional `yolo_v8` built-in processor that runs [YOLOv8](https://docs.ultralytics.com/) inference on every video frame, or every Nth video frame via [ONNX Runtime](https://onnxruntime.ai/). Detections are emitted on the pipeline event bus so downstream code can log them, trigger alerts, draw overlays, or store results.
 
 This guide covers installation, model setup, JSON configuration, and troubleshooting.
 
@@ -18,6 +18,9 @@ This guide covers installation, model setup, JSON configuration, and troubleshoo
 		- [Full parameter reference](#full-parameter-reference)
 	- [How it works](#how-it-works)
 	- [Reading detections](#reading-detections)
+	- [Writing detections to a file](#writing-detections-to-a-file)
+		- [CLI flag](#cli-flag)
+		- [metadata\_file\_writer processor](#metadata_file_writer-processor)
 	- [CUDA / GPU acceleration](#cuda--gpu-acceleration)
 	- [Custom models](#custom-models)
 		- [Training a custom model](#training-a-custom-model)
