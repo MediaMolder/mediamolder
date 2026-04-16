@@ -14,6 +14,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - `av.Frame.PixFmt()` — returns the frame's pixel format as an `int` (`AVPixelFormat`).
 - **Optional `yolo_v8` built-in processor** (behind `-tags with_onnx`): YOLOv8 object detection via ONNX Runtime with CUDA support, greedy NMS, and letterbox-aware coordinate mapping. Pure-Go post-processing (`ParseYOLOv8Output`, `NMS`, `IoU`) in `processors/yolov8.go` compiles without ONNX.
 - `docs/yolov8-guide.md` — end-to-end guide for setting up and using the YOLOv8 processor.
+- **`metadata_file_writer` built-in processor** — decorator that wraps any processor and writes emitted metadata to a JSON Lines file. Configurable entirely in JSON with `output_file` and `inner_processor` params.
+- **`--metadata-out` CLI flag** on `mediamolder run` — writes all `ProcessorMetadata` events as JSON Lines to a file (or stdout with `-`).
+- JSON tags on `pipeline.ProcessorMetadata` for clean serialisation (`node_id`, `frame_index`, `pts`, `metadata`).
 - Schema v1.1 (`schema/v1.1.json`) adding `go_processor` to node type enum with conditional `processor` field requirement.
 - `mediamolder list-processors` CLI command.
 - Comprehensive documentation: `docs/go-processor-nodes.md`, updated `docs/json-config-reference.md` and `README.md`.

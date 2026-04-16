@@ -244,6 +244,45 @@ Each `Detection` has:
 | `Confidence` | float64 | Detection confidence in `[0, 1]` |
 | `BBox` | [4]float64 | `[x1, y1, x2, y2]` in original frame pixel coordinates |
 
+## Writing detections to a file
+
+### CLI flag
+
+The quickest way — no JSON changes needed:
+
+```bash
+mediamolder run --metadata-out detections.jsonl pipeline.json
+```
+
+Every detection event is written as a JSON Lines record:
+
+```json
+{"node_id":"detect0","frame_index":0,"pts":0,"metadata":{"detections":[{"label":"person","confidence":0.92,"bbox":[120,45,380,510]}]}}
+```
+
+### metadata_file_writer processor
+
+For file output configured entirely in JSON (no CLI flags), wrap `yolo_v8` with `metadata_file_writer`:
+
+```json
+{
+  "id": "detect_and_log",
+  "type": "go_processor",
+  "processor": "metadata_file_writer",
+  "params": {
+    "output_file": "detections.jsonl",
+    "inner_processor": "yolo_v8",
+    "model": "/models/yolov8n.onnx",
+    "labels_file": "/models/coco.names",
+    "process_every": 5
+  }
+}
+```
+
+This runs detection as normal (frame passes through, metadata reaches the event bus) **and** writes each detection to `detections.jsonl`.
+
+See [example 32](../testdata/examples/32_yolov8_metadata_to_file.json) for a complete pipeline.
+
 ---
 
 ## CUDA / GPU acceleration

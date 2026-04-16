@@ -17,6 +17,10 @@ Everything runs in-process: no subprocesses, no network calls, no Python. Your p
 	- [Built-in processors](#built-in-processors)
 		- [`null`](#null)
 		- [`frame_counter`](#frame_counter)
+		- [`metadata_file_writer`](#metadata_file_writer)
+	- [Persisting metadata to files](#persisting-metadata-to-files)
+		- [CLI: --metadata-out](#cli---metadata-out)
+		- [Go API: custom event consumer](#go-api-custom-event-consumer)
 	- [Helper functions](#helper-functions)
 		- [Letterbox](#letterbox)
 		- [ImageToFloat32Tensor](#imagetofloat32tensor)
@@ -211,6 +215,40 @@ Metadata emitted:
 ```json
 { "custom": { "frame_count": 100 } }
 ```
+
+### `metadata_file_writer`
+
+A decorator processor that wraps another processor and writes all emitted metadata to a [JSON Lines](https://jsonlines.org/) file. The inner processor's metadata is still returned normally (so it also reaches the event bus).
+
+| Param              | Type   | Default      | Description                                          |
+|--------------------|--------|--------------|------------------------------------------------------|
+| `output_file`      | string | **(required)**| Path to the `.jsonl` output file                     |
+| `inner_processor`  | string | **(required)**| Name of a registered processor to wrap               |
+| *(other params)*   |        |              | Forwarded to the inner processor's `Init()`          |
+
+```json
+{
+  "id": "detect_and_log",
+  "type": "go_processor",
+  "processor": "metadata_file_writer",
+  "params": {
+    "output_file": "detections.jsonl",
+    "inner_processor": "yolo_v8",
+    "model": "/models/yolov8n.onnx",
+    "labels_file": "/models/coco.names",
+    "conf": 0.5
+  }
+}
+```
+
+Each line in the output file is a JSON object:
+
+```json
+{"frame_index":0,"pts":0,"metadata":{"detections":[{"label":"person","confidence":0.92,"bbox":[120,45,380,510]}]}}
+{"frame_index":5,"pts":5000,"metadata":{"detections":[{"label":"car","confidence":0.87,"bbox":[400,200,700,450]}]}}
+```
+
+Frames where the inner processor returns no metadata produce no output line.
 
 ---
 
@@ -418,6 +456,54 @@ type ProcessorMetadataEvent struct {
 ```
 
 This is how you wire processors into a larger system — for example, logging detections to a file, updating a real-time dashboard, triggering alerts, or feeding results into a database.
+
+---
+
+## Persisting metadata to files
+
+There are three ways to capture metadata on disk, depending on your use case:
+
+### CLI: --metadata-out
+
+The simplest approach. Pass `--metadata-out <path>` to the `run` command and all `ProcessorMetadata` events are written as JSON Lines:
+
+```bash
+mediamolder run --metadata-out detections.jsonl pipeline.json
+```
+
+Use `-` to write to stdout (useful for piping):
+
+```bash
+mediamolder run --metadata-out - pipeline.json 2>/dev/null | jq '.metadata.detections[]'
+```
+
+This captures metadata from **all** `go_processor` nodes in the pipeline. Each line includes `node_id` so you can filter by source.
+
+### metadata_file_writer processor
+
+For per-node file output configured entirely in JSON (no CLI flags needed), use the built-in [`metadata_file_writer`](#metadata_file_writer) processor. It wraps another processor, runs it, and writes its metadata to a file. See the [built-in processors](#metadata_file_writer) section above.
+
+### Go API: custom event consumer
+
+For library users who want full control (database writes, webhooks, custom formats):
+
+```go
+eng, _ := pipeline.NewPipeline(cfg)
+
+go func() {
+    for ev := range eng.Events() {
+        md, ok := ev.(pipeline.ProcessorMetadata)
+        if !ok || md.Metadata == nil {
+            continue
+        }
+        // Write to database, send webhook, etc.
+        b, _ := json.Marshal(md)
+        fmt.Println(string(b))
+    }
+}()
+
+eng.Run(ctx)
+```
 
 ---
 
