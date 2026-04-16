@@ -2,35 +2,92 @@
 
 A modern, Go-native media processing engine built on open source media libraries.
 
-FFmpeg is an incredible open source project, incorporating many powerful open-source media processing libraries. 
-
-FFmpeg has two distinct layers: 
+FFmpeg is an incredible open source project, with two distinct layers: 
 - an **interface / orchestration layer** that provides a Command Line Interface (CLI), parses command strings, builds a media processing graph (pipeline), and runs the pipeline until all processing is completed, and
 - a set of **media processing libraries** (libavcodec, libavformat, libavfilter, etc.) that do the actual media processing (container file parsing, analysis, demuxing, decoding, filtering, encoding, and muxing).
 
 ### 1. Project Overview
-MediaMolder is an independent, open-source media processing engine written in Go. It provides a new orchestration layer on top of the libav* C media processing libraries — the same battle-tested libraries that power FFmpeg — replacing the CLI's command-line-driven, string-based architecture with a clean, declarative JSON pipeline model. It is not a wrapper around the ffmpeg binary; it is a ground-up redesign of the high-level engine that retains full media conversion capability through direct libav* bindings.
+MediaMolder is an independent, open-source media processing engine written in Go. It provides a new orchestration layer on top of the same battle-tested libraries that power FFmpeg; replacing the CLI's command-line-driven, string-based architecture with a clean, declarative JSON pipeline model. It is not a wrapper around the ffmpeg binary; it is a ground-up redesign of the high-level engine that retains full media conversion capability through direct libav* bindings.
 
-The goal is **maximum usability and operational reliability** while matching FFmpeg's functional capabilities.
+Version 1.x should be considered experimental.
 
-Version 1.0 should be considered experimental.
+### 2. Project Goals
 
-### 2. Primary Objectives
-- Innovate on media processing orchestration, execution, observability and reliability.
-- Maintain identical media capabilities (formats, codecs, filters, devices, bitstream filters) through direct libav* bindings.
-- Replace error-prone CLI string parsing and cryptic filtergraph syntax with a single, structured JSON file containing all commands and parameters for each job.
-  - Avoid command-line escaping nightmares.
-  - Avoid command-line length limitations.
-  - Make it easier to construct and validate jobs programmatically.
-  - A JSON is introspectable; treat jobs as data, not strings — store in databases, diff between versions, validate before execution.
-- Provide a declarative, version-controlled configuration model (JSON pipeline configs, in-memory Go structs).
-- Enable builds that are nearly identical in speed to FFmpeg.
-  - Go is a fast, highly portable, compiled language. Though not quite as fast as compiled C code, the interface/orchestration layer is not where the compute-intensive operations happen. In theory, MediaMolder should have performance that should closely match builds of FFmpeg.
-- Deliver first-class runtime observability, dynamic control, and resilience for live processing and long-running jobs.
-- Make the engine trivially embeddable as a library in any Go program.
-- Remain fully LGPL compliant (see [LICENSING.md](LICENSING.md)).
-- To facilitate adoption and experimentation, provide a parser that converts any FFmpeg CLI command to a MediaMolder JSON pipeline config (see [FFmpeg Migration Guide](docs/ffmpeg-migration-guide.md)).
-- Manage the project in a fair, open-minded way that attracts like-minded contributors.
+- **Deliver a modern media processing engine** that improves orchestration, usability, execution, observability, and reliability.
+- **Preserve 100% of FFmpeg’s media capabilities** (formats, codecs, filters, devices, bitstream filters) via direct, zero-overhead libav* bindings.
+- **Support custom processor nodes** inside any media processing pipeline — no rebuilds, no C code, no cryptic filtergraph hacks (see below).
+- **Provide a fully declarative, version-controlled configuration model** using JSON pipeline files and native Go structs.
+- **Replace error-prone CLI strings and cryptic filtergraphs** with a single, structured, validated JSON defining each job. This...
+  - Eliminates command-line escaping nightmares and length limits.
+  - Enables programmatic construction, validation, storage in databases, diffing, and versioning.
+  - Treats pipelines as data, not opaque strings — making them introspectable and machine-friendly.
+- **Greatly improve metadata generation, extraction, and propagation** throughout the processing graph.
+- **Offer first-class runtime observability, dynamic control, and resilience**. This is especially important for live streams and long-running jobs (metrics, tracing, graceful restarts, etc.).
+- **Achieve near-identical performance to native FFmpeg** — Go’s orchestration layer adds negligible overhead since all heavy lifting stays in the libav* libraries.
+- **Make the engine trivially embeddable** as a lightweight Go library in any application.
+- **Remain fully LGPL compliant** (see [LICENSING.md](LICENSING.md)).
+- **Lower the barrier to adoption** with a robust FFmpeg CLI → MediaMolder JSON migration parser and detailed migration guide (see [FFmpeg Migration Guide](docs/ffmpeg-migration-guide.md)).
+- **Manage the project openly and fairly** to attract and retain like-minded contributors who value clean APIs, reliability, and developer experience.
+
+#### How MediaMolder compares to FFmpeg when you need custom functionality in your media pipeline
+
+| Aspect                          | FFmpeg (traditional)                                                                 | MediaMolder                                                                 |
+|---------------------------------|--------------------------------------------------------------------------------------|-----------------------------------------------------------------------------|
+| Adding custom logic (AI, OpenCV, metadata enrichment, etc.) | Write a custom `AVFilter` in C, register it in libavfilter, then **rebuild FFmpeg from source** (including linking external libs like OpenCV or ONNX Runtime). | Write a pure-Go struct that implements a simple `Processor` interface. Register it once at startup. |
+| Integration effort              | High: C expertise, FFmpeg build system, dependency hell, custom configure flags (`--enable-libopencv`, etc.). | Low: Standard Go code + `go get`. Use existing Go libraries (GoCV, ONNX Runtime Go bindings, etc.). |
+| Distribution & maintenance      | You ship a custom FFmpeg binary (or static build). Versioning and updates become painful. | Your custom nodes are compiled directly into your Go application/binary. One artifact, trivial updates. |
+| Runtime flexibility             | Static. Custom filters are baked in at compile time. Runtime registration is not officially supported. | Fully dynamic: nodes can be enabled/disabled via JSON config. Live pipelines can swap or hot-reload logic. |
+| Performance                     | Excellent (native C), but the rebuild tax is heavy.                                      | Near-native: heavy lifting still happens in libav* bindings; your Go node sits in the orchestration layer. |
+
+#### What you actually have to do in FFmpeg today
+- Follow the official `doc/writing_filters.txt`.
+- Implement `AVFilter`, `AVFilterPad`, frame processing callbacks, etc.
+- Modify FFmpeg’s build scripts to link your external library (OpenCV, TensorFlow, etc.).
+- Recompile the entire libavfilter (or the whole FFmpeg suite).
+- For AI/OpenCV workflows, most teams end up maintaining a private fork or using external tools (e.g., piping frames to a separate Python process), which destroys performance and reliability.
+
+#### MediaMolder makes this trivial
+You simply implement something like:
+
+```go
+type CustomAINode struct {
+    ModelPath string
+    // ...
+}
+
+func (n *CustomAINode) Process(ctx context.Context, frame *av.Frame) (*av.Frame, error) {
+    // Run inference with your Go AI library, enrich metadata, draw overlays, etc.
+    return frame, nil
+}
+```
+
+Then register it once:
+
+```go
+mediamolder.RegisterProcessor("ai-inference", func() mediaprocessor.Processor { return &CustomAINode{} })
+```
+
+And declare it in your JSON pipeline exactly like any built-in node:
+
+```json
+{
+  "nodes": [
+    { "type": "decoder" },
+    { "type": "ai-inference", "model": "yolov8.onnx", "confidence": 0.6 },
+    { "type": "encoder" }
+  ]
+}
+```
+
+This opens the door to:
+- **AI / computer vision** (object detection, segmentation, pose estimation, super-resolution)
+- **Metadata enrichment** (scene classification, OCR, custom EXIF, ML-based quality scoring)
+- **Business logic** (watermarking with dynamic data, ad insertion, compliance checks)
+- **Hardware-specific nodes** (GPU kernels, edge TPU, custom DSP)
+
+All while staying fully inside the same declarative JSON pipeline and benefiting from MediaMolder’s observability, resilience, and embeddability.
+
+This is the single biggest productivity leap over raw FFmpeg for teams building production media platforms.
 
 
 ### 3. Non-Goals
@@ -80,7 +137,10 @@ go install ./cmd/mediamolder
 
 ## Quickstart
 
-Create a file `transcode.json`:
+Create a job JSON file. See [docs/json-config-reference.md](docs/json-config-reference.md)
+Some examples are below, with additional example job JSONs in [testdata/examples](testdata/examples/)
+
+`transcode.json`:
 ```json
 {
   "schema_version": "1.0",
