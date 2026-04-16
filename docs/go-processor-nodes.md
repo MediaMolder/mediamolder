@@ -356,7 +356,7 @@ These helpers are tools you call **inside** `Process()`, at whatever stage makes
 ```
 frame arrives
   │
-  ├─ preprocessing:  Letterbox / ImageToFloat32Tensor  → feed to AI model
+  ├─ preprocessing:  Letterbox / FrameToFloat32Tensor   → feed to AI model
   │
   ├─ your logic:     run inference, compute scores, make decisions
   │
@@ -604,7 +604,7 @@ Important guarantees:
 ## Performance tips
 
 - **Return the same frame pointer** if you didn't modify it. Creating a new frame when you only needed to read it wastes memory and CPU on copying.
-- **Use the provided helpers** (`ImageToFloat32Tensor`, `Letterbox`) instead of writing your own preprocessing. They're tested, correct, and safe for concurrent use.
+- **Use the provided helpers** (`FrameToFloat32Tensor`, `Letterbox`) instead of writing your own preprocessing. They're tested, correct, and safe for concurrent use.
 - **Drop frames by returning nil.** `return nil, md, nil` tells the runtime to consume the frame. No error, no forwarding — the frame just stops here.
 - **Batch if your model wants it.** If GPU inference is faster on N frames at once, accumulate frames in a buffer inside `Process()` and emit results when the batch is full.
 - **Check `ctx.Context` for cancellation.** If your processing is slow (e.g. large model inference), periodically check `ctx.Context.Done()` so the pipeline can shut down promptly.
@@ -768,7 +768,7 @@ processors.Register("yolo_v8_detector", func() processors.Processor {
 })
 ```
 
-Inside `YOLODetector.Process()`, you'd use `ImageToFloat32Tensor` to prepare the frame, run your ONNX model, then return the detections as `*Metadata`.
+Inside `YOLODetector.Process()`, you'd use `FrameToFloat32Tensor` to prepare the frame, run your ONNX model, then return the detections as `*Metadata`.
 
 ---
 
