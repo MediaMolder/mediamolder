@@ -137,7 +137,7 @@ go install ./cmd/mediamolder
 
 ## Quickstart
 
-Create a job JSON file. See [docs/json-config-reference.md](docs/json-config-reference.md)
+Create a job JSON file. See [docs/json-config-reference.md](docs/json-config-reference.md)≠≠
 Some examples are below, with additional example job JSONs in [testdata/examples](testdata/examples/)
 
 `transcode.json`:

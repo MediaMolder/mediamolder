@@ -28,14 +28,44 @@ jobs:
         with:
           go-version: ${{ matrix.go }}
 
-      - name: Install FFmpeg (Linux)
+      - name: Install FFmpeg build deps (Linux)
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update -y
           sudo apt-get install -y \
-            libavcodec-dev libavformat-dev libavfilter-dev \
-            libavutil-dev libswscale-dev libswresample-dev \
-            pkg-config
+            build-essential nasm pkg-config \
+            libx264-dev libx265-dev libvpx-dev libopus-dev
+
+      - name: Cache FFmpeg (Linux)
+        if: runner.os == 'Linux'
+        id: cache-ffmpeg
+        uses: actions/cache@v4
+        with:
+          path: /usr/local
+          key: ffmpeg-${{ env.FFMPEG_VERSION }}-${{ runner.os }}
+
+      - name: Build FFmpeg from source (Linux)
+        if: runner.os == 'Linux' && steps.cache-ffmpeg.outputs.cache-hit != 'true'
+        run: |
+          curl -fsSL https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.xz | tar xJ
+          cd ffmpeg-${FFMPEG_VERSION}
+          ./configure \
+            --prefix=/usr/local \
+            --enable-shared \
+            --disable-static \
+            --enable-gpl \
+            --enable-libx264 \
+            --enable-libx265 \
+            --enable-libvpx \
+            --enable-libopus \
+            --disable-doc \
+            --disable-programs
+          make -j$(nproc)
+          sudo make install
+
+      - name: Update linker cache (Linux)
+        if: runner.os == 'Linux'
+        run: sudo ldconfig
 
       - name: Install FFmpeg (macOS)
         if: runner.os == 'macOS'
@@ -69,13 +99,41 @@ jobs:
         with:
           go-version: "1.24"
 
-      - name: Install dependencies
+      - name: Install build deps
         run: |
           sudo apt-get update -y
           sudo apt-get install -y \
-            libavcodec-dev libavformat-dev libavfilter-dev \
-            libavutil-dev libswscale-dev libswresample-dev \
-            pkg-config clang
+            build-essential nasm pkg-config clang \
+            libx264-dev libx265-dev libvpx-dev libopus-dev
+
+      - name: Cache FFmpeg
+        id: cache-ffmpeg-asan
+        uses: actions/cache@v4
+        with:
+          path: /usr/local
+          key: ffmpeg-${{ env.FFMPEG_VERSION }}-asan
+
+      - name: Build FFmpeg from source
+        if: steps.cache-ffmpeg-asan.outputs.cache-hit != 'true'
+        run: |
+          curl -fsSL https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.xz | tar xJ
+          cd ffmpeg-${FFMPEG_VERSION}
+          ./configure \
+            --prefix=/usr/local \
+            --enable-shared \
+            --disable-static \
+            --enable-gpl \
+            --enable-libx264 \
+            --enable-libx265 \
+            --enable-libvpx \
+            --enable-libopus \
+            --disable-doc \
+            --disable-programs
+          make -j$(nproc)
+          sudo make install
+
+      - name: Update linker cache
+        run: sudo ldconfig
 
       - name: Test with ASan
         # CGO_ENABLED=1 is the default; -asan instruments C and Go allocations.
@@ -95,13 +153,41 @@ jobs:
         with:
           go-version: "1.23"
 
-      - name: Install FFmpeg dev libs
+      - name: Install build deps
         run: |
           sudo apt-get update -y
           sudo apt-get install -y \
-            libavcodec-dev libavformat-dev libavfilter-dev \
-            libavutil-dev libswscale-dev libswresample-dev \
-            pkg-config
+            build-essential nasm pkg-config \
+            libx264-dev libx265-dev libvpx-dev libopus-dev
+
+      - name: Cache FFmpeg
+        id: cache-ffmpeg-lint
+        uses: actions/cache@v4
+        with:
+          path: /usr/local
+          key: ffmpeg-${{ env.FFMPEG_VERSION }}-lint
+
+      - name: Build FFmpeg from source
+        if: steps.cache-ffmpeg-lint.outputs.cache-hit != 'true'
+        run: |
+          curl -fsSL https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.xz | tar xJ
+          cd ffmpeg-${FFMPEG_VERSION}
+          ./configure \
+            --prefix=/usr/local \
+            --enable-shared \
+            --disable-static \
+            --enable-gpl \
+            --enable-libx264 \
+            --enable-libx265 \
+            --enable-libvpx \
+            --enable-libopus \
+            --disable-doc \
+            --disable-programs
+          make -j$(nproc)
+          sudo make install
+
+      - name: Update linker cache
+        run: sudo ldconfig
 
       - name: Vet
         run: go vet ./...
