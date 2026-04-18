@@ -15,7 +15,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, macos-latest, windows-latest]
+        os: [ubuntu-24.04, macos-latest]
         go: ["1.24", "1.23"]
 
     steps:
@@ -70,12 +70,6 @@ jobs:
       - name: Install FFmpeg (macOS)
         if: runner.os == 'macOS'
         run: brew install ffmpeg pkg-config
-
-      - name: Install FFmpeg (Windows)
-        if: runner.os == 'Windows'
-        run: |
-          choco install ffmpeg --version 8.1 -y
-          echo "PKG_CONFIG_PATH=C:\ProgramData\chocolatey\lib\ffmpeg\tools\ffmpeg\lib\pkgconfig" >> $env:GITHUB_ENV
 
       - name: Build
         run: go build ./...
@@ -151,7 +145,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.23"
+          go-version: "1.25"
 
       - name: Install build deps
         run: |
