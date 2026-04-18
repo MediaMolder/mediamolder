@@ -742,7 +742,19 @@ func (p *Pipeline) runGraph(ctx context.Context) error {
 		return fmt.Errorf("build graph: %w", err)
 	}
 
-	// 2. Pre-open all AV resources in topological order.
+	// 2. Compile: analyze the graph for stage grouping and warnings.
+	plan, err := graph.Compile(dag)
+	if err != nil {
+		return fmt.Errorf("compile graph: %w", err)
+	}
+	for _, w := range plan.Warnings {
+		p.events.Post(ErrorEvent{
+			Err:  fmt.Errorf("graph compilation warning [%s]: %s", w.Code, w.Message),
+			Time: time.Now(),
+		})
+	}
+
+	// 3. Pre-open all AV resources in topological order.
 	runner := newGraphRunner(cfg, p)
 	defer func() {
 		runner.close()
@@ -809,7 +821,7 @@ func (p *Pipeline) runGraph(ctx context.Context) error {
 	p.reconf = reconf
 	p.mu.Unlock()
 
-	// 3. Run the scheduler — one goroutine per node, channels per edge.
+	// 4. Run the scheduler — one goroutine per node, channels per edge.
 	sched := &runtime.Scheduler{BufSize: 8}
 	if err := sched.Run(ctx, dag, runner.handle); err != nil {
 		// Abort all outputs on error.
@@ -819,7 +831,7 @@ func (p *Pipeline) runGraph(ctx context.Context) error {
 		return err
 	}
 
-	// 4. Finalize outputs (atomic rename from .tmp).
+	// 5. Finalize outputs (atomic rename from .tmp).
 	for _, s := range runner.sinks {
 		if err := s.muxer.Close(); err != nil {
 			return err
