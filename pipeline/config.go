@@ -45,8 +45,9 @@ type GraphDef struct {
 // NodeDef describes a single node in the processing graph.
 type NodeDef struct {
 	ID          string         `json:"id"`
-	Type        string         `json:"type"` // "filter", "encoder", "source", "sink"
+	Type        string         `json:"type"` // "filter", "encoder", "source", "sink", "go_processor"
 	Filter      string         `json:"filter,omitempty"`
+	Processor   string         `json:"processor,omitempty"`
 	Params      map[string]any `json:"params,omitempty"`
 	ErrorPolicy *ErrorPolicy   `json:"error_policy,omitempty"`
 }
@@ -113,8 +114,8 @@ func validate(cfg *Config) error {
 	if cfg.SchemaVersion == "" {
 		return fmt.Errorf("config missing required field schema_version")
 	}
-	if cfg.SchemaVersion != "1.0" {
-		return fmt.Errorf("unsupported schema_version %q; expected \"1.0\"", cfg.SchemaVersion)
+	if cfg.SchemaVersion != "1.0" && cfg.SchemaVersion != "1.1" {
+		return fmt.Errorf("unsupported schema_version %q; expected \"1.0\" or \"1.1\"", cfg.SchemaVersion)
 	}
 	if len(cfg.Inputs) == 0 {
 		return fmt.Errorf("config must have at least one input")
@@ -162,6 +163,12 @@ func validate(cfg *Config) error {
 	for i, e := range cfg.Graph.Edges {
 		if !validTypes[e.Type] {
 			return fmt.Errorf("edge[%d] has invalid type %q", i, e.Type)
+		}
+	}
+	// Validate go_processor nodes.
+	for i, node := range cfg.Graph.Nodes {
+		if node.Type == "go_processor" && node.Processor == "" {
+			return fmt.Errorf("node[%d] %q: go_processor requires a \"processor\" field", i, node.ID)
 		}
 	}
 	return nil

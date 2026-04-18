@@ -124,3 +124,48 @@ func TestFilterSpecBuilder(t *testing.T) {
 		t.Errorf("filter spec too short: %q", spec)
 	}
 }
+
+func TestParseConfigSchemaV11(t *testing.T) {
+	cfg := `{
+  "schema_version": "1.1",
+  "inputs": [{"id":"src","url":"in.mp4","streams":[{"input_index":0,"type":"video","track":0}]}],
+  "graph": {
+    "nodes": [
+      {"id":"proc","type":"go_processor","processor":"null"}
+    ],
+    "edges": [
+      {"from":"src:v:0","to":"proc:default","type":"video"},
+      {"from":"proc:default","to":"out:v","type":"video"}
+    ]
+  },
+  "outputs": [{"id":"out","url":"out.mp4","codec_video":"libx264"}]
+}`
+	parsed, err := ParseConfig([]byte(cfg))
+	if err != nil {
+		t.Fatalf("ParseConfig: %v", err)
+	}
+	if parsed.SchemaVersion != "1.1" {
+		t.Errorf("schema_version = %q, want 1.1", parsed.SchemaVersion)
+	}
+	if parsed.Graph.Nodes[0].Processor != "null" {
+		t.Errorf("processor = %q, want null", parsed.Graph.Nodes[0].Processor)
+	}
+}
+
+func TestParseConfigGoProcessorMissingProcessor(t *testing.T) {
+	cfg := `{
+  "schema_version": "1.1",
+  "inputs": [{"id":"src","url":"in.mp4","streams":[{"input_index":0,"type":"video","track":0}]}],
+  "graph": {
+    "nodes": [
+      {"id":"proc","type":"go_processor"}
+    ],
+    "edges": []
+  },
+  "outputs": [{"id":"out","url":"out.mp4"}]
+}`
+	_, err := ParseConfig([]byte(cfg))
+	if err == nil {
+		t.Fatal("expected error for go_processor without processor field")
+	}
+}

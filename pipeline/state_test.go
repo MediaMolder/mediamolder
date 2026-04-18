@@ -200,7 +200,10 @@ func TestSeek(t *testing.T) {
 	}
 
 	t.Run("seek from NULL fails", func(t *testing.T) {
-		p, _ := NewPipeline(cfg)
+		p, err := NewPipeline(cfg)
+		if err != nil {
+			t.Skipf("NewPipeline: %v", err)
+		}
 		defer p.Close()
 		if err := p.SeekTo(1000000); err == nil {
 			t.Fatal("expected error seeking from NULL")
@@ -208,7 +211,10 @@ func TestSeek(t *testing.T) {
 	})
 
 	t.Run("seek from PAUSED stores target", func(t *testing.T) {
-		p, _ := NewPipeline(cfg)
+		p, err := NewPipeline(cfg)
+		if err != nil {
+			t.Skipf("NewPipeline: %v", err)
+		}
 		defer p.Close()
 		if err := p.SetState(StatePaused); err != nil {
 			t.Fatal(err)

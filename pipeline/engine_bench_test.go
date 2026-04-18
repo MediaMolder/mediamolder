@@ -60,7 +60,7 @@ func BenchmarkEngineLinearTranscode(b *testing.B) {
 
 func pickBenchEncoder(b *testing.B) string {
 	b.Helper()
-	for _, name := range []string{"h264_videotoolbox", "libx264", "mpeg4"} {
+	for _, name := range []string{"libx264", "mpeg4", "h264_videotoolbox"} {
 		if av.FindEncoder(name) {
 			b.Logf("using encoder: %s", name)
 			return name

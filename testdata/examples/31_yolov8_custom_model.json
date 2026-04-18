@@ -1,0 +1,78 @@
+{
+  "schema_version": "1.1",
+  "description": "Decode in.mp4 -> scale to 720p -> run YOLOv8 detection with a custom 5-class model at 320x320 input -> encode to H.264, encode audio to AAC -> write to out.mp4. Demonstrates chaining a filter before a go_processor.",
+  "inputs": [
+    {
+      "id": "in0",
+      "url": "in.mp4",
+      "streams": [
+        {
+          "input_index": 0,
+          "type": "video",
+          "track": 0
+        },
+        {
+          "input_index": 0,
+          "type": "audio",
+          "track": 0
+        }
+      ]
+    }
+  ],
+  "graph": {
+    "nodes": [
+      {
+        "id": "scale0",
+        "type": "filter",
+        "filter": "scale",
+        "params": {
+          "w": "1280",
+          "h": "720"
+        }
+      },
+      {
+        "id": "detect0",
+        "type": "go_processor",
+        "processor": "yolo_v8",
+        "params": {
+          "model": "/models/custom_5class.onnx",
+          "labels_file": "/models/custom_classes.names",
+          "input_size": 320,
+          "num_classes": 5,
+          "conf": 0.6,
+          "iou": 0.5
+        }
+      }
+    ],
+    "edges": [
+      {
+        "from": "in0:v:0",
+        "to": "scale0:default",
+        "type": "video"
+      },
+      {
+        "from": "scale0:default",
+        "to": "detect0:default",
+        "type": "video"
+      },
+      {
+        "from": "detect0:default",
+        "to": "out0:v",
+        "type": "video"
+      },
+      {
+        "from": "in0:a:0",
+        "to": "out0:a",
+        "type": "audio"
+      }
+    ]
+  },
+  "outputs": [
+    {
+      "id": "out0",
+      "url": "out.mp4",
+      "codec_video": "libx264",
+      "codec_audio": "aac"
+    }
+  ]
+}

@@ -1,0 +1,60 @@
+{
+  "schema_version": "1.1",
+  "description": "Decode in.mp4 -> run YOLOv8 object detection on every video frame (CPU, COCO 80 classes) -> encode to H.264, copy audio -> write to out.mp4. Detections are emitted on the event bus.",
+  "inputs": [
+    {
+      "id": "in0",
+      "url": "in.mp4",
+      "streams": [
+        {
+          "input_index": 0,
+          "type": "video",
+          "track": 0
+        },
+        {
+          "input_index": 0,
+          "type": "audio",
+          "track": 0
+        }
+      ]
+    }
+  ],
+  "graph": {
+    "nodes": [
+      {
+        "id": "detect0",
+        "type": "go_processor",
+        "processor": "yolo_v8",
+        "params": {
+          "model": "/models/yolov8n.onnx",
+          "labels_file": "/models/coco.names"
+        }
+      }
+    ],
+    "edges": [
+      {
+        "from": "in0:v:0",
+        "to": "detect0:default",
+        "type": "video"
+      },
+      {
+        "from": "detect0:default",
+        "to": "out0:v",
+        "type": "video"
+      },
+      {
+        "from": "in0:a:0",
+        "to": "out0:a",
+        "type": "audio"
+      }
+    ]
+  },
+  "outputs": [
+    {
+      "id": "out0",
+      "url": "out.mp4",
+      "codec_video": "libx264",
+      "codec_audio": "copy"
+    }
+  ]
+}
