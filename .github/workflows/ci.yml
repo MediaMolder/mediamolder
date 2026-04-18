@@ -186,7 +186,8 @@ jobs:
       - name: Vet
         run: go vet ./...
 
+      - name: Install golangci-lint
+        run: go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@v4
-        with:
-          version: latest
+        run: golangci-lint run
