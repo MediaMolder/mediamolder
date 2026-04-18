@@ -81,12 +81,15 @@ Use `"1.1"` when the graph contains `go_processor` nodes. Parsers accept both ve
 
 ## GlobalOptions
 
-| Field      | Type   | Required | Description                    |
-|------------|--------|----------|--------------------------------|
-| `threads`  | int    | no       | Max worker threads             |
-| `hw_accel`  | string | no       | Hardware acceleration backend  |
-| `hw_device` | string | no       | Hardware device name/path      |
-| `realtime`  | bool   | no       | Pace output to wall-clock time |
+| Field         | Type   | Required | Description                                                                 |
+|---------------|--------|----------|-----------------------------------------------------------------------------|
+| `threads`     | int    | no       | Default codec thread count for all decoders/encoders. 0 = FFmpeg auto.      |
+| `thread_type` | string | no       | Default threading model: `"frame"`, `"slice"`, `"frame+slice"`, or omit for auto. |
+| `hw_accel`    | string | no       | Hardware acceleration backend                                               |
+| `hw_device`   | string | no       | Hardware device name/path                                                   |
+| `realtime`    | bool   | no       | Pace output to wall-clock time                                              |
+
+Per-node `params.threads` and `params.thread_type` override the global values for individual codecs. See [Threading Architecture](threading-architecture.md).
 
 ## ErrorPolicy
 

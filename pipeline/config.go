@@ -75,6 +75,7 @@ type Output struct {
 // Options holds global pipeline options.
 type Options struct {
 	Threads        int    `json:"threads,omitempty"`
+	ThreadType     string `json:"thread_type,omitempty"` // "frame", "slice", "frame+slice", "" = auto
 	HardwareAccel  string `json:"hw_accel,omitempty"`
 	HardwareDevice string `json:"hw_device,omitempty"`
 	Realtime       bool   `json:"realtime,omitempty"`

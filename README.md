@@ -340,6 +340,16 @@ MediaMolder instruments the runtime to help identify bottlenecks:
 
 Both monitoring mechanisms add zero overhead to the data path — backpressure uses periodic sampling (not channel wrapping), and latency uses lock-free atomics.
 
+### Threading Controls
+
+Codec threading is configurable at three levels:
+
+- **Per-node** — Set `"threads"` and `"thread_type"` in a node's `params` to tune individual codecs.
+- **Global** — Set `global_options.threads` and `global_options.thread_type` to apply defaults across all codecs.
+- **Security cap** — `SecurityConfig.MaxThreads` clamps every codec's thread count, preventing resource exhaustion in multi-tenant deployments.
+
+Resolution follows a fallback hierarchy: per-node → global → FFmpeg auto-detect. See [Threading Architecture](docs/threading-architecture.md) for full details.
+
 ```go
 // Identify the bottleneck edge:
 for _, es := range pipe.EdgeStats().Snapshot() {

@@ -91,6 +91,13 @@ type HWDecoderContext struct {
 type HWDecoderOptions struct {
 	// AutoTransfer: if true, ReceiveFrame automatically transfers hw frames to sw.
 	AutoTransfer bool
+
+	// ThreadCount sets the number of codec threads. 0 = FFmpeg auto-detect.
+	ThreadCount int
+
+	// ThreadType selects the threading model: "frame", "slice", "frame+slice",
+	// or "" (let FFmpeg choose based on codec capabilities).
+	ThreadType string
 }
 
 // OpenHWDecoder creates a hardware-accelerated decoder for the given stream.
@@ -126,6 +133,14 @@ func OpenHWDecoder(input *InputFormatContext, streamIndex int, device *HWDeviceC
 		hwFmt := C.hw_dec_pix_fmt_for_type(C.enum_AVHWDeviceType(device.Type()))
 		C.set_hw_get_format(ctx, hwFmt)
 		C.set_hw_device_ctx(ctx, device.raw())
+	}
+
+	// Apply threading configuration.
+	if opts.ThreadCount > 0 {
+		ctx.thread_count = C.int(opts.ThreadCount)
+	}
+	if opts.ThreadType != "" {
+		ctx.thread_type = C.int(parseThreadType(opts.ThreadType))
 	}
 
 	if ret := C.avcodec_open2(ctx, codec, nil); ret < 0 {

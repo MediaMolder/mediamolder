@@ -139,7 +139,8 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "threads": { "type": "integer", "minimum": 0 },
+        "threads": { "type": "integer", "minimum": 0, "description": "Default codec thread count for all decoders/encoders. 0 = FFmpeg auto-detect. Can be overridden per node via params.threads." },
+        "thread_type": { "type": "string", "enum": ["frame", "slice", "frame+slice"], "description": "Default codec threading model. Can be overridden per node via params.thread_type." },
         "hw_accel": { "type": "string" },
         "hw_device": { "type": "string" },
         "realtime": { "type": "boolean" }

@@ -40,6 +40,7 @@ type Pipeline struct {
 	edgeStats   *runtime.EdgeStatsRegistry
 	prom        *observability.Metrics  // optional Prometheus metrics; nil = disabled
 	obsProvider *observability.Provider // optional OTel tracing provider; nil = disabled
+	maxThreads  int                     // per-codec thread cap from SecurityConfig; 0 = unlimited
 	reconf      *reconfigurable         // live filter parameter changes (graph mode only)
 	graphRunner *graphRunner            // running graph resources (graph mode only)
 }
@@ -200,6 +201,15 @@ func (p *Pipeline) SetObsProvider(provider *observability.Provider) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.obsProvider = provider
+}
+
+// SetMaxThreads sets the per-codec thread cap from SecurityConfig.MaxThreads.
+// When > 0, each decoder/encoder thread count is clamped to this value.
+// Must be called before SetState(StatePlaying).
+func (p *Pipeline) SetMaxThreads(n int) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.maxThreads = n
 }
 
 // Wait blocks until the pipeline finishes (EOS or error) while in PLAYING state.
@@ -447,7 +457,17 @@ func (e *Pipeline) runLinear(ctx context.Context, g *errgroup.Group) error {
 
 	si, _ := input.StreamInfo(vidIdx)
 
-	dec, err := av.OpenDecoder(input, vidIdx)
+	// Resolve global thread settings for linear pipeline.
+	globalThreads := cfg.GlobalOptions.Threads
+	globalThreadType := cfg.GlobalOptions.ThreadType
+	if e.maxThreads > 0 && globalThreads > e.maxThreads {
+		globalThreads = e.maxThreads
+	}
+
+	dec, err := av.OpenDecoderWithOptions(input, vidIdx, av.DecoderOptions{
+		ThreadCount: globalThreads,
+		ThreadType:  globalThreadType,
+	})
 	if err != nil {
 		return fmt.Errorf("open decoder: %w", err)
 	}
@@ -488,6 +508,8 @@ func (e *Pipeline) runLinear(ctx context.Context, g *errgroup.Group) error {
 		Height:       si.Height,
 		FrameRate:    frameRate,
 		GlobalHeader: true,
+		ThreadCount:  globalThreads,
+		ThreadType:   globalThreadType,
 	})
 	if err != nil {
 		return fmt.Errorf("open encoder %q: %w", outCfg.CodecVideo, err)
@@ -810,7 +832,13 @@ func (p *Pipeline) runGraph(ctx context.Context) (runErr error) {
 	}()
 
 	for _, inp := range cfg.Inputs {
-		src, err := runner.openSource(inp)
+		// Resolve decoder threading from the corresponding source node.
+		decOpts := av.DecoderOptions{}
+		if srcNode := dag.NodeByID(inp.ID); srcNode != nil {
+			decOpts.ThreadCount = runner.resolveThreadCount(srcNode)
+			decOpts.ThreadType = runner.resolveThreadType(srcNode)
+		}
+		src, err := runner.openSource(inp, decOpts)
 		if err != nil {
 			return err
 		}

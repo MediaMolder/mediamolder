@@ -35,6 +35,13 @@ type EncoderOptions struct {
 	// header (required for MP4/MOV/MKV containers).
 	GlobalHeader bool
 
+	// ThreadCount sets the number of codec threads. 0 = FFmpeg auto-detect.
+	ThreadCount int
+
+	// ThreadType selects the threading model: "frame", "slice", "frame+slice",
+	// or "" (let FFmpeg choose based on codec capabilities).
+	ThreadType string
+
 	// ExtraOpts are passed as AVDictionary options (e.g. {"preset": "medium", "crf": "23"}).
 	ExtraOpts map[string]string
 }
@@ -101,6 +108,14 @@ func OpenEncoder(opts EncoderOptions) (*EncoderContext, error) {
 		ctx.flags |= C.AV_CODEC_FLAG_GLOBAL_HEADER
 	}
 
+	// Apply threading configuration.
+	if opts.ThreadCount > 0 {
+		ctx.thread_count = C.int(opts.ThreadCount)
+	}
+	if opts.ThreadType != "" {
+		ctx.thread_type = C.int(parseThreadType(opts.ThreadType))
+	}
+
 	// Build AVDictionary for extra options (e.g. preset, crf).
 	var dict *C.AVDictionary
 	for k, v := range opts.ExtraOpts {
@@ -154,6 +169,11 @@ func (e *EncoderContext) ReceivePacket(pkt *Packet) error {
 // Flush signals end-of-input so buffered packets can be drained.
 func (e *EncoderContext) Flush() error {
 	return e.SendFrame(nil)
+}
+
+// ThreadCount returns the number of threads the encoder is using.
+func (e *EncoderContext) ThreadCount() int {
+	return int(e.p.thread_count)
 }
 
 // raw returns the underlying C pointer. For use within the av package only.

@@ -99,6 +99,31 @@ func newGraphRunner(cfg *Config, pipe *Pipeline) *graphRunner {
 	}
 }
 
+// resolveThreadCount returns the thread count for a node using the hierarchy:
+// per-node params.threads > global_options.threads > 0 (FFmpeg auto).
+// If maxThreads > 0, the result is clamped.
+func (r *graphRunner) resolveThreadCount(node *graph.Node) int {
+	threads := 0
+	if v := paramInt(node.Params, "threads"); v > 0 {
+		threads = v
+	} else if r.cfg.GlobalOptions.Threads > 0 {
+		threads = r.cfg.GlobalOptions.Threads
+	}
+	if r.pipe.maxThreads > 0 && threads > r.pipe.maxThreads {
+		threads = r.pipe.maxThreads
+	}
+	return threads
+}
+
+// resolveThreadType returns the thread type for a node using the hierarchy:
+// per-node params.thread_type > global_options.thread_type > "" (auto).
+func (r *graphRunner) resolveThreadType(node *graph.Node) string {
+	if v := paramString(node.Params, "thread_type"); v != "" {
+		return v
+	}
+	return r.cfg.GlobalOptions.ThreadType
+}
+
 func (r *graphRunner) close() {
 	for _, s := range r.sources {
 		s.Close()
@@ -634,7 +659,7 @@ func (r *graphRunner) handleGoProcessor(ctx context.Context, node *graph.Node, i
 
 // ---------- Resource pre-opening ----------
 
-func (r *graphRunner) openSource(cfg Input) (*sourceResources, error) {
+func (r *graphRunner) openSource(cfg Input, decOpts av.DecoderOptions) (*sourceResources, error) {
 	var inputOpts map[string]string
 	if len(cfg.Options) > 0 {
 		inputOpts = make(map[string]string, len(cfg.Options))
@@ -677,7 +702,7 @@ func (r *graphRunner) openSource(cfg Input) (*sourceResources, error) {
 						}
 						subDecoders[si.Index] = subDec
 					} else {
-						dec, err := av.OpenDecoder(input, si.Index)
+						dec, err := av.OpenDecoderWithOptions(input, si.Index, decOpts)
 						if err != nil {
 							for _, d := range decoders {
 								d.Close()
@@ -809,6 +834,8 @@ func (r *graphRunner) createEncoder(dag *graph.Graph, node *graph.Node) (*av.Enc
 	opts := av.EncoderOptions{
 		CodecName:    codecName,
 		GlobalHeader: true,
+		ThreadCount:  r.resolveThreadCount(node),
+		ThreadType:   r.resolveThreadType(node),
 	}
 
 	switch edgeType := node.Inbound[0].Type; edgeType {
