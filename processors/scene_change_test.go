@@ -117,7 +117,7 @@ func TestSceneChange_NoContentChange(t *testing.T) {
 	defer f1.Close()
 
 	ctx := ProcessorContext{FrameIndex: 0, PTS: 0, MediaType: av.MediaTypeVideo}
-	p.Process(f1, ctx)
+	_, _, _ = p.Process(f1, ctx)
 
 	// Nearly same content — no scene change.
 	f2 := av.NewTestFrame(t, 64, 64, 2)
@@ -150,7 +150,7 @@ func TestSceneChange_PTSGap(t *testing.T) {
 	defer f1.Close()
 
 	ctx := ProcessorContext{FrameIndex: 0, PTS: 0, MediaType: av.MediaTypeVideo}
-	p.Process(f1, ctx)
+	_, _, _ = p.Process(f1, ctx)
 
 	// Large PTS jump.
 	f2 := av.NewTestFrame(t, 64, 64, 2)
@@ -200,7 +200,7 @@ func TestSceneChange_CloseReleasesFrame(t *testing.T) {
 	defer frame.Close()
 
 	ctx := ProcessorContext{FrameIndex: 0, PTS: 0, MediaType: av.MediaTypeVideo}
-	p.Process(frame, ctx)
+	_, _, _ = p.Process(frame, ctx)
 
 	if p.prevFrame == nil {
 		t.Fatal("expected prevFrame to be set after first Process")
