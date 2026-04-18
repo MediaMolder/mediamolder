@@ -12,6 +12,7 @@ import (
 
 	"github.com/MediaMolder/MediaMolder/av"
 	"github.com/MediaMolder/MediaMolder/graph"
+	"github.com/MediaMolder/MediaMolder/processors"
 	"github.com/MediaMolder/MediaMolder/runtime"
 	"golang.org/x/sync/errgroup"
 )
@@ -781,6 +782,15 @@ func (p *Pipeline) runGraph(ctx context.Context) error {
 				return err
 			}
 			runner.sinks[node.ID] = sink
+		case graph.KindGoProcessor:
+			proc, err := processors.Get(node.Processor)
+			if err != nil {
+				return fmt.Errorf("go_processor %q: %w", node.ID, err)
+			}
+			if err := proc.Init(node.Params); err != nil {
+				return fmt.Errorf("go_processor %q init: %w", node.ID, err)
+			}
+			runner.goProcessors[node.ID] = proc
 		}
 	}
 

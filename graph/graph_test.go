@@ -437,3 +437,61 @@ func assertBefore(t *testing.T, order []string, a, b string) {
 		t.Errorf("expected %q before %q in order %v", a, b, order)
 	}
 }
+
+func TestBuildGoProcessorNode(t *testing.T) {
+	def := &Def{
+		Inputs:  []InputDef{{ID: "src"}},
+		Outputs: []OutputDef{{ID: "out"}},
+		Nodes: []NodeDef{
+			{ID: "proc", Type: "go_processor", Processor: "null", Params: map[string]any{"key": "val"}},
+		},
+		Edges: []EdgeDef{
+			{From: "src:v:0", To: "proc:default", Type: "video"},
+			{From: "proc:default", To: "out:v", Type: "video"},
+		},
+	}
+	g, err := Build(def)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	proc := g.NodeByID("proc")
+	if proc == nil {
+		t.Fatal("node 'proc' not found")
+	}
+	if proc.Kind != KindGoProcessor {
+		t.Errorf("Kind = %v, want KindGoProcessor", proc.Kind)
+	}
+	if proc.Processor != "null" {
+		t.Errorf("Processor = %q, want \"null\"", proc.Processor)
+	}
+	order := nodeIDs(g.Order)
+	assertBefore(t, order, "src", "proc")
+	assertBefore(t, order, "proc", "out")
+}
+
+func TestBuildGoProcessorChained(t *testing.T) {
+	def := &Def{
+		Inputs:  []InputDef{{ID: "src"}},
+		Outputs: []OutputDef{{ID: "out"}},
+		Nodes: []NodeDef{
+			{ID: "scale", Type: "filter", Filter: "scale"},
+			{ID: "analyse", Type: "go_processor", Processor: "frame_counter"},
+			{ID: "enc", Type: "encoder"},
+		},
+		Edges: []EdgeDef{
+			{From: "src:v:0", To: "scale:default", Type: "video"},
+			{From: "scale:default", To: "analyse:default", Type: "video"},
+			{From: "analyse:default", To: "enc:default", Type: "video"},
+			{From: "enc:default", To: "out:v", Type: "video"},
+		},
+	}
+	g, err := Build(def)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	order := nodeIDs(g.Order)
+	assertBefore(t, order, "src", "scale")
+	assertBefore(t, order, "scale", "analyse")
+	assertBefore(t, order, "analyse", "enc")
+	assertBefore(t, order, "enc", "out")
+}

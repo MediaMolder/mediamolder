@@ -71,9 +71,11 @@ func TestEngineLinearTranscode(t *testing.T) {
 }
 
 // pickTestEncoder returns the first available video encoder from a preference list.
+// Software encoders are preferred over hardware encoders because CI runners
+// typically lack GPU/hardware access (e.g. VideoToolbox on macOS).
 func pickTestEncoder(t testing.TB) string {
 	t.Helper()
-	for _, name := range []string{"h264_videotoolbox", "libx264", "mpeg4"} {
+	for _, name := range []string{"libx264", "mpeg4", "h264_videotoolbox"} {
 		if av.FindEncoder(name) {
 			t.Logf("using encoder: %s", name)
 			return name

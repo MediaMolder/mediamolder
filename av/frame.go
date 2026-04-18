@@ -24,6 +24,22 @@ func AllocFrame() (*Frame, error) {
 	return f, nil
 }
 
+// Clone creates a new Frame that references the same underlying buffers.
+// The clone must be independently closed via Close(). This is equivalent
+// to av_frame_clone() — the data buffers are reference-counted, not copied.
+func (f *Frame) Clone() (*Frame, error) {
+	if f.p == nil {
+		return nil, &Err{Code: -22, Message: "av: Clone called on nil frame"}
+	}
+	p := C.av_frame_clone(f.p)
+	if p == nil {
+		return nil, &Err{Code: -12, Message: "av_frame_clone: out of memory"}
+	}
+	c := &Frame{p: p}
+	leakTrack(unsafe.Pointer(p), "AVFrame")
+	return c, nil
+}
+
 // Close unrefs the frame data and frees the AVFrame.
 func (f *Frame) Close() error {
 	if f.p != nil {

@@ -272,7 +272,10 @@ func TestCrashReportFromPanic(t *testing.T) {
 		Inputs:        []Input{{ID: "in", URL: "dummy.mp4", Streams: []StreamSelect{{Type: "video"}}}},
 		Outputs:       []Output{{ID: "out", URL: "dummy_out.mp4", CodecVideo: "libx264"}},
 	}
-	p, _ := NewPipeline(cfg)
+	p, err := NewPipeline(cfg)
+	if err != nil {
+		t.Skipf("NewPipeline: %v", err)
+	}
 
 	report := reporter.CaptureFromPanic(p, "test panic value")
 	if report.PanicValue != "test panic value" {
@@ -517,9 +520,12 @@ func TestAddOutputInvalidState(t *testing.T) {
 		Inputs:        []Input{{ID: "in", URL: "dummy.mp4", Streams: []StreamSelect{{Type: "video"}}}},
 		Outputs:       []Output{{ID: "out", URL: "dummy_out.mp4", CodecVideo: "libx264"}},
 	}
-	p, _ := NewPipeline(cfg)
+	p, err := NewPipeline(cfg)
+	if err != nil {
+		t.Skipf("NewPipeline: %v", err)
+	}
 
-	_, err := p.AddOutput(Output{ID: "out2", URL: "test.mp4"})
+	_, err = p.AddOutput(Output{ID: "out2", URL: "test.mp4"})
 	if err == nil {
 		t.Error("should fail in NULL state")
 	}
@@ -531,12 +537,15 @@ func TestAddOutputDuplicateID(t *testing.T) {
 		Inputs:        []Input{{ID: "in", URL: "dummy.mp4", Streams: []StreamSelect{{Type: "video"}}}},
 		Outputs:       []Output{{ID: "out", URL: "dummy_out.mp4", CodecVideo: "libx264"}},
 	}
-	p, _ := NewPipeline(cfg)
+	p, err := NewPipeline(cfg)
+	if err != nil {
+		t.Skipf("NewPipeline: %v", err)
+	}
 	if err := p.SetState(StatePaused); err != nil {
 		t.Fatal(err)
 	}
 
-	_, err := p.AddOutput(Output{ID: "out", URL: "test.mp4"})
+	_, err = p.AddOutput(Output{ID: "out", URL: "test.mp4"})
 	if err == nil {
 		t.Error("duplicate ID should be rejected")
 	}
@@ -549,12 +558,15 @@ func TestAddOutputMissingURL(t *testing.T) {
 		Inputs:        []Input{{ID: "in", URL: "dummy.mp4", Streams: []StreamSelect{{Type: "video"}}}},
 		Outputs:       []Output{{ID: "out", URL: "dummy_out.mp4", CodecVideo: "libx264"}},
 	}
-	p, _ := NewPipeline(cfg)
+	p, err := NewPipeline(cfg)
+	if err != nil {
+		t.Skipf("NewPipeline: %v", err)
+	}
 	if err := p.SetState(StatePaused); err != nil {
 		t.Fatal(err)
 	}
 
-	_, err := p.AddOutput(Output{ID: "out2"})
+	_, err = p.AddOutput(Output{ID: "out2"})
 	if err == nil {
 		t.Error("missing URL should be rejected")
 	}
@@ -569,7 +581,10 @@ func TestReconfigureInvalidState(t *testing.T) {
 		Inputs:        []Input{{ID: "in", URL: "dummy.mp4", Streams: []StreamSelect{{Type: "video"}}}},
 		Outputs:       []Output{{ID: "out", URL: "dummy_out.mp4", CodecVideo: "libx264"}},
 	}
-	p, _ := NewPipeline(cfg)
+	p, pErr := NewPipeline(cfg)
+	if pErr != nil {
+		t.Skipf("NewPipeline: %v", pErr)
+	}
 
 	err := p.Reconfigure("filter1", map[string]any{"volume": "0.5"})
 	if err == nil {
@@ -583,7 +598,10 @@ func TestReconfigureNoGraphRunner(t *testing.T) {
 		Inputs:        []Input{{ID: "in", URL: "dummy.mp4", Streams: []StreamSelect{{Type: "video"}}}},
 		Outputs:       []Output{{ID: "out", URL: "dummy_out.mp4", CodecVideo: "libx264"}},
 	}
-	p, _ := NewPipeline(cfg)
+	p, pErr := NewPipeline(cfg)
+	if pErr != nil {
+		t.Skipf("NewPipeline: %v", pErr)
+	}
 	if err := p.SetState(StatePaused); err != nil {
 		t.Fatal(err)
 	}

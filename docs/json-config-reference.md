@@ -1,16 +1,18 @@
 # JSON Config Reference
 
-MediaMolder pipelines are defined as JSON files conforming to schema v1.0.
+MediaMolder pipelines are defined as JSON files conforming to schema v1.0 or v1.1.
 
 ## Top-level structure
 
 | Field            | Type     | Required | Description                              |
 |------------------|----------|----------|------------------------------------------|
-| `schema_version` | string   | yes      | Must be `"1.0"`                          |
+| `schema_version` | string   | yes      | `"1.0"` or `"1.1"`                       |
 | `inputs`         | array    | yes      | Input sources                            |
 | `graph`          | object   | yes      | Processing graph (nodes + edges)         |
 | `outputs`        | array    | yes      | Output sinks                             |
 | `global_options` | object   | no       | Global pipeline options                  |
+
+Use `"1.1"` when the graph contains `go_processor` nodes. Parsers accept both versions.
 
 ## Input
 
@@ -38,13 +40,14 @@ MediaMolder pipelines are defined as JSON files conforming to schema v1.0.
 
 ### NodeDef
 
-| Field          | Type   | Required | Description                                    |
-|----------------|--------|----------|------------------------------------------------|
-| `id`           | string | yes      | Unique node identifier                         |
-| `type`         | string | yes      | `"filter"`, `"encoder"`, `"source"`, `"sink"`  |
-| `filter`       | string | no       | Filter name (for filter nodes)                 |
-| `params`       | object | no       | Parameters (key-value)                         |
-| `error_policy` | object | no       | Error handling policy                          |
+| Field          | Type   | Required | Description                                                      |
+|----------------|--------|----------|------------------------------------------------------------------|
+| `id`           | string | yes      | Unique node identifier                                           |
+| `type`         | string | yes      | `"filter"`, `"encoder"`, `"source"`, `"sink"`, `"go_processor"`   |
+| `filter`       | string | no       | Filter name (for filter nodes)                                   |
+| `processor`    | string | no       | Registered Go processor name (required for `go_processor` nodes) |
+| `params`       | object | no       | Parameters (key-value)                                           |
+| `error_policy` | object | no       | Error handling policy                                            |
 
 ### EdgeDef
 
@@ -129,6 +132,55 @@ MediaMolder pipelines are defined as JSON files conforming to schema v1.0.
       "url": "output.mp4",
       "codec_video": "libx264",
       "codec_audio": "aac"
+    }
+  ]
+}
+```
+
+## go_processor Nodes (schema v1.1)
+
+The `go_processor` node type enables **custom Go per-frame processing** — for AI inference, quality analysis, tracking, metadata injection, or any transformation that doesn't fit neatly into a libavfilter.
+
+- `processor` must match a name registered via `processors.Register(...)`.
+- `params` are passed directly to the processor's `Init()` method.
+- Frames flow as `*av.Frame`; the processor may modify, replace, or drop them.
+- Non-nil `Metadata` returned by `Process()` is published on the pipeline event bus.
+
+See [Go Processor Nodes](go-processor-nodes.md) for the full guide.
+
+### Example — frame counter
+
+```json
+{
+  "schema_version": "1.1",
+  "inputs": [
+    {
+      "id": "src",
+      "url": "input.mp4",
+      "streams": [
+        { "input_index": 0, "type": "video", "track": 0 }
+      ]
+    }
+  ],
+  "graph": {
+    "nodes": [
+      {
+        "id": "counter",
+        "type": "go_processor",
+        "processor": "frame_counter",
+        "params": { "log_every": 100 }
+      }
+    ],
+    "edges": [
+      { "from": "src:v:0", "to": "counter:default", "type": "video" },
+      { "from": "counter:default", "to": "out:v", "type": "video" }
+    ]
+  },
+  "outputs": [
+    {
+      "id": "out",
+      "url": "output.mp4",
+      "codec_video": "libx264"
     }
   ]
 }

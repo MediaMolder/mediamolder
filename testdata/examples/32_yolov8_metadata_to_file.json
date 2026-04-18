@@ -1,0 +1,64 @@
+{
+  "schema_version": "1.1",
+  "description": "Decode in.mp4 -> run YOLOv8 detection wrapped by metadata_file_writer, which writes all detections to detections.jsonl as JSON Lines -> encode to H.264, copy audio -> write to out.mp4.",
+  "inputs": [
+    {
+      "id": "in0",
+      "url": "in.mp4",
+      "streams": [
+        {
+          "input_index": 0,
+          "type": "video",
+          "track": 0
+        },
+        {
+          "input_index": 0,
+          "type": "audio",
+          "track": 0
+        }
+      ]
+    }
+  ],
+  "graph": {
+    "nodes": [
+      {
+        "id": "detect_and_log",
+        "type": "go_processor",
+        "processor": "metadata_file_writer",
+        "params": {
+          "output_file": "detections.jsonl",
+          "inner_processor": "yolo_v8",
+          "model": "/models/yolov8n.onnx",
+          "labels_file": "/models/coco.names",
+          "process_every": 5,
+          "conf": 0.5
+        }
+      }
+    ],
+    "edges": [
+      {
+        "from": "in0:v:0",
+        "to": "detect_and_log:default",
+        "type": "video"
+      },
+      {
+        "from": "detect_and_log:default",
+        "to": "out0:v",
+        "type": "video"
+      },
+      {
+        "from": "in0:a:0",
+        "to": "out0:a",
+        "type": "audio"
+      }
+    ]
+  },
+  "outputs": [
+    {
+      "id": "out0",
+      "url": "out.mp4",
+      "codec_video": "libx264",
+      "codec_audio": "copy"
+    }
+  ]
+}
