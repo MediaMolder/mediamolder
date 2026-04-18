@@ -309,10 +309,53 @@ See the [Go Processor Nodes](docs/go-processor-nodes.md) guide for the full API,
 - [Error Handling](docs/error-handling.md)
 - [Hardware Acceleration](docs/hardware-acceleration.md)
 - [Observability](docs/observability.md)
+- [Graph Compilation](docs/graph-compilation.md)
+- [Pipeline Instrumentation Roadmap](docs/pipeline-instrumentation-roadmap.md)
 - [Build & Packaging](docs/build_and_packaging.md)
 - [Contribution & Governance](docs/contribution_and_governance.md)
 - [Project Specification](docs/specification.md)
 - [Licensing](LICENSING.md)
+
+---
+
+## Architecture
+
+### Processing Pipeline
+
+A pipeline flows through five phases:
+
+1. **Build** — Parse JSON config into a validated DAG (`graph.Build`). Catches structural errors (missing nodes, cycles).
+2. **Compile** — Analyze the graph for stage grouping, dead-branch detection, disconnected-source warnings, and per-edge buffer sizing (`graph.Compile`). See [Graph Compilation](docs/graph-compilation.md).
+3. **Open resources** — Demuxers, decoders, filters, encoders, and muxers are created in topological order.
+4. **Execute** — The scheduler launches one goroutine per node, connected by buffered channels sized per-edge by the compiler. Each node processes frames independently.
+5. **Finalize** — Outputs are flushed and atomically renamed.
+
+### Performance Monitoring
+
+MediaMolder instruments the runtime to help identify bottlenecks:
+
+- **Channel backpressure monitoring** — A sampler goroutine periodically polls the fill level of every inter-node channel. High fill ratios indicate a downstream node can't keep up. Available via `Pipeline.EdgeStats()`.
+- **Per-node processing latency** — Every handler (source, filter, encoder, sink, Go processor) records per-frame latency. Available via `Pipeline.Metrics()` snapshots (`AvgLatency`, `MaxLatency`).
+- **Adaptive buffer sizing** — The compiler assigns per-edge channel buffer sizes based on node kinds (e.g., 16 after sources for burst absorption, 4 for encoder→sink). See [Graph Compilation](docs/graph-compilation.md).
+
+Both monitoring mechanisms add zero overhead to the data path — backpressure uses periodic sampling (not channel wrapping), and latency uses lock-free atomics.
+
+```go
+// Identify the bottleneck edge:
+for _, es := range pipe.EdgeStats().Snapshot() {
+    if es.Fill > 0.8 {
+        fmt.Printf("backpressure: %s → %s (%.0f%% full, %d stalls)\n",
+            es.FromNode, es.ToNode, es.Fill*100, es.Stalls)
+    }
+}
+
+// Check per-node latency:
+for _, ns := range pipe.Metrics().Snapshot().Nodes {
+    fmt.Printf("%s: avg=%s max=%s\n", ns.NodeID, ns.AvgLatency, ns.MaxLatency)
+}
+```
+
+See [Observability](docs/observability.md) for Prometheus metrics, OpenTelemetry tracing, and Grafana dashboard configuration.
 
 ---
 

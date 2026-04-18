@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/MediaMolder/MediaMolder/av"
 	"github.com/MediaMolder/MediaMolder/graph"
@@ -209,6 +210,7 @@ func (r *graphRunner) handleSource(ctx context.Context, node *graph.Node, outs [
 			return ctx.Err()
 		}
 		pkt.Unref()
+		frameStart := time.Now()
 		if err := src.input.ReadPacket(pkt); err != nil {
 			if av.IsEOF(err) {
 				break
@@ -238,6 +240,7 @@ func (r *graphRunner) handleSource(ctx context.Context, node *graph.Node, outs [
 					}
 				}
 			}
+			r.pipe.Metrics().Node(node.ID).RecordLatency(time.Since(frameStart))
 			continue
 		}
 
@@ -250,6 +253,7 @@ func (r *graphRunner) handleSource(ctx context.Context, node *graph.Node, outs [
 		if err := receiveAll(dec, si.Type); err != nil {
 			return err
 		}
+		r.pipe.Metrics().Node(node.ID).RecordLatency(time.Since(frameStart))
 	}
 
 	// Flush every decoder.
@@ -300,7 +304,7 @@ func (r *graphRunner) handleFilter(ctx context.Context, node *graph.Node, ins []
 
 	// Simple 1→1 fast-path.
 	if len(ins) == 1 && len(outs) == 1 {
-		return handleSimpleFilter(ctx, fg, ins[0], outs[0])
+		return r.handleSimpleFilter(ctx, node, fg, ins[0], outs[0])
 	}
 
 	// Multi-input / multi-output: serialise all filter-graph operations
@@ -401,7 +405,7 @@ func (r *graphRunner) handleFilter(ctx context.Context, node *graph.Node, ins []
 }
 
 // handleSimpleFilter processes a single-input single-output filter chain.
-func handleSimpleFilter(ctx context.Context, fg *av.FilterGraph, in <-chan any, out chan<- any) error {
+func (r *graphRunner) handleSimpleFilter(ctx context.Context, node *graph.Node, fg *av.FilterGraph, in <-chan any, out chan<- any) error {
 	pull := func() error {
 		for {
 			f, err := av.AllocFrame()
@@ -426,6 +430,7 @@ func handleSimpleFilter(ctx context.Context, fg *av.FilterGraph, in <-chan any, 
 
 	for v := range in {
 		f := v.(*av.Frame)
+		frameStart := time.Now()
 		if err := fg.PushFrame(f); err != nil {
 			f.Close()
 			return err
@@ -434,6 +439,7 @@ func handleSimpleFilter(ctx context.Context, fg *av.FilterGraph, in <-chan any, 
 		if err := pull(); err != nil {
 			return err
 		}
+		r.pipe.Metrics().Node(node.ID).RecordLatency(time.Since(frameStart))
 	}
 
 	// Flush and drain.
@@ -480,6 +486,7 @@ func (r *graphRunner) handleEncoder(ctx context.Context, node *graph.Node, ins [
 
 	for v := range in {
 		f := v.(*av.Frame)
+		frameStart := time.Now()
 		if err := enc.SendFrame(f); err != nil {
 			f.Close()
 			return err
@@ -488,6 +495,7 @@ func (r *graphRunner) handleEncoder(ctx context.Context, node *graph.Node, ins [
 		if err := drainEncoder(); err != nil {
 			return err
 		}
+		r.pipe.Metrics().Node(node.ID).RecordLatency(time.Since(frameStart))
 	}
 
 	// Flush.
@@ -509,11 +517,13 @@ func (r *graphRunner) handleSink(ctx context.Context, node *graph.Node, ins []<-
 		for v := range ins[0] {
 			pkt := v.(*av.Packet)
 			pkt.SetStreamIndex(0)
+			frameStart := time.Now()
 			if err := sink.muxer.WritePacket(pkt); err != nil {
 				pkt.Close()
 				return err
 			}
 			pkt.Close()
+			r.pipe.Metrics().Node(node.ID).RecordLatency(time.Since(frameStart))
 		}
 		return sink.muxer.WriteTrailer()
 	}
@@ -528,10 +538,12 @@ func (r *graphRunner) handleSink(ctx context.Context, node *graph.Node, ins []<-
 			for v := range in {
 				pkt := v.(*av.Packet)
 				pkt.SetStreamIndex(i)
+				frameStart := time.Now()
 				mu.Lock()
 				err := sink.muxer.WritePacket(pkt)
 				mu.Unlock()
 				pkt.Close()
+				r.pipe.Metrics().Node(node.ID).RecordLatency(time.Since(frameStart))
 				if err != nil {
 					return err
 				}
@@ -566,6 +578,7 @@ func (r *graphRunner) handleGoProcessor(ctx context.Context, node *graph.Node, i
 	var frameIndex uint64
 	for v := range ins[0] {
 		f := v.(*av.Frame)
+		frameStart := time.Now()
 
 		pctx := processors.ProcessorContext{
 			StreamID:   node.ID,
@@ -598,6 +611,7 @@ func (r *graphRunner) handleGoProcessor(ctx context.Context, node *graph.Node, i
 		}
 
 		frameIndex++
+		r.pipe.Metrics().Node(node.ID).RecordLatency(time.Since(frameStart))
 
 		// nil output means the processor consumed (dropped) the frame.
 		if out == nil {

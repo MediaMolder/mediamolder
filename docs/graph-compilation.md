@@ -14,7 +14,7 @@ Before your media starts flowing, MediaMolder needs to do three things:
 1. **Build** — Read your config and make sure the graph makes sense (no typos
    in node names, no impossible loops, etc.). 
 2. **Compile** *(new)* — Analyze the valid graph to catch potential mistakes
-   and prepare information that helps with debugging and future optimizations.
+   and prepare information that helps the runtime (buffer sizes, stage layout).
 3. **Execute** — Actually run the pipeline, flowing media through the graph.
 
 The compile step is like a spell-checker for your graph. The graph might be
@@ -38,7 +38,7 @@ ParseConfig()          Parse and validate the JSON
 graph.Build()          Validate structure, detect cycles, topological sort
     │
     ▼
-graph.Compile()   ◄── NEW: analyze graph, group stages, detect dead branches
+graph.Compile()   ◄── NEW: analyze graph, group stages, detect issues, size buffers
     │
     ▼
 Open AV resources      Open files, create decoders/encoders/filters
@@ -48,8 +48,9 @@ Scheduler.Run()        Execute: one goroutine per node, channels per edge
 ```
 
 The compile step **never modifies** the graph. It only reads the graph and
-produces an `ExecutionPlan` with analysis results. If the graph is valid, the
-pipeline always proceeds — compile warnings are informational, not blocking.
+produces an `ExecutionPlan` with analysis results and buffer size
+recommendations. If the graph is valid, the pipeline always proceeds —
+compile warnings are informational, not blocking.
 
 ---
 
@@ -135,6 +136,23 @@ Config:
 Warning: source "unused" has no outbound edges and will not contribute to any output
 ```
 
+### Pass 4: Buffer Size Hints
+
+The compiler assigns per-edge channel buffer sizes based on the kinds of the
+upstream and downstream nodes. Different node kinds have different processing
+characteristics, so a single fixed buffer size is suboptimal.
+
+| Upstream Kind | Downstream Kind | Buffer Size | Rationale |
+|--------------|----------------|-------------|-----------|
+| Source | any | 16 | Demuxers produce bursts (B-frame reordering) |
+| any | Encoder | 16 | Encoders are typically the slowest stage |
+| Encoder | Sink | 4 | Packets are small, muxer I/O is fast |
+| any | any (default) | 8 | Steady flow between similar-speed nodes |
+
+The hints are stored in `ExecutionPlan.EdgeBufSizes` and used by the scheduler
+when creating inter-node channels. This replaces the previous uniform buffer
+size (8 for all edges).
+
 ---
 
 ## The ExecutionPlan
@@ -143,9 +161,10 @@ The `Compile()` function returns an `ExecutionPlan` struct:
 
 ```go
 type ExecutionPlan struct {
-    Graph    *Graph      // the validated graph this plan was compiled from
-    Stages   []Stage     // nodes grouped by topological depth
-    Warnings []Warning   // non-fatal issues detected during compilation
+    Graph        *Graph         // the validated graph this plan was compiled from
+    Stages       []Stage        // nodes grouped by topological depth
+    Warnings     []Warning      // non-fatal issues detected during compilation
+    EdgeBufSizes map[*Edge]int  // per-edge channel buffer size recommendations
 }
 
 type Stage struct {
@@ -211,13 +230,25 @@ parameters. This could be used for admission control (rejecting pipelines that
 would exceed available resources) or for scheduling decisions in multi-pipeline
 environments.
 
+### Adaptive Buffer Feedback Loop (planned)
+
+Phase B of adaptive buffer sizing: after a pipeline run, write edge stats
+(peak fill, stall count) to a local cache file keyed by a graph topology hash.
+On the next run of the same graph, the compiler reads the cache and adjusts
+buffer sizes — halving buffers with `PeakFill < 0.1` and doubling buffers with
+`PeakFill > 0.8` or stalls. This closes the feedback loop so buffer sizes
+converge over multiple runs.
+
 ---
 
 ## Code Layout
 
 | File | Purpose |
 |------|---------|
-| [graph/plan.go](../graph/plan.go) | Type definitions: `ExecutionPlan`, `Stage`, `Warning`, `WarningCode` |
-| [graph/compile.go](../graph/compile.go) | `Compile()` function and all analysis passes |
-| [graph/compile_test.go](../graph/compile_test.go) | Tests for stage grouping, dead branches, disconnected sources, determinism |
+| [graph/plan.go](../graph/plan.go) | Type definitions: `ExecutionPlan`, `Stage`, `Warning`, `WarningCode`, `EdgeBufSizes` |
+| [graph/compile.go](../graph/compile.go) | `Compile()` function and all analysis passes (stages, dead branches, disconnected sources, buffer hints) |
+| [graph/compile_test.go](../graph/compile_test.go) | Tests for stage grouping, dead branches, disconnected sources, buffer hints, determinism |
 | [pipeline/engine.go](../pipeline/engine.go) | Integration point: `Compile()` is called in `runGraph()` between `Build()` and resource allocation |
+| [runtime/edge_stats.go](../runtime/edge_stats.go) | `EdgeStatsRegistry` and backpressure sampler (wired in scheduler and engine) |
+| [runtime/scheduler.go](../runtime/scheduler.go) | `Scheduler.Run()` creates per-edge channels using `EdgeBufSizes` from compilation |
+| [pipeline/metrics.go](../pipeline/metrics.go) | `NodeMetrics.RecordLatency()` and latency fields in `NodeMetricsSnapshot` |

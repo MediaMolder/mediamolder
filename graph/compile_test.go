@@ -379,3 +379,121 @@ func filterWarnings(ws []Warning, code WarningCode) []Warning {
 	}
 	return out
 }
+
+// ---------- Buffer size hint tests ----------
+
+func TestCompileBufferHintsLinear(t *testing.T) {
+	// src(Source) → scale(Filter) → out(Sink)
+	g, err := Build(simpleDef())
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	plan, err := Compile(g)
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+
+	if plan.EdgeBufSizes == nil {
+		t.Fatal("EdgeBufSizes is nil")
+	}
+	if len(plan.EdgeBufSizes) != len(g.Edges) {
+		t.Fatalf("EdgeBufSizes has %d entries, want %d", len(plan.EdgeBufSizes), len(g.Edges))
+	}
+
+	for _, e := range g.Edges {
+		size := plan.EdgeBufSizes[e]
+		switch {
+		case e.From.Kind == KindSource:
+			// Source → Filter should be 16.
+			if size != 16 {
+				t.Errorf("edge %s→%s: buf=%d, want 16 (source burst)", e.From.ID, e.To.ID, size)
+			}
+		default:
+			// Filter → Sink should be 8 (default).
+			if size != 8 {
+				t.Errorf("edge %s→%s: buf=%d, want 8 (default)", e.From.ID, e.To.ID, size)
+			}
+		}
+	}
+}
+
+func TestCompileBufferHintsWithEncoder(t *testing.T) {
+	// src(Source) → scale(Filter) → enc(Encoder) → out(Sink)
+	def := &Def{
+		Inputs:  []InputDef{{ID: "src"}},
+		Outputs: []OutputDef{{ID: "out"}},
+		Nodes: []NodeDef{
+			{ID: "scale", Type: "filter", Filter: "scale"},
+			{ID: "enc", Type: "encoder"},
+		},
+		Edges: []EdgeDef{
+			{From: "src:v:0", To: "scale:default", Type: "video"},
+			{From: "scale:default", To: "enc:default", Type: "video"},
+			{From: "enc:default", To: "out:v", Type: "video"},
+		},
+	}
+	g, err := Build(def)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	plan, err := Compile(g)
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+
+	for _, e := range g.Edges {
+		size := plan.EdgeBufSizes[e]
+		switch {
+		case e.From.Kind == KindSource:
+			if size != 16 {
+				t.Errorf("edge %s→%s: buf=%d, want 16 (source)", e.From.ID, e.To.ID, size)
+			}
+		case e.To.Kind == KindEncoder:
+			if size != 16 {
+				t.Errorf("edge %s→%s: buf=%d, want 16 (→encoder)", e.From.ID, e.To.ID, size)
+			}
+		case e.From.Kind == KindEncoder && e.To.Kind == KindSink:
+			if size != 4 {
+				t.Errorf("edge %s→%s: buf=%d, want 4 (encoder→sink)", e.From.ID, e.To.ID, size)
+			}
+		}
+	}
+}
+
+func TestCompileBufferHintsGoProcessor(t *testing.T) {
+	// src(Source) → proc(GoProcessor) → out(Sink)
+	def := &Def{
+		Inputs:  []InputDef{{ID: "src"}},
+		Outputs: []OutputDef{{ID: "out"}},
+		Nodes: []NodeDef{
+			{ID: "proc", Type: "go_processor", Processor: "test"},
+		},
+		Edges: []EdgeDef{
+			{From: "src:v:0", To: "proc:default", Type: "video"},
+			{From: "proc:default", To: "out:v", Type: "video"},
+		},
+	}
+	g, err := Build(def)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	plan, err := Compile(g)
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+
+	for _, e := range g.Edges {
+		size := plan.EdgeBufSizes[e]
+		switch {
+		case e.From.Kind == KindSource:
+			if size != 16 {
+				t.Errorf("edge %s→%s: buf=%d, want 16 (source)", e.From.ID, e.To.ID, size)
+			}
+		case e.From.Kind == KindGoProcessor:
+			// GoProcessor → Sink = default (8).
+			if size != 8 {
+				t.Errorf("edge %s→%s: buf=%d, want 8 (go_processor default)", e.From.ID, e.To.ID, size)
+			}
+		}
+	}
+}

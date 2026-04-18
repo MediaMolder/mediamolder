@@ -24,6 +24,11 @@ type ExecutionPlan struct {
 	// Warnings are non-fatal issues detected during compilation, such as
 	// nodes that are unreachable from any sink (dead branches).
 	Warnings []Warning
+
+	// EdgeBufSizes maps each edge to a recommended channel buffer size.
+	// The scheduler uses these hints instead of a uniform buffer size.
+	// Sizes are determined by static heuristics based on node kinds.
+	EdgeBufSizes map[*Edge]int
 }
 
 // Stage is a set of nodes at the same topological depth. All nodes in a stage

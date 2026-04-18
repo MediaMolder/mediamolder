@@ -20,6 +20,9 @@ import "fmt"
 //     whose outputs are never consumed. These nodes run but waste work.
 //  3. Disconnected-source detection — flags source nodes with no outbound
 //     edges, which would be started by the scheduler but produce nothing.
+//  4. Buffer size hints — assigns per-edge channel buffer sizes based on
+//     the kinds of the connected nodes (e.g., larger buffers after sources
+//     to absorb demux bursts).
 //
 // Compile never modifies the input Graph.
 func Compile(g *Graph) (*ExecutionPlan, error) {
@@ -40,6 +43,9 @@ func Compile(g *Graph) (*ExecutionPlan, error) {
 
 	// Pass 3: detect disconnected sources.
 	detectDisconnectedSources(g, plan)
+
+	// Pass 4: compute per-edge buffer size hints.
+	computeBufferHints(g, plan)
 
 	return plan, nil
 }
@@ -132,5 +138,39 @@ func detectDisconnectedSources(g *Graph, plan *ExecutionPlan) {
 				Message: fmt.Sprintf("source %q has no outbound edges and will not contribute to any output", src.ID),
 			})
 		}
+	}
+}
+
+// computeBufferHints assigns per-edge buffer sizes based on the kinds of the
+// upstream and downstream nodes. The heuristics account for common patterns:
+//
+//   - Sources produce bursts (e.g., B-frame reordering), so edges leaving a
+//     source get a larger buffer.
+//   - Encoders are typically slower than filters, so the edge feeding an
+//     encoder gets a larger buffer to absorb speed differences.
+//   - Sinks do mostly I/O, which is fast, so encoder→sink edges use a smaller
+//     buffer.
+//   - Filter→filter and GoProcessor edges use the default buffer size.
+func computeBufferHints(g *Graph, plan *ExecutionPlan) {
+	const defaultBuf = 8
+
+	plan.EdgeBufSizes = make(map[*Edge]int, len(g.Edges))
+	for _, e := range g.Edges {
+		plan.EdgeBufSizes[e] = edgeBufSize(e.From.Kind, e.To.Kind, defaultBuf)
+	}
+}
+
+// edgeBufSize returns the recommended buffer size for an edge between two
+// node kinds.
+func edgeBufSize(from, to NodeKind, defaultBuf int) int {
+	switch {
+	case from == KindSource:
+		return 16 // demux produces bursts (B-frame reordering)
+	case to == KindEncoder:
+		return 16 // encoder is typically the slowest stage
+	case from == KindEncoder && to == KindSink:
+		return 4 // packets are small, muxer I/O is fast
+	default:
+		return defaultBuf
 	}
 }

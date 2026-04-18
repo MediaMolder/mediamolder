@@ -18,7 +18,25 @@ type NodeMetrics struct {
 	Bytes     atomic.Int64
 	StartTime time.Time
 
+	// Per-frame latency tracking.
+	latencySum   atomic.Int64 // cumulative nanoseconds
+	latencyCount atomic.Int64
+	latencyMax   atomic.Int64 // peak nanoseconds
+
 	mu sync.Mutex
+}
+
+// RecordLatency records a single frame's processing duration.
+func (m *NodeMetrics) RecordLatency(d time.Duration) {
+	ns := d.Nanoseconds()
+	m.latencySum.Add(ns)
+	m.latencyCount.Add(1)
+	for {
+		cur := m.latencyMax.Load()
+		if ns <= cur || m.latencyMax.CompareAndSwap(cur, ns) {
+			break
+		}
+	}
 }
 
 // Snapshot returns a point-in-time copy of the metrics.
@@ -33,24 +51,34 @@ func (m *NodeMetrics) Snapshot() NodeMetricsSnapshot {
 		fps = float64(frames) / elapsed
 	}
 
+	var avgLatency, maxLatency time.Duration
+	if cnt := m.latencyCount.Load(); cnt > 0 {
+		avgLatency = time.Duration(m.latencySum.Load() / cnt)
+		maxLatency = time.Duration(m.latencyMax.Load())
+	}
+
 	return NodeMetricsSnapshot{
-		NodeID:  m.NodeID,
-		Frames:  frames,
-		Errors:  m.Errors.Load(),
-		Bytes:   m.Bytes.Load(),
-		FPS:     fps,
-		Elapsed: time.Since(m.StartTime),
+		NodeID:     m.NodeID,
+		Frames:     frames,
+		Errors:     m.Errors.Load(),
+		Bytes:      m.Bytes.Load(),
+		FPS:        fps,
+		Elapsed:    time.Since(m.StartTime),
+		AvgLatency: avgLatency,
+		MaxLatency: maxLatency,
 	}
 }
 
 // NodeMetricsSnapshot is a read-only copy of node metrics at a point in time.
 type NodeMetricsSnapshot struct {
-	NodeID  string
-	Frames  int64
-	Errors  int64
-	Bytes   int64
-	FPS     float64
-	Elapsed time.Duration
+	NodeID     string
+	Frames     int64
+	Errors     int64
+	Bytes      int64
+	FPS        float64
+	Elapsed    time.Duration
+	AvgLatency time.Duration
+	MaxLatency time.Duration
 }
 
 // MetricsSnapshot is a complete metrics snapshot for the pipeline.

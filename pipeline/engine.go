@@ -12,8 +12,10 @@ import (
 
 	"github.com/MediaMolder/MediaMolder/av"
 	"github.com/MediaMolder/MediaMolder/graph"
+	"github.com/MediaMolder/MediaMolder/observability"
 	"github.com/MediaMolder/MediaMolder/processors"
 	"github.com/MediaMolder/MediaMolder/runtime"
+	"go.opentelemetry.io/otel/trace"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -35,8 +37,11 @@ type Pipeline struct {
 	seekPending bool  // true when a seek has been requested
 
 	metrics     *MetricsRegistry
-	reconf      *reconfigurable // live filter parameter changes (graph mode only)
-	graphRunner *graphRunner    // running graph resources (graph mode only)
+	edgeStats   *runtime.EdgeStatsRegistry
+	prom        *observability.Metrics  // optional Prometheus metrics; nil = disabled
+	obsProvider *observability.Provider // optional OTel tracing provider; nil = disabled
+	reconf      *reconfigurable         // live filter parameter changes (graph mode only)
+	graphRunner *graphRunner            // running graph resources (graph mode only)
 }
 
 // NewPipeline creates a Pipeline from a validated Config.
@@ -172,6 +177,29 @@ func (p *Pipeline) GetMetrics() MetricsSnapshot {
 // Metrics returns the underlying MetricsRegistry for direct node updates.
 func (p *Pipeline) Metrics() *MetricsRegistry {
 	return p.metrics
+}
+
+// EdgeStats returns the edge backpressure registry, or nil if not running.
+func (p *Pipeline) EdgeStats() *runtime.EdgeStatsRegistry {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.edgeStats
+}
+
+// SetPrometheus sets the Prometheus metrics collector for this pipeline.
+// Must be called before SetState(StatePlaying).
+func (p *Pipeline) SetPrometheus(prom *observability.Metrics) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.prom = prom
+}
+
+// SetObsProvider sets the OpenTelemetry tracing provider for this pipeline.
+// Must be called before SetState(StatePlaying).
+func (p *Pipeline) SetObsProvider(provider *observability.Provider) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.obsProvider = provider
 }
 
 // Wait blocks until the pipeline finishes (EOS or error) while in PLAYING state.
@@ -732,8 +760,24 @@ func buildFilterSpec(node NodeDef) string {
 
 // runGraph executes the pipeline using the graph builder + scheduler for
 // configs with explicit edges (multi-input / multi-output support).
-func (p *Pipeline) runGraph(ctx context.Context) error {
+func (p *Pipeline) runGraph(ctx context.Context) (runErr error) {
 	cfg := p.cfg
+
+	// Wrap the entire run in a pipeline-level OTel span if a provider is set.
+	p.mu.Lock()
+	obs := p.obsProvider
+	p.mu.Unlock()
+	if obs != nil {
+		var pipelineSpan trace.Span
+		ctx, pipelineSpan = obs.StartPipelineSpan(ctx, cfg.Description)
+		defer func() {
+			if runErr != nil {
+				observability.EndSpanError(pipelineSpan, runErr)
+			} else {
+				observability.EndSpanOK(pipelineSpan)
+			}
+		}()
+	}
 
 	// 1. Convert pipeline config → graph definition → validated DAG.
 	def := configToGraphDef(cfg)
@@ -761,6 +805,7 @@ func (p *Pipeline) runGraph(ctx context.Context) error {
 		p.mu.Lock()
 		p.graphRunner = nil
 		p.reconf = nil
+		p.edgeStats = nil
 		p.mu.Unlock()
 	}()
 
@@ -822,8 +867,29 @@ func (p *Pipeline) runGraph(ctx context.Context) error {
 	p.mu.Unlock()
 
 	// 4. Run the scheduler — one goroutine per node, channels per edge.
-	sched := &runtime.Scheduler{BufSize: 8}
-	if err := sched.Run(ctx, dag, runner.handle); err != nil {
+	edgeStats := runtime.NewEdgeStatsRegistry()
+	p.mu.Lock()
+	p.edgeStats = edgeStats
+	p.mu.Unlock()
+
+	// Wrap handler with per-node OTel spans.
+	handler := runtime.NodeHandler(runner.handle)
+	if obs != nil {
+		inner := handler
+		handler = func(ctx context.Context, node *graph.Node, ins []<-chan any, outs []chan<- any) error {
+			ctx, span := observability.StartNodeSpan(ctx, node.ID, node.Kind.String(), "", "")
+			err := inner(ctx, node, ins, outs)
+			if err != nil {
+				observability.EndSpanError(span, err)
+			} else {
+				observability.EndSpanOK(span)
+			}
+			return err
+		}
+	}
+
+	sched := &runtime.Scheduler{BufSize: 8, EdgeBufSizes: plan.EdgeBufSizes, EdgeStats: edgeStats}
+	if err := sched.Run(ctx, dag, handler); err != nil {
 		// Abort all outputs on error.
 		for _, s := range runner.sinks {
 			s.muxer.Abort()

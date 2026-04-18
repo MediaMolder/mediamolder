@@ -6,6 +6,7 @@ package runtime
 import (
 	"context"
 	"sync"
+	"time"
 
 	"github.com/MediaMolder/MediaMolder/graph"
 	"golang.org/x/sync/errgroup"
@@ -19,7 +20,10 @@ type NodeHandler func(ctx context.Context, node *graph.Node, ins []<-chan any, o
 
 // Scheduler runs a graph.Graph as concurrent goroutines linked by channels.
 type Scheduler struct {
-	BufSize int // channel buffer size; 0 uses default of 8
+	BufSize        int                 // channel buffer size; 0 uses default of 8
+	EdgeBufSizes   map[*graph.Edge]int // per-edge overrides from ExecutionPlan; nil = use BufSize for all
+	EdgeStats      *EdgeStatsRegistry  // optional backpressure monitor; nil = disabled
+	SampleInterval time.Duration       // edge stats sampling interval; 0 uses 500ms default
 }
 
 // Run launches one goroutine per node, wires them with channels, and blocks
@@ -33,7 +37,22 @@ func (s *Scheduler) Run(ctx context.Context, g *graph.Graph, handler NodeHandler
 	// Create a channel per edge.
 	edgeCh := make(map[*graph.Edge]chan any, len(g.Edges))
 	for _, e := range g.Edges {
-		edgeCh[e] = make(chan any, bufSize)
+		size := bufSize
+		if s.EdgeBufSizes != nil {
+			if hint, ok := s.EdgeBufSizes[e]; ok && hint > 0 {
+				size = hint
+			}
+		}
+		edgeCh[e] = make(chan any, size)
+	}
+
+	// Register channels for backpressure monitoring.
+	if s.EdgeStats != nil {
+		for _, e := range g.Edges {
+			id := e.From.ID + "→" + e.To.ID + ":" + string(e.Type)
+			s.EdgeStats.Register(id, e.From.ID, e.To.ID, string(e.Type), edgeCh[e])
+		}
+		s.EdgeStats.StartSampler(ctx, s.SampleInterval)
 	}
 
 	eg, ctx := errgroup.WithContext(ctx)
