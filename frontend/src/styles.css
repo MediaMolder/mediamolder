@@ -198,6 +198,27 @@ button.danger:hover { background: rgba(185, 74, 74, 0.15); }
 .react-flow__edge.edge-subtitle .react-flow__edge-path { stroke: var(--subtitle); stroke-width: 2; }
 .react-flow__edge.edge-data     .react-flow__edge-path { stroke: var(--data);     stroke-width: 2; }
 
+/* Edge attribute chip rendered by MMEdge — shows pix_fmt, sample_rate etc. */
+.mm-edge-chip {
+  position: absolute;
+  pointer-events: all;
+  background: rgba(24, 27, 34, 0.92);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 6px;
+  font-size: 10px;
+  line-height: 1.4;
+  color: var(--text);
+  white-space: nowrap;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  cursor: help;
+  backdrop-filter: blur(2px);
+}
+.react-flow__edge.edge-video    .mm-edge-chip { border-color: var(--video); }
+.react-flow__edge.edge-audio    .mm-edge-chip { border-color: var(--audio); }
+.react-flow__edge.edge-subtitle .mm-edge-chip { border-color: var(--subtitle); }
+.react-flow__edge.edge-data     .mm-edge-chip { border-color: var(--data); }
+
 
 /* ---------- Palette improvements ---------- */
 .palette-cat { margin-bottom: 4px; }
@@ -411,28 +432,32 @@ button.danger:hover { background: rgba(185, 74, 74, 0.15); }
 .help-content .legend-list { list-style: none; margin-left: 0; }
 .help-content .legend-list li { display: flex; align-items: center; gap: 8px; }
 
-/* ---------- Legend (bottom-right floating) ---------- */
+/* ---------- Legend (bottom-centre floating) ---------- */
 .legend {
   position: absolute;
-  right: 12px;
+  left: 50%;
   bottom: 12px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 14px;
   background: rgba(24, 27, 34, 0.92);
   border: 1px solid var(--border);
   border-radius: 6px;
-  padding: 8px 10px;
+  padding: 6px 12px;
   font-size: 11px;
   z-index: 4;
   pointer-events: none;
   backdrop-filter: blur(4px);
+  white-space: nowrap;
 }
 .legend-title {
   font-size: 10px;
   text-transform: uppercase;
   color: var(--text-dim);
   letter-spacing: 0.5px;
-  margin-bottom: 4px;
 }
-.legend-row { display: flex; align-items: center; gap: 6px; margin: 2px 0; }
+.legend-row { display: inline-flex; align-items: center; gap: 6px; }
 .legend-swatch {
   display: inline-block;
   width: 14px;

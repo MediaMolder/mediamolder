@@ -141,6 +141,7 @@ export function configToFlow(cfg: JobConfig, opts: ConvertOptions = {}): {
     const targetId = outputIds.has(toHead) ? OUTPUT_PREFIX + toHead : toHead;
     return {
       id: `e${idx}-${sourceId}-${targetId}-${e.type}`,
+      type: 'mmEdge',
       source: sourceId,
       target: targetId,
       sourceHandle: e.type,

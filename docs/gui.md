@@ -28,8 +28,9 @@ Useful flags:
 ## Your first pipeline (5-minute walkthrough)
 
 If you have never used the editor before, the canvas opens with an
-**onboarding card** that summarises the steps below. Press <kbd>?</kbd> at
-any time to open the in-app help dialog.
+**onboarding card** that summarises the steps below. Click the
+**Help** toolbar button (or press <kbd>?</kbd>) at any time to open the
+in-app help dialog.
 
 1. **Pick a starting point.**
    * The fastest path is the **Example ▾** dropdown in the toolbar — choose
@@ -67,10 +68,16 @@ any time to open the in-app help dialog.
   whenever the graph gets messy.
 * `Backspace` / `Delete` removes the selected node. The shortcut is ignored
   while you are typing in a form.
-* Press <kbd>?</kbd> for the in-app help, <kbd>Esc</kbd> to dismiss any
-  open dialog.
-* The bottom-right **Stream types** legend shows the colour code used for
-  edges and handles.
+* Press <kbd>?</kbd> (or click the **Help** button) for the in-app help,
+  <kbd>Esc</kbd> to dismiss any open dialog.
+* The bottom-centre **Stream types** legend shows the colour code used for
+  edges and handles. The bottom-right minimap stays clear of it.
+* Each edge displays a small **attribute chip** (e.g. `1280×720 · yuv420p ·
+  30fps`) summarising the technical properties MediaMolder can infer for
+  that stream from the upstream nodes' parameters. Hover the chip to see
+  the full list and which node established each value. Attributes that no
+  upstream node has set are intentionally omitted — the chip never
+  guesses. See [Edge attributes](#edge-attributes) below.
 
 ## File browser
 
@@ -155,11 +162,52 @@ configured node.
   (video / audio / subtitle / data). Handles only accept connections of the
   same type — incompatible drags are rejected.
 * Edges are colour-coded by stream type.
+* Each edge displays an **attribute chip** with the technical properties
+  the editor can infer for the stream (see [Edge attributes](#edge-attributes)).
 * Node positions are persisted into the saved JSON under `graph.ui.positions`
   (schema v1.2) so reopening a job preserves the layout. The runtime ignores
   this block — it is metadata for the editor only.
 * `Backspace` / `Delete` removes the selected node (input fields are not
   hijacked).
+
+### Edge attributes
+
+Every connection on the canvas shows a small chip near its midpoint
+summarising the technical properties of the stream travelling along it,
+for example:
+
+```
+1280×720 · yuv420p · 30fps          (video)
+48000Hz · stereo · aac              (audio after an aac encoder)
+```
+
+The values are inferred at edit time from upstream node parameters by
+walking the graph backwards from the edge:
+
+1. Look at the immediate source node. If its `params` set a known
+   attribute (`pix_fmt`, `width`, `height`, `frame_rate`, `sample_rate`,
+   `channel_layout`, `sample_fmt`, `bit_rate`, …) record it.
+2. Apply filter-specific shortcuts: `scale` / `scale_*` contribute
+   `width` and `height`; `format` contributes `pix_fmt`; `fps` /
+   `framerate` contribute `frame_rate`; `aresample` / `asetrate` /
+   `aformat` contribute `sample_rate` / `sample_fmt` / `channel_layout`;
+   `encoder` nodes contribute `codec` and `bit_rate`; `Output` nodes
+   contribute their `codec_video` / `codec_audio` / `codec_subtitle`.
+3. For any attribute not yet known, repeat the lookup on the source's
+   own incoming edges (same stream type). The closest node that
+   establishes a value wins, so transparent passthroughs like
+   `setpts` or `drawtext` correctly propagate the upstream value.
+4. Attributes that no node has set are omitted — the chip never
+   guesses. An edge with no upstream constraints renders the path
+   only.
+
+Hover the chip to see the full attribute list together with the node
+that established each value (`pix_fmt: yuv420p (from format0)`).
+
+The inference code lives in
+[`frontend/src/lib/streamAttrs.ts`](../frontend/src/lib/streamAttrs.ts);
+add a new entry to `attrsFromGraphNode` to teach the editor about a new
+filter or processor that constrains a property.
 
 ### Inspector
 
@@ -258,7 +306,7 @@ without the GUI never need to include it.
 | **Blank canvas, palette empty.** | The frontend could not reach `/api/nodes`. Check the terminal where `mediamolder gui` is running for an error and confirm the page URL points at the same host/port. |
 | **"Too many redirects" loading the page.** | You are hitting an old build. Rebuild with `make build-gui` (the embedded SPA fallback no longer rewrites `/index.html`). |
 | **Browse… dialog shows "permission denied".** | The directory is not readable by the user running `mediamolder`. Either `chmod` it or pick a different location. |
-| **Connections rejected when wiring nodes.** | Handles are stream-typed. A video output cannot connect to an audio input — see the bottom-right legend for the colour code. |
+| **Connections rejected when wiring nodes.** | Handles are stream-typed. A video output cannot connect to an audio input — see the bottom-centre legend for the colour code. |
 | **`Run` button does nothing.** | The pipeline failed validation. Check the toolbar for a red error banner; common causes are missing URLs, dangling outputs, or unknown filter/codec names. |
 | **No live FPS in node badges.** | The pipeline is not in `Playing` state. Confirm the Run panel shows progressing frame counts; otherwise check the `error` events in the panel. |
 | **Filter not in the palette.** | The binary was built without that filter (e.g. a stripped FFmpeg). Rebuild FFmpeg with the missing component enabled. |

@@ -6,6 +6,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 ## [Unreleased]
 
 ### Added
+- **GUI: edge attribute chips** — every connection on the canvas now shows a small chip summarising the technical properties of the stream travelling along it (e.g. `1280×720 · yuv420p · 30fps`, `48000Hz · stereo · aac`). Values are inferred by walking upstream from the edge: filter-specific rules (`scale`, `format`, `fps`, `aresample`, `aformat`, `asetrate`, encoder/output nodes, …) plus a generic params-by-canonical-name lookup contribute attributes; pass-through nodes propagate upstream values unchanged. Hover a chip for the full attribute list and the node that established each value. Implemented in `frontend/src/lib/streamAttrs.ts` and `frontend/src/components/MMEdge.tsx`.
 - **Visual editor (`mediamolder gui` subcommand)** — browser-based pipeline editor served from the same single binary as the CLI. Drag-and-drop palette populated from `/api/nodes` (every libavfilter, codec, demuxer/muxer, and registered Go processor in the binary), stream-typed handles and edges, dagre auto-layout, JSON import/export, and a typed inspector for every node kind.
 - **Live run + progress streaming** — Run/Stop buttons execute the current graph via `POST /api/run`; per-job state, metrics, errors, and logs stream back over Server-Sent Events (`GET /api/events/{jobId}`). Live frame counts, FPS, and error highlights overlay each node on the canvas.
 - **GUI HTTP API**: `/api/health`, `/api/nodes`, `/api/examples`, `/api/validate`, `/api/run`, `/api/cancel/{jobId}`, `/api/events/{jobId}`.
@@ -33,5 +34,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - Comprehensive documentation: `docs/go-processor-nodes.md`, updated `docs/json-config-reference.md` and `README.md`.
 
 ### Changed
+- **GUI: stream-type legend moved to the bottom centre** and laid out horizontally so it no longer overlays the bottom-right minimap.
+- **GUI: toolbar Help button is now labelled `Help`** instead of `?` (the `?` keyboard shortcut still opens the dialog).
 - Graph builder and runtime support `go_processor` nodes with identical edge/pad semantics as filters.
 - Backward-compatible: all existing `schema_version: "1.0"` pipelines work unchanged.

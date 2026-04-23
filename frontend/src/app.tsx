@@ -19,6 +19,7 @@ import '@xyflow/react/dist/style.css';
 import { Palette } from './components/Palette';
 import { Inspector } from './components/Inspector';
 import { MMNode, type MMNodeRunData } from './components/MMNode';
+import { MMEdge } from './components/MMEdge';
 import { RunPanel } from './components/RunPanel';
 import { HelpDialog } from './components/HelpDialog';
 import { Legend } from './components/Legend';
@@ -31,9 +32,11 @@ import {
 import { autoLayout } from './lib/layout';
 import { spawnNodeFrom, type PaletteEntry } from './lib/spawn';
 import { useJobRun } from './lib/useJobRun';
+import { inferEdgeAttributes, summariseAttributes } from './lib/streamAttrs';
 import type { JobConfig, StreamType } from './lib/jobTypes';
 
 const NODE_TYPES = { mmNode: MMNode };
+const EDGE_TYPES = { mmEdge: MMEdge };
 
 interface ExampleEntry {
   name: string;
@@ -118,6 +121,7 @@ function Editor() {
       setEdges((es) => {
         const newEdge: FlowEdge = {
           id: `e-${Date.now()}-${es.length}`,
+          type: 'mmEdge',
           source: c.source!,
           target: c.target!,
           sourceHandle: c.sourceHandle ?? undefined,
@@ -303,6 +307,22 @@ function Editor() {
     [nodes, runByNode],
   );
 
+  /* Compute inferred technical attributes for each edge so MMEdge can render
+     a chip showing pix_fmt / size / sample_rate / etc. Recomputes whenever
+     the graph topology or any node params change. */
+  const decoratedEdges = useMemo<FlowEdge[]>(
+    () =>
+      edges.map((e) => {
+        const attrs = inferEdgeAttributes(nodes, edges, e);
+        const summary = summariseAttributes(attrs);
+        return {
+          ...e,
+          data: { ...(e.data ?? {}), attrs, attrSummary: summary },
+        } as FlowEdge;
+      }),
+    [nodes, edges],
+  );
+
   return (
     <div className="app-shell">
       <div className="toolbar">
@@ -337,7 +357,7 @@ function Editor() {
         <button onClick={() => setShowRunPanel((v) => !v)} disabled={run.status === 'idle'}>
           {showRunPanel ? 'Hide log' : 'Show log'}
         </button>
-        <button onClick={() => setHelpOpen(true)} title="Open help (or press ?)">?</button>
+        <button onClick={() => setHelpOpen(true)} title="Open help (or press ?)">Help</button>
       </div>
 
       <Palette />
@@ -345,8 +365,9 @@ function Editor() {
       <div className="canvas" ref={canvasRef} onDragOver={onDragOver} onDrop={onDrop}>
         <ReactFlow
           nodes={decoratedNodes}
-          edges={edges}
+          edges={decoratedEdges}
           nodeTypes={NODE_TYPES}
+          edgeTypes={EDGE_TYPES}
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
           onConnect={onConnect}
@@ -370,7 +391,7 @@ function Editor() {
               <li>Connect matching coloured handles — see the legend in the corner.</li>
               <li>Click <strong>Run</strong> to execute and watch progress live.</li>
             </ol>
-            <p className="hint">Need more help? Press <kbd>?</kbd> or click the <strong>?</strong> button in the toolbar.</p>
+            <p className="hint">Need more help? Press <kbd>?</kbd> or click the <strong>Help</strong> button in the toolbar.</p>
           </div>
         )}
         <Legend />

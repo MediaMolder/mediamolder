@@ -18,16 +18,16 @@ import (
 // fileEntry represents one item in a directory listing.
 type fileEntry struct {
 	Name  string `json:"name"`
-	Path  string `json:"path"`            // absolute path
+	Path  string `json:"path"` // absolute path
 	IsDir bool   `json:"is_dir"`
-	Size  int64  `json:"size,omitempty"`  // bytes (files only)
+	Size  int64  `json:"size,omitempty"` // bytes (files only)
 }
 
 type fileListResponse struct {
-	Path    string      `json:"path"`              // absolute, normalized path that was listed
-	Parent  string      `json:"parent,omitempty"`  // absolute path of parent (empty at filesystem root)
+	Path    string      `json:"path"`             // absolute, normalized path that was listed
+	Parent  string      `json:"parent,omitempty"` // absolute path of parent (empty at filesystem root)
 	Entries []fileEntry `json:"entries"`
-	Roots   []string    `json:"roots,omitempty"`   // shortcut roots ($HOME, /, cwd)
+	Roots   []string    `json:"roots,omitempty"` // shortcut roots ($HOME, /, cwd)
 }
 
 // handleListDir returns a directory listing for the GUI's file picker.
