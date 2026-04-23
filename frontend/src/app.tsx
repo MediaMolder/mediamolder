@@ -20,6 +20,8 @@ import { Palette } from './components/Palette';
 import { Inspector } from './components/Inspector';
 import { MMNode, type MMNodeRunData } from './components/MMNode';
 import { RunPanel } from './components/RunPanel';
+import { HelpDialog } from './components/HelpDialog';
+import { Legend } from './components/Legend';
 import {
   configToFlow,
   flowToConfig,
@@ -227,6 +229,15 @@ function Editor() {
     const handler = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null;
       if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) return;
+      if (e.key === 'Escape') {
+        setHelpOpen(false);
+        return;
+      }
+      if (e.key === '?' || (e.shiftKey && e.key === '/')) {
+        e.preventDefault();
+        setHelpOpen(true);
+        return;
+      }
       if ((e.key === 'Backspace' || e.key === 'Delete') && selectedId) {
         e.preventDefault();
         onNodeDelete(selectedId);
@@ -264,6 +275,9 @@ function Editor() {
   const onStop = useCallback(() => {
     void run.cancel();
   }, [run]);
+
+  /* ---------- Help dialog ---------- */
+  const [helpOpen, setHelpOpen] = useState(false);
 
   /* Merge live metrics + errors into node data so MMNode can render badges. */
   const runByNode = useMemo(() => {
@@ -323,6 +337,7 @@ function Editor() {
         <button onClick={() => setShowRunPanel((v) => !v)} disabled={run.status === 'idle'}>
           {showRunPanel ? 'Hide log' : 'Show log'}
         </button>
+        <button onClick={() => setHelpOpen(true)} title="Open help (or press ?)">?</button>
       </div>
 
       <Palette />
@@ -343,12 +358,27 @@ function Editor() {
         >
           <Background gap={16} size={1} color="#2a303a" />
           <MiniMap pannable zoomable style={{ background: 'var(--panel)' }} />
-          <Controls showInteractive={false} />
+          <Controls showInteractive={false} className="mm-controls" />
         </ReactFlow>
+        {nodes.length === 0 && (
+          <div className="canvas-onboarding">
+            <h2>Build your first pipeline</h2>
+            <ol>
+              <li>Pick an example from the toolbar dropdown, <em>or</em></li>
+              <li>Drag a <strong>Source</strong> node (Input file) from the palette on the left onto this canvas.</li>
+              <li>Add <strong>Filters</strong>, <strong>Encoders</strong> or <strong>Processors</strong>, then add a <strong>Sink</strong> (Output file).</li>
+              <li>Connect matching coloured handles — see the legend in the corner.</li>
+              <li>Click <strong>Run</strong> to execute and watch progress live.</li>
+            </ol>
+            <p className="hint">Need more help? Press <kbd>?</kbd> or click the <strong>?</strong> button in the toolbar.</p>
+          </div>
+        )}
+        <Legend />
       </div>
 
       <Inspector node={selectedNode} onChange={onNodeUpdate} onDelete={onNodeDelete} />
       <RunPanel run={run} visible={showRunPanel} onClose={() => setShowRunPanel(false)} />
+      <HelpDialog open={helpOpen} onClose={() => setHelpOpen(false)} />
     </div>
   );
 }

@@ -7,8 +7,10 @@ import type { Input, NodeDef, Output } from './jobTypes';
 
 export interface PaletteEntry {
   category: string;
+  subcategory?: string;
   type: string; // schema NodeDef.type or "input" / "output"
   name: string;
+  label?: string;
   description?: string;
   streams?: string[];
   num_inputs?: number;

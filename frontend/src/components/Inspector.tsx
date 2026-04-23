@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { FlowNode } from '../lib/jsonAdapter';
 import type { Input, NodeDef, Output } from '../lib/jobTypes';
+import { FileBrowser, type BrowseMode } from './FileBrowser';
 
 interface Props {
   node: FlowNode | null;
@@ -64,7 +65,13 @@ function InputForm({ def, onChange }: { def: Input; onChange: (next: Input) => v
   return (
     <>
       <Field label="ID" value={def.id} onChange={(v) => onChange({ ...def, id: v })} />
-      <Field label="URL" value={def.url} onChange={(v) => onChange({ ...def, url: v })} />
+      <FileField
+        label="URL"
+        value={def.url}
+        mode="open"
+        filter="mp4,mkv,mov,m4v,webm,avi,ts,mxf,mp3,wav,flac,aac,m4a,ogg,opus,jpg,jpeg,png"
+        onChange={(v) => onChange({ ...def, url: v })}
+      />
     </>
   );
 }
@@ -74,7 +81,13 @@ function OutputForm({ def, onChange }: { def: Output; onChange: (next: Output) =
   return (
     <>
       <Field label="ID" value={def.id} onChange={(v) => onChange({ ...def, id: v })} />
-      <Field label="URL" value={def.url} onChange={(v) => onChange({ ...def, url: v })} />
+      <FileField
+        label="URL"
+        value={def.url}
+        mode="save"
+        defaultFilename="output.mp4"
+        onChange={(v) => onChange({ ...def, url: v })}
+      />
       <Field label="Format" value={def.format ?? ''} onChange={(v) => onChange({ ...def, format: v || undefined })} />
       <Field
         label="Codec (video)"
@@ -187,4 +200,60 @@ function Field({ label, value, onChange }: { label: string; value: string; onCha
       />
     </>
   );
+}
+
+/* ---------- File-browser-aware text field ---------- */
+function FileField({
+  label,
+  value,
+  mode,
+  filter,
+  defaultFilename,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  mode: BrowseMode;
+  filter?: string;
+  defaultFilename?: string;
+  onChange: (v: string) => void;
+}) {
+  const [local, setLocal] = useState(value);
+  const [open, setOpen] = useState(false);
+  useEffect(() => setLocal(value), [value]);
+  return (
+    <>
+      <label>{label}</label>
+      <div className="file-field">
+        <input
+          value={local}
+          onChange={(e) => setLocal(e.target.value)}
+          onBlur={() => {
+            if (local !== value) onChange(local);
+          }}
+          placeholder={mode === 'save' ? '/path/to/output.mp4' : '/path/to/input.mp4'}
+        />
+        <button onClick={() => setOpen(true)} title="Browse local filesystem">Browse…</button>
+      </div>
+      <FileBrowser
+        open={open}
+        mode={mode}
+        filter={filter}
+        defaultFilename={defaultFilename}
+        initialPath={inferDir(value)}
+        onClose={() => setOpen(false)}
+        onPick={(p) => {
+          setLocal(p);
+          onChange(p);
+        }}
+      />
+    </>
+  );
+}
+
+function inferDir(p: string): string | undefined {
+  if (!p) return undefined;
+  const i = p.lastIndexOf('/');
+  if (i <= 0) return undefined;
+  return p.slice(0, i);
 }

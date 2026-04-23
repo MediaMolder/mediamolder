@@ -25,6 +25,99 @@ Useful flags:
 | `--examples` | `testdata/examples` | Directory whose `*.json` files are listed in the **Example** dropdown. Set to `""` to disable. |
 | `--dev`      | `false`     | Skip the embedded frontend; expects you to run `npm run dev` separately. |
 
+## Your first pipeline (5-minute walkthrough)
+
+If you have never used the editor before, the canvas opens with an
+**onboarding card** that summarises the steps below. Press <kbd>?</kbd> at
+any time to open the in-app help dialog.
+
+1. **Pick a starting point.**
+   * The fastest path is the **Example ▾** dropdown in the toolbar — choose
+     any entry to load a working pipeline you can edit.
+   * Otherwise click **New** to start from a blank canvas.
+2. **Add a Source.** From the **Sources** category in the left palette, drag
+   *Input file* onto the canvas. Click the new node, then in the Inspector
+   on the right click **Browse…** next to **URL** to pick a media file from
+   your local filesystem.
+3. **Add processing nodes.** From the palette categories:
+   * **Filters** — libavfilter operations (scaling, colour, denoise, audio
+     dynamics, …) grouped by intent. Hover any entry for a tooltip with the
+     full description; type in the search box to narrow the list.
+   * **Encoders** — codec implementations grouped by stream type (Video /
+     Audio / Subtitle).
+   * **Processors** — Go-side custom blocks (frame extraction, scene
+     detection, transcript writers, …).
+4. **Add a Sink.** Drag *Output file* from **Sinks**, click **Browse…** and
+   pick **Save** mode in the dialog to choose a destination path and
+   filename. Set the **Format** field (e.g. `mp4`) and the encoder names if
+   you have not already added explicit encoder nodes.
+5. **Connect the nodes.** Each node exposes one handle per stream type on
+   each side. Drag from a source handle to a target handle of the **same
+   colour**. Mismatched stream types are rejected.
+6. **Run.** Click **Run** in the toolbar. The Run panel opens; node badges
+   show live `Frames` / `FPS`, and a node that errors is outlined in red.
+   Click **Stop** to cancel.
+7. **Save / Export.** **Export** downloads the current graph as a
+   MediaMolder JSON job. **Import** loads any job JSON (including the
+   bundled examples and files written by the CLI).
+
+### Tips
+
+* **Auto layout** rearranges the nodes using a left-to-right Dagre layout
+  whenever the graph gets messy.
+* `Backspace` / `Delete` removes the selected node. The shortcut is ignored
+  while you are typing in a form.
+* Press <kbd>?</kbd> for the in-app help, <kbd>Esc</kbd> to dismiss any
+  open dialog.
+* The bottom-right **Stream types** legend shows the colour code used for
+  edges and handles.
+
+## File browser
+
+The Browse… buttons next to **Input → URL** and **Output → URL** open a
+modal file picker. It does *not* upload files anywhere — it just helps you
+type a correct local path.
+
+* The left sidebar lists shortcuts for your home directory, the directory
+  the binary was launched from, and the filesystem root.
+* The pathbar at the top lets you type a path directly and press
+  <kbd>Enter</kbd> or click **Go**, or use the **↑** button to ascend.
+* In **Open** mode, double-click a file to select it. The dialog filters by
+  common media extensions; toggle this off by clearing the URL field
+  before browsing.
+* In **Save** mode, navigate to the destination directory, edit the
+  **Filename** field at the bottom, and click **Save**. The dialog does
+  *not* create the file — that happens when the pipeline runs.
+* Hidden files (starting with `.`) are not shown.
+
+## Filter categories
+
+Rather than a flat alphabetical list of ~360 filters, the palette organises
+filters by intent:
+
+| Bucket | Examples |
+|--------|----------|
+| Scaling & geometry | `scale`, `crop`, `pad`, `rotate`, `transpose` |
+| Color & exposure | `eq`, `curves`, `colorbalance`, `lut3d` |
+| Denoise & deinterlace | `hqdn3d`, `nlmeans`, `yadif`, `bwdif` |
+| Sharpen & blur | `unsharp`, `gblur`, `boxblur` |
+| Text & overlays | `drawtext`, `drawbox`, `overlay` |
+| Timing & framerate | `fps`, `setpts`, `framerate`, `tinterlace` |
+| Format conversion | `format`, `setdar`, `setsar`, `pixfmt`-related |
+| Metadata & inspection | `metadata`, `signalstats`, `cropdetect` |
+| Hardware acceleration | `*_qsv`, `*_cuda`, `*_vaapi`, `*_videotoolbox` |
+| Subtitles | `subtitles`, `ass` |
+| Audio: format & routing | `aresample`, `aformat`, `pan`, `amerge` |
+| Audio: dynamics & loudness | `loudnorm`, `acompressor`, `alimiter` |
+| Audio: EQ & effects | `equalizer`, `bass`, `treble`, `aecho` |
+| Audio: visualisation | `showwaves`, `showspectrum` |
+| Other | anything that does not match the heuristics above |
+
+Each entry shows a friendly label first (e.g. *Scale — set the input video
+size*) with the canonical libavfilter name underneath. Hover for the full
+description. Use the search box to narrow across all categories — matches
+expand the relevant subcategories automatically.
+
 ## Anatomy
 
 ```
@@ -108,6 +201,7 @@ explicitly to `127.0.0.1` (the default) if untrusted users share the host.
 | `POST` | `/api/run`                    | Start a run; returns `{job_id}`.                      |
 | `POST` | `/api/cancel/{jobId}`         | Cancel an in-flight run.                              |
 | `GET`  | `/api/events/{jobId}`         | Server-Sent Events stream for the run.                |
+| `GET`  | `/api/files`                  | List a directory (`?path=&filter=ext1,ext2&dirs_only=`). |
 
 ### Why SSE rather than WebSockets?
 
@@ -156,3 +250,16 @@ without the GUI never need to include it.
   untrusted networks.
 * The job manager retains the 16 most recent finished runs (events + metrics)
   in memory; older runs are garbage-collected.
+
+## Troubleshooting
+
+| Symptom | Likely cause / fix |
+|---------|--------------------|
+| **Blank canvas, palette empty.** | The frontend could not reach `/api/nodes`. Check the terminal where `mediamolder gui` is running for an error and confirm the page URL points at the same host/port. |
+| **"Too many redirects" loading the page.** | You are hitting an old build. Rebuild with `make build-gui` (the embedded SPA fallback no longer rewrites `/index.html`). |
+| **Browse… dialog shows "permission denied".** | The directory is not readable by the user running `mediamolder`. Either `chmod` it or pick a different location. |
+| **Connections rejected when wiring nodes.** | Handles are stream-typed. A video output cannot connect to an audio input — see the bottom-right legend for the colour code. |
+| **`Run` button does nothing.** | The pipeline failed validation. Check the toolbar for a red error banner; common causes are missing URLs, dangling outputs, or unknown filter/codec names. |
+| **No live FPS in node badges.** | The pipeline is not in `Playing` state. Confirm the Run panel shows progressing frame counts; otherwise check the `error` events in the panel. |
+| **Filter not in the palette.** | The binary was built without that filter (e.g. a stripped FFmpeg). Rebuild FFmpeg with the missing component enabled. |
+| **`mediamolder` binary date didn't change after `go build ./...`.** | `go build ./...` is a compile check only. Use `make build-gui` or `go build -o mediamolder ./cmd/mediamolder` to actually overwrite the binary. |
