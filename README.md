@@ -133,6 +133,13 @@ go build -tags=ffstatic ./...
 go install ./cmd/mediamolder
 ```
 
+**Build with the embedded visual editor (GUI):**
+```sh
+make build-gui    # bundles the React frontend into a single binary
+./mediamolder gui # opens http://127.0.0.1:8080
+```
+See [docs/gui.md](docs/gui.md) for the full GUI guide.
+
 ---
 
 ## Quickstart
@@ -301,6 +308,7 @@ See the [Go Processor Nodes](docs/go-processor-nodes.md) guide for the full API,
 ## Documentation
 
 - [JSON Config Reference](docs/json-config-reference.md)
+- [Visual Editor (GUI)](docs/gui.md)
 - [Go Processor Nodes](docs/go-processor-nodes.md)
 - [FFmpeg Migration Guide](docs/ffmpeg-migration-guide.md)
 - [Pipeline State Machine](docs/pipeline-state-machine.md)

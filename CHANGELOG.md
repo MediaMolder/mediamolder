@@ -6,6 +6,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 ## [Unreleased]
 
 ### Added
+- **Visual editor (`mediamolder gui` subcommand)** — browser-based pipeline editor served from the same single binary as the CLI. Drag-and-drop palette populated from `/api/nodes` (every libavfilter, codec, demuxer/muxer, and registered Go processor in the binary), stream-typed handles and edges, dagre auto-layout, JSON import/export, and a typed inspector for every node kind.
+- **Live run + progress streaming** — Run/Stop buttons execute the current graph via `POST /api/run`; per-job state, metrics, errors, and logs stream back over Server-Sent Events (`GET /api/events/{jobId}`). Live frame counts, FPS, and error highlights overlay each node on the canvas.
+- **GUI HTTP API**: `/api/health`, `/api/nodes`, `/api/examples`, `/api/validate`, `/api/run`, `/api/cancel/{jobId}`, `/api/events/{jobId}`.
+- **Schema v1.2** adds optional `graph.ui.positions` for editor-side node-position persistence. Runtime ignores the block; older v1.0 / v1.1 jobs load unchanged.
+- `internal/gui` package: embedded production frontend via `//go:embed`, job manager with bounded history replay (64 events) and finished-job retention (16 runs).
+- `frontend/` workspace: Vite 6 + React 19 + TypeScript strict + @xyflow/react v12 + dagre + Zustand.
+- Makefile targets `frontend-install`, `frontend-dev`, `frontend-build`, `gui`, `gui-dev`, `build-gui`.
+- `docs/gui.md` — full GUI user + developer guide.
+- CI: `gui` job builds the frontend and the embedded GUI binary on every push.
 - **`go_processor` node type** — custom Go per-frame processing in the MediaMolder graph (AI inference, analytics, tracking, metadata emission). Requires `schema_version: "1.1"`.
 - `processors` package with `Processor` interface (`Init`/`Process`/`Close`), thread-safe registry, `ProcessorContext`, and `Metadata`/`Detection` types.
 - Built-in processors: `null` (passthrough), `frame_counter` (counting with periodic metadata), `frame_info` (frame dimensions/format/PTS diagnostics), `scene_change` (scene detection using the same MAFD + diff-of-MAFD algorithm as FFmpeg's `scdet` filter — zero-copy Y plane access for YUV formats, swscale GRAY8 fallback for RGB).

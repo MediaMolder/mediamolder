@@ -191,3 +191,89 @@ jobs:
 
       - name: golangci-lint
         run: golangci-lint run
+
+  gui:
+    name: GUI build (frontend + embedded binary)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install build deps
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y \
+            build-essential nasm pkg-config \
+            libx264-dev libx265-dev libvpx-dev libopus-dev
+
+      - name: Cache FFmpeg
+        id: cache-ffmpeg-gui
+        uses: actions/cache@v4
+        with:
+          path: /usr/local
+          key: ffmpeg-${{ env.FFMPEG_VERSION }}-gui
+
+      - name: Build FFmpeg from source
+        if: steps.cache-ffmpeg-gui.outputs.cache-hit != 'true'
+        run: |
+          curl -fsSL https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.xz | tar xJ
+          cd ffmpeg-${FFMPEG_VERSION}
+          ./configure \
+            --prefix=/usr/local \
+            --enable-shared \
+            --disable-static \
+            --enable-gpl \
+            --enable-libx264 \
+            --enable-libx265 \
+            --enable-libvpx \
+            --enable-libopus \
+            --disable-doc \
+            --disable-programs
+          make -j$(nproc)
+          sudo make install
+
+      - name: Update linker cache
+        run: sudo ldconfig
+
+      - name: Install frontend deps
+        working-directory: frontend
+        run: npm ci
+
+      - name: Type-check + build frontend
+        working-directory: frontend
+        run: npm run build
+
+      - name: Build embedded GUI binary
+        run: make build-gui
+
+      - name: Smoke-test gui subcommand
+        run: |
+          ./mediamolder gui --no-open --port 18099 --host 127.0.0.1 &
+          GUI_PID=$!
+          for i in 1 2 3 4 5 6 7 8 9 10; do
+            if curl -fsS http://127.0.0.1:18099/api/health >/dev/null; then break; fi
+            sleep 0.5
+          done
+          curl -fsS http://127.0.0.1:18099/api/health
+          curl -fsS http://127.0.0.1:18099/api/nodes | head -c 200
+          kill "$GUI_PID"
+          wait "$GUI_PID" 2>/dev/null || true
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mediamolder-gui-linux-amd64
+          path: mediamolder
+          if-no-files-found: error
+
