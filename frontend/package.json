@@ -11,6 +11,7 @@
     "lint": "tsc -b --noEmit"
   },
   "dependencies": {
+    "@dagrejs/dagre": "^1.1.4",
     "@xyflow/react": "^12.3.5",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",

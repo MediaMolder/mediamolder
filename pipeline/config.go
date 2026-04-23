@@ -40,6 +40,22 @@ type StreamSelect struct {
 type GraphDef struct {
 	Nodes []NodeDef `json:"nodes"`
 	Edges []EdgeDef `json:"edges"`
+	// UI holds optional editor-only metadata (node positions, etc.). Ignored by
+	// the runtime; preserved on round-trip so the visual editor (mediamolder gui)
+	// can persist layouts without breaking existing JSONs. Targets schema v1.2.
+	UI *GraphUI `json:"ui,omitempty"`
+}
+
+// GraphUI carries optional layout metadata for the visual editor. All fields
+// are optional and ignored by the runtime.
+type GraphUI struct {
+	Positions map[string]UIPosition `json:"positions,omitempty"`
+}
+
+// UIPosition is a 2D coordinate on the editor canvas.
+type UIPosition struct {
+	X float64 `json:"x"`
+	Y float64 `json:"y"`
 }
 
 // NodeDef describes a single node in the processing graph.

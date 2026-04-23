@@ -1,12 +1,15 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Background,
   Controls,
   MiniMap,
   ReactFlow,
   ReactFlowProvider,
+  addEdge,
   applyEdgeChanges,
   applyNodeChanges,
+  useReactFlow,
+  type Connection,
   type EdgeChange,
   type NodeChange,
   type OnSelectionChangeParams,
@@ -22,7 +25,9 @@ import {
   type FlowEdge,
   type FlowNode,
 } from './lib/jsonAdapter';
-import type { JobConfig } from './lib/jobTypes';
+import { autoLayout } from './lib/layout';
+import { spawnNodeFrom, type PaletteEntry } from './lib/spawn';
+import type { JobConfig, StreamType } from './lib/jobTypes';
 
 const NODE_TYPES = { mmNode: MMNode };
 
@@ -30,6 +35,13 @@ interface ExampleEntry {
   name: string;
   url: string;
 }
+
+const EMPTY_JOB: JobConfig = {
+  schema_version: '1.2',
+  inputs: [],
+  graph: { nodes: [], edges: [] },
+  outputs: [],
+};
 
 export default function App() {
   return (
@@ -42,26 +54,25 @@ export default function App() {
 function Editor() {
   const [examples, setExamples] = useState<ExampleEntry[]>([]);
   const [selectedExample, setSelectedExample] = useState<string>('');
-  const [job, setJob] = useState<JobConfig | null>(null);
+  const [job, setJob] = useState<JobConfig>(EMPTY_JOB);
   const [nodes, setNodes] = useState<FlowNode[]>([]);
   const [edges, setEdges] = useState<FlowEdge[]>([]);
-  const [selected, setSelected] = useState<FlowNode | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const canvasRef = useRef<HTMLDivElement>(null);
+  const rf = useReactFlow();
 
-  // Load list of bundled examples from backend.
+  /* ---------- Examples ---------- */
   useEffect(() => {
     fetch('/api/examples')
       .then((r) => (r.ok ? r.json() : []))
       .then((list: ExampleEntry[]) => {
         setExamples(list);
-        if (list.length && !selectedExample) {
-          setSelectedExample(list[0].url);
-        }
+        if (list.length && !selectedExample) setSelectedExample(list[0].url);
       })
       .catch(() => setExamples([]));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Load selected example.
   useEffect(() => {
     if (!selectedExample) return;
     fetch(selectedExample)
@@ -76,26 +87,108 @@ function Editor() {
     setJob(cfg);
     setNodes(n);
     setEdges(e);
-    setSelected(null);
+    setSelectedId(null);
   }, []);
 
+  /* ---------- React Flow change handlers ---------- */
   const onNodesChange = useCallback(
-    (changes: NodeChange[]) => setNodes((ns) => applyNodeChanges(changes, ns) as FlowNode[]),
+    (changes: NodeChange[]) =>
+      setNodes((ns) => applyNodeChanges(changes, ns) as FlowNode[]),
     [],
   );
   const onEdgesChange = useCallback(
-    (changes: EdgeChange[]) => setEdges((es) => applyEdgeChanges(changes, es) as FlowEdge[]),
+    (changes: EdgeChange[]) =>
+      setEdges((es) => applyEdgeChanges(changes, es) as FlowEdge[]),
     [],
   );
 
-  const onSelectionChange = useCallback((params: OnSelectionChangeParams) => {
-    const sel = params.nodes[0] as FlowNode | undefined;
-    setSelected(sel ?? null);
+  /* ---------- Connection (with stream-type validation) ---------- */
+  const isValidConnection = useCallback((c: Connection | FlowEdge) => {
+    return c.sourceHandle != null && c.sourceHandle === c.targetHandle;
   }, []);
 
+  const onConnect = useCallback(
+    (c: Connection) => {
+      if (!isValidConnection(c)) return;
+      const stream = (c.sourceHandle as StreamType) || 'video';
+      setEdges((es) => {
+        const newEdge: FlowEdge = {
+          id: `e-${Date.now()}-${es.length}`,
+          source: c.source!,
+          target: c.target!,
+          sourceHandle: c.sourceHandle ?? undefined,
+          targetHandle: c.targetHandle ?? undefined,
+          className: `edge-${stream}`,
+          data: { streamType: stream, rawFrom: '', rawTo: '' },
+        };
+        return addEdge(newEdge, es) as FlowEdge[];
+      });
+    },
+    [isValidConnection],
+  );
+
+  /* ---------- Selection ---------- */
+  const onSelectionChange = useCallback((params: OnSelectionChangeParams) => {
+    setSelectedId(params.nodes[0]?.id ?? null);
+  }, []);
+
+  const selectedNode = useMemo(
+    () => nodes.find((n) => n.id === selectedId) ?? null,
+    [nodes, selectedId],
+  );
+
+  /* ---------- Inspector edits ---------- */
+  const onNodeUpdate = useCallback((next: FlowNode) => {
+    setNodes((ns) => ns.map((n) => (n.id === next.id ? next : n)));
+  }, []);
+
+  const onNodeDelete = useCallback((id: string) => {
+    setNodes((ns) => ns.filter((n) => n.id !== id));
+    setEdges((es) => es.filter((e) => e.source !== id && e.target !== id));
+    if (selectedId === id) setSelectedId(null);
+  }, [selectedId]);
+
+  /* ---------- Drop palette items ---------- */
+  const onDragOver = useCallback((e: React.DragEvent) => {
+    if (!e.dataTransfer.types.includes('application/x-mm-palette')) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+  }, []);
+
+  const onDrop = useCallback(
+    (e: React.DragEvent) => {
+      const raw = e.dataTransfer.getData('application/x-mm-palette');
+      if (!raw) return;
+      e.preventDefault();
+      let entry: PaletteEntry;
+      try {
+        entry = JSON.parse(raw);
+      } catch {
+        return;
+      }
+      const position = rf.screenToFlowPosition({ x: e.clientX, y: e.clientY });
+      setNodes((ns) => {
+        const { flowNode } = spawnNodeFrom(entry, position, ns);
+        return [...ns, flowNode];
+      });
+    },
+    [rf],
+  );
+
+  /* ---------- Toolbar actions ---------- */
+  const onAutoLayout = useCallback(() => {
+    setNodes((ns) => autoLayout(ns, edges));
+    setTimeout(() => rf.fitView({ duration: 200 }), 0);
+  }, [edges, rf]);
+
   const onExport = useCallback(() => {
-    if (!job) return;
-    const out = flowToConfig(job.schema_version, nodes, edges, job.description, job.global_options);
+    const out = flowToConfig(
+      job.schema_version || '1.2',
+      nodes,
+      edges,
+      job.description,
+      job.global_options,
+    );
     const blob = new Blob([JSON.stringify(out, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -121,6 +214,25 @@ function Editor() {
     };
     inp.click();
   }, [loadJob]);
+
+  const onClear = useCallback(() => {
+    if (!confirm('Discard the current graph?')) return;
+    loadJob(EMPTY_JOB);
+  }, [loadJob]);
+
+  /* ---------- Keyboard delete ---------- */
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) return;
+      if ((e.key === 'Backspace' || e.key === 'Delete') && selectedId) {
+        e.preventDefault();
+        onNodeDelete(selectedId);
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [selectedId, onNodeDelete]);
 
   const stats = useMemo(
     () => `${nodes.length} nodes · ${edges.length} edges`,
@@ -149,20 +261,25 @@ function Editor() {
           ))}
         </select>
 
-        <button onClick={onImportClick}>Import JSON</button>
-        <button onClick={onExport} disabled={!job}>Export JSON</button>
+        <button onClick={onAutoLayout} disabled={!nodes.length}>Auto layout</button>
+        <button onClick={onClear}>New</button>
+        <button onClick={onImportClick}>Import</button>
+        <button className="primary" onClick={onExport} disabled={!nodes.length}>Export</button>
       </div>
 
       <Palette />
 
-      <div className="canvas">
+      <div className="canvas" ref={canvasRef} onDragOver={onDragOver} onDrop={onDrop}>
         <ReactFlow
           nodes={nodes}
           edges={edges}
           nodeTypes={NODE_TYPES}
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
+          onConnect={onConnect}
+          isValidConnection={isValidConnection}
           onSelectionChange={onSelectionChange}
+          deleteKeyCode={null /* handled manually so inputs aren't hijacked */}
           fitView
           proOptions={{ hideAttribution: true }}
         >
@@ -172,7 +289,7 @@ function Editor() {
         </ReactFlow>
       </div>
 
-      <Inspector node={selected} />
+      <Inspector node={selectedNode} onChange={onNodeUpdate} onDelete={onNodeDelete} />
     </div>
   );
 }

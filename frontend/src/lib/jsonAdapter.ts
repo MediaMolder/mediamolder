@@ -13,10 +13,24 @@
 //   - graph nodes:  "<nodeId>" (verbatim)
 
 import type { Edge, Node } from '@xyflow/react';
-import type { EdgeDef, JobConfig, NodeDef, StreamType } from './jobTypes';
+import type { EdgeDef, JobConfig, NodeDef, StreamType, UIPosition } from './jobTypes';
 
 export const INPUT_PREFIX = '__in__';
 export const OUTPUT_PREFIX = '__out__';
+
+const STREAM_LETTER: Record<StreamType, string> = {
+  video: 'v',
+  audio: 'a',
+  subtitle: 's',
+  data: 'd',
+};
+
+const LETTER_STREAM: Record<string, StreamType> = {
+  v: 'video',
+  a: 'audio',
+  s: 'subtitle',
+  d: 'data',
+};
 
 export interface FlowNodeData extends Record<string, unknown> {
   /** "input" | "output" | original NodeDef.type */
@@ -40,19 +54,27 @@ export type FlowNode = Node<FlowNodeData>;
 export type FlowEdge = Edge<FlowEdgeData>;
 
 interface ConvertOptions {
-  /** When true (default), apply a simple deterministic layout if no positions provided. */
+  /** When true (default), apply column auto-layout if no positions are stored. */
   autoLayout?: boolean;
 }
 
-/** Resolve the React Flow node ID that an edge endpoint string refers to. */
-function endpointNodeId(endpoint: string): string {
-  // "in0:v:0" -> input node "__in__in0"
-  // "out0:v"  -> output node "__out__out0"
-  // "scale0"  -> "scale0"
-  // "scale0:0" -> "scale0"
-  const head = endpoint.split(':')[0];
-  // We can't tell input vs output from the string alone; the caller provides context.
-  return head;
+/** Get the React Flow node id for a job-side input/output/node id. */
+export function flowIdFor(kind: 'input' | 'output' | 'node', id: string): string {
+  if (kind === 'input') return INPUT_PREFIX + id;
+  if (kind === 'output') return OUTPUT_PREFIX + id;
+  return id;
+}
+
+/** Reverse of flowIdFor: split the React Flow node id into kind + raw id. */
+export function jobIdFromFlow(flowId: string): { kind: 'input' | 'output' | 'node'; id: string } {
+  if (flowId.startsWith(INPUT_PREFIX)) return { kind: 'input', id: flowId.slice(INPUT_PREFIX.length) };
+  if (flowId.startsWith(OUTPUT_PREFIX)) return { kind: 'output', id: flowId.slice(OUTPUT_PREFIX.length) };
+  return { kind: 'node', id: flowId };
+}
+
+/** Resolve the head id of an edge endpoint string ("scale0:0" -> "scale0"). */
+function endpointHead(endpoint: string): string {
+  return endpoint.split(':')[0];
 }
 
 /** Convert a JobConfig to React Flow nodes + edges. */
@@ -61,6 +83,7 @@ export function configToFlow(cfg: JobConfig, opts: ConvertOptions = {}): {
   edges: FlowEdge[];
 } {
   const { autoLayout = true } = opts;
+  const positions = cfg.graph.ui?.positions ?? {};
 
   const inputIds = new Set(cfg.inputs.map((i) => i.id));
   const outputIds = new Set(cfg.outputs.map((o) => o.id));
@@ -68,10 +91,11 @@ export function configToFlow(cfg: JobConfig, opts: ConvertOptions = {}): {
   const nodes: FlowNode[] = [];
 
   cfg.inputs.forEach((inp) => {
+    const id = INPUT_PREFIX + inp.id;
     nodes.push({
-      id: INPUT_PREFIX + inp.id,
+      id,
       type: 'mmNode',
-      position: { x: 0, y: 0 },
+      position: positions[id] ?? { x: 0, y: 0 },
       data: {
         kind: 'input',
         label: inp.id,
@@ -85,7 +109,7 @@ export function configToFlow(cfg: JobConfig, opts: ConvertOptions = {}): {
     nodes.push({
       id: n.id,
       type: 'mmNode',
-      position: { x: 0, y: 0 },
+      position: positions[n.id] ?? { x: 0, y: 0 },
       data: {
         kind: n.type,
         label: n.id,
@@ -96,10 +120,11 @@ export function configToFlow(cfg: JobConfig, opts: ConvertOptions = {}): {
   });
 
   cfg.outputs.forEach((out) => {
+    const id = OUTPUT_PREFIX + out.id;
     nodes.push({
-      id: OUTPUT_PREFIX + out.id,
+      id,
       type: 'mmNode',
-      position: { x: 0, y: 0 },
+      position: positions[id] ?? { x: 0, y: 0 },
       data: {
         kind: 'output',
         label: out.id,
@@ -110,15 +135,15 @@ export function configToFlow(cfg: JobConfig, opts: ConvertOptions = {}): {
   });
 
   const edges: FlowEdge[] = cfg.graph.edges.map((e, idx) => {
-    const fromHead = endpointNodeId(e.from);
-    const toHead = endpointNodeId(e.to);
+    const fromHead = endpointHead(e.from);
+    const toHead = endpointHead(e.to);
     const sourceId = inputIds.has(fromHead) ? INPUT_PREFIX + fromHead : fromHead;
     const targetId = outputIds.has(toHead) ? OUTPUT_PREFIX + toHead : toHead;
     return {
-      id: `e${idx}`,
+      id: `e${idx}-${sourceId}-${targetId}-${e.type}`,
       source: sourceId,
       target: targetId,
-      sourceHandle: e.type, // handle id encodes stream type
+      sourceHandle: e.type,
       targetHandle: e.type,
       className: `edge-${e.type}`,
       data: {
@@ -129,14 +154,16 @@ export function configToFlow(cfg: JobConfig, opts: ConvertOptions = {}): {
     };
   });
 
-  if (autoLayout) {
+  // Apply layout fallback only if no positions were stored.
+  const hasAnyPosition = Object.keys(positions).length > 0;
+  if (autoLayout && !hasAnyPosition) {
     layoutByColumn(nodes, edges);
   }
 
   return { nodes, edges };
 }
 
-/** Convert React Flow nodes + edges back to a JobConfig (preserving original refs). */
+/** Convert React Flow nodes + edges back to a JobConfig (preserving original refs and positions). */
 export function flowToConfig(
   baseSchemaVersion: string,
   nodes: FlowNode[],
@@ -147,8 +174,10 @@ export function flowToConfig(
   const inputs: JobConfig['inputs'] = [];
   const outputs: JobConfig['outputs'] = [];
   const graphNodes: NodeDef[] = [];
+  const positions: Record<string, UIPosition> = {};
 
   for (const n of nodes) {
+    positions[n.id] = { x: Math.round(n.position.x), y: Math.round(n.position.y) };
     const ref = n.data.ref;
     if (ref.kind === 'input') inputs.push(ref.def);
     else if (ref.kind === 'output') outputs.push(ref.def);
@@ -156,25 +185,55 @@ export function flowToConfig(
   }
 
   const graphEdges: EdgeDef[] = edges.map((e) => ({
-    from: e.data?.rawFrom ?? '',
-    to: e.data?.rawTo ?? '',
-    type: (e.data?.streamType ?? 'video') as StreamType,
+    from: e.data?.rawFrom || deriveEndpoint(nodes, e.source, e.sourceHandle, 'source'),
+    to: e.data?.rawTo || deriveEndpoint(nodes, e.target, e.targetHandle, 'target'),
+    type: (e.data?.streamType ?? (e.sourceHandle as StreamType) ?? 'video') as StreamType,
   }));
 
   return {
     schema_version: baseSchemaVersion,
     description,
     inputs,
-    graph: { nodes: graphNodes, edges: graphEdges },
+    graph: { nodes: graphNodes, edges: graphEdges, ui: { positions } },
     outputs,
     global_options: globalOptions,
   };
 }
 
 /**
- * Naive column-based layout: place sources at left, sinks at right, intermediate
- * nodes in between based on longest-path distance from any source. Good enough as
- * a placeholder until dagre/ELK is wired in (Phase 2).
+ * Build a graph endpoint string for an edge that was created in the editor (no
+ * pre-existing rawFrom/rawTo). Inputs synthesise "<id>:<v|a|s|d>:0",
+ * outputs synthesise "<id>:<v|a|s|d>", regular nodes use the bare id.
+ */
+function deriveEndpoint(
+  nodes: FlowNode[],
+  flowId: string | null | undefined,
+  handle: string | null | undefined,
+  side: 'source' | 'target',
+): string {
+  if (!flowId) return '';
+  const node = nodes.find((n) => n.id === flowId);
+  const stream = (handle as StreamType) || 'video';
+  const letter = STREAM_LETTER[stream] ?? 'v';
+  if (node?.data.kind === 'input' && side === 'source') {
+    return `${node.data.label}:${letter}:0`;
+  }
+  if (node?.data.kind === 'output' && side === 'target') {
+    return `${node.data.label}:${letter}`;
+  }
+  return node?.data.label ?? flowId;
+}
+
+/** Parse the stream type from a raw endpoint, if present. */
+export function streamTypeFromEndpoint(ep: string): StreamType | null {
+  const parts = ep.split(':');
+  if (parts.length >= 2 && LETTER_STREAM[parts[1]]) return LETTER_STREAM[parts[1]];
+  return null;
+}
+
+/**
+ * Naive column-based fallback layout used when a job loads with no UI
+ * positions. The toolbar's "Auto layout" action uses dagre instead.
  */
 function layoutByColumn(nodes: FlowNode[], edges: FlowEdge[]): void {
   const COL_W = 220;
@@ -191,7 +250,6 @@ function layoutByColumn(nodes: FlowNode[], edges: FlowEdge[]): void {
     indeg.set(e.target, (indeg.get(e.target) ?? 0) + 1);
   });
 
-  // Kahn-style BFS to assign column = longest path from any source.
   const col = new Map<string, number>();
   const queue: string[] = [];
   nodes.forEach((n) => {
@@ -210,7 +268,6 @@ function layoutByColumn(nodes: FlowNode[], edges: FlowEdge[]): void {
       if (d === 0) queue.push(next);
     }
   }
-  // Force inputs to col 0 and outputs to max col (visual clarity).
   let maxCol = 0;
   col.forEach((v) => (maxCol = Math.max(maxCol, v)));
   nodes.forEach((n) => {
@@ -219,7 +276,6 @@ function layoutByColumn(nodes: FlowNode[], edges: FlowEdge[]): void {
   });
   maxCol = Math.max(maxCol, ...Array.from(col.values()));
 
-  // Distribute rows within each column.
   const byCol = new Map<number, string[]>();
   nodes.forEach((n) => {
     const c = col.get(n.id) ?? 0;

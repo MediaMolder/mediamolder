@@ -1,53 +1,90 @@
-interface PaletteItem {
-  category: string;
-  label: string;
-  hint: string;
-}
+import { useEffect, useMemo, useState } from 'react';
+import type { PaletteEntry } from '../lib/spawn';
 
-const ITEMS: PaletteItem[] = [
-  { category: 'Sources', label: 'Input', hint: 'File / URL source' },
-  { category: 'Filters', label: 'scale', hint: 'Resize video' },
-  { category: 'Filters', label: 'fps', hint: 'Change framerate' },
-  { category: 'Filters', label: 'crop', hint: 'Crop video' },
-  { category: 'Filters', label: 'overlay', hint: 'Composite video' },
-  { category: 'Filters', label: 'volume', hint: 'Audio gain' },
-  { category: 'Encoders', label: 'libx264', hint: 'H.264 encoder' },
-  { category: 'Encoders', label: 'libx265', hint: 'HEVC encoder' },
-  { category: 'Encoders', label: 'aac', hint: 'AAC audio encoder' },
-  { category: 'Processors', label: 'go_processor', hint: 'Custom Go node' },
-  { category: 'Sinks', label: 'Output', hint: 'File / URL sink' },
+const FALLBACK: PaletteEntry[] = [
+  { category: 'Sources', type: 'input', name: 'Input', description: 'File or URL source' },
+  { category: 'Sinks', type: 'output', name: 'Output', description: 'File or URL sink' },
 ];
 
+interface CatalogEntry {
+  category: string;
+  type: string;
+  name: string;
+  description?: string;
+  streams?: string[];
+  num_inputs?: number;
+  num_outputs?: number;
+}
+
 export function Palette() {
-  const grouped = ITEMS.reduce<Record<string, PaletteItem[]>>((acc, item) => {
-    (acc[item.category] ||= []).push(item);
-    return acc;
-  }, {});
+  const [entries, setEntries] = useState<PaletteEntry[]>(FALLBACK);
+  const [filter, setFilter] = useState('');
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+
+  useEffect(() => {
+    fetch('/api/nodes')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((list: CatalogEntry[] | null) => {
+        if (Array.isArray(list) && list.length) setEntries(list);
+      })
+      .catch(() => {
+        /* keep fallback */
+      });
+  }, []);
+
+  const grouped = useMemo(() => {
+    const q = filter.trim().toLowerCase();
+    const out: Record<string, PaletteEntry[]> = {};
+    for (const e of entries) {
+      if (q && !e.name.toLowerCase().includes(q) && !(e.description ?? '').toLowerCase().includes(q)) continue;
+      (out[e.category] ||= []).push(e);
+    }
+    return out;
+  }, [entries, filter]);
 
   return (
     <aside className="palette">
-      {Object.entries(grouped).map(([cat, items]) => (
-        <section key={cat}>
-          <h3>{cat}</h3>
-          {items.map((item) => (
-            <div
-              key={item.label}
-              className="palette-item"
-              draggable
-              onDragStart={(e) => {
-                e.dataTransfer.setData('application/x-mm-palette', JSON.stringify(item));
-                e.dataTransfer.effectAllowed = 'move';
-              }}
-              title={item.hint}
+      <input
+        className="palette-search"
+        type="text"
+        placeholder="Search nodes…"
+        value={filter}
+        onChange={(e) => setFilter(e.target.value)}
+      />
+      {Object.entries(grouped).map(([cat, items]) => {
+        const isCollapsed = collapsed[cat];
+        return (
+          <section key={cat}>
+            <h3
+              onClick={() => setCollapsed((c) => ({ ...c, [cat]: !c[cat] }))}
+              style={{ cursor: 'pointer', userSelect: 'none' }}
             >
-              {item.label}
-            </div>
-          ))}
-        </section>
-      ))}
-      <div style={{ marginTop: 16, fontSize: 11, color: 'var(--text-dim)' }}>
-        Drag-to-canvas wired in Phase 2.
-      </div>
+              {isCollapsed ? '▸' : '▾'} {cat}{' '}
+              <span style={{ color: 'var(--text-dim)', fontWeight: 400 }}>({items.length})</span>
+            </h3>
+            {!isCollapsed &&
+              items.slice(0, 200).map((item) => (
+                <div
+                  key={`${item.category}/${item.type}/${item.name}`}
+                  className="palette-item"
+                  draggable
+                  onDragStart={(e) => {
+                    e.dataTransfer.setData('application/x-mm-palette', JSON.stringify(item));
+                    e.dataTransfer.effectAllowed = 'copy';
+                  }}
+                  title={item.description || item.name}
+                >
+                  {item.name}
+                </div>
+              ))}
+            {!isCollapsed && items.length > 200 && (
+              <div style={{ color: 'var(--text-dim)', fontSize: 11, padding: '4px 0' }}>
+                {items.length - 200} more — use search to narrow.
+              </div>
+            )}
+          </section>
+        );
+      })}
     </aside>
   );
 }

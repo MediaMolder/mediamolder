@@ -35,6 +35,16 @@ export interface EdgeDef {
 export interface GraphDef {
   nodes: NodeDef[];
   edges: EdgeDef[];
+  ui?: GraphUI;
+}
+
+export interface GraphUI {
+  positions?: Record<string, UIPosition>;
+}
+
+export interface UIPosition {
+  x: number;
+  y: number;
 }
 
 export interface Output {

@@ -35,8 +35,11 @@ button {
   cursor: pointer;
 }
 button:hover { background: var(--border); }
+button:disabled { opacity: 0.4; cursor: not-allowed; }
 button.primary { background: var(--accent); border-color: var(--accent); color: white; }
 button.primary:hover { filter: brightness(1.1); }
+button.danger { background: transparent; border-color: #b94a4a; color: #ff8a8a; }
+button.danger:hover { background: rgba(185, 74, 74, 0.15); }
 
 .app-shell {
   display: grid;
@@ -74,23 +77,34 @@ button.primary:hover { filter: brightness(1.1); }
   padding: 12px;
   overflow-y: auto;
 }
+.palette-search {
+  width: 100%;
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 8px;
+  font-size: 12px;
+  margin-bottom: 8px;
+}
 .palette h3 {
   font-size: 11px;
   text-transform: uppercase;
   color: var(--text-dim);
-  margin: 16px 0 6px;
+  margin: 12px 0 6px;
   letter-spacing: 0.5px;
 }
-.palette h3:first-child { margin-top: 0; }
+.palette h3:first-of-type { margin-top: 0; }
 .palette-item {
   background: var(--panel-2);
   border: 1px solid var(--border);
   border-radius: 4px;
-  padding: 6px 10px;
-  margin-bottom: 4px;
+  padding: 5px 9px;
+  margin-bottom: 3px;
   cursor: grab;
   font-size: 12px;
 }
+.palette-item:active { cursor: grabbing; }
 .palette-item:hover { border-color: var(--accent); }
 
 .canvas {
@@ -135,6 +149,22 @@ button.primary:hover { filter: brightness(1.1); }
   font-family: inherit;
 }
 .inspector textarea { min-height: 80px; font-family: ui-monospace, monospace; }
+.inspector-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.param-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr 28px;
+  gap: 4px;
+  margin-bottom: 4px;
+}
+.param-row button {
+  padding: 2px 6px;
+  line-height: 1;
+}
 
 /* Custom node */
 .mm-node {
@@ -161,3 +191,9 @@ button.primary:hover { filter: brightness(1.1); }
 .react-flow__handle.handle-audio    { background: var(--audio); }
 .react-flow__handle.handle-subtitle { background: var(--subtitle); }
 .react-flow__handle.handle-data     { background: var(--data); }
+
+/* Stream-typed edges */
+.react-flow__edge.edge-video    .react-flow__edge-path { stroke: var(--video);    stroke-width: 2; }
+.react-flow__edge.edge-audio    .react-flow__edge-path { stroke: var(--audio);    stroke-width: 2; }
+.react-flow__edge.edge-subtitle .react-flow__edge-path { stroke: var(--subtitle); stroke-width: 2; }
+.react-flow__edge.edge-data     .react-flow__edge-path { stroke: var(--data);     stroke-width: 2; }
