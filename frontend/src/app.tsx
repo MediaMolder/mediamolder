@@ -18,7 +18,8 @@ import '@xyflow/react/dist/style.css';
 
 import { Palette } from './components/Palette';
 import { Inspector } from './components/Inspector';
-import { MMNode } from './components/MMNode';
+import { MMNode, type MMNodeRunData } from './components/MMNode';
+import { RunPanel } from './components/RunPanel';
 import {
   configToFlow,
   flowToConfig,
@@ -27,6 +28,7 @@ import {
 } from './lib/jsonAdapter';
 import { autoLayout } from './lib/layout';
 import { spawnNodeFrom, type PaletteEntry } from './lib/spawn';
+import { useJobRun } from './lib/useJobRun';
 import type { JobConfig, StreamType } from './lib/jobTypes';
 
 const NODE_TYPES = { mmNode: MMNode };
@@ -239,6 +241,54 @@ function Editor() {
     [nodes.length, edges.length],
   );
 
+  /* ---------- Run controls (Phase 3) ---------- */
+  const buildJobRef = useRef<() => JobConfig | null>(() => null);
+  buildJobRef.current = () => {
+    if (!nodes.length) return null;
+    return flowToConfig(
+      job.schema_version || '1.2',
+      nodes,
+      edges,
+      job.description,
+      job.global_options,
+    );
+  };
+  const run = useJobRun(() => buildJobRef.current?.() ?? null);
+  const [showRunPanel, setShowRunPanel] = useState(false);
+  const isRunning = run.status === 'running' || run.status === 'starting';
+
+  const onRun = useCallback(() => {
+    setShowRunPanel(true);
+    void run.start();
+  }, [run]);
+  const onStop = useCallback(() => {
+    void run.cancel();
+  }, [run]);
+
+  /* Merge live metrics + errors into node data so MMNode can render badges. */
+  const runByNode = useMemo(() => {
+    const map = new Map<string, MMNodeRunData>();
+    for (const m of run.metrics?.Nodes ?? []) {
+      map.set(m.NodeID, { frames: m.Frames, fps: m.FPS, errors: m.Errors });
+    }
+    for (const e of run.errors) {
+      const cur = map.get(e.node_id) ?? {};
+      cur.hasError = true;
+      map.set(e.node_id, cur);
+    }
+    return map;
+  }, [run.metrics, run.errors]);
+
+  const decoratedNodes = useMemo<FlowNode[]>(
+    () =>
+      nodes.map((n) => {
+        const r = runByNode.get(n.id);
+        if (!r) return n;
+        return { ...n, data: { ...n.data, run: r } } as FlowNode;
+      }),
+    [nodes, runByNode],
+  );
+
   return (
     <div className="app-shell">
       <div className="toolbar">
@@ -264,14 +314,22 @@ function Editor() {
         <button onClick={onAutoLayout} disabled={!nodes.length}>Auto layout</button>
         <button onClick={onClear}>New</button>
         <button onClick={onImportClick}>Import</button>
-        <button className="primary" onClick={onExport} disabled={!nodes.length}>Export</button>
+        <button onClick={onExport} disabled={!nodes.length}>Export</button>
+        {isRunning ? (
+          <button className="danger" onClick={onStop}>Stop</button>
+        ) : (
+          <button className="primary" onClick={onRun} disabled={!nodes.length}>Run</button>
+        )}
+        <button onClick={() => setShowRunPanel((v) => !v)} disabled={run.status === 'idle'}>
+          {showRunPanel ? 'Hide log' : 'Show log'}
+        </button>
       </div>
 
       <Palette />
 
       <div className="canvas" ref={canvasRef} onDragOver={onDragOver} onDrop={onDrop}>
         <ReactFlow
-          nodes={nodes}
+          nodes={decoratedNodes}
           edges={edges}
           nodeTypes={NODE_TYPES}
           onNodesChange={onNodesChange}
@@ -290,6 +348,7 @@ function Editor() {
       </div>
 
       <Inspector node={selectedNode} onChange={onNodeUpdate} onDelete={onNodeDelete} />
+      <RunPanel run={run} visible={showRunPanel} onClose={() => setShowRunPanel(false)} />
     </div>
   );
 }
