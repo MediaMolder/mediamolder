@@ -82,6 +82,14 @@ export function HelpDialog({ open, onClose }: Props) {
             Attributes that no upstream node has set are simply omitted — the
             chip never guesses.
           </p>
+          <p>
+            Click <strong>Get properties</strong> on any Input node in the
+            Inspector to probe the source file with libavformat. The probed
+            stream metadata (codec, pix_fmt, frame rate, sample rate, channel
+            layout, …) is then used as the seed for downstream attribute
+            inference, so every connection in the graph displays accurate
+            technical properties without you having to type them.
+          </p>
 
           <h4>Stream-type colour legend</h4>
           <ul className="legend-list">

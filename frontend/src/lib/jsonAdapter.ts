@@ -13,7 +13,7 @@
 //   - graph nodes:  "<nodeId>" (verbatim)
 
 import type { Edge, Node } from '@xyflow/react';
-import type { EdgeDef, JobConfig, NodeDef, StreamType, UIPosition } from './jobTypes';
+import type { EdgeDef, JobConfig, NodeDef, ProbedStream, StreamType, UIPosition } from './jobTypes';
 
 export const INPUT_PREFIX = '__in__';
 export const OUTPUT_PREFIX = '__out__';
@@ -42,6 +42,12 @@ export interface FlowNodeData extends Record<string, unknown> {
     | { kind: 'input'; def: JobConfig['inputs'][number] }
     | { kind: 'output'; def: JobConfig['outputs'][number] }
     | { kind: 'node'; def: NodeDef };
+  /**
+   * Probed stream metadata (input nodes only). Populated by clicking
+   * "Get properties" in the Inspector, which calls `POST /api/probe`.
+   * Editor-only — never serialised back into the JobConfig.
+   */
+  probed?: ProbedStream[];
 }
 
 export interface FlowEdgeData extends Record<string, unknown> {

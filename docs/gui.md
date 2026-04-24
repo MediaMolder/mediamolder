@@ -209,6 +209,23 @@ The inference code lives in
 add a new entry to `attrsFromGraphNode` to teach the editor about a new
 filter or processor that constrains a property.
 
+#### Seeding from the source file ("Get properties")
+
+When the inputs to a graph are unknown, downstream attribute inference can
+only show what the JSON explicitly declares — usually nothing for a
+freshly-dropped Input node. To bootstrap the chain, click an Input node
+and press **Get properties** in the Inspector. The editor calls
+`POST /api/probe` with the input URL; the backend opens the file with
+`avformat_open_input` + `avformat_find_stream_info` and returns one entry
+per stream with codec, width/height, pix_fmt, frame rate, sample rate,
+sample format, channels, channel layout, and duration. The probed values
+are attached to the Input node (editor-only — never written back into the
+JSON) and become the seed for the upstream walk, so every connection
+downstream of that input gets accurate attribute chips automatically.
+
+The probed metadata is invalidated when the URL changes; click
+**Get properties** again after editing the path.
+
 ### Inspector
 
 The right-hand panel shows a typed form for the selected node. Codec, filter,
@@ -250,6 +267,7 @@ explicitly to `127.0.0.1` (the default) if untrusted users share the host.
 | `POST` | `/api/cancel/{jobId}`         | Cancel an in-flight run.                              |
 | `GET`  | `/api/events/{jobId}`         | Server-Sent Events stream for the run.                |
 | `GET`  | `/api/files`                  | List a directory (`?path=&filter=ext1,ext2&dirs_only=`). |
+| `POST` | `/api/probe`                  | Probe an input URL with libavformat. Body `{url, options?}`; response `{url, streams: [{type, codec, width, height, pix_fmt, frame_rate, sample_rate, sample_fmt, channels, channel_layout, duration_sec, ...}]}`. Used by the Inspector's **Get properties** button. |
 
 ### Why SSE rather than WebSockets?
 

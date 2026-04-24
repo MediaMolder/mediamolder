@@ -11,7 +11,7 @@
 // edge component renders as a chip on each connection.
 
 import type { FlowEdge, FlowNode } from './jsonAdapter';
-import type { Input, NodeDef, Output, StreamType } from './jobTypes';
+import type { Input, NodeDef, Output, ProbedStream, StreamType } from './jobTypes';
 
 export interface EdgeAttribute {
   /** Canonical key, e.g. "pix_fmt", "width", "sample_rate". */
@@ -173,13 +173,39 @@ function attrsFromGraphNode(node: NodeDef, type: StreamType): Record<string, str
 }
 
 /** Attributes contributed by an Input on the given stream type. */
-function attrsFromInput(inp: Input, _type: StreamType): Record<string, string> {
-  // Input streams' technical details are determined by the source media at
-  // open-time, not by the JSON. Surface only explicitly user-set demuxer
-  // options that look like canonical attributes.
+function attrsFromInput(inp: Input, type: StreamType, probed?: ProbedStream[]): Record<string, string> {
   const out: Record<string, string> = {};
+
+  // Probed values take precedence over user-set demuxer options because they
+  // describe the actual decoded stream. Pick the first probed stream of the
+  // requested type — the common case is one video + one audio per input.
+  // Track-aware selection (parsing "in0:v:1") can be added later if needed.
+  if (probed && probed.length) {
+    const ps = probed.find((p) => p.type === type);
+    if (ps) {
+      const set = (k: string, v: unknown) => {
+        const s = asString(v);
+        if (s !== undefined) out[k] = s;
+      };
+      set('codec', ps.codec);
+      if (type === 'video') {
+        set('width', ps.width);
+        set('height', ps.height);
+        set('pix_fmt', ps.pix_fmt);
+        set('frame_rate', ps.frame_rate);
+      } else if (type === 'audio') {
+        set('sample_rate', ps.sample_rate);
+        set('sample_fmt', ps.sample_fmt);
+        set('channels', ps.channels);
+        set('channel_layout', ps.channel_layout);
+      }
+    }
+  }
+
+  // User-set demuxer options layer on top only where probed didn't fill in.
   const opts = (inp.options ?? {}) as Record<string, unknown>;
   for (const k of ['pix_fmt', 'sample_rate', 'channels', 'frame_rate']) {
+    if (k in out) continue;
     const v = asString(opts[k]);
     if (v) out[k] = v;
   }
@@ -198,7 +224,7 @@ function attrsFromOutput(out: Output, type: StreamType): Record<string, string> 
 function nodeAttrs(node: FlowNode, type: StreamType): Record<string, string> {
   const ref = node.data.ref;
   switch (ref.kind) {
-    case 'input': return attrsFromInput(ref.def, type);
+    case 'input': return attrsFromInput(ref.def, type, node.data.probed);
     case 'output': return attrsFromOutput(ref.def, type);
     case 'node': return attrsFromGraphNode(ref.def, type);
   }

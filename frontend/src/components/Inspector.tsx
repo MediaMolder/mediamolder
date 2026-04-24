@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { FlowNode } from '../lib/jsonAdapter';
-import type { Input, NodeDef, Output } from '../lib/jobTypes';
+import type { Input, NodeDef, Output, ProbeResponse, ProbedStream } from '../lib/jobTypes';
 import { FileBrowser, type BrowseMode } from './FileBrowser';
 
 interface Props {
@@ -32,7 +32,11 @@ export function Inspector({ node, onChange, onDelete }: Props) {
       {ref.kind === 'input' && (
         <InputForm
           def={ref.def}
+          probed={node.data.probed}
           onChange={(def) => onChange(updateRef(node, { kind: 'input', def }, def.id, def.url))}
+          onProbed={(probed) =>
+            onChange({ ...node, data: { ...node.data, probed } } as FlowNode)
+          }
         />
       )}
       {ref.kind === 'output' && (
@@ -61,7 +65,47 @@ function updateRef(node: FlowNode, ref: FlowNode['data']['ref'], label: string, 
 }
 
 /* ---------- Input form ---------- */
-function InputForm({ def, onChange }: { def: Input; onChange: (next: Input) => void }) {
+function InputForm({
+  def,
+  probed,
+  onChange,
+  onProbed,
+}: {
+  def: Input;
+  probed?: ProbedStream[];
+  onChange: (next: Input) => void;
+  onProbed: (next: ProbedStream[] | undefined) => void;
+}) {
+  const [probing, setProbing] = useState(false);
+  const [probeError, setProbeError] = useState<string | null>(null);
+
+  const runProbe = async () => {
+    if (!def.url) {
+      setProbeError('Set a URL first.');
+      return;
+    }
+    setProbing(true);
+    setProbeError(null);
+    try {
+      const r = await fetch('/api/probe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: def.url, options: def.options }),
+      });
+      if (!r.ok) {
+        const body = await r.text();
+        throw new Error(body || `HTTP ${r.status}`);
+      }
+      const resp = (await r.json()) as ProbeResponse;
+      onProbed(resp.streams);
+    } catch (err) {
+      setProbeError((err as Error).message);
+      onProbed(undefined);
+    } finally {
+      setProbing(false);
+    }
+  };
+
   return (
     <>
       <Field label="ID" value={def.id} onChange={(v) => onChange({ ...def, id: v })} />
@@ -70,8 +114,62 @@ function InputForm({ def, onChange }: { def: Input; onChange: (next: Input) => v
         value={def.url}
         mode="open"
         filter="mp4,mkv,mov,m4v,webm,avi,ts,mxf,mp3,wav,flac,aac,m4a,ogg,opus,jpg,jpeg,png"
-        onChange={(v) => onChange({ ...def, url: v })}
+        onChange={(v) => {
+          onChange({ ...def, url: v });
+          // Stale once the URL changes.
+          if (probed) onProbed(undefined);
+        }}
       />
+      <div className="probe-actions">
+        <button onClick={runProbe} disabled={probing || !def.url}>
+          {probing ? 'Probing…' : 'Get properties'}
+        </button>
+        {probed && (
+          <button className="link-btn" onClick={() => onProbed(undefined)} title="Discard probed metadata">
+            Clear
+          </button>
+        )}
+      </div>
+      {probeError && <div className="probe-error">{probeError}</div>}
+      {probed && <ProbedStreamsView streams={probed} />}
+    </>
+  );
+}
+
+/** Read-only summary of probed streams. Drives the canvas edge attribute
+ *  chips via FlowNodeData.probed (see lib/streamAttrs.ts). */
+function ProbedStreamsView({ streams }: { streams: ProbedStream[] }) {
+  if (!streams.length) return <div className="empty">No streams reported.</div>;
+  return (
+    <div className="probed-streams">
+      <label style={{ marginTop: 12 }}>Probed streams</label>
+      {streams.map((s) => (
+        <div key={s.index} className="probed-stream">
+          <div className="probed-stream-head">
+            <span className={`stream-pill stream-${s.type}`}>{s.type}</span>
+            <span className="probed-stream-idx">#{s.index}</span>
+            {s.codec && <span className="probed-stream-codec">{s.codec}</span>}
+          </div>
+          <dl className="probed-stream-attrs">
+            {s.width && s.height && <Pair k="size" v={`${s.width}×${s.height}`} />}
+            {s.pix_fmt && <Pair k="pix_fmt" v={s.pix_fmt} />}
+            {s.frame_rate && <Pair k="frame_rate" v={`${s.frame_rate} fps`} />}
+            {s.sample_rate ? <Pair k="sample_rate" v={`${s.sample_rate} Hz`} /> : null}
+            {s.sample_fmt && <Pair k="sample_fmt" v={s.sample_fmt} />}
+            {s.channel_layout && <Pair k="channels" v={`${s.channels ?? '?'} (${s.channel_layout})`} />}
+            {s.duration_sec ? <Pair k="duration" v={`${s.duration_sec.toFixed(2)} s`} /> : null}
+          </dl>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function Pair({ k, v }: { k: string; v: string }) {
+  return (
+    <>
+      <dt>{k}</dt>
+      <dd>{v}</dd>
     </>
   );
 }

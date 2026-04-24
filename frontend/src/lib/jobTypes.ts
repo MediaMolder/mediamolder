@@ -81,3 +81,30 @@ export interface JobConfig {
   outputs: Output[];
   global_options?: Options;
 }
+
+/**
+ * One stream's worth of probed metadata returned by `POST /api/probe`. The
+ * field names match the canonical attribute keys consumed by the edge
+ * attribute inference (see `frontend/src/lib/streamAttrs.ts`).
+ */
+export interface ProbedStream {
+  index: number;
+  type: StreamType | string;
+  codec?: string;
+  width?: number;
+  height?: number;
+  pix_fmt?: string;
+  frame_rate?: string;
+  sample_rate?: number;
+  sample_fmt?: string;
+  channels?: number;
+  channel_layout?: string;
+  duration_sec?: number;
+  time_base_num?: number;
+  time_base_den?: number;
+}
+
+export interface ProbeResponse {
+  url: string;
+  streams: ProbedStream[];
+}

@@ -250,6 +250,73 @@ button.danger:hover { background: rgba(185, 74, 74, 0.15); }
 .file-field { display: grid; grid-template-columns: 1fr auto; gap: 4px; }
 .file-field button { padding: 4px 8px; font-size: 11px; }
 
+/* ---------- Inspector probe ("Get properties") ---------- */
+.probe-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+.probe-actions .link-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  text-decoration: underline;
+  cursor: pointer;
+  padding: 0;
+  font-size: 11px;
+}
+.probe-error {
+  margin-top: 6px;
+  padding: 6px 8px;
+  font-size: 11px;
+  color: #ff8a8a;
+  background: rgba(255, 80, 80, 0.08);
+  border: 1px solid rgba(255, 80, 80, 0.35);
+  border-radius: 4px;
+  white-space: pre-wrap;
+}
+.probed-streams { margin-top: 8px; }
+.probed-stream {
+  margin-top: 6px;
+  padding: 6px 8px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+.probed-stream-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+}
+.stream-pill {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: #0c0e12;
+  font-weight: 600;
+}
+.stream-pill.stream-video    { background: var(--video); }
+.stream-pill.stream-audio    { background: var(--audio); }
+.stream-pill.stream-subtitle { background: var(--subtitle); }
+.stream-pill.stream-data     { background: var(--data); }
+.probed-stream-idx { color: var(--text-dim); font-family: ui-monospace, monospace; }
+.probed-stream-codec { color: var(--text); font-family: ui-monospace, monospace; }
+.probed-stream-attrs {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  column-gap: 8px;
+  row-gap: 2px;
+  margin: 6px 0 0;
+  font-size: 11px;
+}
+.probed-stream-attrs dt { color: var(--text-dim); font-family: ui-monospace, monospace; }
+.probed-stream-attrs dd { margin: 0; font-family: ui-monospace, monospace; }
+
 /* ---------- Dialogs ---------- */
 .dialog-overlay {
   position: fixed;
