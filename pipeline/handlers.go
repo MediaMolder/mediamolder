@@ -48,12 +48,18 @@ func configToGraphDef(cfg *Config) *graph.Def {
 
 // expandImplicitEncoders rewrites edges that connect a source directly to a
 // sink, splicing in a synthetic encoder node that uses the sink's
-// codec_video / codec_audio. This lets compact JobConfigs (one input, one
-// output, two stream-routing edges) run end-to-end without the user having to
-// declare an encoder node by hand.
+// codec_video / codec_audio (defaulting to libx264 / aac / mov_text when
+// the field is empty). This lets compact JobConfigs (one input, one
+// output, two stream-routing edges) run end-to-end without the user
+// having to declare an encoder node by hand.
 //
-// Synthetic encoder nodes use the "__enc__" prefix to avoid colliding with
-// user-supplied node IDs.
+// The GUI mirrors this pass in `materializeImplicitEncoders` so the
+// implicit encoder appears as a real editable node in the canvas; this
+// runtime fallback is what makes the JSON also work when fed directly
+// to `mediamolder run` without going through the GUI.
+//
+// Synthetic encoder nodes use the "__enc__" prefix to avoid colliding
+// with user-supplied node IDs.
 func expandImplicitEncoders(cfg *Config, def *graph.Def) {
 	inputIDs := make(map[string]bool, len(cfg.Inputs))
 	for _, inp := range cfg.Inputs {
@@ -87,8 +93,19 @@ func expandImplicitEncoders(cfg *Config, def *graph.Def) {
 		switch e.Type {
 		case "video":
 			codec = out.CodecVideo
+			if codec == "" {
+				codec = "libx264"
+			}
 		case "audio":
 			codec = out.CodecAudio
+			if codec == "" {
+				codec = "aac"
+			}
+		case "subtitle":
+			codec = out.CodecSubtitle
+			if codec == "" {
+				codec = "mov_text"
+			}
 		}
 		if codec == "" {
 			continue

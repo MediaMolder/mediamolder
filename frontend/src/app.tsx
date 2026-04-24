@@ -28,6 +28,7 @@ import {
   configToFlow,
   expandImplicitNodes,
   flowToConfig,
+  materializeImplicitEncoders,
   type FlowEdge,
   type FlowNode,
 } from './lib/jsonAdapter';
@@ -104,6 +105,11 @@ function Editor() {
   }, [selectedExample]);
 
   const loadJob = useCallback((cfg: JobConfig) => {
+    // Promote implicit encoders (direct source→sink edges) into real
+    // editable graph.nodes[] entries so the user can configure
+    // libx264/aac like any other encoder. Mirrors the runtime fallback
+    // in pipeline.expandImplicitEncoders.
+    cfg = materializeImplicitEncoders(cfg);
     const { nodes: n, edges: e } = configToFlow(cfg);
     setJob(cfg);
     setNodes(n);

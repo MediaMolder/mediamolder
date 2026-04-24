@@ -102,6 +102,101 @@ function endpointHead(endpoint: string): string {
   return endpoint.split(':')[0];
 }
 
+/**
+ * Default codec name used when the user has wired an input directly
+ * to an output for the given stream type and the output declares no
+ * `codec_*` of its own. Mirrors the runtime defaults applied by
+ * `pipeline.expandImplicitEncoders`.
+ */
+function defaultEncoderCodec(type: StreamType): string {
+  switch (type) {
+    case 'video':
+      return 'libx264';
+    case 'audio':
+      return 'aac';
+    case 'subtitle':
+      return 'mov_text';
+    default:
+      return '';
+  }
+}
+
+/**
+ * Materialise implicit encoders into real `graph.nodes[]` entries so
+ * the GUI can display them as editable nodes (rate-control, presets,
+ * bitrate, etc) rather than read-only ghosts. Mirrors the runtime
+ * pass `pipeline.expandImplicitEncoders`.
+ *
+ * Rule: for every edge whose source is an input id and target is an
+ * output id, insert a new encoder node between them. The encoder's
+ * `codec` param comes from the output's `codec_video` / `codec_audio`
+ * if non-empty, otherwise the type-specific default
+ * (libx264 / aac / mov_text).
+ *
+ * Returns a new JobConfig — the caller-supplied object is not
+ * mutated. Edges are rewritten so the original source→sink wire now
+ * goes source→encoder→sink. Synthetic encoder ids use the
+ * `auto_enc_<output>_<type>_<n>` pattern so they are clearly
+ * user-visible (and editable like any other encoder node).
+ */
+export function materializeImplicitEncoders(cfg: JobConfig): JobConfig {
+  const inputIds = new Set(cfg.inputs.map((i) => i.id));
+  const outputIds = new Set(cfg.outputs.map((o) => o.id));
+  const outputById = new Map(cfg.outputs.map((o) => [o.id, o]));
+
+  const nodes: NodeDef[] = [...cfg.graph.nodes];
+  const edges: EdgeDef[] = [];
+  const usedIds = new Set(nodes.map((n) => n.id));
+
+  let inserted = 0;
+  for (const e of cfg.graph.edges) {
+    const fromHead = endpointHead(e.from);
+    const toHead = endpointHead(e.to);
+    if (!inputIds.has(fromHead) || !outputIds.has(toHead)) {
+      edges.push(e);
+      continue;
+    }
+    const out = outputById.get(toHead)!;
+    const declared =
+      e.type === 'video' ? out.codec_video
+      : e.type === 'audio' ? out.codec_audio
+      : e.type === 'subtitle' ? out.codec_subtitle
+      : '';
+    const codec = (declared && declared.length > 0) ? declared : defaultEncoderCodec(e.type);
+    if (!codec) {
+      edges.push(e);
+      continue;
+    }
+
+    let encId = `auto_enc_${toHead}_${e.type}`;
+    let suffix = 1;
+    while (usedIds.has(encId)) {
+      encId = `auto_enc_${toHead}_${e.type}_${suffix++}`;
+    }
+    usedIds.add(encId);
+
+    nodes.push({
+      id: encId,
+      type: 'encoder',
+      params: { codec },
+    });
+    edges.push({ from: e.from, to: encId, type: e.type });
+    edges.push({ from: encId, to: e.to, type: e.type });
+    inserted++;
+  }
+
+  if (inserted === 0) return cfg;
+
+  return {
+    ...cfg,
+    graph: {
+      ...cfg.graph,
+      nodes,
+      edges,
+    },
+  };
+}
+
 /** Convert a JobConfig to React Flow nodes + edges. */
 export function configToFlow(cfg: JobConfig, opts: ConvertOptions = {}): {
   nodes: FlowNode[];
@@ -340,7 +435,6 @@ function layoutByColumn(nodes: FlowNode[], edges: FlowEdge[]): void {
 
 const GHOST_DEMUX_PREFIX = '__ghost__demux__';
 const GHOST_DECODE_PREFIX = '__ghost__decode__';
-const GHOST_ENCODE_PREFIX = '__ghost__encode__';
 const GHOST_MUX_PREFIX = '__ghost__mux__';
 
 /** Best-effort container guess from a URL/file extension. Returns "" if unknown. */
@@ -508,36 +602,11 @@ export function expandImplicitNodes(
       mutated = true;
     }
 
-    // ---- Sink side: encoder → muxer → output ----
+    // ---- Sink side: muxer → output ----
+    // Encoders are no longer ghosts — they are materialised into the
+    // graph as real editable nodes by `materializeImplicitEncoders` at
+    // load time, so the only sink-side ghost left is the muxer.
     if (outputDef) {
-      // Choose codec from output's per-type field. If empty, the
-      // runtime's expandImplicitEncoders will skip insertion, so we
-      // skip the ghost too.
-      const codec =
-        type === 'video'
-          ? outputDef.codec_video
-          : type === 'audio'
-            ? outputDef.codec_audio
-            : type === 'subtitle'
-              ? outputDef.codec_subtitle
-              : '';
-
-      // Only insert a ghost encoder if the upstream of this edge is
-      // not already an encoder (real or ghost) — i.e. the user hasn't
-      // wired one explicitly.
-      const upstream = nodeById.get(chainHead);
-      const upstreamKind = upstream?.data.kind ?? '';
-      const needsEncoder =
-        !!codec && upstreamKind !== 'encoder' && upstreamKind !== 'demuxer';
-
-      if (needsEncoder) {
-        const encId = `${GHOST_ENCODE_PREFIX}${outputDef.id}__${type}`;
-        ensureNode(encId, 'encoder', codec!, `${type} encoder`, [type]);
-        addEdge(chainHead, encId, type, chainHeadRaw, '');
-        chainHead = encId;
-        chainHeadRaw = '';
-      }
-
       const muxId = GHOST_MUX_PREFIX + outputDef.id;
       const container = outputDef.format || guessContainer(outputDef.url) || 'muxer';
       ensureNode(muxId, 'muxer', 'muxer', container, []);
