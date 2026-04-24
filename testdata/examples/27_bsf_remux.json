@@ -4,7 +4,7 @@
   "inputs": [
     {
       "id": "in0",
-      "url": "in.mp4",
+      "url": "",
       "streams": [
         {
           "input_index": 0,
@@ -37,7 +37,7 @@
   "outputs": [
     {
       "id": "out0",
-      "url": "out.ts",
+      "url": "",
       "codec_video": "copy",
       "codec_audio": "copy",
       "bsf_video": "h264_mp4toannexb"

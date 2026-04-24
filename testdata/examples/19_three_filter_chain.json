@@ -4,7 +4,7 @@
   "inputs": [
     {
       "id": "in0",
-      "url": "in.mp4",
+      "url": "",
       "streams": [
         {
           "input_index": 0,
@@ -79,7 +79,7 @@
   "outputs": [
     {
       "id": "out0",
-      "url": "out.mp4",
+      "url": "",
       "codec_video": "libx264",
       "codec_audio": "aac"
     }
