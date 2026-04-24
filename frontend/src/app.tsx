@@ -21,6 +21,7 @@ import { Inspector } from './components/Inspector';
 import { MMNode, type MMNodeRunData } from './components/MMNode';
 import { MMEdge } from './components/MMEdge';
 import { RunPanel } from './components/RunPanel';
+import { RunDock } from './components/RunDock';
 import { HelpDialog } from './components/HelpDialog';
 import { Legend } from './components/Legend';
 import {
@@ -437,7 +438,9 @@ function Editor() {
       </div>
 
       <Inspector node={selectedNode} onChange={onNodeUpdate} onDelete={onNodeDelete} />
-      <RunPanel run={run} visible={showRunPanel} onClose={() => setShowRunPanel(false)} />
+      <RunDock visible={showRunPanel}>
+        <RunPanel run={run} onClose={() => setShowRunPanel(false)} />
+      </RunDock>
       <HelpDialog open={helpOpen} onClose={() => setHelpOpen(false)} />
     </div>
   );

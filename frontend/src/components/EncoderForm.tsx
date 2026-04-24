@@ -26,6 +26,7 @@ import {
   rolesFor,
   type EncoderInfo,
   type EncoderOption,
+  type EncoderUiRoles,
 } from '../lib/encoderSchema';
 import { OptionControl, defaultDisplay } from './controls/OptionControl';
 
@@ -115,25 +116,22 @@ export function EncoderForm({ def, onChange }: Props) {
 
   const roles = rolesFor(codec, info.options);
   const preset = findOption(info.options, roles.preset);
-  const rc = findOption(info.options, roles.rate_control);
   const bitRate = findOption(info.options, roles.bit_rate);
-  const quality = findOption(info.options, roles.quality);
+  const crf = findOption(info.options, roles.crf);
+  const qp = findOption(info.options, roles.qp);
   const keyint = findOption(info.options, roles.keyframe_interval);
-  const rcValue = rc ? getParam(rc.name) : '';
-
-  // Decide whether to surface the bitrate or quality field as the
-  // primary "rate" control. If the encoder distinguishes via an `rc`
-  // option whose name suggests CRF / VBR / CBR, honour it; otherwise
-  // show whichever the user has already set, falling back to bitrate.
-  const showQuality = quality !== undefined && (
-    !rc || /crf|vbr|qp|cqp|constqp|q$/i.test(rcValue) || (!!quality && getParam(quality.name) !== '')
-  );
+  const rcEnum = findOption(info.options, roles.rc_enum);
 
   // Build the set of primary option names to exclude from the Advanced view.
+  // Includes everything driven by the rate-control group (b, crf, qp, rc,
+  // and the maxrate/minrate hack used for CBR with libx264/libx265).
   const primaryNames = new Set<string>();
-  for (const o of [preset, rc, keyint, showQuality ? quality : bitRate]) {
+  for (const o of [preset, bitRate, crf, qp, keyint, rcEnum]) {
     if (o) primaryNames.add(o.name);
   }
+  primaryNames.add('maxrate');
+  primaryNames.add('minrate');
+  primaryNames.add('bufsize');
 
   // Split remaining options into Raw vs Advanced.
   const raw: EncoderOption[] = [];
@@ -147,6 +145,8 @@ export function EncoderForm({ def, onChange }: Props) {
   // Advanced grouping. Cheap and stateless — recompute on every render.
   const groups = groupAdvanced(advanced);
 
+  const hasRateControl = !!(bitRate || crf || qp);
+
   return (
     <>
       <div className="encoder-form-header" style={{ marginTop: 4, marginBottom: 8 }}>
@@ -157,33 +157,29 @@ export function EncoderForm({ def, onChange }: Props) {
       </div>
 
       {preset && <PrimaryRow option={preset} value={getParam(preset.name)} onChange={(v) => setParam(preset.name, v)} />}
-      {rc && <PrimaryRow option={rc} value={rcValue} onChange={(v) => setParam(rc.name, v)} />}
-      {showQuality && quality && (
-        <PrimaryRow
-          option={quality}
-          value={getParam(quality.name)}
-          onChange={(v) => setParam(quality.name, v)}
-          labelOverride="Quality"
+
+      {hasRateControl && (
+        <RateControlGroup
+          roles={roles}
+          bitRate={bitRate}
+          crf={crf}
+          qp={qp}
+          rcEnum={rcEnum}
+          getParam={getParam}
+          setParam={setParam}
         />
       )}
-      {!showQuality && bitRate && (
-        <PrimaryRow
-          option={bitRate}
-          value={getParam(bitRate.name)}
-          onChange={(v) => setParam(bitRate.name, v)}
-          labelOverride="Bit rate"
-        />
-      )}
+
       {keyint && (
         <PrimaryRow
           option={keyint}
           value={getParam(keyint.name)}
           onChange={(v) => setParam(keyint.name, v)}
-          labelOverride="Keyframe interval"
+          labelOverride="Keyframe interval (GOP size)"
         />
       )}
 
-      {!preset && !rc && !bitRate && !quality && !keyint && (
+      {!preset && !hasRateControl && !keyint && (
         <div className="empty" style={{ fontSize: 11 }}>
           No primary controls recognised for this encoder. Use the Advanced
           section below to configure it.
@@ -199,6 +195,174 @@ export function EncoderForm({ def, onChange }: Props) {
       )}
     </>
   );
+}
+
+/* ---------- Rate-control group (mode + per-mode controls) ---------- */
+
+type RateMode = 'bitrate' | 'crf' | 'qp';
+type BitrateSubMode = 'vbr' | 'cbr';
+
+function RateControlGroup({
+  roles,
+  bitRate,
+  crf,
+  qp,
+  rcEnum,
+  getParam,
+  setParam,
+}: {
+  roles: EncoderUiRoles;
+  bitRate: EncoderOption | undefined;
+  crf: EncoderOption | undefined;
+  qp: EncoderOption | undefined;
+  rcEnum: EncoderOption | undefined;
+  getParam: (k: string) => string;
+  setParam: (k: string, v: string) => void;
+}) {
+  // Derive the current mode from which params are set. Priority:
+  // QP > CRF > Bit rate (matching FFmpeg behaviour where QP/CRF
+  // override bitrate when present).
+  const qpVal = qp ? getParam(qp.name) : '';
+  const crfVal = crf ? getParam(crf.name) : '';
+  const bVal = bitRate ? getParam(bitRate.name) : '';
+  let initialMode: RateMode;
+  if (qp && qpVal !== '') initialMode = 'qp';
+  else if (crf && crfVal !== '') initialMode = 'crf';
+  else initialMode = bitRate ? 'bitrate' : crf ? 'crf' : 'qp';
+
+  // Sub-mode for bitrate: VBR if maxrate not pinned to b; CBR if it is
+  // (libx264/libx265 idiom) or if rc enum is set to a CBR constant.
+  const maxrateVal = getParam('maxrate');
+  const rcEnumVal = rcEnum ? getParam(rcEnum.name) : '';
+  const initialBitrateSub: BitrateSubMode =
+    (rcEnum && roles.rc_cbr && rcEnumVal === roles.rc_cbr) ||
+    (bVal !== '' && maxrateVal !== '' && maxrateVal === bVal)
+      ? 'cbr'
+      : 'vbr';
+
+  const setMode = (next: RateMode) => {
+    // Clear every other mode's params, then prime the new mode's enum
+    // selection (for nvenc-style encoders).
+    if (bitRate && next !== 'bitrate') {
+      setParam(bitRate.name, '');
+      setParam('maxrate', '');
+      setParam('minrate', '');
+      setParam('bufsize', '');
+    }
+    if (crf && next !== 'crf') setParam(crf.name, '');
+    if (qp && next !== 'qp') setParam(qp.name, '');
+    if (rcEnum) {
+      const target =
+        next === 'crf' ? roles.rc_crf
+        : next === 'qp' ? roles.rc_qp
+        : roles.rc_vbr; // bitrate defaults to VBR
+      setParam(rcEnum.name, target ?? '');
+    }
+  };
+
+  const setBitrateSub = (sub: BitrateSubMode) => {
+    if (sub === 'cbr') {
+      // CBR idiom for libx264/libx265: maxrate=minrate=b, bufsize=b.
+      // For nvenc, switch the rc enum to its CBR constant.
+      const v = bVal || (bitRate?.default?.int ? String(bitRate.default.int) : '');
+      if (v) {
+        setParam('maxrate', v);
+        setParam('minrate', v);
+        setParam('bufsize', v);
+      }
+      if (rcEnum && roles.rc_cbr) setParam(rcEnum.name, roles.rc_cbr);
+    } else {
+      setParam('maxrate', '');
+      setParam('minrate', '');
+      setParam('bufsize', '');
+      if (rcEnum && roles.rc_vbr) setParam(rcEnum.name, roles.rc_vbr);
+    }
+  };
+
+  // When the user types a new bitrate while in CBR mode, keep maxrate
+  // and friends locked to it.
+  const setBitRateValue = (v: string) => {
+    if (!bitRate) return;
+    setParam(bitRate.name, v);
+    if (initialBitrateSub === 'cbr' && v !== '') {
+      setParam('maxrate', v);
+      setParam('minrate', v);
+      setParam('bufsize', v);
+    }
+  };
+
+  return (
+    <div className="rate-control-group">
+      <label>Rate control mode</label>
+      <select value={initialMode} onChange={(e) => setMode(e.target.value as RateMode)}>
+        {bitRate && <option value="bitrate">Bit rate</option>}
+        {crf && <option value="crf">CRF</option>}
+        {qp && <option value="qp">QP</option>}
+      </select>
+
+      {initialMode === 'bitrate' && bitRate && (
+        <>
+          <label style={{ marginTop: 6 }}>Bit rate mode</label>
+          <select
+            value={initialBitrateSub}
+            onChange={(e) => setBitrateSub(e.target.value as BitrateSubMode)}
+          >
+            <option value="vbr">VBR (variable)</option>
+            <option value="cbr">CBR (constant)</option>
+          </select>
+
+          <label style={{ marginTop: 6 }} title={bitRate.help}>
+            Target bit rate <span className="empty" style={{ fontSize: 10 }}>(bits/s, e.g. 5000000 or 5M)</span>
+          </label>
+          <input
+            type="text"
+            value={bVal}
+            placeholder={defaultDisplay(bitRate) || '5000000'}
+            onChange={(e) => setBitRateValue(e.target.value)}
+          />
+        </>
+      )}
+
+      {initialMode === 'crf' && crf && (
+        <>
+          <label style={{ marginTop: 6 }} title={crf.help}>
+            CRF <span className="empty" style={{ fontSize: 10 }}>({crf.name}{rangeHint(crf)})</span>
+          </label>
+          <input
+            type="number"
+            step={1}
+            min={Number.isFinite(crf.min) ? crf.min : undefined}
+            max={Number.isFinite(crf.max) ? crf.max : undefined}
+            value={crfVal}
+            placeholder={defaultDisplay(crf)}
+            onChange={(e) => setParam(crf.name, e.target.value)}
+          />
+        </>
+      )}
+
+      {initialMode === 'qp' && qp && (
+        <>
+          <label style={{ marginTop: 6 }} title={qp.help}>
+            QP <span className="empty" style={{ fontSize: 10 }}>({qp.name}{rangeHint(qp)})</span>
+          </label>
+          <input
+            type="number"
+            step={1}
+            min={Number.isFinite(qp.min) ? qp.min : undefined}
+            max={Number.isFinite(qp.max) ? qp.max : undefined}
+            value={qpVal}
+            placeholder={defaultDisplay(qp)}
+            onChange={(e) => setParam(qp.name, e.target.value)}
+          />
+        </>
+      )}
+    </div>
+  );
+}
+
+function rangeHint(o: EncoderOption): string {
+  if (Number.isFinite(o.min) && Number.isFinite(o.max)) return ` · ${o.min}–${o.max}`;
+  return '';
 }
 
 /* ---------- Raw options (param-string escape hatch) ---------- */

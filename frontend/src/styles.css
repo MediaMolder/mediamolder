@@ -43,11 +43,12 @@ button.danger:hover { background: rgba(185, 74, 74, 0.15); }
 
 .app-shell {
   display: grid;
-  grid-template-rows: 44px 1fr;
+  grid-template-rows: 44px 1fr auto;
   grid-template-columns: 220px 1fr 320px;
   grid-template-areas:
     "toolbar  toolbar    toolbar"
-    "palette  canvas     inspector";
+    "palette  canvas     inspector"
+    "dock     dock       dock";
   height: 100vh;
 }
 .toolbar {
@@ -667,3 +668,120 @@ button.danger:hover { background: rgba(185, 74, 74, 0.15); }
   max-width: 14px;
   max-height: 14px;
 }
+
+/* ---------- Run dock (bottom panel, VS Code terminal style) ---------- */
+.run-dock {
+  grid-area: dock;
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  border-top: 1px solid var(--border);
+  height: 240px;
+  min-height: 80px;
+  max-height: 70vh;
+  overflow: hidden;
+}
+.run-dock-resize {
+  height: 4px;
+  cursor: row-resize;
+  background: transparent;
+  flex: 0 0 auto;
+}
+.run-dock-resize:hover,
+.run-dock-resize.dragging {
+  background: var(--accent);
+}
+.run-panel {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.run-panel-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 10px;
+  background: var(--panel-2);
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+  flex: 0 0 auto;
+}
+.run-panel-header .spacer { flex: 1 1 auto; }
+.run-panel-header button {
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 14px;
+  padding: 0 6px;
+}
+.run-panel-header button:hover { color: var(--text); }
+.run-status {
+  text-transform: uppercase;
+  font-size: 10px;
+  letter-spacing: 0.5px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+}
+.run-status-running, .run-status-starting { color: #66d9a8; border-color: #2e6f4e; }
+.run-status-error                          { color: #f5b7b1; border-color: #b94a4a; }
+.run-status-done                           { color: #9ad0ff; border-color: #3a6ea0; }
+.run-pipeline-state { color: var(--text-dim); font-size: 11px; }
+.run-final-error {
+  padding: 6px 10px;
+  background: rgba(185, 74, 74, 0.15);
+  border-bottom: 1px solid #b94a4a;
+  color: #f5b7b1;
+  font-size: 12px;
+  flex: 0 0 auto;
+}
+.run-panel-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.run-metrics {
+  overflow: auto;
+  border-right: 1px solid var(--border);
+  padding: 6px 8px;
+}
+.run-metrics table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+.run-metrics th,
+.run-metrics td {
+  padding: 2px 6px;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+.run-metrics th { color: var(--text-dim); font-weight: 500; }
+.run-metrics .cell-error { color: #f5b7b1; }
+.run-logs {
+  overflow: auto;
+  padding: 6px 8px;
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  line-height: 1.4;
+}
+.run-logs .empty { color: var(--text-dim); }
+.run-log .log-time { color: var(--text-dim); margin-right: 6px; }
+.run-log-warn { color: #e6c46b; }
+.run-log-error { color: #f5b7b1; }
+
+/* ---------- Rate-control group ---------- */
+.rate-control-group {
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 8px;
+  margin-top: 6px;
+  margin-bottom: 6px;
+  background: var(--panel-2);
+}
+.rate-control-group > label:first-child { margin-top: 0; }
