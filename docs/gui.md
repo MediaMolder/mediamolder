@@ -72,11 +72,12 @@ in-app help dialog.
   <kbd>Esc</kbd> to dismiss any open dialog.
 * The bottom-centre **Stream types** legend shows the colour code used for
   edges and handles. The bottom-right minimap stays clear of it.
-* Each edge displays a small **attribute chip** (e.g. `1280×720 · yuv420p ·
-  30fps`) summarising the technical properties MediaMolder can infer for
-  that stream from the upstream nodes' parameters. Hover the chip to see
-  the full list and which node established each value. Attributes that no
-  upstream node has set are intentionally omitted — the chip never
+* Edges are unlabelled by default. Hover (or click) any edge to open a
+  popover listing every technical property MediaMolder can infer for that
+  stream — width×height, pix_fmt, frame_rate, color_space, color_range,
+  bit_depth, codec profile/level, bit_rate, sample_rate, channel_layout,
+  sample_fmt, etc. Click to pin the popover open. Attributes that no
+  upstream node has set are intentionally omitted — MediaMolder never
   guesses. See [Edge attributes](#edge-attributes) below.
 
 ## File browser
@@ -162,7 +163,7 @@ configured node.
   (video / audio / subtitle / data). Handles only accept connections of the
   same type — incompatible drags are rejected.
 * Edges are colour-coded by stream type.
-* Each edge displays an **attribute chip** with the technical properties
+* Hover or click any edge to open a popover with every technical property
   the editor can infer for the stream (see [Edge attributes](#edge-attributes)).
 * Node positions are persisted into the saved JSON under `graph.ui.positions`
   (schema v1.2) so reopening a job preserves the layout. The runtime ignores
@@ -172,13 +173,32 @@ configured node.
 
 ### Edge attributes
 
-Every connection on the canvas shows a small chip near its midpoint
-summarising the technical properties of the stream travelling along it,
-for example:
+Edges carry no inline label. Hover an edge — or click to pin it — to
+open a popover at the midpoint listing every known technical property
+of the stream travelling along it. Typical content for a probed input:
 
 ```
-1280×720 · yuv420p · 30fps          (video)
-48000Hz · stereo · aac              (audio after an aac encoder)
+Video:
+  size            1920×1080
+  pix_fmt         yuv420p
+  frame_rate      29.97 fps
+  bit_depth       8 bit
+  color_space     bt709
+  color_range     tv
+  color_primaries bt709
+  color_transfer  bt709
+  codec           h264
+  profile         High@L4.0
+  bit_rate        8.50 Mbps
+
+Audio:
+  sample_rate     48000 Hz
+  channels        2 (stereo)
+  sample_fmt      fltp
+  bit_depth       32 bit
+  codec           aac
+  profile         LC
+  bit_rate        192 kbps
 ```
 
 The values are inferred at edit time from upstream node parameters by
@@ -197,12 +217,12 @@ walking the graph backwards from the edge:
    own incoming edges (same stream type). The closest node that
    establishes a value wins, so transparent passthroughs like
    `setpts` or `drawtext` correctly propagate the upstream value.
-4. Attributes that no node has set are omitted — the chip never
+4. Attributes that no node has set are omitted — the popover never
    guesses. An edge with no upstream constraints renders the path
-   only.
+   only and shows nothing on hover.
 
-Hover the chip to see the full attribute list together with the node
-that established each value (`pix_fmt: yuv420p (from format0)`).
+The popover labels each value with the node that established it
+(`pix_fmt: yuv420p · format0`).
 
 The inference code lives in
 [`frontend/src/lib/streamAttrs.ts`](../frontend/src/lib/streamAttrs.ts);
@@ -217,11 +237,16 @@ freshly-dropped Input node. To bootstrap the chain, click an Input node
 and press **Get properties** in the Inspector. The editor calls
 `POST /api/probe` with the input URL; the backend opens the file with
 `avformat_open_input` + `avformat_find_stream_info` and returns one entry
-per stream with codec, width/height, pix_fmt, frame rate, sample rate,
-sample format, channels, channel layout, and duration. The probed values
+per stream with all available technical metadata: codec (and FourCC tag),
+profile/level, bit_rate, bit_depth, width/height, pix_fmt, frame_rate
+(and r_frame_rate), sample aspect ratio, field order, color_space,
+color_range, color_primaries, color_transfer, sample_rate, sample_fmt,
+channels, channel_layout, duration, and start time. The probed values
 are attached to the Input node (editor-only — never written back into the
 JSON) and become the seed for the upstream walk, so every connection
-downstream of that input gets accurate attribute chips automatically.
+downstream of that input gets accurate edge popovers automatically.
+Image files (jpg/png/...) are reported as a single video stream with the
+image's geometry and pixel format.
 
 The probed metadata is invalidated when the URL changes; click
 **Get properties** again after editing the path.
@@ -267,7 +292,7 @@ explicitly to `127.0.0.1` (the default) if untrusted users share the host.
 | `POST` | `/api/cancel/{jobId}`         | Cancel an in-flight run.                              |
 | `GET`  | `/api/events/{jobId}`         | Server-Sent Events stream for the run.                |
 | `GET`  | `/api/files`                  | List a directory (`?path=&filter=ext1,ext2&dirs_only=`). |
-| `POST` | `/api/probe`                  | Probe an input URL with libavformat. Body `{url, options?}`; response `{url, streams: [{type, codec, width, height, pix_fmt, frame_rate, sample_rate, sample_fmt, channels, channel_layout, duration_sec, ...}]}`. Used by the Inspector's **Get properties** button. |
+| `POST` | `/api/probe`                  | Probe an input URL with libavformat. Body `{url, options?}`; response `{url, streams: [{index, type, codec, codec_tag, profile, level, bit_rate, bit_depth, bits_per_coded_sample, bits_per_raw_sample, width, height, pix_fmt, frame_rate, r_frame_rate, sar, field_order, color_space, color_range, color_primaries, color_transfer, sample_rate, sample_fmt, channels, channel_layout, duration_sec, start_sec, time_base_num, time_base_den}]}`. Used by the Inspector's **Get properties** button. |
 
 ### Why SSE rather than WebSockets?
 

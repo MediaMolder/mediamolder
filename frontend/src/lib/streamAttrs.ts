@@ -25,11 +25,13 @@ export interface EdgeAttribute {
 /** Canonical attribute keys we know how to display, in preferred display order. */
 const VIDEO_KEYS = [
   'width', 'height', 'pix_fmt', 'frame_rate',
-  'color_space', 'color_range', 'sar', 'codec', 'bit_rate',
+  'bit_depth', 'color_space', 'color_range', 'color_primaries', 'color_transfer',
+  'sar', 'field_order',
+  'codec', 'profile', 'level', 'bit_rate',
 ] as const;
 const AUDIO_KEYS = [
-  'sample_rate', 'channels', 'channel_layout', 'sample_fmt',
-  'codec', 'bit_rate',
+  'sample_rate', 'channels', 'channel_layout', 'sample_fmt', 'bit_depth',
+  'codec', 'profile', 'bit_rate',
 ] as const;
 const SUBTITLE_KEYS = ['codec'] as const;
 const DATA_KEYS = ['codec'] as const;
@@ -52,8 +54,12 @@ export function attrLabel(key: string): string {
     case 'channel_layout': return 'layout';
     case 'frame_rate': return 'fps';
     case 'bit_rate': return 'br';
+    case 'bit_depth': return 'depth';
     case 'color_space': return 'colorspace';
     case 'color_range': return 'range';
+    case 'color_primaries': return 'primaries';
+    case 'color_transfer': return 'trc';
+    case 'field_order': return 'field';
     default: return key;
   }
 }
@@ -63,6 +69,12 @@ function asString(v: unknown): string | undefined {
   if (typeof v === 'string') return v.trim() || undefined;
   if (typeof v === 'number' || typeof v === 'boolean') return String(v);
   return undefined;
+}
+
+function formatBitRate(bps: number): string {
+  if (bps >= 1_000_000) return `${(bps / 1_000_000).toFixed(2)} Mbps`;
+  if (bps >= 1_000) return `${(bps / 1_000).toFixed(0)} kbps`;
+  return `${bps} bps`;
 }
 
 /**
@@ -188,11 +200,21 @@ function attrsFromInput(inp: Input, type: StreamType, probed?: ProbedStream[]): 
         if (s !== undefined) out[k] = s;
       };
       set('codec', ps.codec);
+      if (ps.profile) set('profile', ps.profile);
+      if (ps.level) set('level', ps.level);
+      if (ps.bit_rate) set('bit_rate', formatBitRate(ps.bit_rate));
+      if (ps.bit_depth) set('bit_depth', `${ps.bit_depth} bit`);
       if (type === 'video') {
         set('width', ps.width);
         set('height', ps.height);
         set('pix_fmt', ps.pix_fmt);
         set('frame_rate', ps.frame_rate);
+        if (ps.sar && ps.sar !== '1:1') set('sar', ps.sar);
+        if (ps.field_order && ps.field_order !== 'progressive') set('field_order', ps.field_order);
+        set('color_space', ps.color_space);
+        set('color_range', ps.color_range);
+        set('color_primaries', ps.color_primaries);
+        set('color_transfer', ps.color_transfer);
       } else if (type === 'audio') {
         set('sample_rate', ps.sample_rate);
         set('sample_fmt', ps.sample_fmt);

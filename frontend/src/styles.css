@@ -198,26 +198,74 @@ button.danger:hover { background: rgba(185, 74, 74, 0.15); }
 .react-flow__edge.edge-subtitle .react-flow__edge-path { stroke: var(--subtitle); stroke-width: 2; }
 .react-flow__edge.edge-data     .react-flow__edge-path { stroke: var(--data);     stroke-width: 2; }
 
-/* Edge attribute chip rendered by MMEdge — shows pix_fmt, sample_rate etc. */
-.mm-edge-chip {
+/* Edge attribute popover rendered by MMEdge — opens on hover or click,
+ * showing every known technical attribute for the connection. */
+.mm-edge-popover {
   position: absolute;
   pointer-events: all;
-  background: rgba(24, 27, 34, 0.92);
+  background: rgba(24, 27, 34, 0.96);
   border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 1px 6px;
-  font-size: 10px;
-  line-height: 1.4;
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 11px;
+  line-height: 1.45;
   color: var(--text);
-  white-space: nowrap;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  cursor: help;
   backdrop-filter: blur(2px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.45);
+  min-width: 180px;
+  max-width: 320px;
+  z-index: 10;
 }
-.react-flow__edge.edge-video    .mm-edge-chip { border-color: var(--video); }
-.react-flow__edge.edge-audio    .mm-edge-chip { border-color: var(--audio); }
-.react-flow__edge.edge-subtitle .mm-edge-chip { border-color: var(--subtitle); }
-.react-flow__edge.edge-data     .mm-edge-chip { border-color: var(--data); }
+.mm-edge-popover-summary {
+  font-weight: 600;
+  margin-bottom: 4px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.mm-edge-popover-attrs {
+  margin: 0;
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 2px 8px;
+}
+.mm-edge-popover-row {
+  display: contents;
+}
+.mm-edge-popover-attrs dt {
+  color: var(--text-dim);
+  font-size: 10px;
+  text-transform: lowercase;
+}
+.mm-edge-popover-attrs dd {
+  margin: 0;
+  word-break: break-word;
+}
+.mm-edge-popover-source {
+  color: var(--text-dim);
+  font-size: 10px;
+  font-style: italic;
+}
+.mm-edge-popover-close {
+  position: absolute;
+  top: 2px;
+  right: 4px;
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 0;
+}
+.mm-edge-popover-close:hover { color: var(--text); }
+.react-flow__edge.edge-video    .mm-edge-popover { border-color: var(--video); }
+.react-flow__edge.edge-audio    .mm-edge-popover { border-color: var(--audio); }
+.react-flow__edge.edge-subtitle .mm-edge-popover { border-color: var(--subtitle); }
+.react-flow__edge.edge-data     .mm-edge-popover { border-color: var(--data); }
 
 
 /* ---------- Palette improvements ---------- */

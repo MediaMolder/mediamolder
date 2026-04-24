@@ -149,20 +149,60 @@ function ProbedStreamsView({ streams }: { streams: ProbedStream[] }) {
             <span className={`stream-pill stream-${s.type}`}>{s.type}</span>
             <span className="probed-stream-idx">#{s.index}</span>
             {s.codec && <span className="probed-stream-codec">{s.codec}</span>}
+            {s.codec_tag && <span className="probed-stream-codec">{s.codec_tag}</span>}
           </div>
           <dl className="probed-stream-attrs">
+            {/* Common */}
+            {s.bit_rate ? <Pair k="bit_rate" v={formatBitRate(s.bit_rate)} /> : null}
+            {s.profile && <Pair k="profile" v={s.profile + (s.level ? `@L${formatLevel(s.profile, s.level)}` : '')} />}
+            {s.bit_depth ? <Pair k="bit_depth" v={`${s.bit_depth} bit`} /> : null}
+            {/* Video */}
             {s.width && s.height && <Pair k="size" v={`${s.width}×${s.height}`} />}
+            {s.sar && s.sar !== '1:1' && <Pair k="sar" v={s.sar} />}
             {s.pix_fmt && <Pair k="pix_fmt" v={s.pix_fmt} />}
             {s.frame_rate && <Pair k="frame_rate" v={`${s.frame_rate} fps`} />}
+            {s.r_frame_rate && <Pair k="r_frame_rate" v={`${s.r_frame_rate} fps`} />}
+            {s.field_order && s.field_order !== 'progressive' && <Pair k="field_order" v={s.field_order} />}
+            {s.color_space && <Pair k="color_space" v={s.color_space} />}
+            {s.color_range && <Pair k="color_range" v={s.color_range} />}
+            {s.color_primaries && <Pair k="color_primaries" v={s.color_primaries} />}
+            {s.color_transfer && <Pair k="color_transfer" v={s.color_transfer} />}
+            {/* Audio */}
             {s.sample_rate ? <Pair k="sample_rate" v={`${s.sample_rate} Hz`} /> : null}
             {s.sample_fmt && <Pair k="sample_fmt" v={s.sample_fmt} />}
             {s.channel_layout && <Pair k="channels" v={`${s.channels ?? '?'} (${s.channel_layout})`} />}
-            {s.duration_sec ? <Pair k="duration" v={`${s.duration_sec.toFixed(2)} s`} /> : null}
+            {/* Timing */}
+            {s.duration_sec ? <Pair k="duration" v={formatDuration(s.duration_sec)} /> : null}
+            {s.start_sec ? <Pair k="start" v={`${s.start_sec.toFixed(3)} s`} /> : null}
           </dl>
         </div>
       ))}
     </div>
   );
+}
+
+function formatBitRate(bps: number): string {
+  if (bps >= 1_000_000) return `${(bps / 1_000_000).toFixed(2)} Mbps`;
+  if (bps >= 1_000) return `${(bps / 1_000).toFixed(0)} kbps`;
+  return `${bps} bps`;
+}
+
+function formatDuration(sec: number): string {
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = sec - h * 3600 - m * 60;
+  if (h > 0) return `${h}:${String(m).padStart(2, '0')}:${s.toFixed(2).padStart(5, '0')}`;
+  return `${m}:${s.toFixed(2).padStart(5, '0')} (${sec.toFixed(2)} s)`;
+}
+
+// H.264 levels are reported as integers like 41 (=> 4.1). Other codecs use
+// the raw value. Render H.264/HEVC profiles with a decimal level.
+function formatLevel(profile: string, level: number): string {
+  const p = profile.toLowerCase();
+  if (p.includes('h.264') || p.includes('avc') || level >= 10) {
+    return `${Math.floor(level / 10)}.${level % 10}`;
+  }
+  return String(level);
 }
 
 function Pair({ k, v }: { k: string; v: string }) {

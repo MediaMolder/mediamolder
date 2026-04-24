@@ -26,9 +26,12 @@ export function HelpDialog({ open, onClose }: Props) {
               <strong>Connect nodes</strong> by dragging from a coloured handle on one
               node's right edge to a matching handle on another node's left edge. Handle
               colour identifies the stream type (see legend at the bottom center).
-              Each connection shows a small chip with the technical attributes that
-              MediaMolder can infer for that stream (size, pix_fmt, sample rate, …);
-              hover the chip for the full list and where each value comes from.
+              Connections are colour-coded by stream type but carry no inline
+              label. Hover (or click to pin) any connection to open a popover
+              listing every technical attribute MediaMolder can infer for the
+              stream (size, pix_fmt, frame rate, color space, codec profile,
+              bit rate, sample rate, channel layout, …)
+              and which node established each value.
             </li>
             <li>
               <strong>Configure each node</strong> by selecting it. The Inspector panel 
@@ -70,17 +73,22 @@ export function HelpDialog({ open, onClose }: Props) {
             </li>
           </ol>
 
-          <h4>Edge attribute chips</h4>
+          <h4>Edge attribute popover</h4>
           <p>
-            Hover any connection to see all known technical attributes for that
-            stream (e.g. <code>width</code>, <code>height</code>, <code>pix_fmt</code>,
-            <code>sample_rate</code>, <code>channel_layout</code>, <code>codec</code>).
+            Hover any connection — or click it to pin the popover open — to
+            see every known technical attribute for that stream
+            (<code>width</code>, <code>height</code>, <code>pix_fmt</code>,
+            <code>frame_rate</code>, <code>color_space</code>,
+            <code>color_range</code>, <code>bit_depth</code>,
+            <code>sample_rate</code>, <code>channel_layout</code>,
+            <code>sample_fmt</code>, <code>codec</code>,
+            <code>profile</code>, <code>bit_rate</code>, …).
             The values are inferred by walking upstream from the edge: the closest
             node whose parameters constrain a given attribute wins. Pass-through
             nodes (e.g. <code>setpts</code>, <code>drawtext</code>) leave the
             attribute unchanged so it propagates from earlier in the chain.
             Attributes that no upstream node has set are simply omitted — the
-            chip never guesses.
+            popover never guesses.
           </p>
           <p>
             Click <strong>Get properties</strong> on any Input node in the
