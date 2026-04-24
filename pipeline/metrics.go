@@ -24,6 +24,14 @@ type NodeMetrics struct {
 	latencyCount atomic.Int64
 	latencyMax   atomic.Int64 // peak nanoseconds
 
+	// Media-time progress tracking. Source nodes update mediaPTSNs as
+	// they read packets so the GUI can show how far through the input
+	// stream we are. mediaDurationNs is set once at source-open from
+	// the demuxer's reported stream duration; it stays 0 for live or
+	// unknown-duration inputs. Both are nanoseconds.
+	mediaPTSNs      atomic.Int64
+	mediaDurationNs atomic.Int64
+
 	mu sync.Mutex
 }
 
@@ -39,6 +47,26 @@ func (m *NodeMetrics) RecordLatency(d time.Duration) {
 		cur := m.latencyMax.Load()
 		if ns <= cur || m.latencyMax.CompareAndSwap(cur, ns) {
 			break
+		}
+	}
+}
+
+// SetMediaDuration records the total media duration of an input
+// (nanoseconds). Source handlers call this once after opening the
+// demuxer. A value of 0 signals "unknown" (e.g. live streams).
+func (m *NodeMetrics) SetMediaDuration(d time.Duration) {
+	m.mediaDurationNs.Store(d.Nanoseconds())
+}
+
+// AdvanceMediaPTS bumps the latest media-time position observed on
+// this source node. Updates are monotonic — out-of-order packets
+// (e.g. B-frames) leave the value unchanged.
+func (m *NodeMetrics) AdvanceMediaPTS(d time.Duration) {
+	ns := d.Nanoseconds()
+	for {
+		cur := m.mediaPTSNs.Load()
+		if ns <= cur || m.mediaPTSNs.CompareAndSwap(cur, ns) {
+			return
 		}
 	}
 }
@@ -62,14 +90,16 @@ func (m *NodeMetrics) Snapshot() NodeMetricsSnapshot {
 	}
 
 	return NodeMetricsSnapshot{
-		NodeID:     m.NodeID,
-		Frames:     frames,
-		Errors:     m.Errors.Load(),
-		Bytes:      m.Bytes.Load(),
-		FPS:        fps,
-		Elapsed:    time.Since(m.StartTime),
-		AvgLatency: avgLatency,
-		MaxLatency: maxLatency,
+		NodeID:        m.NodeID,
+		Frames:        frames,
+		Errors:        m.Errors.Load(),
+		Bytes:         m.Bytes.Load(),
+		FPS:           fps,
+		Elapsed:       time.Since(m.StartTime),
+		AvgLatency:    avgLatency,
+		MaxLatency:    maxLatency,
+		MediaPTS:      time.Duration(m.mediaPTSNs.Load()),
+		MediaDuration: time.Duration(m.mediaDurationNs.Load()),
 	}
 }
 
@@ -83,6 +113,11 @@ type NodeMetricsSnapshot struct {
 	Elapsed    time.Duration
 	AvgLatency time.Duration
 	MaxLatency time.Duration
+	// MediaPTS is the latest input timestamp this node has read
+	// (source nodes only; 0 elsewhere). MediaDuration is the total
+	// known input duration (0 for live / unknown).
+	MediaPTS      time.Duration
+	MediaDuration time.Duration
 }
 
 // MetricsSnapshot is a complete metrics snapshot for the pipeline.
@@ -90,6 +125,13 @@ type MetricsSnapshot struct {
 	State   string
 	Elapsed time.Duration
 	Nodes   []NodeMetricsSnapshot
+	// MediaPTS / MediaDuration are aggregated across all source nodes
+	// (max of per-source values), giving the GUI a single
+	// "how-far-through-the-input" pair without needing to know which
+	// node is the source. MediaDuration is 0 when no input declares
+	// one (live streams).
+	MediaPTS      time.Duration
+	MediaDuration time.Duration
 }
 
 // MetricsRegistry tracks metrics for all nodes in a pipeline.
@@ -138,6 +180,17 @@ func (r *MetricsRegistry) Snapshot() MetricsSnapshot {
 	}
 	for _, m := range r.nodes {
 		snap.Nodes = append(snap.Nodes, m.Snapshot())
+	}
+	// Aggregate media-time progress across all source nodes. Take the
+	// max so multi-input jobs report progress against the longest
+	// input, which is usually what a user expects.
+	for i := range snap.Nodes {
+		if snap.Nodes[i].MediaPTS > snap.MediaPTS {
+			snap.MediaPTS = snap.Nodes[i].MediaPTS
+		}
+		if snap.Nodes[i].MediaDuration > snap.MediaDuration {
+			snap.MediaDuration = snap.Nodes[i].MediaDuration
+		}
 	}
 	// Stable, deterministic order so the GUI metrics table doesn't
 	// reshuffle rows on every poll. Map iteration order is randomised

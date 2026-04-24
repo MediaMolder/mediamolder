@@ -15,12 +15,17 @@ export interface NodeMetric {
   Elapsed: number;       // ns
   AvgLatency: number;    // ns
   MaxLatency: number;    // ns
+  MediaPTS: number;      // ns — latest input timestamp processed (source nodes only)
+  MediaDuration: number; // ns — total input duration (0 = live / unknown)
 }
 
 export interface MetricsSnapshot {
   State: string;
   Elapsed: number;
   Nodes: NodeMetric[];
+  // Aggregated across all source nodes — see pipeline.MetricsSnapshot.
+  MediaPTS: number;      // ns
+  MediaDuration: number; // ns (0 = live / unknown)
 }
 
 export interface NodeError {

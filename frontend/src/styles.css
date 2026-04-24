@@ -725,6 +725,22 @@ button.danger:hover { background: rgba(185, 74, 74, 0.15); }
   padding: 0 6px;
 }
 .run-panel-header button:hover { color: var(--text); }
+
+/* Progress bar shown beneath the run-panel header when the input has
+   a known total duration. The fill width is set inline from the
+   computed media-time progress. */
+.run-progress-bar {
+  height: 3px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  flex: 0 0 auto;
+  overflow: hidden;
+}
+.run-progress-fill {
+  height: 100%;
+  background: var(--accent, #3b82f6);
+  transition: width 250ms linear;
+}
 .run-status {
   text-transform: uppercase;
   font-size: 10px;

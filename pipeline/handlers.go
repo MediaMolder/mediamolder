@@ -6,6 +6,7 @@ package pipeline
 import (
 	"context"
 	"fmt"
+	"math"
 	"strings"
 	"sync"
 	"time"
@@ -131,6 +132,11 @@ type sourceResources struct {
 	subDecoders map[int]*av.SubtitleDecoderContext // keyed by stream index
 	streams     map[int]av.StreamInfo              // keyed by stream index
 	cfg         Input
+	// mediaDuration is the longest declared duration across the
+	// selected input streams (0 for live / unknown). Cached at
+	// open-time so handleSource can publish it via the metrics
+	// registry without re-reading container metadata.
+	mediaDuration time.Duration
 }
 
 func (s *sourceResources) Close() {
@@ -243,6 +249,11 @@ func (r *graphRunner) handleSource(ctx context.Context, node *graph.Node, outs [
 	if src == nil {
 		return fmt.Errorf("source handler: no resources for node %q", node.ID)
 	}
+	// Publish the input's known duration once so the GUI can compute
+	// percent-complete / ETA. Stays 0 for live or unknown-duration
+	// inputs; the GUI hides the progress bar in that case and shows
+	// only elapsed-time and processed-media-time.
+	r.pipe.Metrics().Node(node.ID).SetMediaDuration(src.mediaDuration)
 
 	// Map edge type → output channel indices.
 	videoOuts := make([]int, 0, 1)
@@ -325,6 +336,16 @@ func (r *graphRunner) handleSource(ctx context.Context, node *graph.Node, outs [
 			continue
 		}
 		si := src.streams[pkt.StreamIndex()]
+
+		// Publish media-time progress so the GUI can compute
+		// percent-complete / ETA. Skip packets without a valid PTS
+		// (AV_NOPTS_VALUE == math.MinInt64) and streams without a
+		// known timebase.
+		if pts := pkt.PTS(); pts != math.MinInt64 && si.TimeBase[1] > 0 {
+			ptsNs := time.Duration(pts) * time.Second *
+				time.Duration(si.TimeBase[0]) / time.Duration(si.TimeBase[1])
+			r.pipe.Metrics().Node(node.ID).AdvanceMediaPTS(ptsNs)
+		}
 
 		// Handle subtitle streams via subtitle decoder.
 		if subDec != nil && len(subtitleOuts) > 0 {
@@ -800,12 +821,29 @@ func (r *graphRunner) openSource(cfg Input, decOpts av.DecoderOptions) (*sourceR
 		}
 	}
 
+	// Compute longest selected stream duration for progress reporting.
+	// Skips streams the user didn't pick (e.g. unselected audio
+	// tracks), so a video-only job reports against the video duration
+	// rather than a longer audio stream.
+	var mediaDuration time.Duration
+	for _, si := range streams {
+		if si.Duration <= 0 || si.TimeBase[1] <= 0 {
+			continue
+		}
+		d := time.Duration(si.Duration) * time.Second *
+			time.Duration(si.TimeBase[0]) / time.Duration(si.TimeBase[1])
+		if d > mediaDuration {
+			mediaDuration = d
+		}
+	}
+
 	return &sourceResources{
-		input:       input,
-		decoders:    decoders,
-		subDecoders: subDecoders,
-		streams:     streams,
-		cfg:         cfg,
+		input:         input,
+		decoders:      decoders,
+		subDecoders:   subDecoders,
+		streams:       streams,
+		cfg:           cfg,
+		mediaDuration: mediaDuration,
 	}, nil
 }
 
