@@ -26,6 +26,7 @@ import { HelpDialog } from './components/HelpDialog';
 import { Legend } from './components/Legend';
 import {
   configToFlow,
+  expandImplicitNodes,
   flowToConfig,
   type FlowEdge,
   type FlowNode,
@@ -68,6 +69,16 @@ function Editor() {
   const [edges, setEdges] = useState<FlowEdge[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedEdgeIds, setSelectedEdgeIds] = useState<string[]>([]);
+  // Ghost-node visibility (persisted). When on, the canvas displays
+  // synthetic read-only demuxer/decoder/encoder/muxer nodes for the
+  // implicit pipeline stages around every input and output.
+  const [showGhosts, setShowGhosts] = useState<boolean>(() => {
+    const v = localStorage.getItem('mm.showGhosts');
+    return v === null ? true : v === '1';
+  });
+  useEffect(() => {
+    localStorage.setItem('mm.showGhosts', showGhosts ? '1' : '0');
+  }, [showGhosts]);
   const canvasRef = useRef<HTMLDivElement>(null);
   const rf = useReactFlow();
 
@@ -128,7 +139,11 @@ function Editor() {
       });
   }, []);
 
-  /* ---------- React Flow change handlers ---------- */
+  /* ---------- React Flow change handlers ----------
+   * Ghost nodes/edges live only in the derived `expandedNodes`/
+   * `expandedEdges` arrays — never in `nodes`/`edges` state — so
+   * applyNodeChanges/applyEdgeChanges naturally ignore changes
+   * targeting ghost ids (the underlying node simply isn't there). */
   const onNodesChange = useCallback(
     (changes: NodeChange[]) =>
       setNodes((ns) => applyNodeChanges(changes, ns) as FlowNode[]),
@@ -148,6 +163,10 @@ function Editor() {
   const onConnect = useCallback(
     (c: Connection) => {
       if (!isValidConnection(c)) return;
+      // Refuse connections that touch a ghost node — ghosts have no
+      // identity in `nodes` state and the resulting edge would be
+      // unanchored.
+      if (c.source?.startsWith('__ghost__') || c.target?.startsWith('__ghost__')) return;
       const stream = (c.sourceHandle as StreamType) || 'video';
       setEdges((es) => {
         const newEdge: FlowEdge = {
@@ -172,9 +191,19 @@ function Editor() {
     setSelectedEdgeIds(params.edges.map((e) => e.id));
   }, []);
 
+  /* Expand the user-facing graph with implicit demuxer/decoder/encoder/
+     muxer ghost nodes when the toggle is on. The expansion is pure and
+     reactive: any change to nodes/edges (drag, connect, delete, edit
+     input streams or output codecs) re-runs the pass automatically. */
+  const expanded = useMemo(
+    () =>
+      showGhosts ? expandImplicitNodes(nodes, edges) : { nodes, edges },
+    [nodes, edges, showGhosts],
+  );
+
   const selectedNode = useMemo(
-    () => nodes.find((n) => n.id === selectedId) ?? null,
-    [nodes, selectedId],
+    () => expanded.nodes.find((n) => n.id === selectedId) ?? null,
+    [expanded.nodes, selectedId],
   );
 
   /* ---------- Inspector edits ---------- */
@@ -339,12 +368,12 @@ function Editor() {
 
   const decoratedNodes = useMemo<FlowNode[]>(
     () =>
-      nodes.map((n) => {
+      expanded.nodes.map((n) => {
         const r = runByNode.get(n.id);
         if (!r) return n;
         return { ...n, data: { ...n.data, run: r } } as FlowNode;
       }),
-    [nodes, runByNode],
+    [expanded.nodes, runByNode],
   );
 
   /* Compute inferred technical attributes for each edge so MMEdge can render
@@ -352,15 +381,15 @@ function Editor() {
      the graph topology or any node params change. */
   const decoratedEdges = useMemo<FlowEdge[]>(
     () =>
-      edges.map((e) => {
-        const attrs = inferEdgeAttributes(nodes, edges, e);
+      expanded.edges.map((e) => {
+        const attrs = inferEdgeAttributes(expanded.nodes, expanded.edges, e);
         const summary = summariseAttributes(attrs);
         return {
           ...e,
           data: { ...(e.data ?? {}), attrs, attrSummary: summary },
         } as FlowEdge;
       }),
-    [nodes, edges],
+    [expanded],
   );
 
   return (
@@ -386,6 +415,13 @@ function Editor() {
         </select>
 
         <button onClick={onAutoLayout} disabled={!nodes.length}>Auto layout</button>
+        <button
+          onClick={() => setShowGhosts((v) => !v)}
+          title="Show or hide auto-generated demuxer / decoder / encoder / muxer nodes"
+          className={showGhosts ? 'toggle-on' : ''}
+        >
+          {showGhosts ? 'Hide pipeline detail' : 'Show pipeline detail'}
+        </button>
         <button onClick={onClear}>New</button>
         <button onClick={onImportClick}>Import</button>
         <button onClick={onExport} disabled={!nodes.length}>Export</button>

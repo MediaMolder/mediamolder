@@ -81,14 +81,6 @@ export type FlowEdge = Edge<FlowEdgeData>;
 interface ConvertOptions {
   /** When true (default), apply column auto-layout if no positions are stored. */
   autoLayout?: boolean;
-  /**
-   * When true (default), insert read-only "ghost" nodes for the implicit
-   * demuxer / decoder / encoder / muxer stages that the runtime actually
-   * instantiates. The originating user-facing edges are kept but marked
-   * `hidden` so React Flow doesn't render them; ghost nodes/edges are
-   * stripped on export.
-   */
-  expandImplicit?: boolean;
 }
 
 /** Get the React Flow node id for a job-side input/output/node id. */
@@ -115,7 +107,7 @@ export function configToFlow(cfg: JobConfig, opts: ConvertOptions = {}): {
   nodes: FlowNode[];
   edges: FlowEdge[];
 } {
-  const { autoLayout = true, expandImplicit = true } = opts;
+  const { autoLayout = true } = opts;
   const positions = cfg.graph.ui?.positions ?? {};
 
   const inputIds = new Set(cfg.inputs.map((i) => i.id));
@@ -192,16 +184,6 @@ export function configToFlow(cfg: JobConfig, opts: ConvertOptions = {}): {
   const hasAnyPosition = Object.keys(positions).length > 0;
   if (autoLayout && !hasAnyPosition) {
     layoutByColumn(nodes, edges);
-  }
-
-  if (expandImplicit) {
-    expandImplicitNodes(cfg, nodes, edges, positions);
-    if (autoLayout && !hasAnyPosition) {
-      // Re-layout so the ghost chain is positioned alongside the
-      // originals; skip edges we just hid so they don't short-circuit
-      // the column ordering.
-      layoutByColumn(nodes, edges.filter((e) => !e.hidden));
-    }
   }
 
   return { nodes, edges };
@@ -380,14 +362,32 @@ function decoderNameFor(
   return stream?.codec || type;
 }
 
-function expandImplicitNodes(
-  cfg: JobConfig,
-  nodes: FlowNode[],
-  edges: FlowEdge[],
-  positions: Record<string, UIPosition>,
-): void {
-  const inputById = new Map(cfg.inputs.map((i) => [i.id, i]));
-  const outputById = new Map(cfg.outputs.map((o) => [o.id, o]));
+/**
+ * Pure ghost-expansion pass. Returns a new {nodes, edges} pair with
+ * the implicit demuxer / per-stream decoder / encoder / muxer stages
+ * spliced in between every input→… and …→output edge. The originating
+ * user-facing edges are returned `hidden` so React Flow doesn't draw
+ * them, but they remain in the array so flowToConfig (which only
+ * strips items flagged `data.implicit`) round-trips losslessly.
+ *
+ * Inputs/outputs are identified by `node.data.ref.kind === 'input' |
+ * 'output'`; their JobConfig defs are read from `node.data.ref.def`,
+ * so this function is free of any reference to the original
+ * JobConfig and can be re-run on every state change.
+ */
+export function expandImplicitNodes(
+  inNodes: FlowNode[],
+  inEdges: FlowEdge[],
+): { nodes: FlowNode[]; edges: FlowEdge[] } {
+  const nodes: FlowNode[] = [...inNodes];
+  const edges: FlowEdge[] = inEdges.map((e) => ({ ...e }));
+
+  const inputById = new Map<string, JobConfig['inputs'][number]>();
+  const outputById = new Map<string, JobConfig['outputs'][number]>();
+  for (const n of inNodes) {
+    if (n.data.ref.kind === 'input') inputById.set(n.data.ref.def.id, n.data.ref.def);
+    else if (n.data.ref.kind === 'output') outputById.set(n.data.ref.def.id, n.data.ref.def);
+  }
   // Index the original nodes (before we start mutating) so ghost lookup
   // ignores any ghost we just added in a previous iteration.
   const nodeById = new Map(nodes.map((n) => [n.id, n]));
@@ -409,7 +409,7 @@ function expandImplicitNodes(
     const ghost: FlowNode = {
       id,
       type: 'mmNode',
-      position: positions[id] ?? { x: 0, y: 0 },
+      position: { x: 0, y: 0 },
       data: {
         kind,
         label,
@@ -571,12 +571,9 @@ function expandImplicitNodes(
     }
   }
 
-  // Re-layout only the freshly added ghost nodes if the user already
-  // had stored positions for the real nodes. Quick offset heuristic:
-  // place each new node at (avg(neighbors.x), avg(neighbors.y)) +
-  // small jitter. The full layout pass in configToFlow handles the
-  // empty-positions case.
-  if (addedNodeIds.size > 0 && Object.keys(positions).length > 0) {
+  // Position freshly added ghosts at the centroid of their non-ghost
+  // neighbours. Real nodes keep whatever positions they already had.
+  if (addedNodeIds.size > 0) {
     const neighbours = new Map<string, string[]>();
     for (const e of edges) {
       if (!neighbours.has(e.source)) neighbours.set(e.source, []);
@@ -596,4 +593,6 @@ function expandImplicitNodes(
       ghost.position = { x, y };
     }
   }
+
+  return { nodes, edges };
 }
