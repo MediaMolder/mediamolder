@@ -992,8 +992,65 @@ func (r *graphRunner) createEncoder(dag *graph.Graph, node *graph.Node) (*av.Enc
 	if v := paramInt64(node.Params, "bitrate"); v > 0 {
 		opts.BitRate = v
 	}
+	// `b` is the FFmpeg AVOption name for bit rate; the GUI's encoder form
+	// writes it under that key. Honour it as an alias for `bitrate` so the
+	// muxer sees the configured rate on the encoder context.
+	if opts.BitRate == 0 {
+		if v := paramInt64(node.Params, "b"); v > 0 {
+			opts.BitRate = v
+		}
+	}
+	// `g` is the FFmpeg AVOption name for keyframe interval / GOP size.
+	if v := paramInt(node.Params, "g"); v > 0 {
+		opts.GOPSize = v
+	}
+
+	// Pass every remaining param through as an AVDictionary entry so codec-
+	// specific options written by the GUI (preset, crf, maxrate, bufsize,
+	// x264-params, ...) actually reach the encoder.
+	opts.ExtraOpts = collectEncoderExtraOpts(node.Params)
 
 	return av.OpenEncoder(opts)
+}
+
+// encoderReservedParams lists the param keys consumed directly by createEncoder
+// (or used to address the node itself). They must not be forwarded as
+// AVDictionary options because some are not codec AVOptions ("codec", "width",
+// "height") and the rest are already applied to EncoderOptions explicitly.
+var encoderReservedParams = map[string]bool{
+	"codec":       true,
+	"width":       true,
+	"height":      true,
+	"bitrate":     true,
+	"threads":     true,
+	"thread_type": true,
+}
+
+// collectEncoderExtraOpts returns a map of AVDictionary options to forward to
+// avcodec_open2 from a node's user-supplied params. Reserved keys are skipped;
+// empty/nil values are skipped (so the encoder uses its built-in default).
+func collectEncoderExtraOpts(params map[string]any) map[string]string {
+	if len(params) == 0 {
+		return nil
+	}
+	var out map[string]string
+	for k, v := range params {
+		if encoderReservedParams[k] {
+			continue
+		}
+		if v == nil {
+			continue
+		}
+		s := fmt.Sprintf("%v", v)
+		if s == "" {
+			continue
+		}
+		if out == nil {
+			out = make(map[string]string, len(params))
+		}
+		out[k] = s
+	}
+	return out
 }
 
 func (r *graphRunner) openSink(_ *graph.Graph, node *graph.Node) (*sinkResources, error) {
