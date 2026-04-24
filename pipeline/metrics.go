@@ -4,6 +4,7 @@
 package pipeline
 
 import (
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -26,8 +27,11 @@ type NodeMetrics struct {
 	mu sync.Mutex
 }
 
-// RecordLatency records a single frame's processing duration.
+// RecordLatency records a single frame's processing duration and
+// increments the frame counter. Handlers call this once per frame they
+// successfully processed, so it doubles as the FPS / throughput source.
 func (m *NodeMetrics) RecordLatency(d time.Duration) {
+	m.Frames.Add(1)
 	ns := d.Nanoseconds()
 	m.latencySum.Add(ns)
 	m.latencyCount.Add(1)
@@ -135,5 +139,11 @@ func (r *MetricsRegistry) Snapshot() MetricsSnapshot {
 	for _, m := range r.nodes {
 		snap.Nodes = append(snap.Nodes, m.Snapshot())
 	}
+	// Stable, deterministic order so the GUI metrics table doesn't
+	// reshuffle rows on every poll. Map iteration order is randomised
+	// in Go and would otherwise cause the rows to jump around.
+	sort.Slice(snap.Nodes, func(i, j int) bool {
+		return snap.Nodes[i].NodeID < snap.Nodes[j].NodeID
+	})
 	return snap
 }
