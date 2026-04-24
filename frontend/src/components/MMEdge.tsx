@@ -34,7 +34,6 @@ export function MMEdge(props: EdgeProps) {
   });
 
   const attrs = ed.attrs ?? [];
-  const summary = ed.attrSummary ?? '';
   const [hover, setHover] = useState(false);
   const [pinned, setPinned] = useState(false);
   const open = (hover || pinned) && attrs.length > 0;
@@ -69,15 +68,11 @@ export function MMEdge(props: EdgeProps) {
             onMouseEnter={() => setHover(true)}
             onMouseLeave={() => setHover(false)}
           >
-            {summary && <div className="mm-edge-popover-summary">{summary}</div>}
             <dl className="mm-edge-popover-attrs">
               {attrs.map((a) => (
                 <div key={a.key} className="mm-edge-popover-row">
                   <dt>{attrLabel(a.key)}</dt>
-                  <dd>
-                    {a.value}
-                    <span className="mm-edge-popover-source"> · {a.source}</span>
-                  </dd>
+                  <dd>{a.value}</dd>
                 </div>
               ))}
             </dl>

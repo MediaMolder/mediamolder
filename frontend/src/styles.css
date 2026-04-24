@@ -205,63 +205,70 @@ button.danger:hover { background: rgba(185, 74, 74, 0.15); }
   pointer-events: all;
   background: rgba(24, 27, 34, 0.96);
   border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 6px 10px;
-  font-size: 11px;
-  line-height: 1.45;
+  border-radius: 4px;
+  padding: 4px 6px;
+  font-size: 10px;
+  line-height: 1.3;
   color: var(--text);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   backdrop-filter: blur(2px);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.45);
-  min-width: 180px;
-  max-width: 320px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
+  min-width: 0;
+  max-width: 220px;
   z-index: 10;
 }
 .mm-edge-popover-summary {
   font-weight: 600;
-  margin-bottom: 4px;
-  padding-bottom: 4px;
+  font-size: 10px;
+  margin-bottom: 3px;
+  padding-bottom: 3px;
   border-bottom: 1px solid var(--border);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  padding-right: 12px;
 }
 .mm-edge-popover-attrs {
   margin: 0;
   display: grid;
   grid-template-columns: max-content 1fr;
-  gap: 2px 8px;
+  gap: 1px 6px;
 }
 .mm-edge-popover-row {
   display: contents;
 }
 .mm-edge-popover-attrs dt {
   color: var(--text-dim);
-  font-size: 10px;
+  font-size: 9px;
   text-transform: lowercase;
 }
 .mm-edge-popover-attrs dd {
   margin: 0;
+  font-size: 10px;
   word-break: break-word;
 }
 .mm-edge-popover-source {
   color: var(--text-dim);
-  font-size: 10px;
+  font-size: 9px;
   font-style: italic;
 }
 .mm-edge-popover-close {
   position: absolute;
-  top: 2px;
-  right: 4px;
+  top: 1px;
+  right: 3px;
   background: transparent;
   border: none;
   color: var(--text-dim);
   cursor: pointer;
-  font-size: 14px;
+  font-size: 12px;
   line-height: 1;
   padding: 0;
 }
 .mm-edge-popover-close:hover { color: var(--text); }
+.react-flow__edge.edge-video    .mm-edge-popover { border-color: var(--video); }
+.react-flow__edge.edge-audio    .mm-edge-popover { border-color: var(--audio); }
+.react-flow__edge.edge-subtitle .mm-edge-popover { border-color: var(--subtitle); }
+.react-flow__edge.edge-data     .mm-edge-popover { border-color: var(--data); }
 .react-flow__edge.edge-video    .mm-edge-popover { border-color: var(--video); }
 .react-flow__edge.edge-audio    .mm-edge-popover { border-color: var(--audio); }
 .react-flow__edge.edge-subtitle .mm-edge-popover { border-color: var(--subtitle); }
