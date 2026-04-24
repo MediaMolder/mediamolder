@@ -1,0 +1,160 @@
+{
+  "schema_version": "1.0",
+  "description": "ABR ladder: decode in.mp4 once, split video to 4 renditions (1920x1080@7Mbps, 1280x720@4Mbps, 960x540@2Mbps, 640x360@1Mbps), encode each to H.264 with libx264, fan out audio to 4 AAC tracks -> write 4 separate MP4 files.",
+  "inputs": [
+    {
+      "id": "in0",
+      "url": "",
+      "streams": [
+        {
+          "input_index": 0,
+          "type": "video",
+          "track": 0
+        },
+        {
+          "input_index": 0,
+          "type": "audio",
+          "track": 0
+        }
+      ]
+    }
+  ],
+  "graph": {
+    "nodes": [
+      {
+        "id": "vsplit",
+        "type": "filter",
+        "filter": "split",
+        "params": {
+          "outputs": "4"
+        }
+      },
+      {
+        "id": "asplit",
+        "type": "filter",
+        "filter": "asplit",
+        "params": {
+          "outputs": "4"
+        }
+      },
+      {
+        "id": "scale_1080",
+        "type": "filter",
+        "filter": "scale",
+        "params": {
+          "w": "1920",
+          "h": "1080"
+        }
+      },
+      {
+        "id": "scale_720",
+        "type": "filter",
+        "filter": "scale",
+        "params": {
+          "w": "1280",
+          "h": "720"
+        }
+      },
+      {
+        "id": "scale_540",
+        "type": "filter",
+        "filter": "scale",
+        "params": {
+          "w": "960",
+          "h": "540"
+        }
+      },
+      {
+        "id": "scale_360",
+        "type": "filter",
+        "filter": "scale",
+        "params": {
+          "w": "640",
+          "h": "360"
+        }
+      },
+      {
+        "id": "enc_1080",
+        "type": "encoder",
+        "params": {
+          "codec": "libx264",
+          "bitrate": 7000000
+        }
+      },
+      {
+        "id": "enc_720",
+        "type": "encoder",
+        "params": {
+          "codec": "libx264",
+          "bitrate": 4000000
+        }
+      },
+      {
+        "id": "enc_540",
+        "type": "encoder",
+        "params": {
+          "codec": "libx264",
+          "bitrate": 2000000
+        }
+      },
+      {
+        "id": "enc_360",
+        "type": "encoder",
+        "params": {
+          "codec": "libx264",
+          "bitrate": 1000000
+        }
+      }
+    ],
+    "edges": [
+      { "from": "in0:v:0",   "to": "vsplit",     "type": "video" },
+
+      { "from": "vsplit:0",  "to": "scale_1080", "type": "video" },
+      { "from": "vsplit:1",  "to": "scale_720",  "type": "video" },
+      { "from": "vsplit:2",  "to": "scale_540",  "type": "video" },
+      { "from": "vsplit:3",  "to": "scale_360",  "type": "video" },
+
+      { "from": "scale_1080", "to": "enc_1080", "type": "video" },
+      { "from": "scale_720",  "to": "enc_720",  "type": "video" },
+      { "from": "scale_540",  "to": "enc_540",  "type": "video" },
+      { "from": "scale_360",  "to": "enc_360",  "type": "video" },
+
+      { "from": "enc_1080", "to": "out_1080:v", "type": "video" },
+      { "from": "enc_720",  "to": "out_720:v",  "type": "video" },
+      { "from": "enc_540",  "to": "out_540:v",  "type": "video" },
+      { "from": "enc_360",  "to": "out_360:v",  "type": "video" },
+
+      { "from": "in0:a:0",  "to": "asplit",      "type": "audio" },
+      { "from": "asplit:0", "to": "out_1080:a",  "type": "audio" },
+      { "from": "asplit:1", "to": "out_720:a",   "type": "audio" },
+      { "from": "asplit:2", "to": "out_540:a",   "type": "audio" },
+      { "from": "asplit:3", "to": "out_360:a",   "type": "audio" }
+    ]
+  },
+  "outputs": [
+    {
+      "id": "out_1080",
+      "url": "",
+      "codec_video": "libx264",
+      "codec_audio": "aac"
+    },
+    {
+      "id": "out_720",
+      "url": "",
+      "codec_video": "libx264",
+      "codec_audio": "aac"
+    },
+    {
+      "id": "out_540",
+      "url": "",
+      "codec_video": "libx264",
+      "codec_audio": "aac"
+    },
+    {
+      "id": "out_360",
+      "url": "",
+      "codec_video": "libx264",
+      "codec_audio": "aac"
+    }
+  ]
+}
