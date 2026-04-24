@@ -66,7 +66,8 @@ in-app help dialog.
 
 * **Auto layout** rearranges the nodes using a left-to-right Dagre layout
   whenever the graph gets messy.
-* `Backspace` / `Delete` removes the selected node. The shortcut is ignored
+* `Backspace` / `Delete` removes the selected node or connection. The
+  shortcut is ignored
   while you are typing in a form.
 * Press <kbd>?</kbd> (or click the **Help** button) for the in-app help,
   <kbd>Esc</kbd> to dismiss any open dialog.
@@ -165,10 +166,15 @@ configured node.
 * Edges are colour-coded by stream type.
 * Hover or click any edge to open a popover with every technical property
   the editor can infer for the stream (see [Edge attributes](#edge-attributes)).
+  The popover also has a **Delete** button. Clicking the edge selects it
+  (drawn thicker with a glow); the endpoint of an existing connection can
+  then be dragged to a different handle to re-route, or dropped on empty
+  canvas to discard.
 * Node positions are persisted into the saved JSON under `graph.ui.positions`
   (schema v1.2) so reopening a job preserves the layout. The runtime ignores
   this block — it is metadata for the editor only.
-* `Backspace` / `Delete` removes the selected node (input fields are not
+* `Backspace` / `Delete` removes the selected node or selected connection
+  (input fields are not
   hijacked).
 
 ### Edge attributes

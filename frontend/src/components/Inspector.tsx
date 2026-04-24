@@ -121,10 +121,14 @@ function InputForm({
         }}
       />
       <div className="probe-actions">
-        {def.url && (
+        {def.url && def.url.trim() ? (
           <button onClick={runProbe} disabled={probing}>
             {probing ? 'Probing…' : 'Get properties'}
           </button>
+        ) : (
+          <div className="empty" style={{ fontSize: 11 }}>
+            Set a URL above to probe the file's technical properties.
+          </div>
         )}
         {probed && (
           <button className="link-btn" onClick={() => onProbed(undefined)} title="Discard probed metadata">

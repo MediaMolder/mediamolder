@@ -99,6 +99,31 @@ export function HelpDialog({ open, onClose }: Props) {
             technical properties without you having to type them.
           </p>
 
+          <h4>Editing connections</h4>
+          <ul>
+            <li>
+              <strong>Create:</strong> drag from a coloured handle on one node's
+              right edge to a matching handle on another node's left edge.
+              Stream types must match (video→video, audio→audio, …).
+            </li>
+            <li>
+              <strong>Select:</strong> click a connection. The selected edge is
+              drawn thicker with a glow so it's easy to see.
+            </li>
+            <li>
+              <strong>Delete:</strong> select an edge and press
+              <kbd>Backspace</kbd> or <kbd>Delete</kbd>, or click the
+              <strong>Delete</strong> button in the edge popover. Multiple
+              edges can be selected (drag-select on empty canvas, or
+              shift-click) and deleted at once.
+            </li>
+            <li>
+              <strong>Re-route:</strong> grab the endpoint of an existing
+              connection and drag it to a different handle. Drop it on empty
+              canvas to discard the connection.
+            </li>
+          </ul>
+
           <h4>Stream-type colour legend</h4>
           <ul className="legend-list">
             <li><span className="legend-swatch" style={{ background: 'var(--video)' }} /> Video</li>
@@ -109,7 +134,7 @@ export function HelpDialog({ open, onClose }: Props) {
 
           <h4>Keyboard shortcuts</h4>
           <ul>
-            <li><kbd>Backspace</kbd> / <kbd>Delete</kbd> — remove the selected node</li>
+            <li><kbd>Backspace</kbd> / <kbd>Delete</kbd> — remove the selected node or connection</li>
             <li><kbd>?</kbd> or the <strong>Help</strong> toolbar button — open this help dialog</li>
             <li><kbd>Esc</kbd> — close any open dialog</li>
           </ul>

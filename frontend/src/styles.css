@@ -252,6 +252,26 @@ button.danger:hover { background: rgba(185, 74, 74, 0.15); }
   font-size: 9px;
   font-style: italic;
 }
+.mm-edge-popover-actions {
+  display: flex;
+  gap: 4px;
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px solid var(--border);
+  justify-content: flex-end;
+}
+.mm-edge-popover-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-size: 9px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  cursor: pointer;
+}
+.mm-edge-popover-btn:hover { background: var(--bg-elev); }
+.mm-edge-popover-btn.danger { border-color: #c0392b; color: #f5b7b1; }
+.mm-edge-popover-btn.danger:hover { background: #c0392b; color: white; }
 .mm-edge-popover-close {
   position: absolute;
   top: 1px;
@@ -269,6 +289,12 @@ button.danger:hover { background: rgba(185, 74, 74, 0.15); }
 .react-flow__edge.edge-audio    .mm-edge-popover { border-color: var(--audio); }
 .react-flow__edge.edge-subtitle .mm-edge-popover { border-color: var(--subtitle); }
 .react-flow__edge.edge-data     .mm-edge-popover { border-color: var(--data); }
+
+/* Selected-edge highlight (so users can see what Backspace will delete). */
+.react-flow__edge.selected .react-flow__edge-path {
+  stroke-width: 4;
+  filter: drop-shadow(0 0 2px currentColor);
+}
 .react-flow__edge.edge-video    .mm-edge-popover { border-color: var(--video); }
 .react-flow__edge.edge-audio    .mm-edge-popover { border-color: var(--audio); }
 .react-flow__edge.edge-subtitle .mm-edge-popover { border-color: var(--subtitle); }

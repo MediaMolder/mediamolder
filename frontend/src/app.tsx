@@ -65,6 +65,7 @@ function Editor() {
   const [nodes, setNodes] = useState<FlowNode[]>([]);
   const [edges, setEdges] = useState<FlowEdge[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedEdgeIds, setSelectedEdgeIds] = useState<string[]>([]);
   const canvasRef = useRef<HTMLDivElement>(null);
   const rf = useReactFlow();
 
@@ -138,6 +139,7 @@ function Editor() {
   /* ---------- Selection ---------- */
   const onSelectionChange = useCallback((params: OnSelectionChangeParams) => {
     setSelectedId(params.nodes[0]?.id ?? null);
+    setSelectedEdgeIds(params.edges.map((e) => e.id));
   }, []);
 
   const selectedNode = useMemo(
@@ -242,14 +244,22 @@ function Editor() {
         setHelpOpen(true);
         return;
       }
-      if ((e.key === 'Backspace' || e.key === 'Delete') && selectedId) {
-        e.preventDefault();
-        onNodeDelete(selectedId);
+      if ((e.key === 'Backspace' || e.key === 'Delete')) {
+        if (selectedEdgeIds.length > 0) {
+          e.preventDefault();
+          setEdges((es) => es.filter((edge) => !selectedEdgeIds.includes(edge.id)));
+          setSelectedEdgeIds([]);
+          return;
+        }
+        if (selectedId) {
+          e.preventDefault();
+          onNodeDelete(selectedId);
+        }
       }
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [selectedId, onNodeDelete]);
+  }, [selectedId, selectedEdgeIds, onNodeDelete]);
 
   const stats = useMemo(
     () => `${nodes.length} nodes · ${edges.length} edges`,
