@@ -83,6 +83,18 @@ interface ConvertOptions {
   autoLayout?: boolean;
 }
 
+/**
+ * Placeholder shown in the canvas sublabel of an input/output node
+ * when the user has not yet chosen a file URL. Visually distinct so
+ * it's obvious the node is incomplete and the user needs to act.
+ */
+export const EMPTY_URL_PLACEHOLDER = '‹choose file›';
+
+/** Render `url` for the canvas sublabel, falling back to a placeholder when blank. */
+export function displayUrl(url: string | undefined): string {
+  return url && url.trim() ? url : EMPTY_URL_PLACEHOLDER;
+}
+
 /** Get the React Flow node id for a job-side input/output/node id. */
 export function flowIdFor(kind: 'input' | 'output' | 'node', id: string): string {
   if (kind === 'input') return INPUT_PREFIX + id;
@@ -219,7 +231,7 @@ export function configToFlow(cfg: JobConfig, opts: ConvertOptions = {}): {
       data: {
         kind: 'input',
         label: inp.id,
-        sublabel: inp.url,
+        sublabel: displayUrl(inp.url),
         ref: { kind: 'input', def: inp },
       },
     });
@@ -248,7 +260,7 @@ export function configToFlow(cfg: JobConfig, opts: ConvertOptions = {}): {
       data: {
         kind: 'output',
         label: out.id,
-        sublabel: out.url,
+        sublabel: displayUrl(out.url),
         ref: { kind: 'output', def: out },
       },
     });

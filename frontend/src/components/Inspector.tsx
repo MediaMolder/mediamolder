@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { FlowNode } from '../lib/jsonAdapter';
+import { displayUrl } from '../lib/jsonAdapter';
 import type { Input, NodeDef, Output, ProbeResponse, ProbedStream } from '../lib/jobTypes';
 import { FileBrowser, type BrowseMode } from './FileBrowser';
 import { EncoderForm } from './EncoderForm';
@@ -60,7 +61,7 @@ export function Inspector({ node, onChange, onDelete }: Props) {
         <InputForm
           def={ref.def}
           probed={node.data.probed}
-          onChange={(def) => onChange(updateRef(node, { kind: 'input', def }, def.id, def.url))}
+          onChange={(def) => onChange(updateRef(node, { kind: 'input', def }, def.id, displayUrl(def.url)))}
           onProbed={(probed) =>
             onChange({ ...node, data: { ...node.data, probed } } as FlowNode)
           }
@@ -69,7 +70,7 @@ export function Inspector({ node, onChange, onDelete }: Props) {
       {ref.kind === 'output' && (
         <OutputForm
           def={ref.def}
-          onChange={(def) => onChange(updateRef(node, { kind: 'output', def }, def.id, def.url))}
+          onChange={(def) => onChange(updateRef(node, { kind: 'output', def }, def.id, displayUrl(def.url)))}
         />
       )}
       {ref.kind === 'node' && (

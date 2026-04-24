@@ -2,7 +2,7 @@
 // item onto the canvas, and assign collision-free IDs.
 
 import type { FlowNode } from './jsonAdapter';
-import { INPUT_PREFIX, OUTPUT_PREFIX } from './jsonAdapter';
+import { EMPTY_URL_PLACEHOLDER, INPUT_PREFIX, OUTPUT_PREFIX } from './jsonAdapter';
 import type { Input, NodeDef, Output } from './jobTypes';
 
 export interface PaletteEntry {
@@ -49,7 +49,7 @@ export function spawnNodeFrom(
         id: INPUT_PREFIX + id,
         type: 'mmNode',
         position,
-        data: { kind: 'input', label: id, sublabel: '(no url)', ref: { kind: 'input', def } },
+        data: { kind: 'input', label: id, sublabel: EMPTY_URL_PLACEHOLDER, ref: { kind: 'input', def } },
       },
     };
   }
@@ -63,7 +63,7 @@ export function spawnNodeFrom(
         id: OUTPUT_PREFIX + id,
         type: 'mmNode',
         position,
-        data: { kind: 'output', label: id, sublabel: '(no url)', ref: { kind: 'output', def } },
+        data: { kind: 'output', label: id, sublabel: EMPTY_URL_PLACEHOLDER, ref: { kind: 'output', def } },
       },
     };
   }
