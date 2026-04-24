@@ -51,7 +51,7 @@ export function MMNode({ data, selected }: NodeProps & { data: FlowNodeData & { 
           />
         ))}
 
-      <div className="mm-node-type">{data.kind}</div>
+      <div className="mm-node-type">{describeKind(data.kind, supported)}</div>
       <div className="mm-node-title">{data.label}</div>
       {data.sublabel && <div className="mm-node-sub">{data.sublabel}</div>}
       {run && (run.frames !== undefined || run.errors !== undefined) && (
@@ -75,4 +75,35 @@ export function MMNode({ data, selected }: NodeProps & { data: FlowNodeData & { 
         ))}
     </div>
   );
+}
+
+/**
+ * Human-friendly heading shown at the top of every node, in place of
+ * the bare runtime kind. Disambiguates by media type when the node is
+ * single-stream (e.g. an encoder wired only for audio renders as
+ * "Audio encoder" rather than the generic "ENCODER" tag).
+ */
+export function describeKind(kind: string, supported: readonly string[]): string {
+  const single = supported.length === 1 ? supported[0] : null;
+  const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+  switch (kind) {
+    case 'input':
+      return 'File read / Demux';
+    case 'output':
+      return 'Mux / File write';
+    case 'demuxer':
+      return 'Demuxer';
+    case 'muxer':
+      return 'Muxer';
+    case 'decoder':
+      return single ? `${cap(single)} decoder` : 'Decoder';
+    case 'encoder':
+      return single ? `${cap(single)} encoder` : 'Encoder';
+    case 'filter':
+      return single ? `${cap(single)} filter` : 'Filter';
+    case 'go_processor':
+      return 'Processor';
+    default:
+      return kind;
+  }
 }

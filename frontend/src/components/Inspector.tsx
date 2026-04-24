@@ -3,6 +3,7 @@ import type { FlowNode } from '../lib/jsonAdapter';
 import type { Input, NodeDef, Output, ProbeResponse, ProbedStream } from '../lib/jobTypes';
 import { FileBrowser, type BrowseMode } from './FileBrowser';
 import { EncoderForm } from './EncoderForm';
+import { describeKind } from './MMNode';
 
 interface Props {
   node: FlowNode | null;
@@ -29,7 +30,7 @@ export function Inspector({ node, onChange, onDelete }: Props) {
           <h3>{node.data.label}</h3>
         </div>
         <div className="mm-node-type" style={{ marginBottom: 12 }}>
-          {node.data.kind} (implicit)
+          {describeKind(node.data.kind, node.data.streams ?? [])} (implicit)
         </div>
         {node.data.sublabel && (
           <div style={{ fontSize: 12, color: 'var(--text-dim)', marginBottom: 12 }}>
@@ -51,7 +52,9 @@ export function Inspector({ node, onChange, onDelete }: Props) {
         <h3>{node.data.label}</h3>
         <button className="danger" onClick={() => onDelete(node.id)}>Delete</button>
       </div>
-      <div className="mm-node-type" style={{ marginBottom: 12 }}>{node.data.kind}</div>
+      <div className="mm-node-type" style={{ marginBottom: 12 }}>
+        {describeKind(node.data.kind, node.data.streams ?? [])}
+      </div>
 
       {ref.kind === 'input' && (
         <InputForm
