@@ -286,10 +286,20 @@ dropdowns built from `AV_OPT_TYPE_CONST` children sharing the option's
 Leaving a field blank simply omits it from the pipeline JSON, so libav's
 own default applies.
 
-The complete option list (with collapsible Advanced groups, full-text
-search, and raw-options escape hatches like `x264-opts` / `x265-params`)
-is planned for a follow-up update; in the interim, any extra options can
-still be set under the existing **Params** key/value editor.
+The complete option list lives below in two further sections:
+
+* **Raw options** — codec-native parameter strings
+  (`x264-params`, `x264-opts`, `x265-params`, `svtav1-params`,
+  `aom-params`, `vpx-params`) rendered as multi-line text inputs and
+  passed through verbatim. Use these to reach options that aren't
+  exposed as individual AVOptions, e.g. `x264-params=keyint=120:me=umh`.
+* **Advanced** — collapsible section listing every remaining option
+  bucketed by a lightweight heuristic (Threading, Quality, Color,
+  Motion, Profile / Level, GOP & frames, Other). A search box at the
+  top filters across all groups by option name and help text. The
+  generic key/value **Params** editor below still accepts arbitrary
+  keys for anything libav adds in the future that the form doesn't
+  yet recognise.
 
 ### Run panel
 

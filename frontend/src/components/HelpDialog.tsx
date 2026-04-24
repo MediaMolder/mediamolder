@@ -133,9 +133,19 @@ export function HelpDialog({ open, onClose }: Props) {
             ranges, defaults, and named values (e.g. <code>preset</code>{' '}
             offers a dropdown of <code>ultrafast</code>, <code>fast</code>,
             <code>medium</code>, …). Leaving a field blank uses libav's
-            default. The full option list and search will arrive in a later
-            update; in the meantime any extra options can still be set under
-            <strong> Params</strong> below.
+            default.
+          </p>
+          <p>
+            Below the primary controls, a <strong>Raw options</strong>{' '}
+            section surfaces codec-native parameter strings (
+            <code>x264-params</code>, <code>x265-params</code>,
+            <code>svtav1-params</code>, <code>aom-params</code>,
+            <code>vpx-params</code>) for power users who want to pass
+            <code>key=value:key=value</code> blobs through verbatim. Every
+            other option lives under the <strong>Advanced</strong>{' '}
+            collapsible, grouped (Threading, Quality, Color, Motion, Profile/
+            Level, GOP &amp; frames, Other) and filterable through a
+            search box that matches against option name and help text.
           </p>
 
           <h4>Stream-type colour legend</h4>
