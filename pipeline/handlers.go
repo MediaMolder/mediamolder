@@ -47,12 +47,14 @@ func configToGraphDef(cfg *Config) *graph.Def {
 	return def
 }
 
-// expandImplicitEncoders rewrites edges that connect a source directly to a
-// sink, splicing in a synthetic encoder node that uses the sink's
-// codec_video / codec_audio (defaulting to libx264 / aac / mov_text when
-// the field is empty). This lets compact JobConfigs (one input, one
-// output, two stream-routing edges) run end-to-end without the user
-// having to declare an encoder node by hand.
+// expandImplicitEncoders rewrites edges feeding a sink whose source is
+// not already an encoder, splicing in a synthetic encoder node that
+// uses the sink's codec_video / codec_audio (defaulting to libx264 /
+// aac / mov_text when the field is empty). This lets compact
+// JobConfigs run end-to-end without the user having to declare an
+// encoder node by hand, including the common case of a filter chain
+// (e.g. scale -> fps -> out0:v) sitting between the input and the
+// output.
 //
 // The GUI mirrors this pass in `materializeImplicitEncoders` so the
 // implicit encoder appears as a real editable node in the canvas; this
@@ -62,13 +64,15 @@ func configToGraphDef(cfg *Config) *graph.Def {
 // Synthetic encoder nodes use the "__enc__" prefix to avoid colliding
 // with user-supplied node IDs.
 func expandImplicitEncoders(cfg *Config, def *graph.Def) {
-	inputIDs := make(map[string]bool, len(cfg.Inputs))
-	for _, inp := range cfg.Inputs {
-		inputIDs[inp.ID] = true
-	}
 	outputs := make(map[string]Output, len(cfg.Outputs))
 	for _, out := range cfg.Outputs {
 		outputs[out.ID] = out
+	}
+	// Index existing graph nodes so we can tell encoder sources from
+	// filter / processor / input sources.
+	nodeByID := make(map[string]graph.NodeDef, len(def.Nodes))
+	for _, n := range def.Nodes {
+		nodeByID[n.ID] = n
 	}
 
 	head := func(ref string) string {
@@ -83,11 +87,13 @@ func expandImplicitEncoders(cfg *Config, def *graph.Def) {
 		e := &def.Edges[i]
 		fromID := head(e.From)
 		toID := head(e.To)
-		if !inputIDs[fromID] {
-			continue
-		}
 		out, ok := outputs[toID]
 		if !ok {
+			continue
+		}
+		// Already encoded: source is a graph encoder node. (Inputs and
+		// filter nodes both fall through to the splice below.)
+		if n, ok := nodeByID[fromID]; ok && n.Type == "encoder" {
 			continue
 		}
 		var codec string
@@ -112,11 +118,13 @@ func expandImplicitEncoders(cfg *Config, def *graph.Def) {
 			continue
 		}
 		encID := fmt.Sprintf("__enc__%s_%s_%d", toID, e.Type, i)
-		def.Nodes = append(def.Nodes, graph.NodeDef{
+		encNode := graph.NodeDef{
 			ID:     encID,
 			Type:   "encoder",
 			Params: map[string]any{"codec": codec},
-		})
+		}
+		def.Nodes = append(def.Nodes, encNode)
+		nodeByID[encID] = encNode
 		added = append(added, graph.EdgeDef{From: encID, To: e.To, Type: e.Type})
 		e.To = encID
 	}

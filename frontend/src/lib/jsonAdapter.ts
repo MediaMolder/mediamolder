@@ -139,10 +139,13 @@ function defaultEncoderCodec(type: StreamType): string {
  * bitrate, etc) rather than read-only ghosts. Mirrors the runtime
  * pass `pipeline.expandImplicitEncoders`.
  *
- * Rule: for every edge whose source is an input id and target is an
- * output id, insert a new encoder node between them. The encoder's
- * `codec` param comes from the output's `codec_video` / `codec_audio`
- * if non-empty, otherwise the type-specific default
+ * Rule: for every edge whose target is an output id and whose source
+ * is not already an encoder node, insert a new encoder node between
+ * them. This handles both the direct input→output shortcut and
+ * filter-chain cases (e.g. scale→fps→out0:v) — anywhere that a sink
+ * inbound is not yet driven by an encoder. The encoder's `codec`
+ * param comes from the output's `codec_video` / `codec_audio` if
+ * non-empty, otherwise the type-specific default
  * (libx264 / aac / mov_text).
  *
  * Returns a new JobConfig — the caller-supplied object is not
@@ -152,9 +155,9 @@ function defaultEncoderCodec(type: StreamType): string {
  * user-visible (and editable like any other encoder node).
  */
 export function materializeImplicitEncoders(cfg: JobConfig): JobConfig {
-  const inputIds = new Set(cfg.inputs.map((i) => i.id));
   const outputIds = new Set(cfg.outputs.map((o) => o.id));
   const outputById = new Map(cfg.outputs.map((o) => [o.id, o]));
+  const nodeById = new Map(cfg.graph.nodes.map((n) => [n.id, n]));
 
   const nodes: NodeDef[] = [...cfg.graph.nodes];
   const edges: EdgeDef[] = [];
@@ -164,7 +167,13 @@ export function materializeImplicitEncoders(cfg: JobConfig): JobConfig {
   for (const e of cfg.graph.edges) {
     const fromHead = endpointHead(e.from);
     const toHead = endpointHead(e.to);
-    if (!inputIds.has(fromHead) || !outputIds.has(toHead)) {
+    if (!outputIds.has(toHead)) {
+      edges.push(e);
+      continue;
+    }
+    // Already encoded: source is a graph encoder node.
+    const fromNode = nodeById.get(fromHead);
+    if (fromNode && fromNode.type === 'encoder') {
       edges.push(e);
       continue;
     }
@@ -187,11 +196,13 @@ export function materializeImplicitEncoders(cfg: JobConfig): JobConfig {
     }
     usedIds.add(encId);
 
-    nodes.push({
+    const encoderNode: NodeDef = {
       id: encId,
       type: 'encoder',
       params: { codec },
-    });
+    };
+    nodes.push(encoderNode);
+    nodeById.set(encId, encoderNode);
     edges.push({ from: e.from, to: encId, type: e.type });
     edges.push({ from: encId, to: e.to, type: e.type });
     inserted++;
