@@ -490,13 +490,15 @@ button.danger:hover { background: rgba(185, 74, 74, 0.15); }
   min-height: 0;
 }
 .file-browser-pathbar {
-  display: grid;
-  grid-template-columns: auto 1fr auto;
+  display: flex;
+  align-items: center;
   gap: 6px;
   padding: 8px 10px;
   border-bottom: 1px solid var(--border);
 }
 .file-browser-pathbar input {
+  flex: 1;
+  min-width: 0;
   background: var(--panel-2);
   color: var(--text);
   border: 1px solid var(--border);

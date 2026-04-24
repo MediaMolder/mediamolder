@@ -41,6 +41,7 @@ func NewServer(opts Options) (*http.Server, error) {
 	mux.HandleFunc("GET /api/examples", makeExamplesHandler(opts.ExamplesDir))
 	mux.HandleFunc("GET /api/nodes", handleListNodes)
 	mux.HandleFunc("GET /api/files", handleListDir)
+	mux.HandleFunc("POST /api/files/mkdir", handleMkdir)
 	mux.HandleFunc("POST /api/probe", handleProbe)
 	mux.HandleFunc("GET /api/encoders/{name}/options", handleEncoderOptions)
 	mux.HandleFunc("POST /api/validate", handleValidate)

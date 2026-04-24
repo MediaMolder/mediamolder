@@ -75,6 +75,34 @@ export function FileBrowser({
     void load(initialPath ?? '');
   }, [open, initialPath, load]);
 
+  const createFolder = useCallback(async () => {
+    if (!data) return;
+    const name = window.prompt('New folder name:');
+    if (!name) return;
+    const trimmed = name.trim();
+    if (!trimmed || /[\\/]/.test(trimmed) || trimmed === '.' || trimmed === '..') {
+      setError('Invalid folder name.');
+      return;
+    }
+    try {
+      const res = await fetch('/api/files/mkdir', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: data.path, name: trimmed }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        setError((body as { error?: string }).error ?? `${res.status} ${res.statusText}`);
+        return;
+      }
+      const body = (await res.json()) as { path: string };
+      // Refresh the current listing and navigate into the new folder.
+      void load(body.path);
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  }, [data, load]);
+
   if (!open) return null;
 
   const onSelect = (e: FileEntry) => {
@@ -141,6 +169,15 @@ export function FileBrowser({
                 placeholder="/path/to/folder"
               />
               <button onClick={() => void load(pathInput)}>Go</button>
+              {mode === 'save' && (
+                <button
+                  onClick={() => void createFolder()}
+                  disabled={!data}
+                  title="Create a new folder inside the current directory"
+                >
+                  New folder
+                </button>
+              )}
             </div>
 
             {error && <div className="file-browser-error">{error}</div>}

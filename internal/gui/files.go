@@ -165,7 +165,96 @@ func shortcutRoots() []string {
 		out = append(out, cwd)
 	}
 	out = append(out, "/")
+	out = append(out, mountedVolumes()...)
 	return uniqueStrings(out)
+}
+
+// mountedVolumes returns paths to mounted drives/volumes that are likely
+// to contain user-visible data. Best-effort and platform-aware:
+//   - macOS: entries under /Volumes (excludes the system volume which
+//     simply re-mounts /).
+//   - Linux: entries under /media/<user> and /mnt that are directories.
+//   - Other: nothing (Windows would need a different enumeration).
+func mountedVolumes() []string {
+	candidates := []string{"/Volumes"}
+	if u, err := os.UserHomeDir(); err == nil {
+		// /media/<user> is the udisks2 default on most desktops.
+		base := filepath.Base(u)
+		if base != "" && base != "/" {
+			candidates = append(candidates, "/media/"+base)
+		}
+	}
+	candidates = append(candidates, "/media", "/mnt", "/run/media")
+
+	var out []string
+	for _, dir := range candidates {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			continue
+		}
+		for _, e := range entries {
+			if !e.IsDir() || strings.HasPrefix(e.Name(), ".") {
+				continue
+			}
+			out = append(out, filepath.Join(dir, e.Name()))
+		}
+	}
+	return out
+}
+
+// mkdirRequest is the body of POST /api/files/mkdir.
+type mkdirRequest struct {
+	Path string `json:"path"` // parent directory
+	Name string `json:"name"` // new directory name
+}
+
+type mkdirResponse struct {
+	Path string `json:"path"` // absolute path of the created directory
+}
+
+// handleMkdir creates a new directory inside an existing one. Used by the
+// file-save dialog's "New folder" button. Same security caveat as
+// handleListDir: localhost-only.
+func handleMkdir(w http.ResponseWriter, r *http.Request) {
+	var req mkdirRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSONError(w, http.StatusBadRequest, fmt.Errorf("invalid JSON body: %w", err))
+		return
+	}
+	parent := strings.TrimSpace(req.Path)
+	name := strings.TrimSpace(req.Name)
+	if parent == "" || name == "" {
+		writeJSONError(w, http.StatusBadRequest, errors.New("path and name are required"))
+		return
+	}
+	// Disallow path separators in the new folder name to prevent the
+	// caller from escaping the parent directory.
+	if strings.ContainsAny(name, `/\`) || name == "." || name == ".." {
+		writeJSONError(w, http.StatusBadRequest, errors.New("invalid folder name"))
+		return
+	}
+	parent = expandHome(parent)
+	abs, err := filepath.Abs(parent)
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, fmt.Errorf("invalid path: %w", err))
+		return
+	}
+	info, err := os.Stat(abs)
+	if err != nil || !info.IsDir() {
+		writeJSONError(w, http.StatusNotFound, errors.New("parent directory does not exist"))
+		return
+	}
+	target := filepath.Join(abs, name)
+	if err := os.Mkdir(target, 0o755); err != nil {
+		if errors.Is(err, fs.ErrExist) {
+			writeJSONError(w, http.StatusConflict, err)
+		} else {
+			writeJSONError(w, http.StatusForbidden, err)
+		}
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(mkdirResponse{Path: target})
 }
 
 func uniqueStrings(in []string) []string {
