@@ -219,28 +219,43 @@ function RateControlGroup({
   getParam: (k: string) => string;
   setParam: (k: string, v: string) => void;
 }) {
-  // Derive the current mode from which params are set. Priority:
-  // QP > CRF > Bit rate (matching FFmpeg behaviour where QP/CRF
-  // override bitrate when present).
+  // The "current mode" is held in component state so the user can pick
+  // CRF or QP without those modes immediately reverting to Bit rate
+  // (which would happen if mode were derived solely from which params
+  // are non-empty — switching modes intentionally clears the previous
+  // mode's value but leaves the new mode blank for the user to fill).
+  // We seed it from the existing params so loading a JobConfig with
+  // e.g. `crf` set lands the user on the CRF view.
   const qpVal = qp ? getParam(qp.name) : '';
   const crfVal = crf ? getParam(crf.name) : '';
   const bVal = bitRate ? getParam(bitRate.name) : '';
-  let initialMode: RateMode;
-  if (qp && qpVal !== '') initialMode = 'qp';
-  else if (crf && crfVal !== '') initialMode = 'crf';
-  else initialMode = bitRate ? 'bitrate' : crf ? 'crf' : 'qp';
+  const rcEnumVal = rcEnum ? getParam(rcEnum.name) : '';
+  const seedMode = (): RateMode => {
+    if (rcEnum && rcEnumVal) {
+      if (roles.rc_qp && rcEnumVal === roles.rc_qp) return 'qp';
+      if (roles.rc_crf && rcEnumVal === roles.rc_crf) return 'crf';
+      if (bitRate) return 'bitrate';
+    }
+    if (qp && qpVal !== '') return 'qp';
+    if (crf && crfVal !== '') return 'crf';
+    if (bitRate) return 'bitrate';
+    if (crf) return 'crf';
+    return 'qp';
+  };
+  const [mode, setModeState] = useState<RateMode>(seedMode);
 
   // Sub-mode for bitrate: VBR if maxrate not pinned to b; CBR if it is
-  // (libx264/libx265 idiom) or if rc enum is set to a CBR constant.
+  // (libx264/libx265 idiom) or if the rc enum is set to a CBR constant.
   const maxrateVal = getParam('maxrate');
-  const rcEnumVal = rcEnum ? getParam(rcEnum.name) : '';
-  const initialBitrateSub: BitrateSubMode =
+  const seedSub = (): BitrateSubMode =>
     (rcEnum && roles.rc_cbr && rcEnumVal === roles.rc_cbr) ||
     (bVal !== '' && maxrateVal !== '' && maxrateVal === bVal)
       ? 'cbr'
       : 'vbr';
+  const [sub, setSubState] = useState<BitrateSubMode>(seedSub);
 
   const setMode = (next: RateMode) => {
+    setModeState(next);
     // Clear every other mode's params, then prime the new mode's enum
     // selection (for nvenc-style encoders).
     if (bitRate && next !== 'bitrate') {
@@ -256,12 +271,13 @@ function RateControlGroup({
         next === 'crf' ? roles.rc_crf
         : next === 'qp' ? roles.rc_qp
         : roles.rc_vbr; // bitrate defaults to VBR
-      setParam(rcEnum.name, target ?? '');
+      if (target !== undefined) setParam(rcEnum.name, target);
     }
   };
 
-  const setBitrateSub = (sub: BitrateSubMode) => {
-    if (sub === 'cbr') {
+  const setBitrateSub = (next: BitrateSubMode) => {
+    setSubState(next);
+    if (next === 'cbr') {
       // CBR idiom for libx264/libx265: maxrate=minrate=b, bufsize=b.
       // For nvenc, switch the rc enum to its CBR constant.
       const v = bVal || (bitRate?.default?.int ? String(bitRate.default.int) : '');
@@ -284,7 +300,7 @@ function RateControlGroup({
   const setBitRateValue = (v: string) => {
     if (!bitRate) return;
     setParam(bitRate.name, v);
-    if (initialBitrateSub === 'cbr' && v !== '') {
+    if (sub === 'cbr' && v !== '') {
       setParam('maxrate', v);
       setParam('minrate', v);
       setParam('bufsize', v);
@@ -294,17 +310,17 @@ function RateControlGroup({
   return (
     <div className="rate-control-group">
       <label>Rate control mode</label>
-      <select value={initialMode} onChange={(e) => setMode(e.target.value as RateMode)}>
+      <select value={mode} onChange={(e) => setMode(e.target.value as RateMode)}>
         {bitRate && <option value="bitrate">Bit rate</option>}
         {crf && <option value="crf">CRF</option>}
         {qp && <option value="qp">QP</option>}
       </select>
 
-      {initialMode === 'bitrate' && bitRate && (
+      {mode === 'bitrate' && bitRate && (
         <>
           <label style={{ marginTop: 6 }}>Bit rate mode</label>
           <select
-            value={initialBitrateSub}
+            value={sub}
             onChange={(e) => setBitrateSub(e.target.value as BitrateSubMode)}
           >
             <option value="vbr">VBR (variable)</option>
@@ -323,7 +339,7 @@ function RateControlGroup({
         </>
       )}
 
-      {initialMode === 'crf' && crf && (
+      {mode === 'crf' && crf && (
         <>
           <label style={{ marginTop: 6 }} title={crf.help}>
             CRF <span className="empty" style={{ fontSize: 10 }}>({crf.name}{rangeHint(crf)})</span>
@@ -340,7 +356,7 @@ function RateControlGroup({
         </>
       )}
 
-      {initialMode === 'qp' && qp && (
+      {mode === 'qp' && qp && (
         <>
           <label style={{ marginTop: 6 }} title={qp.help}>
             QP <span className="empty" style={{ fontSize: 10 }}>({qp.name}{rangeHint(qp)})</span>
