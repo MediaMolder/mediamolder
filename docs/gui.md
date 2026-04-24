@@ -263,6 +263,34 @@ The right-hand panel shows a typed form for the selected node. Codec, filter,
 and processor parameters surface as editable fields; arbitrary key/value pairs
 can be added for less common options.
 
+#### Encoder nodes
+
+Selecting an **encoder** node loads its option schema from
+`GET /api/encoders/{name}/options` and renders typed controls for the most
+common roles:
+
+* **Preset** — `preset` (or the encoder's equivalent, e.g. `cpu-used` for
+  libaom-av1, `deadline` for libvpx-vp9).
+* **Rate control** — `rc` when the encoder exposes one. The form watches
+  this value to decide whether to surface CRF/CQ/Q (for quality-based
+  modes) or the bit-rate field (for VBR/CBR modes) as the secondary
+  primary control.
+* **Quality** or **Bit rate** — `crf`/`cq`/`q` *or* `b`, depending on the
+  selected rate-control mode.
+* **Keyframe interval** — `g`.
+
+Each control is sourced from the codec's own AVOption metadata: numeric
+fields enforce libav's min/max, enum-like options (e.g. `preset`) become
+dropdowns built from `AV_OPT_TYPE_CONST` children sharing the option's
+`unit`, and the option's default value is shown as the placeholder.
+Leaving a field blank simply omits it from the pipeline JSON, so libav's
+own default applies.
+
+The complete option list (with collapsible Advanced groups, full-text
+search, and raw-options escape hatches like `x264-opts` / `x265-params`)
+is planned for a follow-up update; in the interim, any extra options can
+still be set under the existing **Params** key/value editor.
+
 ### Run panel
 
 Click **Run** to execute the current graph. The frontend POSTs the job to

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import type { FlowNode } from '../lib/jsonAdapter';
 import type { Input, NodeDef, Output, ProbeResponse, ProbedStream } from '../lib/jobTypes';
 import { FileBrowser, type BrowseMode } from './FileBrowser';
+import { EncoderForm } from './EncoderForm';
 
 interface Props {
   node: FlowNode | null;
@@ -267,6 +268,7 @@ function NodeForm({ def, onChange }: { def: NodeDef; onChange: (next: NodeDef) =
           onChange={(v) => onChange({ ...def, processor: v || undefined })}
         />
       )}
+      {def.type === 'encoder' && <EncoderForm def={def} onChange={onChange} />}
       <ParamsEditor params={def.params ?? {}} onChange={(p) => onChange({ ...def, params: p })} />
     </>
   );

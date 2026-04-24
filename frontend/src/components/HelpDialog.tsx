@@ -124,6 +124,20 @@ export function HelpDialog({ open, onClose }: Props) {
             </li>
           </ul>
 
+          <h4>Configuring encoders</h4>
+          <p>
+            Selecting an <strong>Encoder</strong> node loads its option schema
+            from libavcodec and renders the most common controls — Preset,
+            Rate control, Quality (CRF/CQ/Q) or Bit rate (whichever applies),
+            and Keyframe interval — as typed inputs with the codec's own
+            ranges, defaults, and named values (e.g. <code>preset</code>{' '}
+            offers a dropdown of <code>ultrafast</code>, <code>fast</code>,
+            <code>medium</code>, …). Leaving a field blank uses libav's
+            default. The full option list and search will arrive in a later
+            update; in the meantime any extra options can still be set under
+            <strong> Params</strong> below.
+          </p>
+
           <h4>Stream-type colour legend</h4>
           <ul className="legend-list">
             <li><span className="legend-swatch" style={{ background: 'var(--video)' }} /> Video</li>

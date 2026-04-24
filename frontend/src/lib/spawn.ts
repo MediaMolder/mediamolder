@@ -73,7 +73,7 @@ export function spawnNodeFrom(
   const id = uniqueId(baseId, existingIds);
   const def: NodeDef = { id, type: entry.type };
   if (entry.type === 'filter') def.filter = entry.name;
-  else if (entry.type === 'encoder') def.filter = entry.name; // codec name lives in params normally; placeholder
+  else if (entry.type === 'encoder') def.params = { codec: entry.name };
   else if (entry.type === 'go_processor') def.processor = entry.name;
 
   return {
