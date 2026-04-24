@@ -63,6 +63,7 @@ func handleListNodes(w http.ResponseWriter, _ *http.Request) {
 			Name:        f.Name,
 			Label:       label,
 			Description: f.Description,
+			Streams:     filterStreams(f),
 			NumInputs:   f.NumInputs,
 			NumOutputs:  f.NumOutputs,
 		})
@@ -136,6 +137,27 @@ func categoryOrder(c string) int {
 	default:
 		return 5
 	}
+}
+
+// filterStreams returns the unique set of media types appearing on a
+// 1→1 filter's input + output pads. Used to populate the catalog entry's
+// Streams field so the frontend renders only matching pins. Returns nil
+// for dynamic-pad filters (libav reports an empty pad list), which the
+// frontend treats as media-type-agnostic.
+func filterStreams(f av.FilterInfo) []string {
+	seen := map[string]struct{}{}
+	var out []string
+	for _, t := range append(append([]string(nil), f.InputTypes...), f.OutputTypes...) {
+		if t == "" {
+			continue
+		}
+		if _, ok := seen[t]; ok {
+			continue
+		}
+		seen[t] = struct{}{}
+		out = append(out, t)
+	}
+	return out
 }
 
 // classifyFilter buckets a libavfilter into a friendly subcategory and

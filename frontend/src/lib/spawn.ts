@@ -86,6 +86,7 @@ export function spawnNodeFrom(
         label: id,
         sublabel: entry.name,
         ref: { kind: 'node', def },
+        streams: entry.streams,
       },
     },
   };

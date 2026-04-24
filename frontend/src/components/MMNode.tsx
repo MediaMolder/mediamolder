@@ -2,6 +2,7 @@ import { Handle, Position, type NodeProps } from '@xyflow/react';
 import type { FlowNodeData } from '../lib/jsonAdapter';
 
 const STREAM_HANDLES = ['video', 'audio', 'subtitle', 'data'] as const;
+type StreamHandle = (typeof STREAM_HANDLES)[number];
 
 export interface MMNodeRunData {
   frames?: number;
@@ -16,6 +17,17 @@ export function MMNode({ data, selected }: NodeProps & { data: FlowNodeData & { 
   const run = data.run;
   const errored = !!run?.hasError || (run?.errors ?? 0) > 0;
 
+  // Inputs and outputs are media-type-agnostic by design (the user picks
+  // which streams an input exposes, and a sink accepts whatever wiring the
+  // graph hands it). For everything else, restrict the handle set to the
+  // media types the catalog reported as supported. An empty/missing
+  // streams list means "unknown" — fall back to all four so the user can
+  // still wire the node manually.
+  const supported: readonly StreamHandle[] =
+    isInput || isOutput || !data.streams || data.streams.length === 0
+      ? STREAM_HANDLES
+      : STREAM_HANDLES.filter((t) => data.streams!.includes(t));
+
   const classes = [
     'mm-node',
     selected ? 'selected' : '',
@@ -27,7 +39,7 @@ export function MMNode({ data, selected }: NodeProps & { data: FlowNodeData & { 
   return (
     <div className={classes}>
       {!isInput &&
-        STREAM_HANDLES.map((t, i) => (
+        supported.map((t, i) => (
           <Handle
             key={`tgt-${t}`}
             type="target"
@@ -50,7 +62,7 @@ export function MMNode({ data, selected }: NodeProps & { data: FlowNodeData & { 
       )}
 
       {!isOutput &&
-        STREAM_HANDLES.map((t, i) => (
+        supported.map((t, i) => (
           <Handle
             key={`src-${t}`}
             type="source"

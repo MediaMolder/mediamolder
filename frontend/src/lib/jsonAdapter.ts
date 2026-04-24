@@ -48,6 +48,15 @@ export interface FlowNodeData extends Record<string, unknown> {
    * Editor-only — never serialised back into the JobConfig.
    */
   probed?: ProbedStream[];
+  /**
+   * Media types this node supports on its handles (e.g. ["video"] for a
+   * video-only encoder, ["audio"] for an audio filter). Drives which
+   * pins MMNode renders. Editor-only — populated from the catalog when
+   * the node is spawned or when JSON is loaded. Empty/undefined ⇒
+   * media-type-agnostic (render all four pins; used for inputs,
+   * outputs, dynamic-pad filters, and unknown go_processors).
+   */
+  streams?: string[];
 }
 
 export interface FlowEdgeData extends Record<string, unknown> {

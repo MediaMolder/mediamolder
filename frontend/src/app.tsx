@@ -33,6 +33,7 @@ import { autoLayout } from './lib/layout';
 import { spawnNodeFrom, type PaletteEntry } from './lib/spawn';
 import { useJobRun } from './lib/useJobRun';
 import { inferEdgeAttributes, summariseAttributes } from './lib/streamAttrs';
+import { fetchCatalog, indexStreams } from './lib/nodeCatalog';
 import type { JobConfig, StreamType } from './lib/jobTypes';
 
 const NODE_TYPES = { mmNode: MMNode };
@@ -96,6 +97,34 @@ function Editor() {
     setNodes(n);
     setEdges(e);
     setSelectedId(null);
+    // Resolve handle media types for filter / encoder / processor nodes
+    // from the live /api/nodes catalog (the JobConfig itself doesn't
+    // carry pin metadata). Done asynchronously so loadJob stays
+    // synchronous; the pins simply re-render once the catalog arrives.
+    fetchCatalog()
+      .then((catalog) => {
+        const idx = indexStreams(catalog);
+        setNodes((cur) =>
+          cur.map((node) => {
+            if (node.data.ref.kind !== 'node') return node;
+            const def = node.data.ref.def;
+            const lookupName =
+              def.type === 'filter'
+                ? (def.filter ?? '')
+                : def.type === 'encoder'
+                  ? String(def.params?.codec ?? '')
+                  : def.type === 'go_processor'
+                    ? (def.processor ?? '')
+                    : '';
+            const streams = idx.get(`${def.type}/${lookupName}`);
+            if (!streams) return node;
+            return { ...node, data: { ...node.data, streams } };
+          }),
+        );
+      })
+      .catch(() => {
+        /* catalog unavailable: fall back to all-pins display */
+      });
   }, []);
 
   /* ---------- React Flow change handlers ---------- */
