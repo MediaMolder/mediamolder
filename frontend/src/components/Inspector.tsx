@@ -121,9 +121,11 @@ function InputForm({
         }}
       />
       <div className="probe-actions">
-        <button onClick={runProbe} disabled={probing || !def.url}>
-          {probing ? 'Probing…' : 'Get properties'}
-        </button>
+        {def.url && (
+          <button onClick={runProbe} disabled={probing}>
+            {probing ? 'Probing…' : 'Get properties'}
+          </button>
+        )}
         {probed && (
           <button className="link-btn" onClick={() => onProbed(undefined)} title="Discard probed metadata">
             Clear

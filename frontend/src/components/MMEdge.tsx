@@ -8,7 +8,7 @@
 // the native `title` tooltip on the popover.
 
 import { useState } from 'react';
-import { BaseEdge, EdgeLabelRenderer, getBezierPath, type EdgeProps } from '@xyflow/react';
+import { BaseEdge, EdgeLabelRenderer, getBezierPath, useStore, type EdgeProps } from '@xyflow/react';
 import type { EdgeAttribute } from '../lib/streamAttrs';
 import { attrLabel } from '../lib/streamAttrs';
 
@@ -37,6 +37,9 @@ export function MMEdge(props: EdgeProps) {
   const [hover, setHover] = useState(false);
   const [pinned, setPinned] = useState(false);
   const open = (hover || pinned) && attrs.length > 0;
+  // Counteract canvas zoom so the popover stays a constant on-screen size.
+  const zoom = useStore((s) => s.transform[2]);
+  const inv = zoom > 0 ? 1 / zoom : 1;
 
   const tooltip = attrs.length
     ? attrs.map((a) => `${a.key}: ${a.value}  (from ${a.source})`).join('\n')
@@ -64,7 +67,7 @@ export function MMEdge(props: EdgeProps) {
           <div
             className="mm-edge-popover nodrag nopan"
             title={tooltip}
-            style={{ transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)` }}
+            style={{ transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px) scale(${inv})` }}
             onMouseEnter={() => setHover(true)}
             onMouseLeave={() => setHover(false)}
           >
