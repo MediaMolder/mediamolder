@@ -42,7 +42,67 @@ func configToGraphDef(cfg *Config) *graph.Def {
 			Type: e.Type,
 		})
 	}
+	expandImplicitEncoders(cfg, def)
 	return def
+}
+
+// expandImplicitEncoders rewrites edges that connect a source directly to a
+// sink, splicing in a synthetic encoder node that uses the sink's
+// codec_video / codec_audio. This lets compact JobConfigs (one input, one
+// output, two stream-routing edges) run end-to-end without the user having to
+// declare an encoder node by hand.
+//
+// Synthetic encoder nodes use the "__enc__" prefix to avoid colliding with
+// user-supplied node IDs.
+func expandImplicitEncoders(cfg *Config, def *graph.Def) {
+	inputIDs := make(map[string]bool, len(cfg.Inputs))
+	for _, inp := range cfg.Inputs {
+		inputIDs[inp.ID] = true
+	}
+	outputs := make(map[string]Output, len(cfg.Outputs))
+	for _, out := range cfg.Outputs {
+		outputs[out.ID] = out
+	}
+
+	head := func(ref string) string {
+		if i := strings.IndexByte(ref, ':'); i >= 0 {
+			return ref[:i]
+		}
+		return ref
+	}
+
+	var added []graph.EdgeDef
+	for i := range def.Edges {
+		e := &def.Edges[i]
+		fromID := head(e.From)
+		toID := head(e.To)
+		if !inputIDs[fromID] {
+			continue
+		}
+		out, ok := outputs[toID]
+		if !ok {
+			continue
+		}
+		var codec string
+		switch e.Type {
+		case "video":
+			codec = out.CodecVideo
+		case "audio":
+			codec = out.CodecAudio
+		}
+		if codec == "" {
+			continue
+		}
+		encID := fmt.Sprintf("__enc__%s_%s_%d", toID, e.Type, i)
+		def.Nodes = append(def.Nodes, graph.NodeDef{
+			ID:     encID,
+			Type:   "encoder",
+			Params: map[string]any{"codec": codec},
+		})
+		added = append(added, graph.EdgeDef{From: encID, To: e.To, Type: e.Type})
+		e.To = encID
+	}
+	def.Edges = append(def.Edges, added...)
 }
 
 // ---------- Pre-opened resource containers ----------
