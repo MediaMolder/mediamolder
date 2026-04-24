@@ -178,6 +178,13 @@ button.danger:hover { background: rgba(185, 74, 74, 0.15); }
   font-size: 12px;
 }
 .mm-node.selected { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(79, 140, 255, 0.25); }
+.mm-node.implicit {
+  background: transparent;
+  border-style: dashed;
+  border-color: var(--text-dim);
+  opacity: 0.85;
+}
+.mm-node.implicit .mm-node-title { font-weight: 500; color: var(--text-dim); }
 .mm-node .mm-node-type {
   font-size: 10px;
   color: var(--text-dim);
@@ -198,6 +205,7 @@ button.danger:hover { background: rgba(185, 74, 74, 0.15); }
 .react-flow__edge.edge-audio    .react-flow__edge-path { stroke: var(--audio);    stroke-width: 2; }
 .react-flow__edge.edge-subtitle .react-flow__edge-path { stroke: var(--subtitle); stroke-width: 2; }
 .react-flow__edge.edge-data     .react-flow__edge-path { stroke: var(--data);     stroke-width: 2; }
+.react-flow__edge.edge-implicit .react-flow__edge-path { stroke-dasharray: 4 3; opacity: 0.7; }
 
 /* Edge attribute popover rendered by MMEdge — opens on hover or click,
  * showing every known technical attribute for the connection. */

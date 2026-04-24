@@ -22,6 +22,29 @@ export function Inspector({ node, onChange, onDelete }: Props) {
 
   const ref = node.data.ref;
 
+  if (node.data.implicit) {
+    return (
+      <div className="inspector">
+        <div className="inspector-header">
+          <h3>{node.data.label}</h3>
+        </div>
+        <div className="mm-node-type" style={{ marginBottom: 12 }}>
+          {node.data.kind} (implicit)
+        </div>
+        {node.data.sublabel && (
+          <div style={{ fontSize: 12, color: 'var(--text-dim)', marginBottom: 12 }}>
+            {node.data.sublabel}
+          </div>
+        )}
+        <p style={{ fontSize: 12, color: 'var(--text-dim)', lineHeight: 1.5 }}>
+          This stage is auto-generated from the surrounding inputs and outputs.
+          The runtime instantiates it on your behalf — to change it, edit the
+          input or output it belongs to.
+        </p>
+      </div>
+    );
+  }
+
   return (
     <div className="inspector">
       <div className="inspector-header">

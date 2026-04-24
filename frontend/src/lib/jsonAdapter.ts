@@ -57,12 +57,22 @@ export interface FlowNodeData extends Record<string, unknown> {
    * outputs, dynamic-pad filters, and unknown go_processors).
    */
   streams?: string[];
+  /**
+   * Set on synthetic "ghost" nodes inserted by the GUI to visualise the
+   * implicit demuxer / decoder / encoder / muxer stages that the runtime
+   * actually instantiates but that have no representation in the
+   * JobConfig (see expandImplicitNodes). Ghost nodes are dropped on
+   * export and rendered read-only in the Inspector.
+   */
+  implicit?: boolean;
 }
 
 export interface FlowEdgeData extends Record<string, unknown> {
   streamType: StreamType;
   rawFrom: string;
   rawTo: string;
+  /** Set on synthetic ghost-chain edges. Dropped on export. */
+  implicit?: boolean;
 }
 
 export type FlowNode = Node<FlowNodeData>;
@@ -71,6 +81,14 @@ export type FlowEdge = Edge<FlowEdgeData>;
 interface ConvertOptions {
   /** When true (default), apply column auto-layout if no positions are stored. */
   autoLayout?: boolean;
+  /**
+   * When true (default), insert read-only "ghost" nodes for the implicit
+   * demuxer / decoder / encoder / muxer stages that the runtime actually
+   * instantiates. The originating user-facing edges are kept but marked
+   * `hidden` so React Flow doesn't render them; ghost nodes/edges are
+   * stripped on export.
+   */
+  expandImplicit?: boolean;
 }
 
 /** Get the React Flow node id for a job-side input/output/node id. */
@@ -97,7 +115,7 @@ export function configToFlow(cfg: JobConfig, opts: ConvertOptions = {}): {
   nodes: FlowNode[];
   edges: FlowEdge[];
 } {
-  const { autoLayout = true } = opts;
+  const { autoLayout = true, expandImplicit = true } = opts;
   const positions = cfg.graph.ui?.positions ?? {};
 
   const inputIds = new Set(cfg.inputs.map((i) => i.id));
@@ -176,6 +194,16 @@ export function configToFlow(cfg: JobConfig, opts: ConvertOptions = {}): {
     layoutByColumn(nodes, edges);
   }
 
+  if (expandImplicit) {
+    expandImplicitNodes(cfg, nodes, edges, positions);
+    if (autoLayout && !hasAnyPosition) {
+      // Re-layout so the ghost chain is positioned alongside the
+      // originals; skip edges we just hid so they don't short-circuit
+      // the column ordering.
+      layoutByColumn(nodes, edges.filter((e) => !e.hidden));
+    }
+  }
+
   return { nodes, edges };
 }
 
@@ -187,6 +215,13 @@ export function flowToConfig(
   description?: string,
   globalOptions?: JobConfig['global_options'],
 ): JobConfig {
+  // Drop ghost nodes / ghost edges synthesised by expandImplicitNodes —
+  // they have no place in the persisted JobConfig. The originating
+  // user-facing edges remain in `edges` (marked hidden) so the round-trip
+  // preserves the user's wiring.
+  nodes = nodes.filter((n) => !n.data.implicit);
+  edges = edges.filter((e) => !e.data?.implicit);
+
   const inputs: JobConfig['inputs'] = [];
   const outputs: JobConfig['outputs'] = [];
   const graphNodes: NodeDef[] = [];
@@ -304,4 +339,261 @@ function layoutByColumn(nodes: FlowNode[], edges: FlowEdge[]): void {
       if (node) node.position = { x: c * COL_W, y: i * ROW_H };
     });
   });
+}
+
+/* ------------------------------------------------------------------ *
+ * Implicit-stage ("ghost") visualisation
+ *
+ * The runtime fuses demuxing + decoding into KindSource and muxing +
+ * writing into KindSink, and lazily inserts encoders for direct
+ * source→sink edges (see pipeline/handlers.go expandImplicitEncoders).
+ * The JobConfig therefore omits these stages entirely. To give the user
+ * a faithful picture of what actually runs, we splice synthetic ghost
+ * nodes into the React Flow graph between each input and the first
+ * "real" downstream node, and between each output and the last real
+ * upstream node. Ghost nodes are flagged `data.implicit = true`,
+ * rendered read-only, dropped on export, and the originating edges are
+ * hidden (not deleted) so the persisted graph round-trips losslessly.
+ * ------------------------------------------------------------------ */
+
+const GHOST_DEMUX_PREFIX = '__ghost__demux__';
+const GHOST_DECODE_PREFIX = '__ghost__decode__';
+const GHOST_ENCODE_PREFIX = '__ghost__encode__';
+const GHOST_MUX_PREFIX = '__ghost__mux__';
+
+/** Best-effort container guess from a URL/file extension. Returns "" if unknown. */
+function guessContainer(url: string): string {
+  const m = url.match(/\.([a-zA-Z0-9]+)(?:\?.*)?$/);
+  if (!m) return '';
+  return m[1].toLowerCase();
+}
+
+/** Best-effort decoder name for an input stream from probed metadata. */
+function decoderNameFor(
+  probed: ProbedStream[] | undefined,
+  type: StreamType,
+  track: number,
+): string {
+  if (!probed) return type;
+  const ofType = probed.filter((s) => s.type === type);
+  const stream = ofType[track] ?? ofType[0];
+  return stream?.codec || type;
+}
+
+function expandImplicitNodes(
+  cfg: JobConfig,
+  nodes: FlowNode[],
+  edges: FlowEdge[],
+  positions: Record<string, UIPosition>,
+): void {
+  const inputById = new Map(cfg.inputs.map((i) => [i.id, i]));
+  const outputById = new Map(cfg.outputs.map((o) => [o.id, o]));
+  // Index the original nodes (before we start mutating) so ghost lookup
+  // ignores any ghost we just added in a previous iteration.
+  const nodeById = new Map(nodes.map((n) => [n.id, n]));
+  const probedByInputFlowId = new Map<string, ProbedStream[] | undefined>();
+  for (const n of nodes) {
+    if (n.data.kind === 'input') probedByInputFlowId.set(n.id, n.data.probed);
+  }
+
+  const addedNodeIds = new Set<string>();
+  const ensureNode = (
+    id: string,
+    kind: string,
+    label: string,
+    sublabel: string,
+    streams: StreamType[],
+  ): FlowNode => {
+    const existing = nodeById.get(id);
+    if (existing) return existing;
+    const ghost: FlowNode = {
+      id,
+      type: 'mmNode',
+      position: positions[id] ?? { x: 0, y: 0 },
+      data: {
+        kind,
+        label,
+        sublabel,
+        ref: { kind: 'input', def: { id, url: '', streams: [] } }, // placeholder; never serialised
+        streams,
+        implicit: true,
+      },
+    };
+    nodes.push(ghost);
+    nodeById.set(id, ghost);
+    addedNodeIds.add(id);
+    return ghost;
+  };
+
+  let ghostEdgeSeq = 0;
+  const addEdge = (
+    source: string,
+    target: string,
+    type: StreamType,
+    rawFrom: string,
+    rawTo: string,
+  ): void => {
+    edges.push({
+      id: `g${ghostEdgeSeq++}-${source}-${target}-${type}`,
+      type: 'mmEdge',
+      source,
+      target,
+      sourceHandle: type,
+      targetHandle: type,
+      className: `edge-${type} edge-implicit`,
+      data: { streamType: type, rawFrom, rawTo, implicit: true },
+    });
+  };
+
+  // Walk a copy of the original edges; we will add new ghost edges and
+  // hide the originals as we go.
+  const original = [...edges];
+  for (const e of original) {
+    if (e.data?.implicit) continue;
+    const fromHead = endpointHead(e.data?.rawFrom ?? '');
+    const toHead = endpointHead(e.data?.rawTo ?? '');
+    const inputDef = inputById.get(fromHead);
+    const outputDef = outputById.get(toHead);
+    const sourceNode = nodeById.get(e.source);
+    const targetNode = nodeById.get(e.target);
+    if (!sourceNode || !targetNode) continue;
+    const type = (e.data?.streamType ?? 'video') as StreamType;
+
+    let chainHead = e.source;
+    let chainHeadRaw = e.data?.rawFrom ?? '';
+    let chainTail = e.target;
+    let chainTailRaw = e.data?.rawTo ?? '';
+    let mutated = false;
+
+    // ---- Source side: input → demuxer → decoder ----
+    if (inputDef) {
+      const demuxId = GHOST_DEMUX_PREFIX + inputDef.id;
+      const container = guessContainer(inputDef.url) || 'demuxer';
+      ensureNode(demuxId, 'demuxer', 'demuxer', container, []);
+      // input → demuxer (one edge per input/type pair so the typed
+      // pipe colour reads sensibly; demuxers are media-agnostic on
+      // both sides via empty `streams`).
+      const demuxEdgeId = `${demuxId}__from__${e.source}__${type}`;
+      if (!edges.some((x) => x.id === demuxEdgeId)) {
+        edges.push({
+          id: demuxEdgeId,
+          type: 'mmEdge',
+          source: e.source,
+          target: demuxId,
+          sourceHandle: type,
+          targetHandle: type,
+          className: `edge-${type} edge-implicit`,
+          data: {
+            streamType: type,
+            rawFrom: chainHeadRaw,
+            rawTo: '',
+            implicit: true,
+          },
+        });
+      }
+
+      // Per-stream decoder. Endpoint format: "<input>:<letter>:<track>".
+      const parts = (e.data?.rawFrom ?? '').split(':');
+      const track = parts.length >= 3 ? parts[2] : '0';
+      const decId = `${GHOST_DECODE_PREFIX}${inputDef.id}__${type}__${track}`;
+      const decLabel = decoderNameFor(
+        probedByInputFlowId.get(e.source),
+        type,
+        Number(track) || 0,
+      );
+      ensureNode(decId, 'decoder', decLabel, `${type} decoder`, [type]);
+      addEdge(demuxId, decId, type, '', '');
+      chainHead = decId;
+      chainHeadRaw = '';
+      mutated = true;
+    }
+
+    // ---- Sink side: encoder → muxer → output ----
+    if (outputDef) {
+      // Choose codec from output's per-type field. If empty, the
+      // runtime's expandImplicitEncoders will skip insertion, so we
+      // skip the ghost too.
+      const codec =
+        type === 'video'
+          ? outputDef.codec_video
+          : type === 'audio'
+            ? outputDef.codec_audio
+            : type === 'subtitle'
+              ? outputDef.codec_subtitle
+              : '';
+
+      // Only insert a ghost encoder if the upstream of this edge is
+      // not already an encoder (real or ghost) — i.e. the user hasn't
+      // wired one explicitly.
+      const upstream = nodeById.get(chainHead);
+      const upstreamKind = upstream?.data.kind ?? '';
+      const needsEncoder =
+        !!codec && upstreamKind !== 'encoder' && upstreamKind !== 'demuxer';
+
+      if (needsEncoder) {
+        const encId = `${GHOST_ENCODE_PREFIX}${outputDef.id}__${type}`;
+        ensureNode(encId, 'encoder', codec!, `${type} encoder`, [type]);
+        addEdge(chainHead, encId, type, chainHeadRaw, '');
+        chainHead = encId;
+        chainHeadRaw = '';
+      }
+
+      const muxId = GHOST_MUX_PREFIX + outputDef.id;
+      const container = outputDef.format || guessContainer(outputDef.url) || 'muxer';
+      ensureNode(muxId, 'muxer', 'muxer', container, []);
+      addEdge(chainHead, muxId, type, chainHeadRaw, '');
+      chainHead = muxId;
+      chainHeadRaw = '';
+      chainTail = e.target;
+      // Final muxer → output edge (one per output/type so colour reads).
+      const muxOutId = `${muxId}__to__${e.target}__${type}`;
+      if (!edges.some((x) => x.id === muxOutId)) {
+        edges.push({
+          id: muxOutId,
+          type: 'mmEdge',
+          source: muxId,
+          target: e.target,
+          sourceHandle: type,
+          targetHandle: type,
+          className: `edge-${type} edge-implicit`,
+          data: { streamType: type, rawFrom: '', rawTo: chainTailRaw, implicit: true },
+        });
+      }
+      mutated = true;
+    } else if (mutated) {
+      // Source-side expansion only: connect decoder → original target.
+      addEdge(chainHead, chainTail, type, chainHeadRaw, chainTailRaw);
+    }
+
+    // Hide the original edge — keep it for round-trip on export.
+    if (mutated) {
+      e.hidden = true;
+    }
+  }
+
+  // Re-layout only the freshly added ghost nodes if the user already
+  // had stored positions for the real nodes. Quick offset heuristic:
+  // place each new node at (avg(neighbors.x), avg(neighbors.y)) +
+  // small jitter. The full layout pass in configToFlow handles the
+  // empty-positions case.
+  if (addedNodeIds.size > 0 && Object.keys(positions).length > 0) {
+    const neighbours = new Map<string, string[]>();
+    for (const e of edges) {
+      if (!neighbours.has(e.source)) neighbours.set(e.source, []);
+      if (!neighbours.has(e.target)) neighbours.set(e.target, []);
+      neighbours.get(e.source)!.push(e.target);
+      neighbours.get(e.target)!.push(e.source);
+    }
+    for (const id of addedNodeIds) {
+      const ghost = nodeById.get(id);
+      if (!ghost) continue;
+      const nbrs = (neighbours.get(id) ?? [])
+        .map((nid) => nodeById.get(nid))
+        .filter((n): n is FlowNode => !!n && !addedNodeIds.has(n.id));
+      if (nbrs.length === 0) continue;
+      const x = nbrs.reduce((s, n) => s + n.position.x, 0) / nbrs.length;
+      const y = nbrs.reduce((s, n) => s + n.position.y, 0) / nbrs.length;
+      ghost.position = { x, y };
+    }
+  }
 }

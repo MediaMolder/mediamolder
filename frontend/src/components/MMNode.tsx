@@ -32,6 +32,7 @@ export function MMNode({ data, selected }: NodeProps & { data: FlowNodeData & { 
     'mm-node',
     selected ? 'selected' : '',
     errored ? 'errored' : '',
+    data.implicit ? 'implicit' : '',
   ]
     .filter(Boolean)
     .join(' ');
