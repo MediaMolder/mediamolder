@@ -76,6 +76,9 @@ export function spawnNodeFrom(
   else if (entry.type === 'encoder') def.params = { codec: entry.name };
   else if (entry.type === 'go_processor') def.processor = entry.name;
 
+  // Show the codec / filter / processor name as the bold heading; the
+  // user-facing id is the secondary line. Mirrors nodeDisplayLabel /
+  // nodeDisplaySublabel in jsonAdapter.ts.
   return {
     flowNode: {
       id,
@@ -83,8 +86,8 @@ export function spawnNodeFrom(
       position,
       data: {
         kind: entry.type,
-        label: id,
-        sublabel: entry.name,
+        label: entry.name,
+        sublabel: id,
         ref: { kind: 'node', def },
         streams: entry.streams,
       },

@@ -209,6 +209,28 @@ export function materializeImplicitEncoders(cfg: JobConfig): JobConfig {
   };
 }
 
+/**
+ * Pick the bold heading shown on a graph NodeDef in the canvas. For
+ * encoders, filters and go_processors the user-meaningful identity is
+ * the codec / filter / processor name (e.g. "libx264", "scale",
+ * "yolov8"), not the synthetic node id (e.g. "auto_enc_out0_video").
+ * Falls back to the node id when no specialised name is set.
+ */
+export function nodeDisplayLabel(n: NodeDef): string {
+  if (n.type === 'encoder') {
+    const codec = (n.params?.codec as string | undefined)?.trim();
+    if (codec) return codec;
+  }
+  if (n.type === 'filter' && n.filter) return n.filter;
+  if (n.type === 'go_processor' && n.processor) return n.processor;
+  return n.id;
+}
+
+/** Secondary line shown beneath the heading — typically the node id. */
+export function nodeDisplaySublabel(n: NodeDef): string {
+  return n.id;
+}
+
 /** Convert a JobConfig to React Flow nodes + edges. */
 export function configToFlow(cfg: JobConfig, opts: ConvertOptions = {}): {
   nodes: FlowNode[];
@@ -244,8 +266,8 @@ export function configToFlow(cfg: JobConfig, opts: ConvertOptions = {}): {
       position: positions[n.id] ?? { x: 0, y: 0 },
       data: {
         kind: n.type,
-        label: n.id,
-        sublabel: n.filter || n.processor || n.type,
+        label: nodeDisplayLabel(n),
+        sublabel: nodeDisplaySublabel(n),
         ref: { kind: 'node', def: n },
       },
     });

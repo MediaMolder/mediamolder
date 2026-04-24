@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { FlowNode } from '../lib/jsonAdapter';
-import { displayUrl } from '../lib/jsonAdapter';
+import { displayUrl, nodeDisplayLabel, nodeDisplaySublabel } from '../lib/jsonAdapter';
 import type { Input, NodeDef, Output, ProbeResponse, ProbedStream } from '../lib/jobTypes';
 import { FileBrowser, type BrowseMode } from './FileBrowser';
 import { EncoderForm } from './EncoderForm';
@@ -77,7 +77,7 @@ export function Inspector({ node, onChange, onDelete }: Props) {
         <NodeForm
           def={ref.def}
           onChange={(def) =>
-            onChange(updateRef(node, { kind: 'node', def }, def.id, def.filter || def.processor || def.type))
+            onChange(updateRef(node, { kind: 'node', def }, nodeDisplayLabel(def), nodeDisplaySublabel(def)))
           }
         />
       )}
