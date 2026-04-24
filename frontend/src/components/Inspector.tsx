@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import type { FlowNode } from '../lib/jsonAdapter';
 import { displayUrl, nodeDisplayLabel, nodeDisplaySublabel } from '../lib/jsonAdapter';
 import type { Input, NodeDef, Output, ProbeResponse, ProbedStream } from '../lib/jobTypes';
+import { MEDIA_FILE_EXTENSIONS } from '../lib/mediaExtensions';
 import { FileBrowser, type BrowseMode } from './FileBrowser';
 import { EncoderForm } from './EncoderForm';
 import { describeKind } from './MMNode';
@@ -141,7 +142,7 @@ function InputForm({
         label="URL"
         value={def.url}
         mode="open"
-        filter="mp4,mkv,mov,m4v,webm,avi,ts,mxf,mp3,wav,flac,aac,m4a,ogg,opus,jpg,jpeg,png"
+        filter={MEDIA_FILE_EXTENSIONS}
         onChange={(v) => {
           onChange({ ...def, url: v });
           // Stale once the URL changes.
