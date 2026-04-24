@@ -78,6 +78,31 @@ function formatBitRate(bps: number): string {
 }
 
 /**
+ * Parse a bit-rate string as accepted by FFmpeg's AVOptions: a plain
+ * integer ("5000000"), or a decimal with a SI/binary suffix ("5M",
+ * "5000k", "1.5M", "1500K"). Returns the value in bits/second, or
+ * undefined if the input doesn't look like a bit rate.
+ */
+export function parseBitRate(s: string): number | undefined {
+  const m = s.trim().match(/^(\d+(?:\.\d+)?)\s*([kKmMgG])?$/);
+  if (!m) return undefined;
+  const n = parseFloat(m[1]);
+  if (!Number.isFinite(n)) return undefined;
+  switch (m[2]) {
+    case 'k': case 'K': return Math.round(n * 1_000);
+    case 'm': case 'M': return Math.round(n * 1_000_000);
+    case 'g': case 'G': return Math.round(n * 1_000_000_000);
+    default: return Math.round(n);
+  }
+}
+
+/** Format a raw param string (e.g. "5M", "5000000") as a bit rate. */
+export function formatBitRateString(s: string): string {
+  const bps = parseBitRate(s);
+  return bps === undefined ? s : formatBitRate(bps);
+}
+
+/**
  * Extract attributes that a single graph node establishes for the given
  * stream type. Returns a partial map; absent keys mean "not set by this node".
  */
@@ -178,7 +203,7 @@ function attrsFromGraphNode(node: NodeDef, type: StreamType): Record<string, str
     const codec = node.filter ?? get('codec');
     if (codec) out['codec'] = codec;
     const br = get('b') ?? get('bitrate') ?? get('bit_rate');
-    if (br) out['bit_rate'] = br;
+    if (br) out['bit_rate'] = formatBitRateString(br);
   }
 
   return out;

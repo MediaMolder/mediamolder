@@ -29,6 +29,7 @@ import {
   type EncoderUiRoles,
 } from '../lib/encoderSchema';
 import { OptionControl, defaultDisplay } from './controls/OptionControl';
+import { parseBitRate } from '../lib/streamAttrs';
 
 interface Props {
   def: NodeDef;
@@ -328,13 +329,15 @@ function RateControlGroup({
           </select>
 
           <label style={{ marginTop: 6 }} title={bitRate.help}>
-            Target bit rate <span className="empty" style={{ fontSize: 10 }}>(bits/s, e.g. 5000000 or 5M)</span>
+            Target bit rate <span className="empty" style={{ fontSize: 10 }}>(kbps)</span>
           </label>
           <input
-            type="text"
-            value={bVal}
-            placeholder={defaultDisplay(bitRate) || '5000000'}
-            onChange={(e) => setBitRateValue(e.target.value)}
+            type="number"
+            min={0}
+            step={100}
+            value={bpsToKbpsInput(bVal)}
+            placeholder={bpsToKbpsInput(defaultDisplay(bitRate)) || '5000'}
+            onChange={(e) => setBitRateValue(kbpsInputToBps(e.target.value))}
           />
         </>
       )}
@@ -379,6 +382,24 @@ function RateControlGroup({
 function rangeHint(o: EncoderOption): string {
   if (Number.isFinite(o.min) && Number.isFinite(o.max)) return ` · ${o.min}–${o.max}`;
   return '';
+}
+
+/** Convert a stored bit-rate param (e.g. "5000000", "5M") into the
+ * kbps integer string shown in the input. Empty stays empty. */
+function bpsToKbpsInput(stored: string): string {
+  if (!stored) return '';
+  const bps = parseBitRate(stored);
+  if (bps === undefined) return stored; // pass through unparseable values
+  return String(Math.round(bps / 1000));
+}
+
+/** Convert the kbps the user typed into the bits/s string we persist. */
+function kbpsInputToBps(input: string): string {
+  const v = input.trim();
+  if (!v) return '';
+  const n = parseFloat(v);
+  if (!Number.isFinite(n) || n < 0) return '';
+  return String(Math.round(n * 1000));
 }
 
 /* ---------- Raw options (param-string escape hatch) ---------- */
