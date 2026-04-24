@@ -299,6 +299,7 @@ explicitly to `127.0.0.1` (the default) if untrusted users share the host.
 | `GET`  | `/api/events/{jobId}`         | Server-Sent Events stream for the run.                |
 | `GET`  | `/api/files`                  | List a directory (`?path=&filter=ext1,ext2&dirs_only=`). |
 | `POST` | `/api/probe`                  | Probe an input URL with libavformat. Body `{url, options?}`; response `{url, streams: [{index, type, codec, codec_tag, profile, level, bit_rate, bit_depth, bits_per_coded_sample, bits_per_raw_sample, width, height, pix_fmt, frame_rate, r_frame_rate, sar, field_order, color_space, color_range, color_primaries, color_transfer, sample_rate, sample_fmt, channels, channel_layout, duration_sec, start_sec, time_base_num, time_base_den}]}`. Used by the Inspector's **Get properties** button. |
+| `GET`  | `/api/encoders/{name}/options` | Enumerate every AVOption available on the named encoder (both generic AVCodecContext options and the codec's private options). Response: `{name, long_name, media_type, options: [{name, help, type, unit, min, max, default, constants?, is_private}]}`. `type` is one of `int`/`int64`/`uint64`/`bool`/`float`/`double`/`string`/`flags`/`rational`/`pix_fmt`/`sample_fmt`/`channel_layout`/`duration`/`color`/`binary`/`dict`. `constants` is populated for enum-like options (every `AV_OPT_TYPE_CONST` whose `unit` matches). Cached in-memory after the first call. |
 
 ### Why SSE rather than WebSockets?
 
