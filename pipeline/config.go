@@ -131,8 +131,8 @@ func validate(cfg *Config) error {
 	if cfg.SchemaVersion == "" {
 		return fmt.Errorf("config missing required field schema_version")
 	}
-	if cfg.SchemaVersion != "1.0" && cfg.SchemaVersion != "1.1" {
-		return fmt.Errorf("unsupported schema_version %q; expected \"1.0\" or \"1.1\"", cfg.SchemaVersion)
+	if cfg.SchemaVersion != "1.0" && cfg.SchemaVersion != "1.1" && cfg.SchemaVersion != "1.2" {
+		return fmt.Errorf("unsupported schema_version %q; expected \"1.0\", \"1.1\" or \"1.2\"", cfg.SchemaVersion)
 	}
 	if len(cfg.Inputs) == 0 {
 		return fmt.Errorf("config must have at least one input")
