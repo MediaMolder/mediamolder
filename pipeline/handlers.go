@@ -430,9 +430,26 @@ func (r *graphRunner) handleSource(ctx context.Context, node *graph.Node, outs [
 		return nil
 	}
 
-	receiveAll := func(dec *av.DecoderContext, mt av.MediaType) error {
+	// rescaleAudioPTS converts an audio frame's pts from the input stream's
+	// time_base to (1, sample_rate) units. The downstream audio filter
+	// graph (abuffer source) is configured at (1, sample_rate) granularity
+	// to keep sample-accurate timing through filters like asetnsamples.
+	// Many container/codec combinations (e.g. MP3 in AVI, where the stream
+	// time_base is 1/(sample_rate/1152)) deliver decoded frames whose pts
+	// would otherwise be misinterpreted as one sample apart.
+	rescaleAudioPTS := func(f *av.Frame, si av.StreamInfo) {
+		pts := f.PTS()
+		if pts == math.MinInt64 || si.TimeBase[1] <= 0 || si.SampleRate <= 0 {
+			return
+		}
+		// new_pts = pts * tb_num * sample_rate / tb_den
+		// Use big-int-style ordering to minimise overflow risk.
+		f.SetPTS(pts * int64(si.TimeBase[0]) * int64(si.SampleRate) / int64(si.TimeBase[1]))
+	}
+
+	receiveAll := func(dec *av.DecoderContext, si av.StreamInfo) error {
 		var indices []int
-		switch mt {
+		switch si.Type {
 		case av.MediaTypeVideo:
 			indices = byType[graph.PortVideo].frame
 		case av.MediaTypeAudio:
@@ -452,6 +469,9 @@ func (r *graphRunner) handleSource(ctx context.Context, node *graph.Node, outs [
 					return nil
 				}
 				return err
+			}
+			if si.Type == av.MediaTypeAudio {
+				rescaleAudioPTS(f, si)
 			}
 			if err := sendFrame(f, indices); err != nil {
 				f.Close()
@@ -542,7 +562,7 @@ func (r *graphRunner) handleSource(ctx context.Context, node *graph.Node, outs [
 		if err := dec.SendPacket(pkt); err != nil {
 			return err
 		}
-		if err := receiveAll(dec, si.Type); err != nil {
+		if err := receiveAll(dec, si); err != nil {
 			return err
 		}
 		r.pipe.Metrics().Node(node.ID).RecordLatency(time.Since(frameStart))
@@ -574,6 +594,7 @@ func (r *graphRunner) handleSource(ctx context.Context, node *graph.Node, outs [
 					return err
 				}
 			case av.MediaTypeAudio:
+				rescaleAudioPTS(f, si)
 				if err := sendFrame(f, byType[graph.PortAudio].frame); err != nil {
 					f.Close()
 					return err

@@ -24,7 +24,8 @@ package av
 // // Helper: build the buffersrc args string for an audio stream.
 // static int make_audio_src_args(char *buf, int buf_size,
 //                                int sample_fmt, int sample_rate,
-//                                int nb_channels) {
+//                                int nb_channels,
+//                                int tb_num, int tb_den) {
 //     // Derive a default channel layout for the channel count and emit
 //     // it as a string so the abuffer source matches incoming frames
 //     // whose ch_layout has the canonical mask set (e.g. stereo = 0x3).
@@ -35,9 +36,17 @@ package av
 //     char layout_str[128];
 //     av_channel_layout_describe(&layout, layout_str, sizeof(layout_str));
 //     av_channel_layout_uninit(&layout);
+//     // time_base must match the source frame's time_base. Otherwise the
+//     // buffer source defaults to 1/sample_rate, which silently corrupts
+//     // pts when the decoder uses a coarser tick (e.g. AVI MP3 audio
+//     // delivers frames with pts incrementing by 1 per 1152-sample frame).
+//     if (tb_num <= 0 || tb_den <= 0) {
+//         tb_num = 1;
+//         tb_den = sample_rate > 0 ? sample_rate : 1;
+//     }
 //     return snprintf(buf, buf_size,
-//         "sample_fmt=%d:sample_rate=%d:channels=%d:channel_layout=%s",
-//         sample_fmt, sample_rate, nb_channels, layout_str);
+//         "sample_fmt=%d:sample_rate=%d:channels=%d:channel_layout=%s:time_base=%d/%d",
+//         sample_fmt, sample_rate, nb_channels, layout_str, tb_num, tb_den);
 // }
 import "C"
 
@@ -311,7 +320,8 @@ func NewAudioFilterGraph(cfg AudioFilterGraphConfig) (*FilterGraph, error) {
 
 	var argsBuf [512]C.char
 	C.make_audio_src_args(&argsBuf[0], 512,
-		C.int(cfg.SampleFmt), C.int(cfg.SampleRate), C.int(cfg.Channels))
+		C.int(cfg.SampleFmt), C.int(cfg.SampleRate), C.int(cfg.Channels),
+		1, C.int(cfg.SampleRate))
 
 	cIn := C.CString("in")
 	defer C.free(unsafe.Pointer(cIn))
@@ -456,7 +466,8 @@ func NewComplexFilterGraph(cfg ComplexFilterGraphConfig) (*FilterGraph, error) {
 				return nil, fmt.Errorf("abuffer filter not found")
 			}
 			C.make_audio_src_args(&argsBuf[0], 512,
-				C.int(inp.SampleFmt), C.int(inp.SampleRate), C.int(inp.Channels))
+				C.int(inp.SampleFmt), C.int(inp.SampleRate), C.int(inp.Channels),
+				C.int(inp.TBNum), C.int(inp.TBDen))
 
 		default:
 			C.avfilter_graph_free(&graph)
