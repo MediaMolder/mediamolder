@@ -394,7 +394,11 @@ function deriveEndpoint(
   if (node?.data.kind === 'output' && side === 'target') {
     return `${node.data.label}:${letter}`;
   }
-  return node?.data.label ?? flowId;
+  // Regular graph node: the React Flow node id IS the job-side node id
+  // (configToFlow uses it verbatim). NEVER fall back to data.label here —
+  // for encoder/filter/processor nodes that's the codec/filter/processor
+  // name (e.g. "aac", "scale"), not the unique node id.
+  return flowId;
 }
 
 /** Parse the stream type from a raw endpoint, if present. */
