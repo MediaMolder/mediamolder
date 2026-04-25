@@ -90,7 +90,7 @@ If no provider is set, the noop tracer is used (zero overhead).
 |-----------|-------------|
 | `pipeline.id` | Pipeline identifier |
 | `node.id` | Node identifier |
-| `node.kind` | Node type (source, filter, encoder, sink) |
+| `node.kind` | Node type (source, filter, encoder, sink, copy, go_processor) |
 | `node.codec` | Codec name (e.g., h264, aac) |
 | `node.media_type` | Media type (video, audio) |
 

@@ -46,6 +46,10 @@ in-app help dialog.
      full description; type in the search box to narrow the list.
    * **Encoders** — codec implementations grouped by stream type (Video /
      Audio / Subtitle).
+   * **Copy** — stream-copy nodes (one per media type) that forward demuxer
+     packets straight to the muxer with no decode / encode. Use these for
+     lossless remux or "merge tracks from two files" jobs. The destination
+     container must accept the source codec.
    * **Processors** — Go-side custom blocks (frame extraction, scene
      detection, transcript writers, …).
 4. **Add a Sink.** Drag *Output file* from **Sinks**, click **Browse…** and
