@@ -23,6 +23,7 @@ import type { NodeDef } from '../lib/jobTypes';
 import {
   fetchEncoderInfo,
   findOption,
+  primaryMeta,
   rolesFor,
   type EncoderInfo,
   type EncoderOption,
@@ -161,6 +162,7 @@ export function EncoderForm({ def, onChange }: Props) {
 
       {hasRateControl && (
         <RateControlGroup
+          codec={codec}
           roles={roles}
           bitRate={bitRate}
           crf={crf}
@@ -204,6 +206,7 @@ type RateMode = 'bitrate' | 'crf' | 'qp';
 type BitrateSubMode = 'vbr' | 'cbr';
 
 function RateControlGroup({
+  codec,
   roles,
   bitRate,
   crf,
@@ -212,6 +215,7 @@ function RateControlGroup({
   getParam,
   setParam,
 }: {
+  codec: string;
   roles: EncoderUiRoles;
   bitRate: EncoderOption | undefined;
   crf: EncoderOption | undefined;
@@ -342,46 +346,47 @@ function RateControlGroup({
         </>
       )}
 
-      {mode === 'crf' && crf && (
-        <>
-          <label style={{ marginTop: 6 }} title={crf.help}>
-            CRF <span className="empty" style={{ fontSize: 10 }}>({crf.name}{rangeHint(crf)})</span>
-          </label>
-          <input
-            type="number"
-            step={1}
-            min={Number.isFinite(crf.min) ? crf.min : undefined}
-            max={Number.isFinite(crf.max) ? crf.max : undefined}
-            value={crfVal}
-            placeholder={defaultDisplay(crf)}
-            onChange={(e) => setParam(crf.name, e.target.value)}
-          />
-        </>
-      )}
+      {mode === 'crf' && crf && (() => {
+        const meta = primaryMeta(codec, crf);
+        return (
+          <>
+            <label style={{ marginTop: 6 }} title={crf.help}>
+              CRF <span className="empty" style={{ fontSize: 10 }}>({crf.name}{meta.rangeHint})</span>
+            </label>
+            <input
+              type="number"
+              step={1}
+              min={meta.min}
+              max={meta.max}
+              value={crfVal}
+              placeholder={meta.default}
+              onChange={(e) => setParam(crf.name, e.target.value)}
+            />
+          </>
+        );
+      })()}
 
-      {mode === 'qp' && qp && (
-        <>
-          <label style={{ marginTop: 6 }} title={qp.help}>
-            QP <span className="empty" style={{ fontSize: 10 }}>({qp.name}{rangeHint(qp)})</span>
-          </label>
-          <input
-            type="number"
-            step={1}
-            min={Number.isFinite(qp.min) ? qp.min : undefined}
-            max={Number.isFinite(qp.max) ? qp.max : undefined}
-            value={qpVal}
-            placeholder={defaultDisplay(qp)}
-            onChange={(e) => setParam(qp.name, e.target.value)}
-          />
-        </>
-      )}
+      {mode === 'qp' && qp && (() => {
+        const meta = primaryMeta(codec, qp);
+        return (
+          <>
+            <label style={{ marginTop: 6 }} title={qp.help}>
+              QP <span className="empty" style={{ fontSize: 10 }}>({qp.name}{meta.rangeHint})</span>
+            </label>
+            <input
+              type="number"
+              step={1}
+              min={meta.min}
+              max={meta.max}
+              value={qpVal}
+              placeholder={meta.default}
+              onChange={(e) => setParam(qp.name, e.target.value)}
+            />
+          </>
+        );
+      })()}
     </div>
   );
-}
-
-function rangeHint(o: EncoderOption): string {
-  if (Number.isFinite(o.min) && Number.isFinite(o.max)) return ` · ${o.min}–${o.max}`;
-  return '';
 }
 
 /** Convert a stored bit-rate param (e.g. "5000000", "5M") into the

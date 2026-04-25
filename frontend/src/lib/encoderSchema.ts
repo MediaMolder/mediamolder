@@ -124,6 +124,91 @@ export function findOption(options: EncoderOption[], name: string | undefined): 
   return options.find((o) => o.name === name);
 }
 
+/* -------------------------------------------------------------------------- *
+ * Sentinel handling for primary AVOptions.
+ *
+ * Several libavcodec encoders expose `crf` / `qp` (and other primary
+ * controls) as "AVOption defaults you should not actually use": the option's
+ * default_val and min are both -1, and max is FLT_MAX. For example libx265:
+ *
+ *   { "crf", ..., AV_OPT_TYPE_FLOAT, { .dbl = -1 }, -1, FLT_MAX, VE }
+ *
+ * The encoder treats -1 as "unset → fall back to my built-in default" (28
+ * for x265, 23 for x264, ...). The metadata is correct in libav but a
+ * dreadful UI, so we override display values per encoder + option.
+ *
+ * The runtime is unaffected — the user typing nothing means nothing is sent
+ * and libavcodec applies its real default. These overrides are *only* shown
+ * as placeholder text and as the input's HTML5 min/max bounds.
+ * -------------------------------------------------------------------------- */
+
+export interface PrimaryOverride {
+  /** Placeholder shown when libav reports the sentinel default (-1). */
+  default?: string;
+  /** Sensible numeric range for the HTML5 input + range hint. */
+  min?: number;
+  max?: number;
+}
+
+const ENCODER_PRIMARY_OVERRIDES: Record<string, Record<string, PrimaryOverride>> = {
+  libx264:    { crf: { default: '23', min: 0, max: 51 }, qp: { default: '23', min: 0, max: 69 } },
+  libx265:    { crf: { default: '28', min: 0, max: 51 }, qp: { default: '28', min: 0, max: 51 } },
+  libsvtav1:  { crf: { default: '35', min: 1, max: 63 }, qp: { default: '50', min: 1, max: 63 } },
+  libvpx_vp9: { crf: { default: '32', min: 0, max: 63 }, qp: { default: '32', min: 0, max: 63 } },
+  libaom_av1: { crf: { default: '23', min: 0, max: 63 }, qp: { default: '23', min: 0, max: 63 } },
+  // *_nvenc: cq default is 0 ("disabled"); leave alone — not a sentinel.
+};
+
+/** True when the AVOption looks like an unset sentinel (-1 / -1 / FLT_MAX). */
+export function isSentinelOption(opt: EncoderOption): boolean {
+  const d = opt.default;
+  const sentinelDefault = !!d && (d.int === -1 || d.float === -1);
+  const sentinelMin = opt.min === -1;
+  const sentinelMax = typeof opt.max === 'number' && Math.abs(opt.max) > 1e9;
+  // We require BOTH the default and at least one of the range bounds to be
+  // a sentinel before suppressing them, so that genuine -1 defaults (rare
+  // but valid) on bounded ranges still display normally.
+  return sentinelDefault && (sentinelMin || sentinelMax);
+}
+
+/**
+ * Compute the displayable default, HTML5 input min/max, and rangeHint for
+ * a primary encoder option. Falls back to the AVOption's own metadata when
+ * no override is registered and the values are sane.
+ */
+export function primaryMeta(
+  codec: string,
+  opt: EncoderOption,
+): { default: string; min?: number; max?: number; rangeHint: string } {
+  const override = ENCODER_PRIMARY_OVERRIDES[codec]?.[opt.name];
+  const sane = (n: number | undefined): boolean =>
+    typeof n === 'number' && Number.isFinite(n) && Math.abs(n) < 1e9;
+  const sentinel = isSentinelOption(opt);
+
+  let def = '';
+  if (opt.default) {
+    if (opt.default.string !== undefined) def = opt.default.string;
+    else if (opt.default.int !== undefined) def = String(opt.default.int);
+    else if (opt.default.float !== undefined) def = String(opt.default.float);
+    else if (opt.default.num_den) def = `${opt.default.num_den[0]}/${opt.default.num_den[1]}`;
+  }
+  if (override?.default !== undefined && (sentinel || def === '' || def === '-1' || def === '-1.0')) {
+    def = override.default;
+  } else if (sentinel) {
+    def = '';
+  }
+
+  const minVal = override?.min ?? (sane(opt.min) && opt.min !== -1 ? opt.min : undefined);
+  const maxVal = override?.max ?? (sane(opt.max) ? opt.max : undefined);
+
+  let rangeHint = '';
+  if (minVal !== undefined && maxVal !== undefined) rangeHint = ` · ${minVal}–${maxVal}`;
+  else if (maxVal !== undefined) rangeHint = ` · ≤ ${maxVal}`;
+  else if (minVal !== undefined) rangeHint = ` · ≥ ${minVal}`;
+
+  return { default: def, min: minVal, max: maxVal, rangeHint };
+}
+
 const cache = new Map<string, Promise<EncoderInfo>>();
 
 /** Fetch (and cache) the encoder option schema for a given encoder name. */
