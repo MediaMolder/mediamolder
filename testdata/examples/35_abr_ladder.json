@@ -1,6 +1,6 @@
 {
   "schema_version": "1.0",
-  "description": "ABR ladder: decode in.mp4 once, split video to 4 renditions (1920x1080@7Mbps, 1280x720@4Mbps, 960x540@2Mbps, 640x360@1Mbps), encode each to H.264 with libx264, fan out audio to 4 AAC tracks -> write 4 separate MP4 files.",
+  "description": "ABR ladder: decode in.mp4 once, split video to 4 renditions (1920x1080@7Mbps, 1280x720@4Mbps, 960x540@2Mbps, 640x360@1Mbps) each encoded with libx264, plus a single AAC audio encoder whose packets are fanned out to all four MP4 outputs (encode-once, mux-many).",
   "inputs": [
     {
       "id": "in0",
@@ -25,14 +25,6 @@
         "id": "vsplit",
         "type": "filter",
         "filter": "split",
-        "params": {
-          "outputs": "4"
-        }
-      },
-      {
-        "id": "asplit",
-        "type": "filter",
-        "filter": "asplit",
         "params": {
           "outputs": "4"
         }
@@ -104,6 +96,14 @@
           "codec": "libx264",
           "bitrate": 1000000
         }
+      },
+      {
+        "id": "enc_audio",
+        "type": "encoder",
+        "params": {
+          "codec": "aac",
+          "bitrate": 128000
+        }
       }
     ],
     "edges": [
@@ -124,11 +124,11 @@
       { "from": "enc_540",  "to": "out_540:v",  "type": "video" },
       { "from": "enc_360",  "to": "out_360:v",  "type": "video" },
 
-      { "from": "in0:a:0",  "to": "asplit",      "type": "audio" },
-      { "from": "asplit:0", "to": "out_1080:a",  "type": "audio" },
-      { "from": "asplit:1", "to": "out_720:a",   "type": "audio" },
-      { "from": "asplit:2", "to": "out_540:a",   "type": "audio" },
-      { "from": "asplit:3", "to": "out_360:a",   "type": "audio" }
+      { "from": "in0:a:0",  "to": "enc_audio",     "type": "audio" },
+      { "from": "enc_audio", "to": "out_1080:a",   "type": "audio" },
+      { "from": "enc_audio", "to": "out_720:a",    "type": "audio" },
+      { "from": "enc_audio", "to": "out_540:a",    "type": "audio" },
+      { "from": "enc_audio", "to": "out_360:a",    "type": "audio" }
     ]
   },
   "outputs": [
