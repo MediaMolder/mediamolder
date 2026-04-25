@@ -64,19 +64,19 @@ type audioEncoderRequirement struct {
 // listed here get no auto-adapter; users can still wire an aformat /
 // asetnsamples chain by hand if they need one.
 var audioEncoderRequirements = map[string]audioEncoderRequirement{
-	"aac":         {sampleFmt: "fltp", frameSize: 1024, hasFrameSz: true},
-	"libfdk_aac":  {sampleFmt: "s16", frameSize: 1024, hasFrameSz: true},
-	"libmp3lame":  {sampleFmt: "fltp", frameSize: 1152, hasFrameSz: true},
-	"libopus":     {sampleFmt: "flt", frameSize: 960, hasFrameSz: true},
-	"libvorbis":   {sampleFmt: "fltp"}, // variable frame size
-	"flac":        {sampleFmt: "s16"},  // variable frame size
-	"pcm_s16le":   {sampleFmt: "s16"},
-	"pcm_s16be":   {sampleFmt: "s16"},
-	"pcm_s24le":   {sampleFmt: "s32"},
-	"pcm_s32le":   {sampleFmt: "s32"},
-	"pcm_f32le":   {sampleFmt: "flt"},
-	"ac3":         {sampleFmt: "fltp", frameSize: 1536, hasFrameSz: true},
-	"eac3":        {sampleFmt: "fltp", frameSize: 1536, hasFrameSz: true},
+	"aac":        {sampleFmt: "fltp", frameSize: 1024, hasFrameSz: true},
+	"libfdk_aac": {sampleFmt: "s16", frameSize: 1024, hasFrameSz: true},
+	"libmp3lame": {sampleFmt: "fltp", frameSize: 1152, hasFrameSz: true},
+	"libopus":    {sampleFmt: "flt", frameSize: 960, hasFrameSz: true},
+	"libvorbis":  {sampleFmt: "fltp"}, // variable frame size
+	"flac":       {sampleFmt: "s16"},  // variable frame size
+	"pcm_s16le":  {sampleFmt: "s16"},
+	"pcm_s16be":  {sampleFmt: "s16"},
+	"pcm_s24le":  {sampleFmt: "s32"},
+	"pcm_s32le":  {sampleFmt: "s32"},
+	"pcm_f32le":  {sampleFmt: "flt"},
+	"ac3":        {sampleFmt: "fltp", frameSize: 1536, hasFrameSz: true},
+	"eac3":       {sampleFmt: "fltp", frameSize: 1536, hasFrameSz: true},
 }
 
 // spliceAudioAdaptersForEncoders rewrites edges that feed an audio
@@ -617,21 +617,45 @@ func (r *graphRunner) handleSource(ctx context.Context, node *graph.Node, outs [
 // muxer can be configured via AddStreamFromInput rather than from an
 // encoder context.
 func (r *graphRunner) handleCopy(ctx context.Context, node *graph.Node, ins []<-chan any, outs []chan<- any) error {
-	if len(ins) != 1 || len(outs) != 1 {
-		return fmt.Errorf("copy node %q: expected 1 input / 1 output, got %d/%d", node.ID, len(ins), len(outs))
+	if len(ins) != 1 || len(outs) < 1 {
+		return fmt.Errorf("copy node %q: expected 1 input / >=1 output, got %d/%d", node.ID, len(ins), len(outs))
 	}
-	in, out := ins[0], outs[0]
+	in := ins[0]
 	for v := range in {
 		pkt, ok := v.(*av.Packet)
 		if !ok {
 			return fmt.Errorf("copy node %q: expected *av.Packet, got %T", node.ID, v)
 		}
 		frameStart := time.Now()
-		select {
-		case out <- pkt:
-		case <-ctx.Done():
-			pkt.Close()
-			return ctx.Err()
+		// Fan out to each downstream channel (clone for all but the last
+		// so each muxer owns an independent ref and can rescale/set the
+		// stream index without racing the others).
+		var sendErr error
+		for i, out := range outs {
+			var p *av.Packet
+			if i == len(outs)-1 {
+				p = pkt
+			} else {
+				c, err := av.ClonePacket(pkt)
+				if err != nil {
+					pkt.Close()
+					sendErr = err
+					break
+				}
+				p = c
+			}
+			select {
+			case out <- p:
+			case <-ctx.Done():
+				p.Close()
+				sendErr = ctx.Err()
+			}
+			if sendErr != nil {
+				break
+			}
+		}
+		if sendErr != nil {
+			return sendErr
 		}
 		r.pipe.Metrics().Node(node.ID).RecordLatency(time.Since(frameStart))
 	}
@@ -800,11 +824,39 @@ func (r *graphRunner) handleEncoder(ctx context.Context, node *graph.Node, ins [
 	if enc == nil {
 		return fmt.Errorf("encoder handler: no encoder for node %q", node.ID)
 	}
-	if len(ins) != 1 || len(outs) != 1 {
-		return fmt.Errorf("encoder node %q: expected 1 input / 1 output, got %d/%d", node.ID, len(ins), len(outs))
+	if len(ins) != 1 || len(outs) < 1 {
+		return fmt.Errorf("encoder node %q: expected 1 input / >=1 output, got %d/%d", node.ID, len(ins), len(outs))
 	}
 
-	in, out := ins[0], outs[0]
+	in := ins[0]
+
+	// Fan out each encoded packet to every downstream channel. With one
+	// output the packet is forwarded as-is; with N outputs the packet is
+	// av_packet_clone'd N-1 times so each consumer (muxer) owns an
+	// independent reference and can mutate stream_index / time_base
+	// without racing the others.
+	sendPacket := func(p *av.Packet) error {
+		for i, out := range outs {
+			var pkt *av.Packet
+			if i == len(outs)-1 {
+				pkt = p
+			} else {
+				c, err := av.ClonePacket(p)
+				if err != nil {
+					p.Close()
+					return err
+				}
+				pkt = c
+			}
+			select {
+			case out <- pkt:
+			case <-ctx.Done():
+				pkt.Close()
+				return ctx.Err()
+			}
+		}
+		return nil
+	}
 
 	drainEncoder := func() error {
 		for {
@@ -819,11 +871,8 @@ func (r *graphRunner) handleEncoder(ctx context.Context, node *graph.Node, ins [
 				}
 				return err
 			}
-			select {
-			case out <- p:
-			case <-ctx.Done():
-				p.Close()
-				return ctx.Err()
+			if err := sendPacket(p); err != nil {
+				return err
 			}
 		}
 	}

@@ -445,7 +445,7 @@ function RawOptions({
             style={{ width: '100%', fontFamily: 'var(--mono, monospace)', fontSize: 11 }}
           />
           {o.help && (
-            <div className="empty" style={{ fontSize: 10, marginTop: -4, marginBottom: 6 }}>
+            <div className="empty" style={{ fontSize: 10, marginTop: 2, marginBottom: 6 }}>
               {o.help}
             </div>
           )}
@@ -571,7 +571,7 @@ function AdvancedRow({
       </label>
       <OptionControl option={option} value={value} onChange={onChange} />
       {option.help && (
-        <div className="empty" style={{ fontSize: 10, marginTop: -4, marginBottom: 4 }}>
+        <div className="empty" style={{ fontSize: 10, marginTop: 2, marginBottom: 4 }}>
           {option.help}
         </div>
       )}
@@ -651,7 +651,7 @@ function PrimaryRow({
         <OptionControl option={option} value={value} onChange={onChange} />
       )}
       {option.help && (
-        <div className="empty" style={{ fontSize: 10, marginTop: -4, marginBottom: 6 }}>
+        <div className="empty" style={{ fontSize: 10, marginTop: 2, marginBottom: 6 }}>
           {option.help}
         </div>
       )}
