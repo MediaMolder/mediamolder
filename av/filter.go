@@ -6,6 +6,7 @@ package av
 // #include "libavfilter/avfilter.h"
 // #include "libavfilter/buffersrc.h"
 // #include "libavfilter/buffersink.h"
+// #include "libavutil/channel_layout.h"
 // #include "libavutil/opt.h"
 // #include "libavutil/rational.h"
 // #include "libavcodec/avcodec.h"
@@ -24,9 +25,19 @@ package av
 // static int make_audio_src_args(char *buf, int buf_size,
 //                                int sample_fmt, int sample_rate,
 //                                int nb_channels) {
+//     // Derive a default channel layout for the channel count and emit
+//     // it as a string so the abuffer source matches incoming frames
+//     // whose ch_layout has the canonical mask set (e.g. stereo = 0x3).
+//     // Without this, libavfilter rejects the first frame with
+//     // "Changing audio frame properties on the fly is not supported."
+//     AVChannelLayout layout;
+//     av_channel_layout_default(&layout, nb_channels);
+//     char layout_str[128];
+//     av_channel_layout_describe(&layout, layout_str, sizeof(layout_str));
+//     av_channel_layout_uninit(&layout);
 //     return snprintf(buf, buf_size,
-//         "sample_fmt=%d:sample_rate=%d:channels=%d",
-//         sample_fmt, sample_rate, nb_channels);
+//         "sample_fmt=%d:sample_rate=%d:channels=%d:channel_layout=%s",
+//         sample_fmt, sample_rate, nb_channels, layout_str);
 // }
 import "C"
 

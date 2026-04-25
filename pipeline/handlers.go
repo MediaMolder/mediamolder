@@ -44,7 +44,105 @@ func configToGraphDef(cfg *Config) *graph.Def {
 		})
 	}
 	expandImplicitEncoders(cfg, def)
+	spliceAudioAdaptersForEncoders(def)
 	return def
+}
+
+// audioEncoderRequirement describes the sample format and per-frame
+// sample count a fixed-frame-size audio encoder requires on its input.
+// Used by spliceAudioAdaptersForEncoders to insert an aformat +
+// asetnsamples chain in front of the encoder when the upstream is a
+// raw decoder (no user-supplied filter chain).
+type audioEncoderRequirement struct {
+	sampleFmt  string // libavfilter sample-fmt name (e.g. "fltp", "s16")
+	frameSize  int    // exact samples per frame the encoder demands
+	hasFrameSz bool   // whether frameSize must be enforced (some codecs accept variable n)
+}
+
+// audioEncoderRequirements lists encoders for which the runtime knows
+// the required sample format and (when fixed) frame size. Codecs not
+// listed here get no auto-adapter; users can still wire an aformat /
+// asetnsamples chain by hand if they need one.
+var audioEncoderRequirements = map[string]audioEncoderRequirement{
+	"aac":         {sampleFmt: "fltp", frameSize: 1024, hasFrameSz: true},
+	"libfdk_aac":  {sampleFmt: "s16", frameSize: 1024, hasFrameSz: true},
+	"libmp3lame":  {sampleFmt: "fltp", frameSize: 1152, hasFrameSz: true},
+	"libopus":     {sampleFmt: "flt", frameSize: 960, hasFrameSz: true},
+	"libvorbis":   {sampleFmt: "fltp"}, // variable frame size
+	"flac":        {sampleFmt: "s16"},  // variable frame size
+	"pcm_s16le":   {sampleFmt: "s16"},
+	"pcm_s16be":   {sampleFmt: "s16"},
+	"pcm_s24le":   {sampleFmt: "s32"},
+	"pcm_s32le":   {sampleFmt: "s32"},
+	"pcm_f32le":   {sampleFmt: "flt"},
+	"ac3":         {sampleFmt: "fltp", frameSize: 1536, hasFrameSz: true},
+	"eac3":        {sampleFmt: "fltp", frameSize: 1536, hasFrameSz: true},
+}
+
+// spliceAudioAdaptersForEncoders rewrites edges that feed an audio
+// encoder directly from a source / decoder, inserting a synthetic
+// libavfilter node that conforms the stream to the encoder's sample
+// format and (when fixed) per-frame sample count.
+//
+// This makes the common "input → AAC encoder → output" topology work
+// even when the source's audio doesn't already match the encoder
+// (e.g. an MP3-in-AVI track that delivers 1152-sample s16p frames to
+// the native AAC encoder which requires 1024-sample fltp frames). An
+// existing filter / processor upstream is left alone — the user is
+// assumed to have set up the conversion deliberately.
+//
+// Synthetic filter nodes use the "__aspl__" prefix to avoid colliding
+// with user-supplied node IDs.
+func spliceAudioAdaptersForEncoders(def *graph.Def) {
+	nodeByID := make(map[string]graph.NodeDef, len(def.Nodes))
+	for _, n := range def.Nodes {
+		nodeByID[n.ID] = n
+	}
+	head := func(ref string) string {
+		if i := strings.IndexByte(ref, ':'); i >= 0 {
+			return ref[:i]
+		}
+		return ref
+	}
+
+	var added []graph.EdgeDef
+	for i := range def.Edges {
+		e := &def.Edges[i]
+		if e.Type != "audio" {
+			continue
+		}
+		dstNode, ok := nodeByID[head(e.To)]
+		if !ok || dstNode.Type != "encoder" {
+			continue
+		}
+		codec, _ := dstNode.Params["codec"].(string)
+		req, known := audioEncoderRequirements[codec]
+		if !known {
+			continue
+		}
+		// Skip if the source is already a filter or processor: the
+		// user (or another splice pass) has set up the format chain.
+		if srcNode, ok := nodeByID[head(e.From)]; ok {
+			if srcNode.Type == "filter" || srcNode.Type == "go_processor" {
+				continue
+			}
+		}
+		spec := "aformat=sample_fmts=" + req.sampleFmt
+		if req.hasFrameSz {
+			spec += fmt.Sprintf(",asetnsamples=n=%d:p=0", req.frameSize)
+		}
+		filtID := fmt.Sprintf("__aspl__%s_%d", dstNode.ID, i)
+		filtNode := graph.NodeDef{
+			ID:     filtID,
+			Type:   "filter",
+			Filter: spec,
+		}
+		def.Nodes = append(def.Nodes, filtNode)
+		nodeByID[filtID] = filtNode
+		added = append(added, graph.EdgeDef{From: e.From, To: filtID, Type: "audio"})
+		e.From = filtID
+	}
+	def.Edges = append(def.Edges, added...)
 }
 
 // expandImplicitEncoders rewrites edges feeding a sink whose source is
