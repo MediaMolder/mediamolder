@@ -4,6 +4,17 @@
 package av
 
 // #include "libavcodec/packet.h"
+//
+// static void packet_rescale_ts(AVPacket *pkt,
+//                                int src_num, int src_den,
+//                                int dst_num, int dst_den) {
+//     AVRational src = {src_num, src_den};
+//     AVRational dst = {dst_num, dst_den};
+//     av_packet_rescale_ts(pkt, src, dst);
+// }
+// static AVPacket *packet_clone(const AVPacket *src) {
+//     return av_packet_clone(src);
+// }
 import "C"
 
 import "unsafe"
@@ -56,6 +67,36 @@ func (pkt *Packet) DTS() int64 { return int64(pkt.p.dts) }
 
 // SetStreamIndex sets the packet's stream index.
 func (pkt *Packet) SetStreamIndex(i int) { pkt.p.stream_index = C.int(i) }
+
+// Rescale converts the packet's timestamps from srcTB to dstTB using
+// av_packet_rescale_ts. Both rationals are {num, den}; a zero denominator
+// is silently ignored to make this safe to call when one side is unknown.
+func (pkt *Packet) Rescale(srcTB, dstTB [2]int) {
+	if pkt.p == nil {
+		return
+	}
+	if srcTB[1] == 0 || dstTB[1] == 0 {
+		return
+	}
+	C.packet_rescale_ts(pkt.p,
+		C.int(srcTB[0]), C.int(srcTB[1]),
+		C.int(dstTB[0]), C.int(dstTB[1]))
+}
+
+// Clone returns a new Packet that shares buffer references with pkt
+// (via av_packet_clone). The returned packet must be Close()d
+// independently.
+func ClonePacket(src *Packet) (*Packet, error) {
+	if src == nil || src.p == nil {
+		return nil, &Err{Code: -22, Message: "ClonePacket: nil source"}
+	}
+	c := C.packet_clone(src.p)
+	if c == nil {
+		return nil, &Err{Code: -12, Message: "av_packet_clone: out of memory"}
+	}
+	leakTrack(unsafe.Pointer(c), "AVPacket")
+	return &Packet{p: c}, nil
+}
 
 // raw returns the underlying C pointer. For use within the av package only.
 func (pkt *Packet) raw() *C.AVPacket { return pkt.p }

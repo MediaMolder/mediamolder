@@ -49,6 +49,28 @@ func handleListNodes(w http.ResponseWriter, _ *http.Request) {
 		},
 	)
 
+	// Stream-copy nodes — one per media type. A copy node forwards
+	// demuxer packets straight to the muxer with no decode/encode, so
+	// the source and destination must share a codec the output
+	// container accepts.
+	for _, st := range []struct{ name, label, desc, stream string }{
+		{"copy_video", "Copy (video)", "Forward the input video stream to the output container without re-encoding.", "video"},
+		{"copy_audio", "Copy (audio)", "Forward the input audio stream to the output container without re-encoding.", "audio"},
+		{"copy_subtitle", "Copy (subtitle)", "Forward the input subtitle stream to the output container without re-encoding.", "subtitle"},
+		{"copy_data", "Copy (data)", "Forward an input data stream (timecode, KLV, ...) to the output container without re-encoding.", "data"},
+	} {
+		out = append(out, NodeCatalogEntry{
+			Category:    "Copy",
+			Type:        "copy",
+			Name:        st.name,
+			Label:       st.label,
+			Description: st.desc,
+			Streams:     []string{st.stream},
+			NumInputs:   1,
+			NumOutputs:  1,
+		})
+	}
+
 	// Filters from libavfilter — only 1→1 in the palette; multi-IO filters
 	// (overlay, split, etc.) can be added by editing JSON directly.
 	for _, f := range av.ListFilters() {
@@ -130,12 +152,14 @@ func categoryOrder(c string) int {
 		return 1
 	case "Encoders":
 		return 2
-	case "Processors":
+	case "Copy":
 		return 3
-	case "Sinks":
+	case "Processors":
 		return 4
-	default:
+	case "Sinks":
 		return 5
+	default:
+		return 6
 	}
 }
 

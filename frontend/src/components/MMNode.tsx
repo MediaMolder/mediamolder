@@ -103,6 +103,8 @@ export function describeKind(kind: string, supported: readonly string[]): string
       return single ? `${cap(single)} filter` : 'Filter';
     case 'go_processor':
       return 'Processor';
+    case 'copy':
+      return single ? `${cap(single)} stream copy` : 'Stream copy';
     default:
       return kind;
   }

@@ -15,6 +15,21 @@ package av
 //     avcodec_parameters_from_context(ctx->streams[idx]->codecpar, enc_ctx);
 //     ctx->streams[idx]->time_base = enc_ctx->time_base;
 // }
+// // Copy codec parameters from an input stream to an output stream and
+// // adopt the input stream's time_base. Used for stream-copy outputs.
+// static int copy_stream_codecpar(AVFormatContext *out_ctx, int out_idx,
+//                                  AVFormatContext *in_ctx, int in_idx) {
+//     int ret = avcodec_parameters_copy(out_ctx->streams[out_idx]->codecpar,
+//                                       in_ctx->streams[in_idx]->codecpar);
+//     if (ret < 0) return ret;
+//     // Clear codec_tag so the muxer can pick a container-appropriate one.
+//     out_ctx->streams[out_idx]->codecpar->codec_tag = 0;
+//     out_ctx->streams[out_idx]->time_base = in_ctx->streams[in_idx]->time_base;
+//     return 0;
+// }
+// static AVRational out_stream_time_base(AVFormatContext *ctx, int idx) {
+//     return ctx->streams[idx]->time_base;
+// }
 import "C"
 
 import (
@@ -80,6 +95,32 @@ func (f *OutputFormatContext) AddStream(enc *EncoderContext) (int, error) {
 	}
 	C.set_stream_codecpar(f.p, C.int(st.index), enc.raw())
 	return int(st.index), nil
+}
+
+// AddStreamFromInput adds a new output stream by copying codec parameters
+// directly from inputStreamIndex on src (no re-encoding). Adopts the input
+// stream's time_base. Used to wire stream-copy nodes to the muxer.
+// Returns the zero-based stream index assigned in the output container.
+func (f *OutputFormatContext) AddStreamFromInput(src *InputFormatContext, inputStreamIndex int) (int, error) {
+	if src == nil || src.p == nil {
+		return -1, fmt.Errorf("AddStreamFromInput: nil source")
+	}
+	st := C.new_stream(f.p)
+	if st == nil {
+		return -1, fmt.Errorf("avformat_new_stream: out of memory")
+	}
+	if ret := C.copy_stream_codecpar(f.p, C.int(st.index), src.p, C.int(inputStreamIndex)); ret < 0 {
+		return -1, fmt.Errorf("avcodec_parameters_copy: %w", newErr(ret))
+	}
+	return int(st.index), nil
+}
+
+// StreamTimeBase returns the time_base of output stream idx as {num, den}.
+// Valid after AddStream / AddStreamFromInput; some muxers adjust it during
+// WriteHeader, so callers wanting the post-header value should re-query.
+func (f *OutputFormatContext) StreamTimeBase(idx int) [2]int {
+	tb := C.out_stream_time_base(f.p, C.int(idx))
+	return [2]int{int(tb.num), int(tb.den)}
 }
 
 // WriteHeader writes the container header. Must be called after all streams

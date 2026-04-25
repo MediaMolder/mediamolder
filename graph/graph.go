@@ -28,6 +28,7 @@ const (
 	KindEncoder                     // encode
 	KindSink                        // mux
 	KindGoProcessor                 // custom Go per-frame processor
+	KindCopy                        // stream copy: forward demuxer packets to muxer
 )
 
 func (k NodeKind) String() string {
@@ -42,6 +43,8 @@ func (k NodeKind) String() string {
 		return "sink"
 	case KindGoProcessor:
 		return "go_processor"
+	case KindCopy:
+		return "copy"
 	default:
 		return fmt.Sprintf("NodeKind(%d)", int(k))
 	}
@@ -66,7 +69,7 @@ type InputDef struct {
 // NodeDef describes a processing node in the graph.
 type NodeDef struct {
 	ID        string
-	Type      string         // "filter", "encoder", "source", "sink", "go_processor"
+	Type      string         // "filter", "encoder", "source", "sink", "go_processor", "copy"
 	Filter    string         // filter name (for filter nodes)
 	Processor string         // registered processor name (for go_processor nodes)
 	Params    map[string]any // filter/encoder/processor parameters
@@ -315,6 +318,8 @@ func parseNodeKind(s string) (NodeKind, error) {
 		return KindSink, nil
 	case "go_processor":
 		return KindGoProcessor, nil
+	case "copy":
+		return KindCopy, nil
 	default:
 		return 0, fmt.Errorf("unknown node type %q", s)
 	}

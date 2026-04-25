@@ -171,9 +171,10 @@ export function materializeImplicitEncoders(cfg: JobConfig): JobConfig {
       edges.push(e);
       continue;
     }
-    // Already encoded: source is a graph encoder node.
+    // Already encoded: source is a graph encoder node, or already a
+    // stream-copy node forwarding demuxer packets to the muxer.
     const fromNode = nodeById.get(fromHead);
-    if (fromNode && fromNode.type === 'encoder') {
+    if (fromNode && (fromNode.type === 'encoder' || fromNode.type === 'copy')) {
       edges.push(e);
       continue;
     }

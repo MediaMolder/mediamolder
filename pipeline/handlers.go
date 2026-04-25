@@ -91,9 +91,10 @@ func expandImplicitEncoders(cfg *Config, def *graph.Def) {
 		if !ok {
 			continue
 		}
-		// Already encoded: source is a graph encoder node. (Inputs and
-		// filter nodes both fall through to the splice below.)
-		if n, ok := nodeByID[fromID]; ok && n.Type == "encoder" {
+		// Already encoded: source is a graph encoder node, or already a
+		// stream-copy node (which forwards demuxer packets directly to the
+		// muxer). Inputs and filter nodes fall through to the splice below.
+		if n, ok := nodeByID[fromID]; ok && (n.Type == "encoder" || n.Type == "copy") {
 			continue
 		}
 		var codec string
@@ -163,6 +164,18 @@ func (s *sourceResources) Close() {
 type sinkResources struct {
 	muxer *av.OutputFormatContext
 	cfg   Output
+	// streamRescale[i] describes the timestamp rescaling to apply to
+	// packets arriving on input channel i before WritePacket. Non-nil
+	// only when the inbound is a stream-copy node (input demuxer
+	// time_base → muxer output time_base). For encoder-fed channels it
+	// is left nil because the encoder context's time_base is already
+	// adopted by the output stream via set_stream_codecpar.
+	streamRescale []*sinkRescale
+}
+
+type sinkRescale struct {
+	srcTB [2]int
+	dstTB [2]int
 }
 
 // graphRunner pre-opens all AV resources and provides the runtime.NodeHandler
@@ -245,6 +258,8 @@ func (r *graphRunner) handle(ctx context.Context, node *graph.Node, ins []<-chan
 		return r.handleSink(ctx, node, ins)
 	case graph.KindGoProcessor:
 		return r.handleGoProcessor(ctx, node, ins, outs)
+	case graph.KindCopy:
+		return r.handleCopy(ctx, node, ins, outs)
 	default:
 		return fmt.Errorf("unknown node kind %v for node %q", node.Kind, node.ID)
 	}
@@ -263,18 +278,25 @@ func (r *graphRunner) handleSource(ctx context.Context, node *graph.Node, outs [
 	// only elapsed-time and processed-media-time.
 	r.pipe.Metrics().Node(node.ID).SetMediaDuration(src.mediaDuration)
 
-	// Map edge type → output channel indices.
-	videoOuts := make([]int, 0, 1)
-	audioOuts := make([]int, 0, 1)
-	subtitleOuts := make([]int, 0, 1)
+	// Map edge type → output channel indices, split between "frame"
+	// outs (decode → av.Frame) and "copy" outs (raw demuxer packets
+	// forwarded to a downstream copy node).
+	type typeOuts struct{ frame, copy []int }
+	byType := map[graph.PortType]*typeOuts{
+		graph.PortVideo:    {},
+		graph.PortAudio:    {},
+		graph.PortSubtitle: {},
+		graph.PortData:     {},
+	}
 	for i, e := range node.Outbound {
-		switch e.Type {
-		case graph.PortVideo:
-			videoOuts = append(videoOuts, i)
-		case graph.PortAudio:
-			audioOuts = append(audioOuts, i)
-		case graph.PortSubtitle:
-			subtitleOuts = append(subtitleOuts, i)
+		bucket := byType[e.Type]
+		if bucket == nil {
+			continue
+		}
+		if e.To != nil && e.To.Kind == graph.KindCopy {
+			bucket.copy = append(bucket.copy, i)
+		} else {
+			bucket.frame = append(bucket.frame, i)
 		}
 	}
 
@@ -289,13 +311,34 @@ func (r *graphRunner) handleSource(ctx context.Context, node *graph.Node, outs [
 		return nil
 	}
 
+	// sendPacketCopies clones the demuxer packet once per copy-out and
+	// forwards each clone. Cloning is necessary because the source
+	// reuses a single AVPacket across the demux loop (Unref before
+	// each ReadPacket); without a clone the downstream copy node would
+	// see freed buffers.
+	sendPacketCopies := func(pkt *av.Packet, indices []int) error {
+		for _, idx := range indices {
+			c, err := av.ClonePacket(pkt)
+			if err != nil {
+				return err
+			}
+			select {
+			case outs[idx] <- c:
+			case <-ctx.Done():
+				c.Close()
+				return ctx.Err()
+			}
+		}
+		return nil
+	}
+
 	receiveAll := func(dec *av.DecoderContext, mt av.MediaType) error {
 		var indices []int
 		switch mt {
 		case av.MediaTypeVideo:
-			indices = videoOuts
+			indices = byType[graph.PortVideo].frame
 		case av.MediaTypeAudio:
-			indices = audioOuts
+			indices = byType[graph.PortAudio].frame
 		}
 		if len(indices) == 0 {
 			return nil
@@ -340,10 +383,10 @@ func (r *graphRunner) handleSource(ctx context.Context, node *graph.Node, outs [
 		}
 		dec := src.decoders[pkt.StreamIndex()]
 		subDec := src.subDecoders[pkt.StreamIndex()]
-		if dec == nil && subDec == nil {
+		si, known := src.streams[pkt.StreamIndex()]
+		if dec == nil && subDec == nil && !known {
 			continue
 		}
-		si := src.streams[pkt.StreamIndex()]
 
 		// Publish media-time progress so the GUI can compute
 		// percent-complete / ETA. Skip packets without a valid PTS
@@ -355,14 +398,32 @@ func (r *graphRunner) handleSource(ctx context.Context, node *graph.Node, outs [
 			r.pipe.Metrics().Node(node.ID).AdvanceMediaPTS(ptsNs)
 		}
 
+		// Route to copy outs first (per stream type).
+		var portType graph.PortType
+		switch si.Type {
+		case av.MediaTypeVideo:
+			portType = graph.PortVideo
+		case av.MediaTypeAudio:
+			portType = graph.PortAudio
+		case av.MediaTypeSubtitle:
+			portType = graph.PortSubtitle
+		case av.MediaTypeData:
+			portType = graph.PortData
+		}
+		if bucket := byType[portType]; bucket != nil && len(bucket.copy) > 0 {
+			if err := sendPacketCopies(pkt, bucket.copy); err != nil {
+				return err
+			}
+		}
+
 		// Handle subtitle streams via subtitle decoder.
-		if subDec != nil && len(subtitleOuts) > 0 {
+		if subDec != nil && len(byType[graph.PortSubtitle].frame) > 0 {
 			sub, got, err := subDec.Decode(pkt)
 			if err != nil {
 				return err
 			}
 			if got {
-				for _, idx := range subtitleOuts {
+				for _, idx := range byType[graph.PortSubtitle].frame {
 					select {
 					case outs[idx] <- sub:
 					case <-ctx.Done():
@@ -376,6 +437,8 @@ func (r *graphRunner) handleSource(ctx context.Context, node *graph.Node, outs [
 		}
 
 		if dec == nil {
+			// Copy-only or data-only stream: nothing to decode.
+			r.pipe.Metrics().Node(node.ID).RecordLatency(time.Since(frameStart))
 			continue
 		}
 		if err := dec.SendPacket(pkt); err != nil {
@@ -408,12 +471,12 @@ func (r *graphRunner) handleSource(ctx context.Context, node *graph.Node, outs [
 			}
 			switch si.Type {
 			case av.MediaTypeVideo:
-				if err := sendFrame(f, videoOuts); err != nil {
+				if err := sendFrame(f, byType[graph.PortVideo].frame); err != nil {
 					f.Close()
 					return err
 				}
 			case av.MediaTypeAudio:
-				if err := sendFrame(f, audioOuts); err != nil {
+				if err := sendFrame(f, byType[graph.PortAudio].frame); err != nil {
 					f.Close()
 					return err
 				}
@@ -421,6 +484,37 @@ func (r *graphRunner) handleSource(ctx context.Context, node *graph.Node, outs [
 				f.Close()
 			}
 		}
+	}
+	return nil
+}
+
+// ---------- Copy handler ----------
+//
+// A copy node is a verbatim demuxer-packet-to-muxer pipeline: it neither
+// decodes nor encodes. The source emits raw AVPackets in the input
+// stream's time_base; the sink rescales to the output stream's time_base
+// at write time. handleCopy is therefore a thin passthrough; it exists as
+// a distinct kind so the graph can express stream-copy intent and so the
+// muxer can be configured via AddStreamFromInput rather than from an
+// encoder context.
+func (r *graphRunner) handleCopy(ctx context.Context, node *graph.Node, ins []<-chan any, outs []chan<- any) error {
+	if len(ins) != 1 || len(outs) != 1 {
+		return fmt.Errorf("copy node %q: expected 1 input / 1 output, got %d/%d", node.ID, len(ins), len(outs))
+	}
+	in, out := ins[0], outs[0]
+	for v := range in {
+		pkt, ok := v.(*av.Packet)
+		if !ok {
+			return fmt.Errorf("copy node %q: expected *av.Packet, got %T", node.ID, v)
+		}
+		frameStart := time.Now()
+		select {
+		case out <- pkt:
+		case <-ctx.Done():
+			pkt.Close()
+			return ctx.Err()
+		}
+		r.pipe.Metrics().Node(node.ID).RecordLatency(time.Since(frameStart))
 	}
 	return nil
 }
@@ -645,9 +739,16 @@ func (r *graphRunner) handleSink(ctx context.Context, node *graph.Node, ins []<-
 	}
 
 	if len(ins) == 1 {
+		var rs *sinkRescale
+		if len(sink.streamRescale) > 0 {
+			rs = sink.streamRescale[0]
+		}
 		for v := range ins[0] {
 			pkt := v.(*av.Packet)
 			pkt.SetStreamIndex(0)
+			if rs != nil {
+				pkt.Rescale(rs.srcTB, rs.dstTB)
+			}
 			frameStart := time.Now()
 			if err := sink.muxer.WritePacket(pkt); err != nil {
 				pkt.Close()
@@ -665,10 +766,17 @@ func (r *graphRunner) handleSink(ctx context.Context, node *graph.Node, ins []<-
 
 	for i, in := range ins {
 		i, in := i, in
+		var rs *sinkRescale
+		if i < len(sink.streamRescale) {
+			rs = sink.streamRescale[i]
+		}
 		eg.Go(func() error {
 			for v := range in {
 				pkt := v.(*av.Packet)
 				pkt.SetStreamIndex(i)
+				if rs != nil {
+					pkt.Rescale(rs.srcTB, rs.dstTB)
+				}
 				frameStart := time.Now()
 				mu.Lock()
 				err := sink.muxer.WritePacket(pkt)
@@ -765,7 +873,7 @@ func (r *graphRunner) handleGoProcessor(ctx context.Context, node *graph.Node, i
 
 // ---------- Resource pre-opening ----------
 
-func (r *graphRunner) openSource(cfg Input, decOpts av.DecoderOptions) (*sourceResources, error) {
+func (r *graphRunner) openSource(cfg Input, srcNode *graph.Node, decOpts av.DecoderOptions) (*sourceResources, error) {
 	var inputOpts map[string]string
 	if len(cfg.Options) > 0 {
 		inputOpts = make(map[string]string, len(cfg.Options))
@@ -785,6 +893,27 @@ func (r *graphRunner) openSource(cfg Input, decOpts av.DecoderOptions) (*sourceR
 		return nil, fmt.Errorf("enumerate streams %q: %w", cfg.URL, err)
 	}
 
+	// Determine which stream types feed *only* copy nodes (no decoder
+	// needed) versus types that have at least one decoded consumer.
+	// Streams whose type appears only on copy edges skip decoder open.
+	copyOnly := map[string]bool{}
+	if srcNode != nil {
+		seenAny := map[string]bool{}
+		seenNonCopy := map[string]bool{}
+		for _, e := range srcNode.Outbound {
+			t := string(e.Type)
+			seenAny[t] = true
+			if e.To == nil || e.To.Kind != graph.KindCopy {
+				seenNonCopy[t] = true
+			}
+		}
+		for t := range seenAny {
+			if !seenNonCopy[t] {
+				copyOnly[t] = true
+			}
+		}
+	}
+
 	decoders := make(map[int]*av.DecoderContext)
 	subDecoders := make(map[int]*av.SubtitleDecoderContext)
 	streams := make(map[int]av.StreamInfo)
@@ -794,7 +923,14 @@ func (r *graphRunner) openSource(cfg Input, decOpts av.DecoderOptions) (*sourceR
 		for _, si := range allStreams {
 			if si.Type.String() == sel.Type {
 				if count == sel.Track {
-					if sel.Type == "subtitle" {
+					switch {
+					case copyOnly[sel.Type]:
+						// Stream-copy only: don't open a decoder.
+						// Data streams always land here (no decoder
+						// available). For subtitle/video/audio, the
+						// muxer will be wired with the input
+						// codecpar via AddStreamFromInput.
+					case sel.Type == "subtitle":
 						subDec, err := av.OpenSubtitleDecoder(input, si.Index)
 						if err != nil {
 							for _, d := range decoders {
@@ -807,7 +943,7 @@ func (r *graphRunner) openSource(cfg Input, decOpts av.DecoderOptions) (*sourceR
 							return nil, fmt.Errorf("open subtitle decoder for track %d: %w", sel.Track, err)
 						}
 						subDecoders[si.Index] = subDec
-					} else {
+					default:
 						dec, err := av.OpenDecoderWithOptions(input, si.Index, decOpts)
 						if err != nil {
 							for _, d := range decoders {
@@ -1064,18 +1200,41 @@ func (r *graphRunner) openSink(_ *graph.Graph, node *graph.Node) (*sinkResources
 		return nil, fmt.Errorf("open output %q: %w", out.URL, err)
 	}
 
-	// Add one stream per inbound edge. The encoder for each stream has already
-	// been opened (topological order guarantees this).
-	for _, e := range node.Inbound {
+	rescales := make([]*sinkRescale, len(node.Inbound))
+
+	// Add one stream per inbound edge. Encoder predecessors register
+	// the stream from the encoder context; stream-copy predecessors
+	// copy the input codecpar directly so the muxer never sees an
+	// encoder for that stream. Topological order guarantees both kinds
+	// of predecessor are already prepared.
+	for i, e := range node.Inbound {
 		from := e.From
-		enc := r.encoders[from.ID]
-		if enc == nil {
+		switch from.Kind {
+		case graph.KindEncoder:
+			enc := r.encoders[from.ID]
+			if enc == nil {
+				muxer.Abort()
+				return nil, fmt.Errorf("sink %q: inbound from %q has no encoder", node.ID, from.ID)
+			}
+			if _, err := muxer.AddStream(enc); err != nil {
+				muxer.Abort()
+				return nil, fmt.Errorf("sink %q add stream: %w", node.ID, err)
+			}
+		case graph.KindCopy:
+			srcInput, srcIdx, srcTB, err := r.copySourceFor(from)
+			if err != nil {
+				muxer.Abort()
+				return nil, fmt.Errorf("sink %q copy from %q: %w", node.ID, from.ID, err)
+			}
+			outIdx, err := muxer.AddStreamFromInput(srcInput, srcIdx)
+			if err != nil {
+				muxer.Abort()
+				return nil, fmt.Errorf("sink %q add copy stream: %w", node.ID, err)
+			}
+			rescales[i] = &sinkRescale{srcTB: srcTB, dstTB: muxer.StreamTimeBase(outIdx)}
+		default:
 			muxer.Abort()
-			return nil, fmt.Errorf("sink %q: inbound from %q has no encoder", node.ID, from.ID)
-		}
-		if _, err := muxer.AddStream(enc); err != nil {
-			muxer.Abort()
-			return nil, fmt.Errorf("sink %q add stream: %w", node.ID, err)
+			return nil, fmt.Errorf("sink %q: inbound from %q (kind=%v) is not an encoder or copy node", node.ID, from.ID, from.Kind)
 		}
 	}
 
@@ -1084,7 +1243,43 @@ func (r *graphRunner) openSink(_ *graph.Graph, node *graph.Node) (*sinkResources
 		return nil, fmt.Errorf("sink %q write header: %w", node.ID, err)
 	}
 
-	return &sinkResources{muxer: muxer, cfg: *out}, nil
+	// Some muxers adjust stream time_base in WriteHeader; refresh the
+	// post-header value so per-packet rescaling targets the actual
+	// container timebase.
+	for i, rs := range rescales {
+		if rs == nil {
+			continue
+		}
+		rs.dstTB = muxer.StreamTimeBase(i)
+	}
+
+	return &sinkResources{muxer: muxer, cfg: *out, streamRescale: rescales}, nil
+}
+
+// copySourceFor resolves a stream-copy node back to the input it reads
+// from, returning the InputFormatContext, the demuxer stream index, and
+// the input stream's time_base. The copy node is required to have
+// exactly one inbound edge from a KindSource.
+func (r *graphRunner) copySourceFor(copyNode *graph.Node) (*av.InputFormatContext, int, [2]int, error) {
+	if len(copyNode.Inbound) != 1 {
+		return nil, 0, [2]int{}, fmt.Errorf("copy node %q must have exactly 1 inbound edge, got %d", copyNode.ID, len(copyNode.Inbound))
+	}
+	in := copyNode.Inbound[0]
+	from := in.From
+	if from.Kind != graph.KindSource {
+		return nil, 0, [2]int{}, fmt.Errorf("copy node %q: upstream %q (kind=%v) must be a source", copyNode.ID, from.ID, from.Kind)
+	}
+	src := r.sources[from.ID]
+	if src == nil {
+		return nil, 0, [2]int{}, fmt.Errorf("copy node %q: source %q has no resources", copyNode.ID, from.ID)
+	}
+	mt := portTypeToAVMediaType(in.Type)
+	for idx, si := range src.streams {
+		if si.Type == mt {
+			return src.input, idx, si.TimeBase, nil
+		}
+	}
+	return nil, 0, [2]int{}, fmt.Errorf("copy node %q: source %q has no %v stream", copyNode.ID, from.ID, in.Type)
 }
 
 // ---------- Helpers ----------

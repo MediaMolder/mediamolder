@@ -68,13 +68,15 @@ export function spawnNodeFrom(
     };
   }
 
-  // Filter / encoder / processor → graph NodeDef
+  // Filter / encoder / processor / copy → graph NodeDef
   const baseId = sanitiseId(entry.name);
   const id = uniqueId(baseId, existingIds);
   const def: NodeDef = { id, type: entry.type };
   if (entry.type === 'filter') def.filter = entry.name;
   else if (entry.type === 'encoder') def.params = { codec: entry.name };
   else if (entry.type === 'go_processor') def.processor = entry.name;
+  // Copy nodes carry no params; the inbound edge type tells the
+  // runtime which input stream to forward.
 
   // Show the codec / filter / processor name as the bold heading; the
   // user-facing id is the secondary line. Mirrors nodeDisplayLabel /

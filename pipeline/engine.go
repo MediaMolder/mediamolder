@@ -834,11 +834,12 @@ func (p *Pipeline) runGraph(ctx context.Context) (runErr error) {
 	for _, inp := range cfg.Inputs {
 		// Resolve decoder threading from the corresponding source node.
 		decOpts := av.DecoderOptions{}
-		if srcNode := dag.NodeByID(inp.ID); srcNode != nil {
+		srcNode := dag.NodeByID(inp.ID)
+		if srcNode != nil {
 			decOpts.ThreadCount = runner.resolveThreadCount(srcNode)
 			decOpts.ThreadType = runner.resolveThreadType(srcNode)
 		}
-		src, err := runner.openSource(inp, decOpts)
+		src, err := runner.openSource(inp, srcNode, decOpts)
 		if err != nil {
 			return err
 		}
@@ -876,6 +877,10 @@ func (p *Pipeline) runGraph(ctx context.Context) (runErr error) {
 				return fmt.Errorf("go_processor %q init: %w", node.ID, err)
 			}
 			runner.goProcessors[node.ID] = proc
+		case graph.KindCopy:
+			// Stream-copy nodes hold no per-node AV resources; the
+			// source already emits raw packets and the sink wires the
+			// output stream from the input codecpar at openSink time.
 		}
 	}
 
