@@ -209,6 +209,62 @@ export function primaryMeta(
   return { default: def, min: minVal, max: maxVal, rangeHint };
 }
 
+/* -------------------------------------------------------------------------- *
+ * String-typed AVOption choice tables.
+ *
+ * libavcodec exposes some encoder options (notably libx264/libx265 `preset`,
+ * and libvpx-vp9 `deadline`) as AV_OPT_TYPE_STRING with no AVOption
+ * constants attached, so isEnum() can't surface them as a dropdown. The
+ * accepted values are nevertheless a fixed enum baked into the codec. List
+ * them here so the GUI can render a <select> instead of a free-form input.
+ *
+ * Entries with `constants` already on the AVOption (e.g. nvenc presets,
+ * cpu-used integers) are NOT listed — OptionControl already enums them.
+ * -------------------------------------------------------------------------- */
+
+export interface OptionChoiceList {
+  /** Built-in default written by the codec when no value is supplied. */
+  default?: string;
+  /** Ordered choices to render in the dropdown. */
+  choices: { value: string; label?: string }[];
+}
+
+const X264_X265_PRESETS: OptionChoiceList = {
+  default: 'medium',
+  choices: [
+    { value: 'ultrafast' },
+    { value: 'superfast' },
+    { value: 'veryfast' },
+    { value: 'faster' },
+    { value: 'fast' },
+    { value: 'medium' },
+    { value: 'slow' },
+    { value: 'slower' },
+    { value: 'veryslow' },
+    { value: 'placebo' },
+  ],
+};
+
+export const ENCODER_OPTION_CHOICES: Record<string, Record<string, OptionChoiceList>> = {
+  libx264: { preset: X264_X265_PRESETS },
+  libx265: { preset: X264_X265_PRESETS },
+  libvpx_vp9: {
+    deadline: {
+      default: 'good',
+      choices: [
+        { value: 'best',     label: 'best (slowest)' },
+        { value: 'good',     label: 'good (default)' },
+        { value: 'realtime', label: 'realtime (fastest)' },
+      ],
+    },
+  },
+};
+
+/** Return the choice list registered for `(codec, optionName)`, if any. */
+export function optionChoices(codec: string, optionName: string): OptionChoiceList | undefined {
+  return ENCODER_OPTION_CHOICES[codec]?.[optionName];
+}
+
 const cache = new Map<string, Promise<EncoderInfo>>();
 
 /** Fetch (and cache) the encoder option schema for a given encoder name. */

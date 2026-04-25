@@ -23,11 +23,13 @@ import type { NodeDef } from '../lib/jobTypes';
 import {
   fetchEncoderInfo,
   findOption,
+  optionChoices,
   primaryMeta,
   rolesFor,
   type EncoderInfo,
   type EncoderOption,
   type EncoderUiRoles,
+  type OptionChoiceList,
 } from '../lib/encoderSchema';
 import { OptionControl, defaultDisplay } from './controls/OptionControl';
 import { parseBitRate } from '../lib/streamAttrs';
@@ -158,7 +160,14 @@ export function EncoderForm({ def, onChange }: Props) {
         </div>
       </div>
 
-      {preset && <PrimaryRow option={preset} value={getParam(preset.name)} onChange={(v) => setParam(preset.name, v)} />}
+      {preset && (
+        <PrimaryRow
+          option={preset}
+          value={getParam(preset.name)}
+          onChange={(v) => setParam(preset.name, v)}
+          choices={optionChoices(codec, preset.name)}
+        />
+      )}
 
       {hasRateControl && (
         <RateControlGroup
@@ -614,20 +623,33 @@ function PrimaryRow({
   value,
   onChange,
   labelOverride,
+  choices,
 }: {
   option: EncoderOption;
   value: string;
   onChange: (next: string) => void;
   labelOverride?: string;
+  choices?: OptionChoiceList;
 }) {
   const label = labelOverride ?? prettyLabel(option.name);
-  const def = defaultDisplay(option);
+  const def = choices?.default ?? defaultDisplay(option);
   return (
     <>
       <label title={option.help}>
         {label} <span className="empty" style={{ fontSize: 10 }}>({option.name}{def ? ` · default ${def}` : ''})</span>
       </label>
-      <OptionControl option={option} value={value} onChange={onChange} />
+      {choices ? (
+        <select value={value} onChange={(e) => onChange(e.target.value)}>
+          <option value="">(default{choices.default ? ` — ${choices.default}` : ''})</option>
+          {choices.choices.map((c) => (
+            <option key={c.value} value={c.value}>
+              {c.label ?? c.value}
+            </option>
+          ))}
+        </select>
+      ) : (
+        <OptionControl option={option} value={value} onChange={onChange} />
+      )}
       {option.help && (
         <div className="empty" style={{ fontSize: 10, marginTop: -4, marginBottom: 6 }}>
           {option.help}
