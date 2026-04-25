@@ -4,7 +4,7 @@
   "inputs": [
     {
       "id": "in0",
-      "url": "",
+      "url": "{{input}}",
       "streams": [
         {
           "input_index": 0,
@@ -34,6 +34,18 @@
         "id": "loudnorm0",
         "type": "filter",
         "filter": "loudnorm"
+      },
+      {
+        "id": "resample0",
+        "type": "filter",
+        "filter": "aformat",
+        "params": { "sample_rates": "48000", "sample_fmts": "fltp" }
+      },
+      {
+        "id": "chunkaudio0",
+        "type": "filter",
+        "filter": "asetnsamples",
+        "params": { "n": "1024", "p": "0" }
       }
     ],
     "edges": [
@@ -54,6 +66,16 @@
       },
       {
         "from": "loudnorm0",
+        "to": "resample0",
+        "type": "audio"
+      },
+      {
+        "from": "resample0",
+        "to": "chunkaudio0",
+        "type": "audio"
+      },
+      {
+        "from": "chunkaudio0",
         "to": "out0:a",
         "type": "audio"
       }
@@ -62,7 +84,7 @@
   "outputs": [
     {
       "id": "out0",
-      "url": "",
+      "url": "{{output}}",
       "codec_video": "libx264",
       "codec_audio": "aac"
     }

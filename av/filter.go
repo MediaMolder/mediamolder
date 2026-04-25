@@ -269,6 +269,15 @@ func (fg *FilterGraph) OutputSampleRate(idx int) int {
 	return int(C.av_buffersink_get_sample_rate(fg.bufSinks[idx]))
 }
 
+// OutputSampleFmt returns the output AVSampleFormat of the audio sink at the given index.
+// Returns -1 if the index is out of range.
+func (fg *FilterGraph) OutputSampleFmt(idx int) int {
+	if idx < 0 || idx >= len(fg.bufSinks) {
+		return -1
+	}
+	return int(C.av_buffersink_get_format(fg.bufSinks[idx]))
+}
+
 // OutputChannels returns the number of audio channels of the sink at the given index.
 func (fg *FilterGraph) OutputChannels(idx int) int {
 	if idx < 0 || idx >= len(fg.bufSinks) {

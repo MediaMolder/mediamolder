@@ -6,6 +6,16 @@ package av
 // #include "libavcodec/avcodec.h"
 // #include "libavutil/opt.h"
 // #include "libavutil/pixdesc.h"
+//
+// // select_supported_sample_fmt ensures ctx->sample_fmt is in the codec's
+// // supported list. When it is not, the first supported format is used.
+// static void select_supported_sample_fmt(AVCodecContext *ctx, const AVCodec *codec) {
+//     if (codec->sample_fmts == NULL) return;
+//     for (const enum AVSampleFormat *p = codec->sample_fmts; *p != AV_SAMPLE_FMT_NONE; p++) {
+//         if (*p == ctx->sample_fmt) return;
+//     }
+//     ctx->sample_fmt = codec->sample_fmts[0];
+// }
 import "C"
 
 import (
@@ -95,6 +105,10 @@ func OpenEncoder(opts EncoderOptions) (*EncoderContext, error) {
 	if opts.SampleRate > 0 {
 		ctx.sample_rate = C.int(opts.SampleRate)
 		ctx.sample_fmt = C.enum_AVSampleFormat(opts.SampleFmt)
+		// Auto-correct sample format: if the encoder doesn't support the
+		// requested format (e.g. libopus rejects fltp), fall back to the
+		// first format in the codec's supported list.
+		C.select_supported_sample_fmt(ctx, codec)
 		ctx.time_base = C.AVRational{num: 1, den: C.int(opts.SampleRate)}
 		// Channel layout: use the default layout for the given channel count.
 		C.av_channel_layout_default(&ctx.ch_layout, C.int(opts.Channels))

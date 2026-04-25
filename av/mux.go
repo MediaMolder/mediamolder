@@ -35,8 +35,6 @@ import "C"
 import (
 	"fmt"
 	"os"
-	"path/filepath"
-	"strings"
 	"unsafe"
 )
 
@@ -52,20 +50,32 @@ type OutputFormatContext struct {
 // the file extension. The actual write happens to a .tmp file; Close() performs
 // an atomic rename to the final path.
 func OpenOutput(path string) (*OutputFormatContext, error) {
+	return OpenOutputWithFormat(path, "")
+}
+
+// OpenOutputWithFormat creates an output container at path using the given
+// format name. When format is empty the format is inferred from the file
+// extension (same behaviour as OpenOutput).
+func OpenOutputWithFormat(path, format string) (*OutputFormatContext, error) {
 	tmpPath := path + ".tmp"
 	cTmpPath := C.CString(tmpPath)
 	defer C.free(unsafe.Pointer(cTmpPath))
 
-	// Determine format from the real extension, not the .tmp extension.
-	ext := strings.TrimPrefix(filepath.Ext(path), ".")
+	// Prefer an explicitly supplied format; fall back to the file extension.
+	// When an explicit format is supplied, use it as the format_name argument.
+	// Otherwise pass nil so FFmpeg auto-detects from the real filename (not the
+	// .tmp suffix, which would confuse it). avio_open still uses cTmpPath.
 	var cFmt *C.char
-	if ext != "" {
-		cFmt = C.CString(ext)
+	if format != "" {
+		cFmt = C.CString(format)
 		defer C.free(unsafe.Pointer(cFmt))
 	}
 
+	cRealPath := C.CString(path)
+	defer C.free(unsafe.Pointer(cRealPath))
+
 	var ctx *C.AVFormatContext
-	ret := C.avformat_alloc_output_context2(&ctx, nil, cFmt, cTmpPath)
+	ret := C.avformat_alloc_output_context2(&ctx, nil, cFmt, cRealPath)
 	if ret < 0 {
 		return nil, fmt.Errorf("avformat_alloc_output_context2(%q): %w", path, newErr(ret))
 	}

@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -217,10 +218,16 @@ func expandImplicitEncoders(cfg *Config, def *graph.Def) {
 			continue
 		}
 		encID := fmt.Sprintf("__enc__%s_%s_%d", toID, e.Type, i)
+		nodeType := "encoder"
+		nodeParams := map[string]any{"codec": codec}
+		if codec == "copy" {
+			nodeType = "copy"
+			nodeParams = nil
+		}
 		encNode := graph.NodeDef{
 			ID:     encID,
-			Type:   "encoder",
-			Params: map[string]any{"codec": codec},
+			Type:   nodeType,
+			Params: nodeParams,
 		}
 		def.Nodes = append(def.Nodes, encNode)
 		nodeByID[encID] = encNode
@@ -1363,7 +1370,7 @@ func (r *graphRunner) openSink(_ *graph.Graph, node *graph.Node) (*sinkResources
 		return nil, fmt.Errorf("sink node %q: no matching output config", node.ID)
 	}
 
-	muxer, err := av.OpenOutput(out.URL)
+	muxer, err := av.OpenOutputWithFormat(out.URL, out.Format)
 	if err != nil {
 		return nil, fmt.Errorf("open output %q: %w", out.URL, err)
 	}
@@ -1485,7 +1492,49 @@ func (r *graphRunner) resolveEdgeStreamInfo(dag *graph.Graph, e *graph.Edge) (av
 			}
 		}
 		return av.StreamInfo{}, fmt.Errorf("source %q has no %v stream", from.ID, e.Type)
-	case graph.KindFilter, graph.KindGoProcessor:
+	case graph.KindFilter:
+		// If the upstream filter graph is already built (topological order
+		// guarantees this), query its actual output dimensions rather than
+		// tracing all the way back to the source. This is critical for
+		// chained filters (e.g. scale → fps) where the downstream node must
+		// be initialised with the scaled, not the source, dimensions.
+		if fg := r.filters[from.ID]; fg != nil {
+			padIdx := 0
+			if e.FromPort != "default" {
+				if n, err := strconv.Atoi(e.FromPort); err == nil {
+					padIdx = n
+				}
+			}
+			si, err := r.resolveStreamInfo(dag, from)
+			if err != nil {
+				return av.StreamInfo{}, err
+			}
+			switch e.Type {
+			case graph.PortVideo:
+				if w := fg.OutputWidth(padIdx); w > 0 {
+					si.Width = w
+				}
+				if h := fg.OutputHeight(padIdx); h > 0 {
+					si.Height = h
+				}
+				if pf := fg.OutputPixFmt(padIdx); pf >= 0 {
+					si.PixFmt = pf
+				}
+			case graph.PortAudio:
+				if sr := fg.OutputSampleRate(padIdx); sr > 0 {
+					si.SampleRate = sr
+				}
+				if ch := fg.OutputChannels(padIdx); ch > 0 {
+					si.Channels = ch
+				}
+				if sf := fg.OutputSampleFmt(padIdx); sf >= 0 {
+					si.SampleFmt = sf
+				}
+			}
+			return si, nil
+		}
+		return r.resolveStreamInfo(dag, from)
+	case graph.KindGoProcessor:
 		// Pass through to the node's upstream source.
 		return r.resolveStreamInfo(dag, from)
 	default:
@@ -1541,6 +1590,12 @@ func paramString(m map[string]any, key string) string {
 	v, ok := m[key]
 	if !ok {
 		return ""
+	}
+	// JSON numbers unmarshal into map[string]any as float64. Format them as
+	// integers (no decimal/scientific notation) so that Sscanf %d parses them
+	// correctly (e.g. 7000000.0 → "7000000", not "7e+06").
+	if f, ok := v.(float64); ok {
+		return strconv.FormatInt(int64(f), 10)
 	}
 	return fmt.Sprintf("%v", v)
 }

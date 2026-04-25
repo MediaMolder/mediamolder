@@ -4,7 +4,7 @@
   "inputs": [
     {
       "id": "in0",
-      "url": "",
+      "url": "{{input}}",
       "streams": [
         {
           "input_index": 0,
@@ -28,6 +28,12 @@
         "params": {
           "volume": "2.0"
         }
+      },
+      {
+        "id": "chunkaudio0",
+        "type": "filter",
+        "filter": "asetnsamples",
+        "params": { "n": "1024", "p": "0" }
       }
     ],
     "edges": [
@@ -43,6 +49,11 @@
       },
       {
         "from": "volume0",
+        "to": "chunkaudio0",
+        "type": "audio"
+      },
+      {
+        "from": "chunkaudio0",
         "to": "out0:a",
         "type": "audio"
       }
@@ -51,8 +62,8 @@
   "outputs": [
     {
       "id": "out0",
-      "url": "",
-      "codec_video": "copy",
+      "url": "{{output}}",
+      "codec_video": "libx264",
       "codec_audio": "aac"
     }
   ]
