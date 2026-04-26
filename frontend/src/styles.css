@@ -233,6 +233,16 @@ button.danger:hover { background: rgba(185, 74, 74, 0.15); }
 }
 .mm-node .mm-node-title { font-weight: 600; }
 .mm-node .mm-node-sub { font-size: 11px; color: var(--text-dim); margin-top: 2px; }
+/* Run-time stats badge: each metric is its own span with no whitespace
+ * between them, so use flex+gap to separate them visually. */
+.mm-node .mm-node-run {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-top: 4px;
+}
 
 /* Stream-typed handles */
 .react-flow__handle.handle-video    { background: var(--video); }
