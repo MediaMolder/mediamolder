@@ -4,6 +4,7 @@
 package av
 
 // #include "libavcodec/avcodec.h"
+// #include "libavfilter/avfilter.h"
 import "C"
 
 import "unsafe"
@@ -13,4 +14,12 @@ func FindEncoder(name string) bool {
 	cName := C.CString(name)
 	defer C.free(unsafe.Pointer(cName))
 	return C.avcodec_find_encoder_by_name(cName) != nil
+}
+
+// FindFilter reports whether the named libavfilter filter is available in
+// this build (e.g. "drawtext", "subtitles", "overlay").
+func FindFilter(name string) bool {
+	cName := C.CString(name)
+	defer C.free(unsafe.Pointer(cName))
+	return C.avfilter_get_by_name(cName) != nil
 }

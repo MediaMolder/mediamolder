@@ -15,6 +15,7 @@ go 1.25.0
 
 require (
 	github.com/prometheus/client_golang v1.23.2
+	github.com/yalue/onnxruntime_go v1.28.0
 	go.opentelemetry.io/otel v1.39.0
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp v1.38.0
 	go.opentelemetry.io/otel/sdk v1.39.0
