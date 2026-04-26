@@ -77,9 +77,6 @@ The `cgo_flags.go` / `cgo_flags_static.go` build-tag pair controls which FFmpeg 
 | `make build-static` | Local source tree (`-tags=ffstatic`) |
 | `make build-gui-static` | Local source tree (`-tags=ffstatic`) |
 
-> **Note:** `-tags=ffstatic` is a Go build flag passed to `go build`, not a
-> `make` flag. Running `make build-gui -tags=ffstatic` will not work; use
-> `make build-gui-static` or `GOFLAGS="-tags=ffstatic" make build-gui` instead.
 
 ## Build from Source (Windows)
 
