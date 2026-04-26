@@ -26,7 +26,7 @@ package av
 // #cgo LDFLAGS: -lass -lfribidi -lunibreak -lfontconfig -lexpat -lfreetype -lpng16 -lharfbuzz -lusp10 -lrpcrt4 -ldwrite
 // #cgo LDFLAGS: -lglib-2.0 -lintl -lwinmm -lshlwapi -luuid -lpcre2-8 -lgraphite2 -lbrotlidec -lbrotlicommon
 // #cgo LDFLAGS: -lvpx -llzma -ldav1d -laom -lmp3lame -lopus -lspeex -ltheoraenc -ltheoradec -lvorbisenc -lvorbis -logg -lx264 -lx265
-// #cgo LDFLAGS: -lssl -lcrypto -lws2_32 -lgdi32 -lcrypt32 -luser32 -lbcrypt
+// #cgo LDFLAGS: -lssl -lcrypto -lws2_32 -lgdi32 -lcrypt32 -luser32 -lbcrypt -lsecur32 -lncrypt
 // #cgo LDFLAGS: -lstdc++ -lgcc_s -lgcc -latomic
 // #cgo LDFLAGS: -lmfuuid -lstrmiids -lole32
 import "C"
