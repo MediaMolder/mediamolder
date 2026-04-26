@@ -65,7 +65,7 @@ export function MMNode({ data, selected }: NodeProps & { data: FlowNodeData & { 
       {data.sublabel && <div className="mm-node-sub">{data.sublabel}</div>}
       {run && (run.frames !== undefined || run.errors !== undefined) && (
         <div className="mm-node-run">
-          {run.frames !== undefined && <span>{run.frames} fr</span>}
+          {run.frames !== undefined && <span>{run.frames} pkt</span>}
           {run.fps !== undefined && run.fps > 0 && <span>{run.fps.toFixed(1)} fps</span>}
           {(run.errors ?? 0) > 0 && <span className="badge-err">{run.errors} err</span>}
         </div>

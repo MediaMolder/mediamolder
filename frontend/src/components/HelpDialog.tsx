@@ -63,7 +63,7 @@ export function HelpDialog({ open, onClose }: Props) {
               event stream begins.
             </li>
             <li>
-              Each node displays live frame counts and FPS. Nodes that report errors get
+              Each node displays live packet counts and FPS. Nodes that report errors get
               a red border.
             </li>
             <li>

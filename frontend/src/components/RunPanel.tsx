@@ -26,7 +26,7 @@ function formatHMS(ns: number): string {
  * The dock itself (positioning, resize handle) lives in `RunDock`.
  */
 export function RunPanel({ run, onClose }: Props) {
-  const totalFrames = run.metrics?.Nodes.reduce((s, n) => s + n.Frames, 0) ?? 0;
+  const totalPackets = run.metrics?.Nodes.reduce((s, n) => s + n.Frames, 0) ?? 0;
   const totalErrors = run.metrics?.Nodes.reduce((s, n) => s + n.Errors, 0) ?? 0;
 
   // Progress = mediaPTS / mediaDuration (when known). ETA derived from
@@ -47,7 +47,7 @@ export function RunPanel({ run, onClose }: Props) {
         <span className={`run-status run-status-${run.status}`}>{run.status}</span>
         {run.pipelineState && <span className="run-pipeline-state">{run.pipelineState}</span>}
         <span style={{ color: 'var(--text-dim)' }}>
-          frames: {totalFrames} · errors: {totalErrors}
+          packets: {totalPackets} · errors: {totalErrors}
         </span>
         {(mediaPTS > 0 || haveDuration) && (
           <span style={{ color: 'var(--text-dim)' }}>
@@ -81,7 +81,7 @@ export function RunPanel({ run, onClose }: Props) {
               <thead>
                 <tr>
                   <th>Node</th>
-                  <th>Frames</th>
+                  <th>Packets</th>
                   <th>FPS</th>
                   <th>Errors</th>
                   <th>Avg latency</th>
