@@ -37,17 +37,26 @@ export function MMNode({ data, selected }: NodeProps & { data: FlowNodeData & { 
     .filter(Boolean)
     .join(' ');
 
+  // Each stream type gets a fixed vertical slot (video=0, audio=1, …) so that
+  // the same media type lines up across every node, even when a node only
+  // exposes a subset of the four handles. Without this, a single-stream
+  // node (e.g. an audio-only encoder) would draw its audio handle in
+  // slot 0, but a multi-stream demuxer would draw audio in slot 1, and the
+  // edge between them would render as a slanted line that misses both
+  // endpoint dots.
+  const slotTop = (t: StreamHandle) => 16 + STREAM_HANDLES.indexOf(t) * 12;
+
   return (
     <div className={classes}>
       {!isInput &&
-        supported.map((t, i) => (
+        supported.map((t) => (
           <Handle
             key={`tgt-${t}`}
             type="target"
             position={Position.Left}
             id={t}
             className={`handle-${t}`}
-            style={{ top: 16 + i * 12 }}
+            style={{ top: slotTop(t) }}
           />
         ))}
 
@@ -63,14 +72,14 @@ export function MMNode({ data, selected }: NodeProps & { data: FlowNodeData & { 
       )}
 
       {!isOutput &&
-        supported.map((t, i) => (
+        supported.map((t) => (
           <Handle
             key={`src-${t}`}
             type="source"
             position={Position.Right}
             id={t}
             className={`handle-${t}`}
-            style={{ top: 16 + i * 12 }}
+            style={{ top: slotTop(t) }}
           />
         ))}
     </div>
