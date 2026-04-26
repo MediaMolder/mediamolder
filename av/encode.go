@@ -9,6 +9,10 @@ package av
 //
 // // select_supported_sample_fmt ensures ctx->sample_fmt is in the codec's
 // // supported list. When it is not, the first supported format is used.
+// // AVCodec.sample_fmts is deprecated in FFmpeg 8+ but still functional;
+// // suppress the warning since we intentionally use it here.
+// #pragma GCC diagnostic push
+// #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
 // static void select_supported_sample_fmt(AVCodecContext *ctx, const AVCodec *codec) {
 //     if (codec->sample_fmts == NULL) return;
 //     for (const enum AVSampleFormat *p = codec->sample_fmts; *p != AV_SAMPLE_FMT_NONE; p++) {
@@ -16,6 +20,7 @@ package av
 //     }
 //     ctx->sample_fmt = codec->sample_fmts[0];
 // }
+// #pragma GCC diagnostic pop
 import "C"
 
 import (
