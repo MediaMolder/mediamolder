@@ -13,6 +13,7 @@ interface ListResponse {
   path: string;
   parent?: string;
   entries: FileEntry[];
+  drives?: string[];
   roots?: string[];
 }
 
@@ -142,6 +143,16 @@ export function FileBrowser({
 
         <div className="file-browser">
           <div className="file-browser-shortcuts">
+            {(data?.drives ?? []).length > 0 && (
+              <>
+                <div className="shortcut-label">Drives</div>
+                {data!.drives!.map((d) => (
+                  <button key={d} className="shortcut" onClick={() => void load(d)} title={d}>
+                    {driveLabel(d)}
+                  </button>
+                ))}
+              </>
+            )}
             <div className="shortcut-label">Shortcuts</div>
             {(data?.roots ?? []).map((r) => (
               <button key={r} className="shortcut" onClick={() => void load(r)} title={r}>
@@ -242,10 +253,20 @@ function joinPath(dir: string, name: string): string {
 
 function shortcutLabel(p: string): string {
   if (p === '/') return '/ (root)';
-  // Show the trailing path component but keep enough context.
-  const parts = p.split('/').filter(Boolean);
+  // Show the trailing path component but keep enough context. Split on
+  // both separators so Windows paths ("C:\\Users\\Tom") render the same
+  // way as POSIX paths.
+  const parts = p.split(/[\\/]/).filter(Boolean);
   if (parts.length === 0) return p;
   return parts[parts.length - 1] || p;
+}
+
+// driveLabel formats a Windows drive-root path ("C:\\", "E:\\") for the
+// drives shortcut group. We strip the trailing separator so the button
+// reads "C:" rather than "C:\\", which matches how Windows Explorer
+// labels its sidebar entries.
+function driveLabel(p: string): string {
+  return p.replace(/[\\/]+$/, '');
 }
 
 function formatSize(bytes: number): string {

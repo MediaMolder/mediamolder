@@ -469,6 +469,10 @@ button.danger:hover { background: rgba(185, 74, 74, 0.15); }
   letter-spacing: 0.5px;
   margin-bottom: 6px;
 }
+.file-browser-shortcuts .shortcut-label + .shortcut-label,
+.file-browser-shortcuts .shortcut + .shortcut-label {
+  margin-top: 12px;
+}
 .file-browser-shortcuts .shortcut {
   display: block;
   width: 100%;

@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 )
@@ -27,7 +28,8 @@ type fileListResponse struct {
 	Path    string      `json:"path"`             // absolute, normalized path that was listed
 	Parent  string      `json:"parent,omitempty"` // absolute path of parent (empty at filesystem root)
 	Entries []fileEntry `json:"entries"`
-	Roots   []string    `json:"roots,omitempty"` // shortcut roots ($HOME, /, cwd)
+	Drives  []string    `json:"drives,omitempty"` // local drive/volume roots (e.g. "C:\\", "E:\\" on Windows)
+	Roots   []string    `json:"roots,omitempty"`  // shortcut roots ($HOME, cwd, …)
 }
 
 // handleListDir returns a directory listing for the GUI's file picker.
@@ -127,6 +129,7 @@ func handleListDir(w http.ResponseWriter, r *http.Request) {
 		Path:    abs,
 		Parent:  parent,
 		Entries: entries,
+		Drives:  localDrives(),
 		Roots:   shortcutRoots(),
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -164,9 +167,39 @@ func shortcutRoots() []string {
 	if cwd, err := os.Getwd(); err == nil {
 		out = append(out, cwd)
 	}
-	out = append(out, "/")
-	out = append(out, mountedVolumes()...)
+	if runtime.GOOS != "windows" {
+		// On Unix the filesystem root is a meaningful shortcut. On Windows
+		// each drive letter is its own root and is exposed via localDrives()
+		// instead, so adding "/" here would just resolve to the cwd's drive.
+		out = append(out, "/")
+		out = append(out, mountedVolumes()...)
+	}
 	return uniqueStrings(out)
+}
+
+// localDrives returns the set of mounted drive roots that the file picker
+// should expose as a top-level navigation group above the user's shortcuts.
+//
+// On Windows this is every drive letter A: through Z: that os.Stat reports
+// as existing, in alphabetical order. The values are returned with a
+// trailing separator ("C:\\", "E:\\") so they round-trip through
+// filepath.Abs without being interpreted as the cwd's drive.
+//
+// On non-Windows platforms this returns nil; the existing shortcutRoots()
+// machinery already covers "/" and removable media under /Volumes, /media,
+// /mnt, and /run/media.
+func localDrives() []string {
+	if runtime.GOOS != "windows" {
+		return nil
+	}
+	var out []string
+	for letter := 'A'; letter <= 'Z'; letter++ {
+		root := string(letter) + `:\`
+		if _, err := os.Stat(root); err == nil {
+			out = append(out, root)
+		}
+	}
+	return out
 }
 
 // mountedVolumes returns paths to mounted drives/volumes that are likely
