@@ -1,5 +1,5 @@
 .PHONY: build build-static test test-static lint bench bench-static clean \
-        frontend-install frontend-dev frontend-build gui gui-dev build-gui
+        frontend-install frontend-dev frontend-build gui gui-dev build-gui build-gui-static
 
 # Default: use system FFmpeg via pkg-config (no special flags needed).
 build:
@@ -57,3 +57,7 @@ gui-dev:
 # Full single-binary build with embedded production frontend.
 build-gui: frontend-build
 	go build -o mediamolder ./cmd/mediamolder
+
+# Same as build-gui but linking against a local FFmpeg source tree.
+build-gui-static: frontend-build
+	go build -tags=ffstatic -o mediamolder ./cmd/mediamolder

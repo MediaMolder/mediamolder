@@ -68,6 +68,19 @@ CGO_LDFLAGS="-L${FFMPEG_SRC}/libavcodec -L${FFMPEG_SRC}/libavformat -L${FFMPEG_S
 go build -tags ffstatic ./cmd/mediamolder/
 ```
 
+The `cgo_flags.go` / `cgo_flags_static.go` build-tag pair controls which FFmpeg is linked:
+
+| Build command | FFmpeg source |
+|---|---|
+| `make build` | System FFmpeg via `pkg-config` |
+| `make build-gui` | System FFmpeg via `pkg-config` |
+| `make build-static` | Local source tree (`-tags=ffstatic`) |
+| `make build-gui-static` | Local source tree (`-tags=ffstatic`) |
+
+> **Note:** `-tags=ffstatic` is a Go build flag passed to `go build`, not a
+> `make` flag. Running `make build-gui -tags=ffstatic` will not work; use
+> `make build-gui-static` or `GOFLAGS="-tags=ffstatic" make build-gui` instead.
+
 ## Build from Source (Windows)
 
 Windows builds require MSYS2 or WSL with FFmpeg development files:
