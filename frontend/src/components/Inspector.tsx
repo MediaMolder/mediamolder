@@ -5,6 +5,7 @@ import type { Input, NodeDef, Output, ProbeResponse, ProbedStream } from '../lib
 import { MEDIA_FILE_EXTENSIONS } from '../lib/mediaExtensions';
 import { FileBrowser, type BrowseMode } from './FileBrowser';
 import { EncoderForm } from './EncoderForm';
+import { FilterForm } from './FilterForm';
 import { describeKind } from './MMNode';
 
 interface Props {
@@ -297,7 +298,10 @@ function NodeForm({ def, onChange }: { def: NodeDef; onChange: (next: NodeDef) =
         />
       )}
       {def.type === 'encoder' && <EncoderForm def={def} onChange={onChange} />}
-      <ParamsEditor params={def.params ?? {}} onChange={(p) => onChange({ ...def, params: p })} />
+      {def.type === 'filter' && <FilterForm def={def} onChange={onChange} />}
+      {def.type !== 'encoder' && def.type !== 'filter' && (
+        <ParamsEditor params={def.params ?? {}} onChange={(p) => onChange({ ...def, params: p })} />
+      )}
     </>
   );
 }
