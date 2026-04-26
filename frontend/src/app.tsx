@@ -26,7 +26,6 @@ import { HelpDialog } from './components/HelpDialog';
 import { Legend } from './components/Legend';
 import {
   configToFlow,
-  expandImplicitNodes,
   flowToConfig,
   materializeImplicitEncoders,
   type FlowEdge,
@@ -70,16 +69,17 @@ function Editor() {
   const [edges, setEdges] = useState<FlowEdge[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedEdgeIds, setSelectedEdgeIds] = useState<string[]>([]);
-  // Ghost-node visibility (persisted). When on, the canvas displays
-  // synthetic read-only demuxer/decoder/encoder/muxer nodes for the
-  // implicit pipeline stages around every input and output.
-  const [showGhosts, setShowGhosts] = useState<boolean>(() => {
-    const v = localStorage.getItem('mm.showGhosts');
-    return v === null ? true : v === '1';
+  // Node label density (persisted). 'verbose' shows the full heading +
+  // sublabel (file path / node id) on every node; 'compact' hides the
+  // sublabel so dense graphs stay readable. Connections are unaffected.
+  type LabelMode = 'verbose' | 'compact';
+  const [labelMode, setLabelMode] = useState<LabelMode>(() => {
+    const v = localStorage.getItem('mm.labelMode');
+    return v === 'compact' ? 'compact' : 'verbose';
   });
   useEffect(() => {
-    localStorage.setItem('mm.showGhosts', showGhosts ? '1' : '0');
-  }, [showGhosts]);
+    localStorage.setItem('mm.labelMode', labelMode);
+  }, [labelMode]);
   const canvasRef = useRef<HTMLDivElement>(null);
   const rf = useReactFlow();
 
@@ -197,19 +197,9 @@ function Editor() {
     setSelectedEdgeIds(params.edges.map((e) => e.id));
   }, []);
 
-  /* Expand the user-facing graph with implicit demuxer/decoder/encoder/
-     muxer ghost nodes when the toggle is on. The expansion is pure and
-     reactive: any change to nodes/edges (drag, connect, delete, edit
-     input streams or output codecs) re-runs the pass automatically. */
-  const expanded = useMemo(
-    () =>
-      showGhosts ? expandImplicitNodes(nodes, edges) : { nodes, edges },
-    [nodes, edges, showGhosts],
-  );
-
   const selectedNode = useMemo(
-    () => expanded.nodes.find((n) => n.id === selectedId) ?? null,
-    [expanded.nodes, selectedId],
+    () => nodes.find((n) => n.id === selectedId) ?? null,
+    [nodes, selectedId],
   );
 
   /* ---------- Inspector edits ---------- */
@@ -374,12 +364,12 @@ function Editor() {
 
   const decoratedNodes = useMemo<FlowNode[]>(
     () =>
-      expanded.nodes.map((n) => {
+      nodes.map((n) => {
         const r = runByNode.get(n.id);
         if (!r) return n;
         return { ...n, data: { ...n.data, run: r } } as FlowNode;
       }),
-    [expanded.nodes, runByNode],
+    [nodes, runByNode],
   );
 
   /* Compute inferred technical attributes for each edge so MMEdge can render
@@ -387,15 +377,15 @@ function Editor() {
      the graph topology or any node params change. */
   const decoratedEdges = useMemo<FlowEdge[]>(
     () =>
-      expanded.edges.map((e) => {
-        const attrs = inferEdgeAttributes(expanded.nodes, expanded.edges, e);
+      edges.map((e) => {
+        const attrs = inferEdgeAttributes(nodes, edges, e);
         const summary = summariseAttributes(attrs);
         return {
           ...e,
           data: { ...(e.data ?? {}), attrs, attrSummary: summary },
         } as FlowEdge;
       }),
-    [expanded],
+    [nodes, edges],
   );
 
   return (
@@ -421,13 +411,32 @@ function Editor() {
         </select>
 
         <button onClick={onAutoLayout} disabled={!nodes.length}>Auto layout</button>
-        <button
-          onClick={() => setShowGhosts((v) => !v)}
-          title="Show or hide auto-generated demuxer / decoder / encoder / muxer nodes"
-          className={showGhosts ? 'toggle-on' : ''}
+        <div
+          className="segmented"
+          role="radiogroup"
+          aria-label="Node label density"
+          title="Choose how much detail each node shows. Connections are unaffected."
         >
-          {showGhosts ? 'Hide pipeline detail' : 'Show pipeline detail'}
-        </button>
+          <span className="segmented-label">Labels:</span>
+          <button
+            type="button"
+            role="radio"
+            aria-checked={labelMode === 'verbose'}
+            className={labelMode === 'verbose' ? 'segmented-on' : ''}
+            onClick={() => setLabelMode('verbose')}
+          >
+            Verbose
+          </button>
+          <button
+            type="button"
+            role="radio"
+            aria-checked={labelMode === 'compact'}
+            className={labelMode === 'compact' ? 'segmented-on' : ''}
+            onClick={() => setLabelMode('compact')}
+          >
+            Compact
+          </button>
+        </div>
         <button onClick={onClear}>New</button>
         <button onClick={onImportClick}>Import</button>
         <button onClick={onExport} disabled={!nodes.length}>Export</button>
@@ -444,7 +453,13 @@ function Editor() {
 
       <Palette />
 
-      <div className="canvas" ref={canvasRef} onDragOver={onDragOver} onDrop={onDrop}>
+      <div
+        className="canvas"
+        data-label-mode={labelMode}
+        ref={canvasRef}
+        onDragOver={onDragOver}
+        onDrop={onDrop}
+      >
         <ReactFlow
           nodes={decoratedNodes}
           edges={decoratedEdges}

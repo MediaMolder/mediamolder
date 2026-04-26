@@ -71,6 +71,46 @@ button.danger:hover { background: rgba(185, 74, 74, 0.15); }
   font-size: 12px;
 }
 
+/* Segmented radio control — two or more mutually-exclusive options
+ * rendered as a single pill. Used in the toolbar for label density so
+ * the current choice and the alternative are both visible at once. */
+.segmented {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.segmented-label {
+  color: var(--text-dim);
+  font-size: 12px;
+}
+.segmented > button {
+  border-radius: 0;
+  margin: 0;
+}
+.segmented > button:nth-of-type(1) {
+  border-top-left-radius: 4px;
+  border-bottom-left-radius: 4px;
+}
+.segmented > button:last-of-type {
+  border-top-right-radius: 4px;
+  border-bottom-right-radius: 4px;
+}
+.segmented > button + button {
+  border-left: none;
+}
+.segmented > button.segmented-on {
+  background: var(--accent, #3a82f7);
+  color: #fff;
+  border-color: var(--accent, #3a82f7);
+}
+
+/* Compact label mode — drop the secondary line (file path / node id)
+ * to keep dense graphs readable. Connections, handles and the heading
+ * are unaffected. */
+.canvas[data-label-mode="compact"] .mm-node-sub {
+  display: none;
+}
+
 .palette {
   grid-area: palette;
   background: var(--panel);
