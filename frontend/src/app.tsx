@@ -460,7 +460,31 @@ function Editor() {
           proOptions={{ hideAttribution: true }}
         >
           <Background gap={16} size={1} color="#2a303a" />
-          <MiniMap pannable zoomable style={{ background: 'var(--panel)' }} />
+          <MiniMap
+            pannable
+            zoomable
+            nodeColor={(n) => {
+              switch (n.type) {
+                case 'source':   return '#4f8cff33';
+                case 'filter':   return '#2dd4bf33';
+                case 'encoder':  return '#a78bfa33';
+                case 'sink':     return '#f59e0b33';
+                default:         return '#ffffff18';
+              }
+            }}
+            nodeStrokeColor={(n) => {
+              switch (n.type) {
+                case 'source':   return '#4f8cff';
+                case 'filter':   return '#2dd4bf';
+                case 'encoder':  return '#a78bfa';
+                case 'sink':     return '#f59e0b';
+                default:         return '#4a5060';
+              }
+            }}
+            nodeStrokeWidth={2}
+            maskColor="rgba(15,17,21,0.65)"
+            className="mm-minimap"
+          />
           <Controls showInteractive={false} className="mm-controls" />
         </ReactFlow>
         {nodes.length === 0 && (
@@ -470,7 +494,7 @@ function Editor() {
               <li>Pick an example from the toolbar dropdown, <em>or</em></li>
               <li>Drag a <strong>Source</strong> node (Input file) from the palette on the left onto this canvas.</li>
               <li>Add <strong>Filters</strong>, <strong>Encoders</strong> or <strong>Processors</strong>, then add a <strong>Sink</strong> (Output file).</li>
-              <li>Connect matching coloured handles — see the legend in the corner.</li>
+              <li>Connect matching coloured handles — see the legend on the bottom.</li>
               <li>Click <strong>Run</strong> to execute and watch progress live.</li>
             </ol>
             <p className="hint">Need more help? Press <kbd>?</kbd> or click the <strong>Help</strong> button in the toolbar.</p>

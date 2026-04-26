@@ -680,6 +680,15 @@ button.danger:hover { background: rgba(185, 74, 74, 0.15); }
   max-height: 14px;
 }
 
+/* ---------- Minimap ---------- */
+.mm-minimap {
+  background: var(--panel) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: 8px !important;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4) !important;
+  overflow: hidden;
+}
+
 /* ---------- Run dock (bottom panel, VS Code terminal style) ---------- */
 .run-dock {
   grid-area: dock;
