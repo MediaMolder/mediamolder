@@ -252,6 +252,16 @@ function Pair({ k, v }: { k: string; v: string }) {
 
 /* ---------- Output form ---------- */
 function OutputForm({ def, onChange }: { def: Output; onChange: (next: Output) => void }) {
+  // Selecting an HEVC video codec auto-fills the video codec_tag with "hvc1"
+  // (Apple-compatible) when no override has been set yet. Without this, the
+  // MP4 muxer writes "hev1" by default which won't play in QuickTime/Safari/iOS.
+  const setCodecVideo = (v: string) => {
+    const next: Output = { ...def, codec_video: v || undefined };
+    if (!def.codec_tag_video && isHEVC(v)) {
+      next.codec_tag_video = 'hvc1';
+    }
+    onChange(next);
+  };
   return (
     <>
       <Field label="ID" value={def.id} onChange={(v) => onChange({ ...def, id: v })} />
@@ -263,11 +273,7 @@ function OutputForm({ def, onChange }: { def: Output; onChange: (next: Output) =
         onChange={(v) => onChange({ ...def, url: v })}
       />
       <Field label="Format" value={def.format ?? ''} onChange={(v) => onChange({ ...def, format: v || undefined })} />
-      <Field
-        label="Codec (video)"
-        value={def.codec_video ?? ''}
-        onChange={(v) => onChange({ ...def, codec_video: v || undefined })}
-      />
+      <Field label="Codec (video)" value={def.codec_video ?? ''} onChange={setCodecVideo} />
       <Field
         label="Codec (audio)"
         value={def.codec_audio ?? ''}
@@ -276,19 +282,19 @@ function OutputForm({ def, onChange }: { def: Output; onChange: (next: Output) =
       <TagField
         label="Codec tag (video)"
         value={def.codec_tag_video ?? ''}
-        suggestions={CODEC_TAG_SUGGESTIONS_VIDEO}
+        suggestions={tagsForVideo(def.codec_video)}
         onChange={(v) => onChange({ ...def, codec_tag_video: v || undefined })}
       />
       <TagField
         label="Codec tag (audio)"
         value={def.codec_tag_audio ?? ''}
-        suggestions={CODEC_TAG_SUGGESTIONS_AUDIO}
+        suggestions={tagsForAudio(def.codec_audio)}
         onChange={(v) => onChange({ ...def, codec_tag_audio: v || undefined })}
       />
       <TagField
         label="Codec tag (subtitle)"
         value={def.codec_tag_subtitle ?? ''}
-        suggestions={CODEC_TAG_SUGGESTIONS_SUBTITLE}
+        suggestions={tagsForSubtitle(def.codec_subtitle)}
         onChange={(v) => onChange({ ...def, codec_tag_subtitle: v || undefined })}
       />
     </>
@@ -297,37 +303,121 @@ function OutputForm({ def, onChange }: { def: Output; onChange: (next: Output) =
 
 // Curated FourCC suggestions for the muxer's per-stream codec_tag override.
 // Free text is still accepted; these only populate the datalist drop-down.
-// Values come from MOV/MP4's stsd table (libavformat ff_codec_movvideo_tags
-// / ff_codec_movaudio_tags / ff_codec_movsubtitle_tags) and a few common
-// AVI / Matroska FourCCs. When changing this list, keep entries to exactly
-// 4 ASCII chars - the backend rejects anything else.
-const CODEC_TAG_SUGGESTIONS_VIDEO = [
-  'hvc1', // HEVC, Apple-compatible (preferred for MP4 + QuickTime/Safari)
-  'hev1', // HEVC, generic
-  'avc1', // H.264, in-band parameter sets disallowed (MP4 default)
-  'avc3', // H.264, in-band parameter sets allowed
-  'av01', // AV1
-  'vp09', // VP9
-  'mp4v', // MPEG-4 Part 2
-  'jpeg', // Motion JPEG
-  'apch', // ProRes 422 HQ
-  'apcn', // ProRes 422
-];
+// Values come from MOV/MP4's stsd tables in libavformat
+// (ff_codec_movvideo_tags / ff_codec_movaudio_tags / ff_codec_movsubtitle_tags)
+// plus a few common AVI / Matroska FourCCs. When changing these maps, keep
+// entries to exactly 4 ASCII chars - the backend rejects anything else.
+//
+// Each map's key is a normalized codec name (lowercased, leading "lib" and
+// trailing version digits stripped where appropriate). Lookups fall back to
+// the union of all values when the codec is unknown / empty so the user
+// still gets a useful drop-down.
 
-const CODEC_TAG_SUGGESTIONS_AUDIO = [
-  'mp4a', // AAC / MP3 (default in MP4)
-  'ac-3', // AC-3
-  'ec-3', // E-AC-3
-  'Opus', // Opus
-  'fLaC', // FLAC
-  'alac', // Apple Lossless
-];
+const VIDEO_TAGS_BY_CODEC: Record<string, string[]> = {
+  // H.264
+  h264: ['avc1', 'avc3'],
+  libx264: ['avc1', 'avc3'],
+  h264_videotoolbox: ['avc1', 'avc3'],
+  h264_nvenc: ['avc1', 'avc3'],
+  h264_qsv: ['avc1', 'avc3'],
+  h264_vaapi: ['avc1', 'avc3'],
+  h264_amf: ['avc1', 'avc3'],
+  // HEVC - hvc1 first so it is the default suggestion.
+  hevc: ['hvc1', 'hev1'],
+  h265: ['hvc1', 'hev1'],
+  libx265: ['hvc1', 'hev1'],
+  hevc_videotoolbox: ['hvc1', 'hev1'],
+  hevc_nvenc: ['hvc1', 'hev1'],
+  hevc_qsv: ['hvc1', 'hev1'],
+  hevc_vaapi: ['hvc1', 'hev1'],
+  hevc_amf: ['hvc1', 'hev1'],
+  // AV1
+  av1: ['av01'],
+  libaom_av1: ['av01'],
+  libsvtav1: ['av01'],
+  librav1e: ['av01'],
+  av1_nvenc: ['av01'],
+  av1_qsv: ['av01'],
+  // VP9 / VP8
+  vp9: ['vp09'],
+  libvpx_vp9: ['vp09'],
+  vp8: ['vp08'],
+  libvpx: ['vp08'],
+  // MPEG-4 Part 2
+  mpeg4: ['mp4v', 'XVID', 'DIVX'],
+  // Motion JPEG
+  mjpeg: ['jpeg', 'mjpa', 'mjpb'],
+  // ProRes
+  prores: ['apch', 'apcn', 'apcs', 'apco', 'ap4h', 'ap4x'],
+  prores_ks: ['apch', 'apcn', 'apcs', 'apco', 'ap4h', 'ap4x'],
+  prores_videotoolbox: ['apch', 'apcn', 'apcs', 'apco', 'ap4h', 'ap4x'],
+  // DNxHD / DNxHR
+  dnxhd: ['AVdn'],
+  // VVC / H.266
+  vvc: ['vvc1', 'vvi1'],
+  libvvenc: ['vvc1', 'vvi1'],
+};
 
-const CODEC_TAG_SUGGESTIONS_SUBTITLE = [
-  'tx3g', // 3GPP timed text (MP4 default)
-  'c608', // CEA-608 captions
-  'c708', // CEA-708 captions
-];
+const AUDIO_TAGS_BY_CODEC: Record<string, string[]> = {
+  aac: ['mp4a'],
+  aac_at: ['mp4a'],
+  libfdk_aac: ['mp4a'],
+  mp3: ['.mp3', 'mp4a'],
+  libmp3lame: ['.mp3', 'mp4a'],
+  ac3: ['ac-3'],
+  eac3: ['ec-3'],
+  opus: ['Opus', 'opus'],
+  libopus: ['Opus', 'opus'],
+  flac: ['fLaC'],
+  alac: ['alac'],
+  pcm_s16le: ['sowt', 'lpcm'],
+  pcm_s16be: ['twos', 'lpcm'],
+  pcm_s24le: ['in24', 'lpcm'],
+  pcm_s32le: ['in32', 'lpcm'],
+  pcm_f32le: ['fl32', 'lpcm'],
+  pcm_f64le: ['fl64', 'lpcm'],
+  pcm_mulaw: ['ulaw'],
+  pcm_alaw: ['alaw'],
+};
+
+const SUBTITLE_TAGS_BY_CODEC: Record<string, string[]> = {
+  mov_text: ['tx3g'],
+  webvtt: ['wvtt'],
+  eia_608: ['c608'],
+  eia_708: ['c708'],
+};
+
+function normalizeCodec(name: string | undefined | null): string {
+  return (name ?? '').trim().toLowerCase().replace(/-/g, '_');
+}
+
+function isHEVC(name: string | undefined | null): boolean {
+  const n = normalizeCodec(name);
+  return n === 'hevc' || n === 'h265' || n.startsWith('libx265') || n.startsWith('hevc_');
+}
+
+function lookupTags(map: Record<string, string[]>, codec: string | undefined): string[] {
+  const n = normalizeCodec(codec);
+  if (n && map[n]) return map[n];
+  // Unknown / unset codec: show every tag we know about so the drop-down
+  // is still useful.
+  if (!n) {
+    const all = new Set<string>();
+    for (const list of Object.values(map)) for (const t of list) all.add(t);
+    return Array.from(all);
+  }
+  return [];
+}
+
+function tagsForVideo(codec: string | undefined): string[] {
+  return lookupTags(VIDEO_TAGS_BY_CODEC, codec);
+}
+function tagsForAudio(codec: string | undefined): string[] {
+  return lookupTags(AUDIO_TAGS_BY_CODEC, codec);
+}
+function tagsForSubtitle(codec: string | undefined): string[] {
+  return lookupTags(SUBTITLE_TAGS_BY_CODEC, codec);
+}
 
 /* ---------- 4-char FourCC field with datalist suggestions ---------- */
 function TagField({
@@ -346,6 +436,9 @@ function TagField({
   // Stable id so multiple fields don't share a single datalist.
   const listId = `codec-tag-${label.replace(/[^a-z0-9]/gi, '-').toLowerCase()}`;
   const invalid = local.length > 0 && local.length !== 4;
+  // When the codec maps to a single tag we surface it as the placeholder so
+  // the user can see what the muxer would write by default.
+  const placeholder = suggestions.length === 1 ? suggestions[0] : '(default)';
   return (
     <>
       <label>{label}</label>
@@ -353,7 +446,7 @@ function TagField({
         list={listId}
         value={local}
         maxLength={4}
-        placeholder="(none)"
+        placeholder={placeholder}
         spellCheck={false}
         autoComplete="off"
         // Visual hint when the value isn't a valid 4-char FourCC.
