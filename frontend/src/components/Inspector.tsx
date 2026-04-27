@@ -273,6 +273,101 @@ function OutputForm({ def, onChange }: { def: Output; onChange: (next: Output) =
         value={def.codec_audio ?? ''}
         onChange={(v) => onChange({ ...def, codec_audio: v || undefined })}
       />
+      <TagField
+        label="Codec tag (video)"
+        value={def.codec_tag_video ?? ''}
+        suggestions={CODEC_TAG_SUGGESTIONS_VIDEO}
+        onChange={(v) => onChange({ ...def, codec_tag_video: v || undefined })}
+      />
+      <TagField
+        label="Codec tag (audio)"
+        value={def.codec_tag_audio ?? ''}
+        suggestions={CODEC_TAG_SUGGESTIONS_AUDIO}
+        onChange={(v) => onChange({ ...def, codec_tag_audio: v || undefined })}
+      />
+      <TagField
+        label="Codec tag (subtitle)"
+        value={def.codec_tag_subtitle ?? ''}
+        suggestions={CODEC_TAG_SUGGESTIONS_SUBTITLE}
+        onChange={(v) => onChange({ ...def, codec_tag_subtitle: v || undefined })}
+      />
+    </>
+  );
+}
+
+// Curated FourCC suggestions for the muxer's per-stream codec_tag override.
+// Free text is still accepted; these only populate the datalist drop-down.
+// Values come from MOV/MP4's stsd table (libavformat ff_codec_movvideo_tags
+// / ff_codec_movaudio_tags / ff_codec_movsubtitle_tags) and a few common
+// AVI / Matroska FourCCs. When changing this list, keep entries to exactly
+// 4 ASCII chars - the backend rejects anything else.
+const CODEC_TAG_SUGGESTIONS_VIDEO = [
+  'hvc1', // HEVC, Apple-compatible (preferred for MP4 + QuickTime/Safari)
+  'hev1', // HEVC, generic
+  'avc1', // H.264, in-band parameter sets disallowed (MP4 default)
+  'avc3', // H.264, in-band parameter sets allowed
+  'av01', // AV1
+  'vp09', // VP9
+  'mp4v', // MPEG-4 Part 2
+  'jpeg', // Motion JPEG
+  'apch', // ProRes 422 HQ
+  'apcn', // ProRes 422
+];
+
+const CODEC_TAG_SUGGESTIONS_AUDIO = [
+  'mp4a', // AAC / MP3 (default in MP4)
+  'ac-3', // AC-3
+  'ec-3', // E-AC-3
+  'Opus', // Opus
+  'fLaC', // FLAC
+  'alac', // Apple Lossless
+];
+
+const CODEC_TAG_SUGGESTIONS_SUBTITLE = [
+  'tx3g', // 3GPP timed text (MP4 default)
+  'c608', // CEA-608 captions
+  'c708', // CEA-708 captions
+];
+
+/* ---------- 4-char FourCC field with datalist suggestions ---------- */
+function TagField({
+  label,
+  value,
+  suggestions,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  suggestions: string[];
+  onChange: (v: string) => void;
+}) {
+  const [local, setLocal] = useState(value);
+  useEffect(() => setLocal(value), [value]);
+  // Stable id so multiple fields don't share a single datalist.
+  const listId = `codec-tag-${label.replace(/[^a-z0-9]/gi, '-').toLowerCase()}`;
+  const invalid = local.length > 0 && local.length !== 4;
+  return (
+    <>
+      <label>{label}</label>
+      <input
+        list={listId}
+        value={local}
+        maxLength={4}
+        placeholder="(none)"
+        spellCheck={false}
+        autoComplete="off"
+        // Visual hint when the value isn't a valid 4-char FourCC.
+        style={invalid ? { outline: '1px solid var(--mm-error, #c33)' } : undefined}
+        onChange={(e) => setLocal(e.target.value)}
+        onBlur={() => {
+          if (local !== value) onChange(local);
+        }}
+      />
+      <datalist id={listId}>
+        {suggestions.map((s) => (
+          <option key={s} value={s} />
+        ))}
+      </datalist>
     </>
   );
 }

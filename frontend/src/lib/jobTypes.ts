@@ -56,6 +56,13 @@ export interface Output {
   codec_subtitle?: string;
   bsf_video?: string;
   bsf_audio?: string;
+  /** FourCC overrides for the muxer's per-stream codec_tag. Equivalent to
+   *  ffmpeg's -tag:v / -tag:a / -tag:s. Must be exactly 4 ASCII chars when
+   *  set. Most commonly used to force HEVC in MP4 to "hvc1" for
+   *  QuickTime / Safari / iOS compatibility. */
+  codec_tag_video?: string;
+  codec_tag_audio?: string;
+  codec_tag_subtitle?: string;
   options?: Record<string, unknown>;
 }
 
