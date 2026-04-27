@@ -364,6 +364,29 @@ export function flowToConfig(
     type: (e.data?.streamType ?? (e.sourceHandle as StreamType) ?? 'video') as StreamType,
   }));
 
+  // Reconcile each input's `streams` declaration with the edges that
+  // actually originate from it. The GUI only updates `def.streams` when
+  // the user explicitly probes / edits an input, so wiring up a fresh
+  // edge (e.g. dragging an audio pin from `in` to an AAC encoder) would
+  // otherwise leave the input declared as video-only and the runtime
+  // would reject the job with `source "in" has no audio stream`. We
+  // take the union of any pre-existing entries (preserving non-zero
+  // input_index, options, etc.) and one StreamSelect per (type, track)
+  // referenced by an outbound edge.
+  for (const inp of inputs) {
+    const wanted = collectInputStreamRefs(inp.id, graphEdges);
+    if (wanted.size === 0) continue;
+    const existing = inp.streams ?? [];
+    const haveKey = new Set(existing.map((s) => `${s.type}:${s.track}`));
+    const merged = [...existing];
+    for (const key of wanted) {
+      if (haveKey.has(key)) continue;
+      const [type, trackStr] = key.split(':');
+      merged.push({ input_index: 0, type: type as StreamType, track: Number(trackStr) });
+    }
+    inp.streams = merged;
+  }
+
   return {
     schema_version: baseSchemaVersion,
     description,
@@ -400,6 +423,25 @@ function deriveEndpoint(
   // for encoder/filter/processor nodes that's the codec/filter/processor
   // name (e.g. "aac", "scale"), not the unique node id.
   return flowId;
+}
+
+/**
+ * Returns the set of "<type>:<track>" keys for every edge whose `from`
+ * endpoint references the given input id (e.g. "in:a:0"). Edges whose
+ * `from` is not in `<id>:<letter>:<track>` form, or whose stream-type
+ * letter is unknown, are ignored.
+ */
+function collectInputStreamRefs(inputId: string, edges: EdgeDef[]): Set<string> {
+  const out = new Set<string>();
+  for (const e of edges) {
+    const parts = e.from.split(':');
+    if (parts.length !== 3 || parts[0] !== inputId) continue;
+    const type = LETTER_STREAM[parts[1]];
+    const track = Number(parts[2]);
+    if (!type || !Number.isFinite(track)) continue;
+    out.add(`${type}:${track}`);
+  }
+  return out;
 }
 
 /** Parse the stream type from a raw endpoint, if present. */
