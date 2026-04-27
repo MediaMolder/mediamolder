@@ -195,5 +195,15 @@ func (e *EncoderContext) ThreadCount() int {
 	return int(e.p.thread_count)
 }
 
+// TimeBase returns the encoder context's time_base as {num, den}. Encoded
+// packet PTS / DTS values are expressed in this time base; muxers that
+// override the output stream's time_base during WriteHeader (notably MP4)
+// require packets to be rescaled from this to the post-header stream
+// time_base before WritePacket, otherwise PTS values are interpreted in
+// the wrong units and the decoded video plays back at the wrong rate.
+func (e *EncoderContext) TimeBase() [2]int {
+	return [2]int{int(e.p.time_base.num), int(e.p.time_base.den)}
+}
+
 // raw returns the underlying C pointer. For use within the av package only.
 func (e *EncoderContext) raw() *C.AVCodecContext { return e.p }

@@ -270,11 +270,13 @@ type sinkResources struct {
 	muxer *av.OutputFormatContext
 	cfg   Output
 	// streamRescale[i] describes the timestamp rescaling to apply to
-	// packets arriving on input channel i before WritePacket. Non-nil
-	// only when the inbound is a stream-copy node (input demuxer
-	// time_base → muxer output time_base). For encoder-fed channels it
-	// is left nil because the encoder context's time_base is already
-	// adopted by the output stream via set_stream_codecpar.
+	// packets arriving on input channel i before WritePacket. Always
+	// non-nil: stream-copy edges rescale demuxer time_base → muxer
+	// time_base; encoder edges rescale encoder time_base → muxer
+	// time_base. The encoder rescale is required because some muxers
+	// (notably MP4) overwrite the stream's time_base in WriteHeader,
+	// so the encoder's PTS values would otherwise be interpreted in
+	// the wrong units and play back at the wrong rate.
 	streamRescale []*sinkRescale
 }
 
@@ -1430,10 +1432,17 @@ func (r *graphRunner) openSink(_ *graph.Graph, node *graph.Node) (*sinkResources
 				muxer.Abort()
 				return nil, fmt.Errorf("sink %q: inbound from %q has no encoder", node.ID, from.ID)
 			}
-			if _, err := muxer.AddStream(enc); err != nil {
+			outIdx, err := muxer.AddStream(enc)
+			if err != nil {
 				muxer.Abort()
 				return nil, fmt.Errorf("sink %q add stream: %w", node.ID, err)
 			}
+			// Capture the encoder's time_base. AddStream copies it onto
+			// the output stream, but some muxers (notably MP4) overwrite
+			// the stream's time_base in WriteHeader, leaving encoder
+			// packets (whose PTS is in encoder TB) misinterpreted by the
+			// muxer in the new TB. We rescale per-packet to compensate.
+			rescales[i] = &sinkRescale{srcTB: enc.TimeBase(), dstTB: muxer.StreamTimeBase(outIdx)}
 		case graph.KindCopy:
 			srcInput, srcIdx, srcTB, err := r.copySourceFor(from)
 			if err != nil {
