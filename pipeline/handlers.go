@@ -1418,6 +1418,20 @@ func (r *graphRunner) openSink(_ *graph.Graph, node *graph.Node) (*sinkResources
 
 	rescales := make([]*sinkRescale, len(node.Inbound))
 
+	// codecTagFor returns the configured FourCC codec_tag override for
+	// the given edge's stream kind, or "" if none is configured.
+	codecTagFor := func(t graph.PortType) string {
+		switch t {
+		case "video":
+			return out.CodecTagVideo
+		case "audio":
+			return out.CodecTagAudio
+		case "subtitle":
+			return out.CodecTagSubtitle
+		}
+		return ""
+	}
+
 	// Add one stream per inbound edge. Encoder predecessors register
 	// the stream from the encoder context; stream-copy predecessors
 	// copy the input codecpar directly so the muxer never sees an
@@ -1425,6 +1439,7 @@ func (r *graphRunner) openSink(_ *graph.Graph, node *graph.Node) (*sinkResources
 	// of predecessor are already prepared.
 	for i, e := range node.Inbound {
 		from := e.From
+		var outIdx int
 		switch from.Kind {
 		case graph.KindEncoder:
 			enc := r.encoders[from.ID]
@@ -1432,11 +1447,12 @@ func (r *graphRunner) openSink(_ *graph.Graph, node *graph.Node) (*sinkResources
 				muxer.Abort()
 				return nil, fmt.Errorf("sink %q: inbound from %q has no encoder", node.ID, from.ID)
 			}
-			outIdx, err := muxer.AddStream(enc)
+			idx, err := muxer.AddStream(enc)
 			if err != nil {
 				muxer.Abort()
 				return nil, fmt.Errorf("sink %q add stream: %w", node.ID, err)
 			}
+			outIdx = idx
 			// Capture the encoder's time_base. AddStream copies it onto
 			// the output stream, but some muxers (notably MP4) overwrite
 			// the stream's time_base in WriteHeader, leaving encoder
@@ -1449,15 +1465,24 @@ func (r *graphRunner) openSink(_ *graph.Graph, node *graph.Node) (*sinkResources
 				muxer.Abort()
 				return nil, fmt.Errorf("sink %q copy from %q: %w", node.ID, from.ID, err)
 			}
-			outIdx, err := muxer.AddStreamFromInput(srcInput, srcIdx)
+			idx, err := muxer.AddStreamFromInput(srcInput, srcIdx)
 			if err != nil {
 				muxer.Abort()
 				return nil, fmt.Errorf("sink %q add copy stream: %w", node.ID, err)
 			}
+			outIdx = idx
 			rescales[i] = &sinkRescale{srcTB: srcTB, dstTB: muxer.StreamTimeBase(outIdx)}
 		default:
 			muxer.Abort()
 			return nil, fmt.Errorf("sink %q: inbound from %q (kind=%v) is not an encoder or copy node", node.ID, from.ID, from.Kind)
+		}
+
+		// Apply optional codec_tag override (e.g. -tag:v hvc1).
+		if tag := codecTagFor(e.Type); tag != "" {
+			if err := muxer.SetStreamCodecTag(outIdx, tag); err != nil {
+				muxer.Abort()
+				return nil, fmt.Errorf("sink %q set codec_tag for %s stream: %w", node.ID, e.Type, err)
+			}
 		}
 	}
 

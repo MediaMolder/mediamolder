@@ -85,6 +85,16 @@ type Output struct {
 	CodecSubtitle string         `json:"codec_subtitle,omitempty"`
 	BSFVideo      string         `json:"bsf_video,omitempty"`
 	BSFAudio      string         `json:"bsf_audio,omitempty"`
+	// CodecTagVideo / CodecTagAudio / CodecTagSubtitle override the
+	// FourCC codec_tag set by the muxer on the corresponding output
+	// stream. Equivalent to ffmpeg's -tag:v / -tag:a / -tag:s. Most
+	// commonly used to force HEVC in MP4 to "hvc1" for QuickTime/Safari
+	// compatibility (vs. the default "hev1"). Must be exactly 4 ASCII
+	// characters when set. Applied to both encoder and stream-copy
+	// streams of the matching kind.
+	CodecTagVideo    string         `json:"codec_tag_video,omitempty"`
+	CodecTagAudio    string         `json:"codec_tag_audio,omitempty"`
+	CodecTagSubtitle string         `json:"codec_tag_subtitle,omitempty"`
 	Options       map[string]any `json:"options,omitempty"`
 }
 

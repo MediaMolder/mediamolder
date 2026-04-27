@@ -30,6 +30,11 @@ package av
 // static AVRational out_stream_time_base(AVFormatContext *ctx, int idx) {
 //     return ctx->streams[idx]->time_base;
 // }
+// static int set_stream_codec_tag(AVFormatContext *ctx, int idx, uint32_t tag) {
+//     if (idx < 0 || idx >= (int)ctx->nb_streams) return -1;
+//     ctx->streams[idx]->codecpar->codec_tag = tag;
+//     return 0;
+// }
 import "C"
 
 import (
@@ -131,6 +136,27 @@ func (f *OutputFormatContext) AddStreamFromInput(src *InputFormatContext, inputS
 func (f *OutputFormatContext) StreamTimeBase(idx int) [2]int {
 	tb := C.out_stream_time_base(f.p, C.int(idx))
 	return [2]int{int(tb.num), int(tb.den)}
+}
+
+// SetStreamCodecTag sets the codecpar.codec_tag (FourCC) on output stream
+// idx. tag must be a 4-byte ASCII string (e.g. "hvc1", "hev1", "avc1").
+// Must be called after AddStream / AddStreamFromInput and before
+// WriteHeader. Equivalent to ffmpeg's -tag:v / -tag:a CLI option.
+func (f *OutputFormatContext) SetStreamCodecTag(idx int, tag string) error {
+	if len(tag) != 4 {
+		return fmt.Errorf("SetStreamCodecTag: tag %q must be exactly 4 ASCII characters", tag)
+	}
+	for _, b := range []byte(tag) {
+		if b > 0x7f {
+			return fmt.Errorf("SetStreamCodecTag: tag %q must be ASCII", tag)
+		}
+	}
+	b := []byte(tag)
+	v := uint32(b[0]) | uint32(b[1])<<8 | uint32(b[2])<<16 | uint32(b[3])<<24
+	if ret := C.set_stream_codec_tag(f.p, C.int(idx), C.uint32_t(v)); ret < 0 {
+		return fmt.Errorf("set_stream_codec_tag: invalid stream index %d", idx)
+	}
+	return nil
 }
 
 // WriteHeader writes the container header. Must be called after all streams
