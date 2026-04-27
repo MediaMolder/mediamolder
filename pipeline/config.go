@@ -77,14 +77,14 @@ type EdgeDef struct {
 
 // Output describes a single output sink.
 type Output struct {
-	ID            string         `json:"id"`
-	URL           string         `json:"url"`
-	Format        string         `json:"format,omitempty"`
-	CodecVideo    string         `json:"codec_video,omitempty"`
-	CodecAudio    string         `json:"codec_audio,omitempty"`
-	CodecSubtitle string         `json:"codec_subtitle,omitempty"`
-	BSFVideo      string         `json:"bsf_video,omitempty"`
-	BSFAudio      string         `json:"bsf_audio,omitempty"`
+	ID            string `json:"id"`
+	URL           string `json:"url"`
+	Format        string `json:"format,omitempty"`
+	CodecVideo    string `json:"codec_video,omitempty"`
+	CodecAudio    string `json:"codec_audio,omitempty"`
+	CodecSubtitle string `json:"codec_subtitle,omitempty"`
+	BSFVideo      string `json:"bsf_video,omitempty"`
+	BSFAudio      string `json:"bsf_audio,omitempty"`
 	// CodecTagVideo / CodecTagAudio / CodecTagSubtitle override the
 	// FourCC codec_tag set by the muxer on the corresponding output
 	// stream. Equivalent to ffmpeg's -tag:v / -tag:a / -tag:s. Most
@@ -95,7 +95,7 @@ type Output struct {
 	CodecTagVideo    string         `json:"codec_tag_video,omitempty"`
 	CodecTagAudio    string         `json:"codec_tag_audio,omitempty"`
 	CodecTagSubtitle string         `json:"codec_tag_subtitle,omitempty"`
-	Options       map[string]any `json:"options,omitempty"`
+	Options          map[string]any `json:"options,omitempty"`
 }
 
 // Options holds global pipeline options.
