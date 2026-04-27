@@ -23,6 +23,7 @@ import { MMEdge } from './components/MMEdge';
 import { RunPanel } from './components/RunPanel';
 import { RunDock } from './components/RunDock';
 import { HelpDialog } from './components/HelpDialog';
+import { ImportFFmpegDialog } from './components/ImportFFmpegDialog';
 import { Legend } from './components/Legend';
 import {
   configToFlow,
@@ -384,6 +385,7 @@ function Editor() {
 
   /* ---------- Help dialog ---------- */
   const [helpOpen, setHelpOpen] = useState(false);
+  const [importFFmpegOpen, setImportFFmpegOpen] = useState(false);
 
   /* Merge live metrics + errors into node data so MMNode can render badges. */
   const runByNode = useMemo(() => {
@@ -476,6 +478,9 @@ function Editor() {
         </div>
         <button onClick={onClear}>New</button>
         <button onClick={onImportClick}>Import</button>
+        <button onClick={() => setImportFFmpegOpen(true)} title="Paste an FFmpeg command line and convert it to a graph">
+          Import FFmpeg command
+        </button>
         <button onClick={onExport} disabled={!nodes.length}>Export</button>
         {isRunning ? (
           <button className="danger" onClick={onStop}>Stop</button>
@@ -560,6 +565,11 @@ function Editor() {
         <RunPanel run={run} nodeKinds={nodeKinds} onClose={() => setShowRunPanel(false)} />
       </RunDock>
       <HelpDialog open={helpOpen} onClose={() => setHelpOpen(false)} />
+      <ImportFFmpegDialog
+        open={importFFmpegOpen}
+        onClose={() => setImportFFmpegOpen(false)}
+        onImported={(cfg) => loadJob(cfg)}
+      />
     </div>
   );
 }
