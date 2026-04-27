@@ -92,9 +92,9 @@ type Output struct {
 	// compatibility (vs. the default "hev1"). Must be exactly 4 ASCII
 	// characters when set. Applied to both encoder and stream-copy
 	// streams of the matching kind.
-	CodecTagVideo    string         `json:"codec_tag_video,omitempty"`
-	CodecTagAudio    string         `json:"codec_tag_audio,omitempty"`
-	CodecTagSubtitle string         `json:"codec_tag_subtitle,omitempty"`
+	CodecTagVideo    string `json:"codec_tag_video,omitempty"`
+	CodecTagAudio    string `json:"codec_tag_audio,omitempty"`
+	CodecTagSubtitle string `json:"codec_tag_subtitle,omitempty"`
 	// EncoderParamsVideo / EncoderParamsAudio / EncoderParamsSubtitle
 	// hold codec-specific options (preset, crf, tune, profile, level,
 	// g, b, maxrate, bufsize, ...) attached to the implicit encoder
