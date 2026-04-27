@@ -32,6 +32,15 @@ type NodeMetrics struct {
 	mediaPTSNs      atomic.Int64
 	mediaDurationNs atomic.Int64
 
+	// outputPTSNs is set by sink nodes after each successfully
+	// written packet (max across streams). It tracks how far the
+	// pipeline output has actually advanced — i.e. how much media
+	// has been *encoded and muxed*, not just demuxed. This is the
+	// signal the GUI wants for progress/ETA/speed: the source
+	// demuxer typically races ahead of encoders, so source mediaPTS
+	// hits 100% long before the run is finished.
+	outputPTSNs atomic.Int64
+
 	mu sync.Mutex
 }
 
@@ -71,6 +80,19 @@ func (m *NodeMetrics) AdvanceMediaPTS(d time.Duration) {
 	}
 }
 
+// AdvanceOutputPTS bumps the latest output-side media position for
+// this node (sink-side). Monotonic; out-of-order packet timestamps are
+// ignored.
+func (m *NodeMetrics) AdvanceOutputPTS(d time.Duration) {
+	ns := d.Nanoseconds()
+	for {
+		cur := m.outputPTSNs.Load()
+		if ns <= cur || m.outputPTSNs.CompareAndSwap(cur, ns) {
+			return
+		}
+	}
+}
+
 // Snapshot returns a point-in-time copy of the metrics.
 func (m *NodeMetrics) Snapshot() NodeMetricsSnapshot {
 	m.mu.Lock()
@@ -100,6 +122,7 @@ func (m *NodeMetrics) Snapshot() NodeMetricsSnapshot {
 		MaxLatency:    maxLatency,
 		MediaPTS:      time.Duration(m.mediaPTSNs.Load()),
 		MediaDuration: time.Duration(m.mediaDurationNs.Load()),
+		OutputPTS:     time.Duration(m.outputPTSNs.Load()),
 	}
 }
 
@@ -118,6 +141,11 @@ type NodeMetricsSnapshot struct {
 	// known input duration (0 for live / unknown).
 	MediaPTS      time.Duration
 	MediaDuration time.Duration
+	// OutputPTS is the latest output timestamp written by this node
+	// (sink nodes only; 0 elsewhere). It reflects how much media has
+	// actually been encoded + muxed, which is what the GUI uses for
+	// progress/speed/ETA.
+	OutputPTS time.Duration
 }
 
 // MetricsSnapshot is a complete metrics snapshot for the pipeline.
@@ -132,6 +160,11 @@ type MetricsSnapshot struct {
 	// one (live streams).
 	MediaPTS      time.Duration
 	MediaDuration time.Duration
+	// OutputPTS is aggregated across all sink nodes (max of per-sink
+	// values). It tracks how much media has actually been written to
+	// the output(s) and is the basis for progress/speed/ETA in the
+	// GUI — unlike MediaPTS, it doesn't race ahead of slow encoders.
+	OutputPTS time.Duration
 }
 
 // MetricsRegistry tracks metrics for all nodes in a pipeline.
@@ -190,6 +223,9 @@ func (r *MetricsRegistry) Snapshot() MetricsSnapshot {
 		}
 		if snap.Nodes[i].MediaDuration > snap.MediaDuration {
 			snap.MediaDuration = snap.Nodes[i].MediaDuration
+		}
+		if snap.Nodes[i].OutputPTS > snap.OutputPTS {
+			snap.OutputPTS = snap.Nodes[i].OutputPTS
 		}
 	}
 	// Stable, deterministic order so the GUI metrics table doesn't

@@ -943,6 +943,7 @@ func (r *graphRunner) handleSink(ctx context.Context, node *graph.Node, ins []<-
 		if len(sink.streamRescale) > 0 {
 			rs = sink.streamRescale[0]
 		}
+		dstTB := sink.muxer.StreamTimeBase(0)
 		for v := range ins[0] {
 			pkt := v.(*av.Packet)
 			pkt.SetStreamIndex(0)
@@ -953,6 +954,11 @@ func (r *graphRunner) handleSink(ctx context.Context, node *graph.Node, ins []<-
 			if err := sink.muxer.WritePacket(pkt); err != nil {
 				pkt.Close()
 				return err
+			}
+			if pts := pkt.PTS(); pts != math.MinInt64 && dstTB[1] > 0 {
+				ptsNs := time.Duration(pts) * time.Second *
+					time.Duration(dstTB[0]) / time.Duration(dstTB[1])
+				r.pipe.Metrics().Node(node.ID).AdvanceOutputPTS(ptsNs)
 			}
 			pkt.Close()
 			r.pipe.Metrics().Node(node.ID).RecordLatency(time.Since(frameStart))
@@ -970,6 +976,7 @@ func (r *graphRunner) handleSink(ctx context.Context, node *graph.Node, ins []<-
 		if i < len(sink.streamRescale) {
 			rs = sink.streamRescale[i]
 		}
+		dstTB := sink.muxer.StreamTimeBase(i)
 		eg.Go(func() error {
 			for v := range in {
 				pkt := v.(*av.Packet)
@@ -981,6 +988,13 @@ func (r *graphRunner) handleSink(ctx context.Context, node *graph.Node, ins []<-
 				mu.Lock()
 				err := sink.muxer.WritePacket(pkt)
 				mu.Unlock()
+				if err == nil {
+					if pts := pkt.PTS(); pts != math.MinInt64 && dstTB[1] > 0 {
+						ptsNs := time.Duration(pts) * time.Second *
+							time.Duration(dstTB[0]) / time.Duration(dstTB[1])
+						r.pipe.Metrics().Node(node.ID).AdvanceOutputPTS(ptsNs)
+					}
+				}
 				pkt.Close()
 				r.pipe.Metrics().Node(node.ID).RecordLatency(time.Since(frameStart))
 				if err != nil {

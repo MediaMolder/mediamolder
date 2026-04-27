@@ -345,6 +345,43 @@ function Editor() {
     void run.cancel();
   }, [run]);
 
+  /* Per-node media kind, derived from edge stream types. A node that
+     touches only one stream type (video/audio/subtitle/data) reports
+     that type; mixed nodes (e.g. demuxer sources) report ''. The run
+     panel uses this to label per-node throughput correctly (FPS for
+     video, packets/s for everything else). */
+  const nodeKinds = useMemo<Map<string, '' | 'video' | 'audio' | 'subtitle' | 'data'>>(() => {
+    const m = new Map<string, Set<string>>();
+    const add = (id: string, t?: string) => {
+      if (!id || !t) return;
+      let s = m.get(id);
+      if (!s) {
+        s = new Set();
+        m.set(id, s);
+      }
+      s.add(t);
+    };
+    for (const e of edges) {
+      const t = (e.data?.streamType ?? e.sourceHandle ?? '') as string;
+      add(e.source, t);
+      add(e.target, t);
+    }
+    const out = new Map<string, '' | 'video' | 'audio' | 'subtitle' | 'data'>();
+    for (const [id, s] of m) {
+      if (s.size !== 1) {
+        out.set(id, '');
+        continue;
+      }
+      const only = [...s][0];
+      if (only === 'video' || only === 'audio' || only === 'subtitle' || only === 'data') {
+        out.set(id, only);
+      } else {
+        out.set(id, '');
+      }
+    }
+    return out;
+  }, [edges]);
+
   /* ---------- Help dialog ---------- */
   const [helpOpen, setHelpOpen] = useState(false);
 
@@ -520,7 +557,7 @@ function Editor() {
 
       <Inspector node={selectedNode} onChange={onNodeUpdate} onDelete={onNodeDelete} />
       <RunDock visible={showRunPanel}>
-        <RunPanel run={run} onClose={() => setShowRunPanel(false)} />
+        <RunPanel run={run} nodeKinds={nodeKinds} onClose={() => setShowRunPanel(false)} />
       </RunDock>
       <HelpDialog open={helpOpen} onClose={() => setHelpOpen(false)} />
     </div>

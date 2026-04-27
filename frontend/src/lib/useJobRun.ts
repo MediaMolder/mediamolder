@@ -17,6 +17,7 @@ export interface NodeMetric {
   MaxLatency: number;    // ns
   MediaPTS: number;      // ns — latest input timestamp processed (source nodes only)
   MediaDuration: number; // ns — total input duration (0 = live / unknown)
+  OutputPTS: number;     // ns — latest output timestamp written (sink nodes only)
 }
 
 export interface MetricsSnapshot {
@@ -26,6 +27,7 @@ export interface MetricsSnapshot {
   // Aggregated across all source nodes — see pipeline.MetricsSnapshot.
   MediaPTS: number;      // ns
   MediaDuration: number; // ns (0 = live / unknown)
+  OutputPTS: number;     // ns — aggregated across sink nodes (max)
 }
 
 export interface NodeError {
