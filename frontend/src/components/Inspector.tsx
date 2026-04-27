@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { FlowNode } from '../lib/jsonAdapter';
+import type { FlowEdge, FlowNode } from '../lib/jsonAdapter';
 import { displayUrl, nodeDisplayLabel, nodeDisplaySublabel } from '../lib/jsonAdapter';
 import type { Input, NodeDef, Output, ProbeResponse, ProbedStream } from '../lib/jobTypes';
 import { MEDIA_FILE_EXTENSIONS } from '../lib/mediaExtensions';
@@ -10,11 +10,15 @@ import { describeKind } from './MMNode';
 
 interface Props {
   node: FlowNode | null;
+  /** Full node array, so the output form can resolve its upstream encoder. */
+  nodes: FlowNode[];
+  /** Full edge array, used to walk back from the output to the encoder. */
+  edges: FlowEdge[];
   onChange: (next: FlowNode) => void;
   onDelete: (id: string) => void;
 }
 
-export function Inspector({ node, onChange, onDelete }: Props) {
+export function Inspector({ node, nodes, edges, onChange, onDelete }: Props) {
   if (!node) {
     return (
       <div className="inspector">
@@ -72,6 +76,7 @@ export function Inspector({ node, onChange, onDelete }: Props) {
       {ref.kind === 'output' && (
         <OutputForm
           def={ref.def}
+          upstreamCodecs={resolveUpstreamCodecs(nodes, edges, node.id)}
           onChange={(def) => onChange(updateRef(node, { kind: 'output', def }, def.id, displayUrl(def.url)))}
         />
       )}
@@ -251,17 +256,42 @@ function Pair({ k, v }: { k: string; v: string }) {
 }
 
 /* ---------- Output form ---------- */
-function OutputForm({ def, onChange }: { def: Output; onChange: (next: Output) => void }) {
-  // Selecting an HEVC video codec auto-fills the video codec_tag with "hvc1"
-  // (Apple-compatible) when no override has been set yet. Without this, the
-  // MP4 muxer writes "hev1" by default which won't play in QuickTime/Safari/iOS.
-  const setCodecVideo = (v: string) => {
-    const next: Output = { ...def, codec_video: v || undefined };
-    if (!def.codec_tag_video && isHEVC(v)) {
-      next.codec_tag_video = 'hvc1';
-    }
-    onChange(next);
-  };
+interface UpstreamCodecs {
+  video?: { codec: string; sourceLabel: string };
+  audio?: { codec: string; sourceLabel: string };
+  subtitle?: { codec: string; sourceLabel: string };
+}
+
+function OutputForm({
+  def,
+  upstreamCodecs,
+  onChange,
+}: {
+  def: Output;
+  upstreamCodecs: UpstreamCodecs;
+  onChange: (next: Output) => void;
+}) {
+  // The codec actually used by each stream is whatever encoder is wired
+  // upstream of this output in the graph. The legacy codec_video / codec_audio
+  // / codec_subtitle fields on Output are only used when no upstream encoder
+  // is present (the implicit-encoder case), so prefer the resolved upstream
+  // value and fall back to the explicit field, then to "(default)".
+  const effVideo = upstreamCodecs.video?.codec || def.codec_video || '';
+  const effAudio = upstreamCodecs.audio?.codec || def.codec_audio || '';
+  const effSubtitle = upstreamCodecs.subtitle?.codec || def.codec_subtitle || '';
+
+  // When the video stream is HEVC and codec_tag_video is still unset, default
+  // it to "hvc1" so the resulting MP4 plays in QuickTime/Safari/iOS without
+  // the user having to know about the hev1/hvc1 distinction.
+  useEffect(() => {
+    if (def.codec_tag_video) return;
+    if (!isHEVC(effVideo)) return;
+    onChange({ ...def, codec_tag_video: 'hvc1' });
+    // Only react to changes in the upstream codec or the current tag value;
+    // intentionally skip onChange / def in deps to avoid a feedback loop.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [effVideo, def.codec_tag_video]);
+
   return (
     <>
       <Field label="ID" value={def.id} onChange={(v) => onChange({ ...def, id: v })} />
@@ -273,32 +303,138 @@ function OutputForm({ def, onChange }: { def: Output; onChange: (next: Output) =
         onChange={(v) => onChange({ ...def, url: v })}
       />
       <Field label="Format" value={def.format ?? ''} onChange={(v) => onChange({ ...def, format: v || undefined })} />
-      <Field label="Codec (video)" value={def.codec_video ?? ''} onChange={setCodecVideo} />
-      <Field
+      <CodecRow
+        label="Codec (video)"
+        upstream={upstreamCodecs.video}
+        explicit={def.codec_video}
+        onClear={() => onChange({ ...def, codec_video: undefined })}
+        onEdit={(v) => onChange({ ...def, codec_video: v || undefined })}
+      />
+      <CodecRow
         label="Codec (audio)"
-        value={def.codec_audio ?? ''}
-        onChange={(v) => onChange({ ...def, codec_audio: v || undefined })}
+        upstream={upstreamCodecs.audio}
+        explicit={def.codec_audio}
+        onClear={() => onChange({ ...def, codec_audio: undefined })}
+        onEdit={(v) => onChange({ ...def, codec_audio: v || undefined })}
+      />
+      <CodecRow
+        label="Codec (subtitle)"
+        upstream={upstreamCodecs.subtitle}
+        explicit={def.codec_subtitle}
+        onClear={() => onChange({ ...def, codec_subtitle: undefined })}
+        onEdit={(v) => onChange({ ...def, codec_subtitle: v || undefined })}
       />
       <TagField
         label="Codec tag (video)"
         value={def.codec_tag_video ?? ''}
-        suggestions={tagsForVideo(def.codec_video)}
+        suggestions={tagsForVideo(effVideo)}
         onChange={(v) => onChange({ ...def, codec_tag_video: v || undefined })}
       />
       <TagField
         label="Codec tag (audio)"
         value={def.codec_tag_audio ?? ''}
-        suggestions={tagsForAudio(def.codec_audio)}
+        suggestions={tagsForAudio(effAudio)}
         onChange={(v) => onChange({ ...def, codec_tag_audio: v || undefined })}
       />
       <TagField
         label="Codec tag (subtitle)"
         value={def.codec_tag_subtitle ?? ''}
-        suggestions={tagsForSubtitle(def.codec_subtitle)}
+        suggestions={tagsForSubtitle(effSubtitle)}
         onChange={(v) => onChange({ ...def, codec_tag_subtitle: v || undefined })}
       />
     </>
   );
+}
+
+/* ---------- Codec row: read-only when an upstream encoder is wired ---------- */
+function CodecRow({
+  label,
+  upstream,
+  explicit,
+  onClear,
+  onEdit,
+}: {
+  label: string;
+  upstream: { codec: string; sourceLabel: string } | undefined;
+  explicit: string | undefined;
+  onClear: () => void;
+  onEdit: (v: string) => void;
+}) {
+  // When the graph has an encoder feeding this output for this stream type,
+  // the encoder's codec is what actually gets used: show it read-only and
+  // tell the user where to edit it. Otherwise fall back to the legacy
+  // editable text field (for users who want to declare a codec on the
+  // sink for the implicit-encoder case).
+  if (upstream) {
+    return (
+      <>
+        <label>{label}</label>
+        <div className="readonly-codec" title={`Set on encoder node "${upstream.sourceLabel}"`}>
+          <span>{upstream.codec}</span>
+          <small style={{ marginLeft: 8, color: 'var(--text-dim)' }}>
+            from {upstream.sourceLabel}
+          </small>
+          {explicit && explicit !== upstream.codec && (
+            <button
+              type="button"
+              style={{ marginLeft: 8, fontSize: 11 }}
+              onClick={onClear}
+              title={`Override "${explicit}" set on this output is ignored while the upstream encoder is wired. Click to clear it.`}
+            >
+              clear override ({explicit})
+            </button>
+          )}
+        </div>
+      </>
+    );
+  }
+  return <Field label={label} value={explicit ?? ''} onChange={onEdit} />;
+}
+
+/** Walk back through the graph from an output's flow-node id to find the
+ *  encoder feeding each stream type. Stops at the first encoder hit, or
+ *  returns undefined for a given stream type if no encoder is reachable
+ *  (e.g. a stream-copy node forwards demuxer packets directly). */
+function resolveUpstreamCodecs(
+  nodes: FlowNode[],
+  edges: FlowEdge[],
+  outputFlowId: string,
+): UpstreamCodecs {
+  const result: UpstreamCodecs = {};
+  const types: Array<'video' | 'audio' | 'subtitle'> = ['video', 'audio', 'subtitle'];
+  const nodeById = new Map(nodes.map((n) => [n.id, n]));
+  for (const t of types) {
+    let currentId = outputFlowId;
+    const visited = new Set<string>();
+    // Bounded walk to avoid pathological graphs.
+    for (let hops = 0; hops < 32; hops++) {
+      if (visited.has(currentId)) break;
+      visited.add(currentId);
+      const incoming = edges.find(
+        (e) => e.target === currentId && e.data?.streamType === t,
+      );
+      if (!incoming) break;
+      const src = nodeById.get(incoming.source);
+      if (!src) break;
+      if (src.data.ref.kind === 'node') {
+        const def = src.data.ref.def;
+        if (def.type === 'encoder') {
+          const codec = def.params?.codec;
+          if (typeof codec === 'string' && codec.length > 0) {
+            result[t] = { codec, sourceLabel: src.data.label || src.id };
+          }
+          break;
+        }
+        if (def.type === 'copy') {
+          // Stream copy: muxer writes the inbound codec_id straight through.
+          // Nothing to resolve - leave undefined.
+          break;
+        }
+      }
+      currentId = src.id;
+    }
+  }
+  return result;
 }
 
 // Curated FourCC suggestions for the muxer's per-stream codec_tag override.

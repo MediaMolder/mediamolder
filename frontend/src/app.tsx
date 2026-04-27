@@ -555,7 +555,7 @@ function Editor() {
         <Legend />
       </div>
 
-      <Inspector node={selectedNode} onChange={onNodeUpdate} onDelete={onNodeDelete} />
+      <Inspector node={selectedNode} nodes={nodes} edges={edges} onChange={onNodeUpdate} onDelete={onNodeDelete} />
       <RunDock visible={showRunPanel}>
         <RunPanel run={run} nodeKinds={nodeKinds} onClose={() => setShowRunPanel(false)} />
       </RunDock>
