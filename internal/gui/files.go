@@ -45,6 +45,7 @@ type fileListResponse struct {
 func handleListDir(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	target := strings.TrimSpace(q.Get("path"))
+	roots := defaultRoots()
 	if target == "" {
 		if home, err := os.UserHomeDir(); err == nil {
 			target = home
@@ -56,6 +57,11 @@ func handleListDir(w http.ResponseWriter, r *http.Request) {
 	abs, err := filepath.Abs(target)
 	if err != nil {
 		writeJSONError(w, http.StatusBadRequest, fmt.Errorf("invalid path: %w", err))
+		return
+	}
+	abs = filepath.Clean(abs)
+	if !isWithinAnyRoot(abs, roots) {
+		writeJSONError(w, http.StatusBadRequest, errors.New("path is outside allowed roots"))
 		return
 	}
 
@@ -260,9 +266,12 @@ func handleMkdir(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, errors.New("path and name are required"))
 		return
 	}
-	// Disallow path separators in the new folder name to prevent the
-	// caller from escaping the parent directory.
-	if strings.ContainsAny(name, `/\`) || name == "." || name == ".." {
+	// Disallow path separators and any non-canonical/special components
+	// so the folder name is always a single safe path component.
+	if strings.ContainsAny(name, `/\`) ||
+		name == "." || name == ".." ||
+		filepath.Base(name) != name ||
+		filepath.Clean(name) != name {
 		writeJSONError(w, http.StatusBadRequest, errors.New("invalid folder name"))
 		return
 	}
@@ -272,12 +281,22 @@ func handleMkdir(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, fmt.Errorf("invalid path: %w", err))
 		return
 	}
+	abs = filepath.Clean(abs)
+	if !isWithinAnyRoot(abs, defaultRoots()) {
+		writeJSONError(w, http.StatusBadRequest, errors.New("path is outside allowed roots"))
+		return
+	}
 	info, err := os.Stat(abs)
 	if err != nil || !info.IsDir() {
 		writeJSONError(w, http.StatusNotFound, errors.New("parent directory does not exist"))
 		return
 	}
 	target := filepath.Join(abs, name)
+	target = filepath.Clean(target)
+	if !isWithinAnyRoot(target, defaultRoots()) {
+		writeJSONError(w, http.StatusBadRequest, errors.New("target is outside allowed roots"))
+		return
+	}
 	if err := os.Mkdir(target, 0o755); err != nil {
 		if errors.Is(err, fs.ErrExist) {
 			writeJSONError(w, http.StatusConflict, err)
@@ -288,6 +307,50 @@ func handleMkdir(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(mkdirResponse{Path: target})
+}
+
+// defaultRoots returns the set of directories the file picker is allowed to
+// browse: the user's shortcut roots (home, cwd, filesystem root on Unix and
+// mounted volumes) plus any local drives. Returned paths are absolute and
+// cleaned so they can be compared with filepath.Rel.
+func defaultRoots() []string {
+	var out []string
+	for _, r := range append(shortcutRoots(), localDrives()...) {
+		if abs, err := filepath.Abs(r); err == nil {
+			out = append(out, filepath.Clean(abs))
+		}
+	}
+	return uniqueStrings(out)
+}
+
+// isWithinAnyRoot reports whether path resolves inside one of the supplied
+// allow-listed root directories.
+func isWithinAnyRoot(path string, roots []string) bool {
+	for _, root := range roots {
+		if isWithinRoot(path, root) {
+			return true
+		}
+	}
+	return false
+}
+
+// isWithinRoot reports whether path is equal to root or nested below it.
+func isWithinRoot(path, root string) bool {
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return false
+	}
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		return false
+	}
+	absPath = filepath.Clean(absPath)
+	absRoot = filepath.Clean(absRoot)
+	rel, err := filepath.Rel(absRoot, absPath)
+	if err != nil {
+		return false
+	}
+	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator)))
 }
 
 func uniqueStrings(in []string) []string {
