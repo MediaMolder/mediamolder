@@ -63,6 +63,16 @@ export interface Output {
   codec_tag_video?: string;
   codec_tag_audio?: string;
   codec_tag_subtitle?: string;
+  /** Codec-specific options (preset, crf, b, g, ...) attached to the
+   *  implicit encoder synthesised by `materializeImplicitEncoders`.
+   *  Populated by the backend when parsing FFmpeg command lines via
+   *  `compat/ffcli` so that flags like `-crf 22 -preset slow` survive
+   *  into the GUI graph as visible encoder params. Ignored when an
+   *  explicit encoder node is wired upstream of the matching output
+   *  stream. */
+  encoder_params_video?: Record<string, unknown>;
+  encoder_params_audio?: Record<string, unknown>;
+  encoder_params_subtitle?: Record<string, unknown>;
   options?: Record<string, unknown>;
 }
 

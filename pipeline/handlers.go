@@ -197,22 +197,26 @@ func expandImplicitEncoders(cfg *Config, def *graph.Def) {
 			continue
 		}
 		var codec string
+		var extraParams map[string]any
 		switch e.Type {
 		case "video":
 			codec = out.CodecVideo
 			if codec == "" {
 				codec = "libx264"
 			}
+			extraParams = out.EncoderParamsVideo
 		case "audio":
 			codec = out.CodecAudio
 			if codec == "" {
 				codec = "aac"
 			}
+			extraParams = out.EncoderParamsAudio
 		case "subtitle":
 			codec = out.CodecSubtitle
 			if codec == "" {
 				codec = "mov_text"
 			}
+			extraParams = out.EncoderParamsSubtitle
 		}
 		if codec == "" {
 			continue
@@ -220,6 +224,12 @@ func expandImplicitEncoders(cfg *Config, def *graph.Def) {
 		encID := fmt.Sprintf("__enc__%s_%s_%d", toID, e.Type, i)
 		nodeType := "encoder"
 		nodeParams := map[string]any{"codec": codec}
+		for k, v := range extraParams {
+			if k == "codec" {
+				continue
+			}
+			nodeParams[k] = v
+		}
 		if codec == "copy" {
 			nodeType = "copy"
 			nodeParams = nil

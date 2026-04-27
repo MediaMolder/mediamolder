@@ -42,6 +42,13 @@ type parser struct {
 	hwDevice     string
 	hwOutFmt     string
 	globalOpts   map[string]string
+	// Per-stream encoder options (preset, crf, b, g, ...). Populated
+	// from CLI flags like -crf, -preset, -b:v, -tune, -profile:v,
+	// -level, -g, -bf, -maxrate, -minrate, -bufsize. Attached to the
+	// matching pipeline.Output.EncoderParams* field so the implicit
+	// encoder pass picks them up.
+	videoEncOpts map[string]any
+	audioEncOpts map[string]any
 }
 
 func (p *parser) peek() string {
@@ -61,6 +68,8 @@ func (p *parser) hasMore() bool { return p.pos < len(p.args) }
 
 func (p *parser) parse() (*pipeline.Config, error) {
 	p.globalOpts = make(map[string]string)
+	p.videoEncOpts = make(map[string]any)
+	p.audioEncOpts = make(map[string]any)
 	for p.hasMore() {
 		arg := p.next()
 		switch {
@@ -123,12 +132,12 @@ func (p *parser) parse() (*pipeline.Config, error) {
 			if !p.hasMore() {
 				return nil, fmt.Errorf("-b:v requires an argument")
 			}
-			p.globalOpts["video_bitrate"] = p.next()
+			p.videoEncOpts["b"] = p.next()
 		case arg == "-b:a":
 			if !p.hasMore() {
 				return nil, fmt.Errorf("-b:a requires an argument")
 			}
-			p.globalOpts["audio_bitrate"] = p.next()
+			p.audioEncOpts["b"] = p.next()
 		case arg == "-r":
 			if !p.hasMore() {
 				return nil, fmt.Errorf("-r requires an argument")
@@ -172,6 +181,34 @@ func (p *parser) parse() (*pipeline.Config, error) {
 				return nil, fmt.Errorf("-hwaccel_output_format requires an argument")
 			}
 			p.hwOutFmt = p.next()
+		// ---- Video encoder options ----
+		case arg == "-crf" || arg == "-qp" || arg == "-preset" || arg == "-tune" ||
+			arg == "-profile:v" || arg == "-level" || arg == "-g" || arg == "-bf" ||
+			arg == "-maxrate" || arg == "-minrate" || arg == "-bufsize" ||
+			arg == "-pix_fmt" || arg == "-x264-params" || arg == "-x265-params":
+			if !p.hasMore() {
+				return nil, fmt.Errorf("%s requires an argument", arg)
+			}
+			key := strings.TrimPrefix(arg, "-")
+			// `-profile:v` -> AVOption `profile`.
+			if key == "profile:v" {
+				key = "profile"
+			}
+			p.videoEncOpts[key] = p.next()
+		// ---- Audio encoder options ----
+		case arg == "-q:a" || arg == "-aq" || arg == "-ar" || arg == "-ac" ||
+			arg == "-profile:a":
+			if !p.hasMore() {
+				return nil, fmt.Errorf("%s requires an argument", arg)
+			}
+			key := strings.TrimPrefix(arg, "-")
+			switch key {
+			case "q:a", "aq":
+				key = "q"
+			case "profile:a":
+				key = "profile"
+			}
+			p.audioEncOpts[key] = p.next()
 		case strings.HasPrefix(arg, "-"):
 			if p.hasMore() && !strings.HasPrefix(p.peek(), "-") {
 				p.globalOpts[strings.TrimPrefix(arg, "-")] = p.next()
@@ -197,6 +234,16 @@ func (p *parser) parse() (*pipeline.Config, error) {
 			if f, ok := p.globalOpts["format"]; ok {
 				out.Format = f
 				delete(p.globalOpts, "format")
+			}
+			// Attach encoder options collected from CLI flags so the
+			// implicit-encoder pass (runtime + GUI) merges them into
+			// the synthesised encoder node. Only attach for stream
+			// types that aren't disabled or copied.
+			if p.codecV != "none" && p.codecV != "copy" && len(p.videoEncOpts) > 0 {
+				out.EncoderParamsVideo = copyAnyMap(p.videoEncOpts)
+			}
+			if p.codecA != "none" && p.codecA != "copy" && len(p.audioEncOpts) > 0 {
+				out.EncoderParamsAudio = copyAnyMap(p.audioEncOpts)
 			}
 			p.outputs = append(p.outputs, out)
 		}
@@ -322,4 +369,19 @@ func tokenize(s string) []string {
 		args = append(args, cur.String())
 	}
 	return args
+}
+
+// copyAnyMap returns a shallow copy of m. Used so that each Output
+// gets its own EncoderParams* map rather than aliasing the parser's
+// accumulator (which would let a later output mutate an earlier one's
+// params).
+func copyAnyMap(m map[string]any) map[string]any {
+	if len(m) == 0 {
+		return nil
+	}
+	out := make(map[string]any, len(m))
+	for k, v := range m {
+		out[k] = v
+	}
+	return out
 }

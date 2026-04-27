@@ -64,7 +64,18 @@ in-app help dialog.
    Click **Stop** to cancel.
 7. **Save / Export.** **Export** downloads the current graph as a
    MediaMolder JSON job. **Import** loads any job JSON (including the
-   bundled examples and files written by the CLI).
+   bundled examples and files written by the CLI). **Import FFmpeg
+   command** opens a dialog where you can paste a full `ffmpeg ...`
+   command line; MediaMolder parses it (via the same `compat/ffcli`
+   package the `mediamolder convert-cmd` CLI uses) and replaces the
+   current canvas with the resulting graph. Encoder options like
+   `-crf`, `-preset`, `-tune`, `-profile:v`, `-level`, `-g`, `-bf`,
+   `-maxrate`, `-minrate`, `-bufsize`, `-pix_fmt`, `-b:v`, `-b:a`,
+   `-q:a`, `-x264-params` and `-x265-params` are attached to the
+   synthesised encoder node so the Inspector shows the same rate
+   control / quality settings you'd get from running the original
+   command. `-c:v copy` / `-c:a copy` produce a stream-copy node
+   instead of an encoder.
 
 ### Tips
 
@@ -135,7 +146,8 @@ expand the relevant subcategories automatically.
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│ Toolbar  [Example ▾] [Auto layout] [New] [Import] [Export]   │
+│ Toolbar  [Example ▾] [Auto layout] [New] [Import]            │
+│          [Import FFmpeg command] [Export]                    │
 │          [Run] / [Stop] [Show log]                           │
 ├────────────┬─────────────────────────────────────┬───────────┤
 │            │                                     │           │
@@ -336,6 +348,7 @@ explicitly to `127.0.0.1` (the default) if untrusted users share the host.
 | `GET`  | `/api/examples`               | List of bundled example job JSONs.                    |
 | `GET`  | `/examples/{file}`            | Static serve of the examples directory.               |
 | `POST` | `/api/validate`               | Parse + structurally validate a posted JobConfig.     |
+| `POST` | `/api/convert-cmd`            | Parse an FFmpeg command line into a JobConfig. Body `{command: string}`; response `{config: JobConfig}` on success or `422 {error: string}` on parse failure. Backed by `compat/ffcli.Parse`. Used by the toolbar's **Import FFmpeg command** dialog. |
 | `POST` | `/api/run`                    | Start a run; returns `{job_id}`.                      |
 | `POST` | `/api/cancel/{jobId}`         | Cancel an in-flight run.                              |
 | `GET`  | `/api/events/{jobId}`         | Server-Sent Events stream for the run.                |

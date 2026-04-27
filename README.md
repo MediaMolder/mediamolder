@@ -204,8 +204,14 @@ mediamolder inspect transcode.json
 
 Convert an FFmpeg command to MediaMolder JSON:
 ```sh
-mediamolder convert-cmd "ffmpeg -i input.mp4 -vf scale=1280:720 -c:v libx264 -c:a aac output.mp4"
+mediamolder convert-cmd "ffmpeg -i input.mp4 -vf scale=1280:720 -c:v libx264 -crf 22 -preset slow -c:a aac -b:a 192k output.mp4"
 ```
+Encoder options (`-crf`, `-qp`, `-preset`, `-tune`, `-profile:v`,
+`-level`, `-g`, `-bf`, `-maxrate`, `-minrate`, `-bufsize`, `-pix_fmt`,
+`-b:v`, `-b:a`, `-q:a`, `-x264-params`, `-x265-params`) are attached to
+the encoder node in the resulting graph; `-c:v copy` / `-c:a copy`
+produce a stream-copy node. The same parser is exposed in the GUI via
+the **Import FFmpeg command** toolbar button (`POST /api/convert-cmd`).
 
 List available codecs, filters, or formats:
 ```sh

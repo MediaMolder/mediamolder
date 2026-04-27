@@ -123,6 +123,9 @@
         "codec_tag_subtitle": { "type": "string", "minLength": 4, "maxLength": 4 },
         "bsf_video": { "type": "string" },
         "bsf_audio": { "type": "string" },
+        "encoder_params_video": { "type": "object", "additionalProperties": true, "description": "Codec-specific options (preset, crf, b, g, ...) attached to the implicit video encoder. Populated by compat/ffcli when parsing FFmpeg command lines." },
+        "encoder_params_audio": { "type": "object", "additionalProperties": true },
+        "encoder_params_subtitle": { "type": "object", "additionalProperties": true },
         "options": {
           "type": "object",
           "additionalProperties": true

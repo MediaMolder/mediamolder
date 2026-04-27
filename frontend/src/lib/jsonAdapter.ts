@@ -197,10 +197,28 @@ export function materializeImplicitEncoders(cfg: JobConfig): JobConfig {
     }
     usedIds.add(encId);
 
+    const isCopy = codec === 'copy';
+    const extraParams: Record<string, unknown> | undefined =
+      e.type === 'video' ? out.encoder_params_video
+      : e.type === 'audio' ? out.encoder_params_audio
+      : e.type === 'subtitle' ? out.encoder_params_subtitle
+      : undefined;
+    let params: Record<string, unknown> | undefined;
+    if (isCopy) {
+      params = undefined;
+    } else {
+      params = { codec };
+      if (extraParams) {
+        for (const [k, v] of Object.entries(extraParams)) {
+          if (k === 'codec') continue;
+          params[k] = v;
+        }
+      }
+    }
     const encoderNode: NodeDef = {
       id: encId,
-      type: 'encoder',
-      params: { codec },
+      type: isCopy ? 'copy' : 'encoder',
+      params,
     };
     nodes.push(encoderNode);
     nodeById.set(encId, encoderNode);

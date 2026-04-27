@@ -95,7 +95,19 @@ type Output struct {
 	CodecTagVideo    string         `json:"codec_tag_video,omitempty"`
 	CodecTagAudio    string         `json:"codec_tag_audio,omitempty"`
 	CodecTagSubtitle string         `json:"codec_tag_subtitle,omitempty"`
-	Options          map[string]any `json:"options,omitempty"`
+	// EncoderParamsVideo / EncoderParamsAudio / EncoderParamsSubtitle
+	// hold codec-specific options (preset, crf, tune, profile, level,
+	// g, b, maxrate, bufsize, ...) attached to the implicit encoder
+	// inserted by `expandImplicitEncoders`. They are populated by
+	// `compat/ffcli` when parsing FFmpeg command lines so that flags
+	// like `-crf 22 -preset slow` survive the round-trip into a
+	// pipeline.Config and reach the encoder as AVDictionary entries.
+	// Ignored when an explicit encoder node is wired upstream of the
+	// matching output stream.
+	EncoderParamsVideo    map[string]any `json:"encoder_params_video,omitempty"`
+	EncoderParamsAudio    map[string]any `json:"encoder_params_audio,omitempty"`
+	EncoderParamsSubtitle map[string]any `json:"encoder_params_subtitle,omitempty"`
+	Options               map[string]any `json:"options,omitempty"`
 }
 
 // Options holds global pipeline options.

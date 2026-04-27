@@ -89,8 +89,8 @@ func TestExamplesAllSinksHaveEncoder(t *testing.T) {
 						t.Errorf("sink %q has inbound edge with nil source", node.ID)
 						continue
 					}
-					if e.From.Kind != graph.KindEncoder {
-						t.Errorf("sink %q: inbound from %q is %v, expected KindEncoder",
+					if e.From.Kind != graph.KindEncoder && e.From.Kind != graph.KindCopy {
+						t.Errorf("sink %q: inbound from %q is %v, expected KindEncoder or KindCopy",
 							node.ID, e.From.ID, e.From.Kind)
 					}
 				}
