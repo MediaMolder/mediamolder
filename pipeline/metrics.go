@@ -160,10 +160,12 @@ type MetricsSnapshot struct {
 	// one (live streams).
 	MediaPTS      time.Duration
 	MediaDuration time.Duration
-	// OutputPTS is aggregated across all sink nodes (max of per-sink
-	// values). It tracks how much media has actually been written to
-	// the output(s) and is the basis for progress/speed/ETA in the
-	// GUI — unlike MediaPTS, it doesn't race ahead of slow encoders.
+	// OutputPTS is the slowest sink's latest output timestamp (min
+	// over sinks that have started writing). It tracks how much
+	// media has actually been written by every output and is the
+	// basis for progress/speed/ETA in the GUI — using max here would
+	// let a fast sink (e.g. AAC audio) report 100% before the slower
+	// video encoder is anywhere close to done.
 	OutputPTS time.Duration
 }
 
@@ -217,6 +219,17 @@ func (r *MetricsRegistry) Snapshot() MetricsSnapshot {
 	// Aggregate media-time progress across all source nodes. Take the
 	// max so multi-input jobs report progress against the longest
 	// input, which is usually what a user expects.
+	//
+	// OutputPTS is aggregated as the *min* across sinks that have
+	// started writing (>0). The pipeline's effective progress is
+	// constrained by its slowest sink — taking the max would let a
+	// fast audio sink that races ahead of the video encoder report
+	// 100% completion while video still has minutes left, which makes
+	// the GUI's ETA/speed estimates meaningless. Sinks that haven't
+	// produced any packet yet are ignored so a not-yet-started sink
+	// doesn't pin progress at 0 forever.
+	var minOut time.Duration
+	var sawSink bool
 	for i := range snap.Nodes {
 		if snap.Nodes[i].MediaPTS > snap.MediaPTS {
 			snap.MediaPTS = snap.Nodes[i].MediaPTS
@@ -224,9 +237,15 @@ func (r *MetricsRegistry) Snapshot() MetricsSnapshot {
 		if snap.Nodes[i].MediaDuration > snap.MediaDuration {
 			snap.MediaDuration = snap.Nodes[i].MediaDuration
 		}
-		if snap.Nodes[i].OutputPTS > snap.OutputPTS {
-			snap.OutputPTS = snap.Nodes[i].OutputPTS
+		if op := snap.Nodes[i].OutputPTS; op > 0 {
+			if !sawSink || op < minOut {
+				minOut = op
+				sawSink = true
+			}
 		}
+	}
+	if sawSink {
+		snap.OutputPTS = minOut
 	}
 	// Stable, deterministic order so the GUI metrics table doesn't
 	// reshuffle rows on every poll. Map iteration order is randomised
