@@ -566,6 +566,16 @@ func (r *graphRunner) handleSource(ctx context.Context, node *graph.Node, outs [
 			r.pipe.Metrics().Node(node.ID).RecordLatency(time.Since(frameStart))
 			continue
 		}
+		// If no downstream node consumes decoded frames of this
+		// stream type, skip the decoder entirely. Otherwise packets
+		// pile up in the decoder's internal queue until SendPacket
+		// returns EAGAIN and the source aborts with averror(-35).
+		// (A copy-only consumer was already serviced above via
+		// sendPacketCopies.)
+		if bucket := byType[portType]; bucket == nil || len(bucket.frame) == 0 {
+			r.pipe.Metrics().Node(node.ID).RecordLatency(time.Since(frameStart))
+			continue
+		}
 		if err := dec.SendPacket(pkt); err != nil {
 			return err
 		}
@@ -575,12 +585,27 @@ func (r *graphRunner) handleSource(ctx context.Context, node *graph.Node, outs [
 		r.pipe.Metrics().Node(node.ID).RecordLatency(time.Since(frameStart))
 	}
 
-	// Flush every decoder.
+	// Flush every decoder that actually had packets pushed through it
+	// (i.e. has at least one downstream frame consumer).
 	for idx, dec := range src.decoders {
-		if err := dec.Flush(); err != nil && !av.IsEOF(err) {
+		si := src.streams[idx]
+		var portType graph.PortType
+		switch si.Type {
+		case av.MediaTypeVideo:
+			portType = graph.PortVideo
+		case av.MediaTypeAudio:
+			portType = graph.PortAudio
+		case av.MediaTypeSubtitle:
+			portType = graph.PortSubtitle
+		case av.MediaTypeData:
+			portType = graph.PortData
+		}
+		if bucket := byType[portType]; bucket == nil || len(bucket.frame) == 0 {
+			continue
+		}
+		if err := dec.Flush(); err != nil && !av.IsEOF(err) && !av.IsEAgain(err) {
 			return err
 		}
-		si := src.streams[idx]
 		// Drain remaining decoded frames.
 		for {
 			f, err := av.AllocFrame()
@@ -589,7 +614,7 @@ func (r *graphRunner) handleSource(ctx context.Context, node *graph.Node, outs [
 			}
 			if err := dec.ReceiveFrame(f); err != nil {
 				f.Close()
-				if av.IsEOF(err) {
+				if av.IsEOF(err) || av.IsEAgain(err) {
 					break
 				}
 				return err
@@ -899,7 +924,7 @@ func (r *graphRunner) handleEncoder(ctx context.Context, node *graph.Node, ins [
 	}
 
 	// Flush.
-	if err := enc.Flush(); err != nil && !av.IsEOF(err) {
+	if err := enc.Flush(); err != nil && !av.IsEOF(err) && !av.IsEAgain(err) {
 		return err
 	}
 	return drainEncoder()
