@@ -17,6 +17,8 @@ package av
 // #cgo LDFLAGS: -L${SRCDIR}/../../ffmpeg/libswscale    -lswscale
 // #cgo LDFLAGS: -L${SRCDIR}/../../ffmpeg/libswresample -lswresample
 // #cgo LDFLAGS: -L${SRCDIR}/../../x264 -lx264
+// #cgo darwin LDFLAGS: -L/opt/homebrew/opt/x265/lib -lx265 -lc++
+// #cgo linux LDFLAGS: -lx265 -lstdc++
 // #cgo LDFLAGS: -lbz2 -lz -liconv -lm -lpthread
 // #cgo darwin LDFLAGS: -L/opt/homebrew/Cellar/libxcb/1.17.0/lib -lxcb -lxcb-shm -lxcb-xfixes -lxcb-shape
 // #cgo darwin LDFLAGS: -L/opt/homebrew/lib -lSDL2
