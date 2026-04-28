@@ -49,6 +49,11 @@ type parser struct {
 	// encoder pass picks them up.
 	videoEncOpts map[string]any
 	audioEncOpts map[string]any
+	// Per-file timing/demuxer options (-t, -ss, -to) collected from the
+	// CLI between file specifiers. FFmpeg attaches them to the *next*
+	// file (input or output) named on the command line, so they are
+	// queued here and drained when the next -i / output URL is seen.
+	pendingFileOpts map[string]any
 }
 
 func (p *parser) peek() string {
@@ -89,9 +94,12 @@ func (p *parser) parse() (*pipeline.Config, error) {
 					InputIndex: 0, Type: "subtitle", Track: 0,
 				})
 			}
-			p.inputs = append(p.inputs, pipeline.Input{
-				ID: id, URL: url, Streams: streams,
-			})
+			in := pipeline.Input{ID: id, URL: url, Streams: streams}
+			if len(p.pendingFileOpts) > 0 {
+				in.Options = p.pendingFileOpts
+				p.pendingFileOpts = nil
+			}
+			p.inputs = append(p.inputs, in)
 		case arg == "-c:v" || arg == "-vcodec":
 			if !p.hasMore() {
 				return nil, fmt.Errorf("%s requires an argument", arg)
@@ -209,6 +217,14 @@ func (p *parser) parse() (*pipeline.Config, error) {
 				key = "profile"
 			}
 			p.audioEncOpts[key] = p.next()
+		case arg == "-t" || arg == "-ss" || arg == "-to":
+			if !p.hasMore() {
+				return nil, fmt.Errorf("%s requires an argument", arg)
+			}
+			if p.pendingFileOpts == nil {
+				p.pendingFileOpts = make(map[string]any)
+			}
+			p.pendingFileOpts[strings.TrimPrefix(arg, "-")] = p.next()
 		case strings.HasPrefix(arg, "-"):
 			if p.hasMore() && !strings.HasPrefix(p.peek(), "-") {
 				p.globalOpts[strings.TrimPrefix(arg, "-")] = p.next()
@@ -216,6 +232,10 @@ func (p *parser) parse() (*pipeline.Config, error) {
 		default:
 			id := fmt.Sprintf("output%d", len(p.outputs))
 			out := pipeline.Output{ID: id, URL: arg}
+			if len(p.pendingFileOpts) > 0 {
+				out.Options = p.pendingFileOpts
+				p.pendingFileOpts = nil
+			}
 			if p.codecV != "" && p.codecV != "none" {
 				out.CodecVideo = p.codecV
 			}
@@ -255,10 +275,18 @@ func (p *parser) parse() (*pipeline.Config, error) {
 		return nil, fmt.Errorf("no output specified")
 	}
 	p.buildGraph()
+	nodes := p.nodes
+	if nodes == nil {
+		nodes = []pipeline.NodeDef{}
+	}
+	edges := p.edges
+	if edges == nil {
+		edges = []pipeline.EdgeDef{}
+	}
 	cfg := &pipeline.Config{
 		SchemaVersion: "1.0",
 		Inputs:        p.inputs,
-		Graph:         pipeline.GraphDef{Nodes: p.nodes, Edges: p.edges},
+		Graph:         pipeline.GraphDef{Nodes: nodes, Edges: edges},
 		Outputs:       p.outputs,
 	}
 	if p.hwAccel != "" {

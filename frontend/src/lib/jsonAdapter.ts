@@ -155,6 +155,20 @@ function defaultEncoderCodec(type: StreamType): string {
  * user-visible (and editable like any other encoder node).
  */
 export function materializeImplicitEncoders(cfg: JobConfig): JobConfig {
+  // Defensively coerce array fields that may be `null` when the config
+  // came from a backend (e.g. POST /api/convert-cmd) that emitted a JSON
+  // null for an empty Go slice. The rest of the function — and every
+  // downstream consumer — assumes these are always real arrays.
+  cfg = {
+    ...cfg,
+    inputs: cfg.inputs ?? [],
+    outputs: cfg.outputs ?? [],
+    graph: {
+      ...cfg.graph,
+      nodes: cfg.graph?.nodes ?? [],
+      edges: cfg.graph?.edges ?? [],
+    },
+  };
   const outputIds = new Set(cfg.outputs.map((o) => o.id));
   const outputById = new Map(cfg.outputs.map((o) => [o.id, o]));
   const nodeById = new Map(cfg.graph.nodes.map((n) => [n.id, n]));
