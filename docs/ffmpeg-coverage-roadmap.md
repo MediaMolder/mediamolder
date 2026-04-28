@@ -531,9 +531,20 @@ branch:
    duration came out ~512x too long. Round-trip cases
    `vf_scale_positional_x264_audio_copy` and
    `vf_scale_named_x264_no_audio` lock both fixes in.
-5. Open the schema-evolution work for chapter and per-stream
+5. ~~Open the schema-evolution work for chapter and per-stream
    metadata IO (`KindMetadataReader`, `KindMetadataWriter`,
-   `Output.Chapters`).
+   `Output.Chapters`).~~ **Landed (shorthand only).** `Output.Metadata`
+   (`map[string]string`) and `Output.Chapters` (`[]Chapter`, seconds-based
+   `Start`/`End`) now reach the muxer via `av.OutputFormatContext.SetMetadata`
+   / `AddChapter`; `Input.MapMetadata` and `Input.MapChapters` provide
+   `-map_metadata` / `-map_chapters` semantics with FFmpeg-faithful
+   precedence (output overrides win; first-input-wins for chapters).
+   Schemas v1.0/v1.1 + `frontend/src/lib/jobTypes.ts` synced; round-trip
+   coverage in [pipeline/metadata_test.go](../pipeline/metadata_test.go).
+   The heavier `KindMetadataReader` / `KindMetadataWriter` graph node
+   kinds remain **deferred** — the shorthand covers the common case and
+   the graph-kind work is reserved for a future PR that has a real
+   per-stream / multi-source metadata-routing scenario to anchor it.
 6. Stand up the **production-pattern conformance corpus** stub at
    `testdata/production-patterns/` with the highest-leverage
    commands from §1.1 (animated `drawtext`, multi-resolution ABR,

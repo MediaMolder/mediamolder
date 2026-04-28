@@ -38,6 +38,8 @@
         "id": { "type": "string", "minLength": 1 },
         "url": { "type": "string", "minLength": 1 },
         "kind": { "type": "string", "enum": ["file", "lavfi"], "description": "How to open the input. \"file\" (default) probes the URL with libavformat. \"lavfi\" routes through the lavfi virtual demuxer (FFmpeg's -f lavfi); the URL is then a filtergraph spec such as 'anullsrc=r=48000:cl=stereo' or 'color=black:s=1920x1080:r=30'." },
+        "map_metadata": { "type": "boolean", "description": "When true, copy this input's container-level metadata onto every output that does not set its own `metadata`. Mirrors ffmpeg `-map_metadata IDX`. Multiple inputs merge in declaration order; last writer wins per key." },
+        "map_chapters": { "type": "boolean", "description": "When true, copy this input's chapter table onto every output that does not set its own `chapters`. Mirrors ffmpeg `-map_chapters IDX`. First input with map_chapters=true wins (single-source semantics)." },
         "streams": {
           "type": "array",
           "items": { "$ref": "#/$defs/stream_select" }
@@ -129,10 +131,24 @@
         "encoder_params_subtitle": { "type": "object", "additionalProperties": true },
         "max_frames_video": { "type": "integer", "minimum": 0, "description": "Stop muxing after N video packets. 0 = unlimited. Mirrors ffmpeg -frames:v / -vframes; required for extract-frame, tile-thumbnails, scene-image patterns." },
         "max_frames_audio": { "type": "integer", "minimum": 0, "description": "Stop muxing after N audio packets. 0 = unlimited. Mirrors ffmpeg -frames:a / -aframes." },
+        "metadata": { "type": "object", "additionalProperties": { "type": "string" }, "description": "Container-level key/value metadata written into the output (`-metadata key=value`). Replaces any metadata mapped from inputs via `input.map_metadata`." },
+        "chapters": { "type": "array", "items": { "$ref": "#/$defs/chapter" }, "description": "Explicit chapter table. Replaces any chapters mapped from inputs via `input.map_chapters`. Container must support chapters (matroska, mp4, ogg, ffmetadata, ...)." },
         "options": {
           "type": "object",
           "additionalProperties": true
         }
+      }
+    },
+    "chapter": {
+      "type": "object",
+      "required": ["start", "end"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "integer" },
+        "start": { "type": "number", "minimum": 0, "description": "Chapter start in seconds." },
+        "end": { "type": "number", "minimum": 0, "description": "Chapter end in seconds." },
+        "title": { "type": "string" },
+        "metadata": { "type": "object", "additionalProperties": { "type": "string" } }
       }
     },
     "global_options": {

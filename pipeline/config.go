@@ -35,6 +35,18 @@ type Input struct {
 	Kind    string         `json:"kind,omitempty"`
 	Streams []StreamSelect `json:"streams"`
 	Options map[string]any `json:"options,omitempty"`
+	// MapMetadata, when true, copies the container-level metadata of
+	// this input onto every Output that does not set its own
+	// `Output.Metadata`. Mirrors FFmpeg's `-map_metadata IDX` when IDX
+	// is the index of this input. Multiple inputs with MapMetadata=true
+	// merge in declaration order; the last writer wins per key.
+	MapMetadata bool `json:"map_metadata,omitempty"`
+	// MapChapters, when true, copies the chapter table of this input
+	// onto every Output that does not set its own `Output.Chapters`.
+	// Mirrors FFmpeg's `-map_chapters IDX`. When more than one input has
+	// MapChapters=true the first such input wins (matches FFmpeg's
+	// single-source semantics for chapters).
+	MapChapters bool `json:"map_chapters,omitempty"`
 }
 
 // StreamSelect selects a specific stream from an input.
@@ -123,9 +135,38 @@ type Output struct {
 	// and dropped so upstream does not stall; the muxer trailer is
 	// written when all input channels close. Required for
 	// extract-frame, tile-thumbnails, and scene-image patterns.
-	MaxFramesVideo int            `json:"max_frames_video,omitempty"`
-	MaxFramesAudio int            `json:"max_frames_audio,omitempty"`
-	Options        map[string]any `json:"options,omitempty"`
+	MaxFramesVideo int `json:"max_frames_video,omitempty"`
+	MaxFramesAudio int `json:"max_frames_audio,omitempty"`
+	// Metadata is the container-level metadata table written into the
+	// output (`-metadata key=value` in FFmpeg). When non-nil it
+	// completely replaces any metadata mapped from inputs via
+	// `Input.MapMetadata`; when nil and at least one input has
+	// MapMetadata=true the merged input metadata is written instead.
+	// Per-stream metadata is intentionally not exposed here yet —
+	// resolving "which output stream" requires the universal mapper
+	// (roadmap §3.2) and will land alongside it.
+	Metadata map[string]string `json:"metadata,omitempty"`
+	// Chapters is the explicit chapter table for the output. Each
+	// chapter's Start/End is in seconds. When non-nil it replaces any
+	// chapters mapped from inputs via `Input.MapChapters`; when nil and
+	// at least one input has MapChapters=true that input's chapter
+	// table is written instead. The container must support chapters
+	// (matroska, mp4, ogg, ffmetadata, …) for them to surface.
+	Chapters []Chapter      `json:"chapters,omitempty"`
+	Options  map[string]any `json:"options,omitempty"`
+}
+
+// Chapter is one entry in `Output.Chapters`. Start/End are in seconds;
+// the runtime converts them to the chapter's microsecond time_base when
+// the output is written. Title is the conventional shorthand for the
+// `title` metadata key; arbitrary additional metadata may be passed in
+// Metadata (which is merged on top of the title).
+type Chapter struct {
+	ID       int64             `json:"id,omitempty"`
+	Start    float64           `json:"start"`
+	End      float64           `json:"end"`
+	Title    string            `json:"title,omitempty"`
+	Metadata map[string]string `json:"metadata,omitempty"`
 }
 
 // Options holds global pipeline options.

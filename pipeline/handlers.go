@@ -1667,6 +1667,27 @@ func (r *graphRunner) openSink(_ *graph.Graph, node *graph.Node) (*sinkResources
 		}
 	}
 
+	// Container metadata + chapters. Resolution rules:
+	//   - Output.Metadata, when non-nil, fully replaces any
+	//     metadata mapped from inputs (mirrors FFmpeg's behaviour
+	//     when both `-metadata` and `-map_metadata` are given:
+	//     `-metadata` is applied last and wins).
+	//   - When Output.Metadata is nil, every input with
+	//     MapMetadata=true contributes its container-level
+	//     metadata in declaration order; the last writer wins
+	//     per key.
+	//   - Chapters follow the same precedence: an explicit
+	//     Output.Chapters wins; otherwise the first input with
+	//     MapChapters=true contributes its chapter table.
+	if err := r.applyOutputMetadata(muxer, out); err != nil {
+		muxer.Abort()
+		return nil, fmt.Errorf("sink %q apply metadata: %w", node.ID, err)
+	}
+	if err := r.applyOutputChapters(muxer, out); err != nil {
+		muxer.Abort()
+		return nil, fmt.Errorf("sink %q apply chapters: %w", node.ID, err)
+	}
+
 	if err := muxer.WriteHeader(); err != nil {
 		muxer.Abort()
 		return nil, fmt.Errorf("sink %q write header: %w", node.ID, err)
@@ -1886,4 +1907,65 @@ func paramInt64(m map[string]any, key string) int64 {
 	var n int64
 	_, _ = fmt.Sscanf(s, "%d", &n)
 	return n
+}
+
+// applyOutputMetadata writes container-level metadata onto muxer
+// according to the precedence rules documented at the call site:
+// Output.Metadata wins outright; otherwise every input with
+// Input.MapMetadata=true contributes in declaration order.
+func (r *graphRunner) applyOutputMetadata(muxer *av.OutputFormatContext, out *Output) error {
+	if out.Metadata != nil {
+		return muxer.SetMetadata(out.Metadata)
+	}
+	var merged map[string]string
+	for _, in := range r.cfg.Inputs {
+		if !in.MapMetadata {
+			continue
+		}
+		src := r.sources[in.ID]
+		if src == nil || src.input == nil {
+			continue
+		}
+		for k, v := range src.input.Metadata() {
+			if merged == nil {
+				merged = make(map[string]string)
+			}
+			merged[k] = v
+		}
+	}
+	if merged == nil {
+		return nil
+	}
+	return muxer.SetMetadata(merged)
+}
+
+// applyOutputChapters writes chapters onto muxer with the same
+// precedence as applyOutputMetadata, except chapters are not merged
+// across inputs (FFmpeg's `-map_chapters` is single-source); the first
+// input with MapChapters=true wins.
+func (r *graphRunner) applyOutputChapters(muxer *av.OutputFormatContext, out *Output) error {
+	if len(out.Chapters) > 0 {
+		for _, ch := range out.Chapters {
+			if err := muxer.AddChapter(ch.ID, ch.Start, ch.End, ch.Title, ch.Metadata); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	for _, in := range r.cfg.Inputs {
+		if !in.MapChapters {
+			continue
+		}
+		src := r.sources[in.ID]
+		if src == nil || src.input == nil {
+			continue
+		}
+		for _, ch := range src.input.Chapters() {
+			if err := muxer.AddChapter(ch.ID, ch.Start, ch.End, ch.Title, ch.Metadata); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	return nil
 }

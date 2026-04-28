@@ -19,6 +19,14 @@ export interface Input {
    *  such as `anullsrc=r=48000:cl=stereo` or
    *  `color=black:s=1920x1080:r=30`. */
   kind?: "file" | "lavfi";
+  /** Copy this input's container metadata onto outputs that don't set
+   *  their own `metadata` (mirrors ffmpeg `-map_metadata IDX`).
+   *  Multiple inputs merge in declaration order; last writer wins. */
+  map_metadata?: boolean;
+  /** Copy this input's chapter table onto outputs that don't set their
+   *  own `chapters` (mirrors ffmpeg `-map_chapters IDX`). First input
+   *  with map_chapters=true wins. */
+  map_chapters?: boolean;
   streams: StreamSelect[];
   options?: Record<string, unknown>;
 }
@@ -85,7 +93,24 @@ export interface Output {
    *  tile-thumbnails and scene-image jobs. */
   max_frames_video?: number;
   max_frames_audio?: number;
+  /** Container-level metadata key/value pairs (`-metadata key=value`).
+   *  Replaces any metadata mapped from inputs via `input.map_metadata`. */
+  metadata?: Record<string, string>;
+  /** Explicit chapter table. Replaces any chapters mapped from inputs
+   *  via `input.map_chapters`. The container must support chapters
+   *  (matroska, mp4, ogg, ffmetadata, ...). */
+  chapters?: Chapter[];
   options?: Record<string, unknown>;
+}
+
+export interface Chapter {
+  id?: number;
+  /** Chapter start in seconds. */
+  start: number;
+  /** Chapter end in seconds. */
+  end: number;
+  title?: string;
+  metadata?: Record<string, string>;
 }
 
 export interface Options {
