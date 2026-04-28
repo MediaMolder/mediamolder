@@ -568,10 +568,29 @@ branch:
    landing each upstream capability is "this pattern flips from skip
    to pass". Capability inventory mining:
    `go test -v -run TestProductionPatternsCorpus ./compat/ffcli/ 2>&1 | grep '^.*blocked-by:'`.
-7. Add the **filter-expression `eval-expression` HTTP endpoint** so
+7. ~~Add the **filter-expression `eval-expression` HTTP endpoint** so
    the GUI can validate `enable=`, `x=`, `y=`, `text=` expressions
    without running the full graph. Cheap to ship, immediately
-   useful for `drawtext` / `overlay` / `crop` authoring.
+   useful for `drawtext` / `overlay` / `crop` authoring.~~ **Landed.**
+   `av.EvalExpression` ([av/expr.go](../av/expr.go)) wraps libavutil's
+   `av_expr_parse_and_eval`; `GET /api/filters/{name}/eval-expression?expr=…&t=…&w=…`
+   ([internal/gui/filter_eval.go](../internal/gui/filter_eval.go)
+   `handleFilterEvalExpression`) registered on the GUI mux. Ships a
+   curated variable table per common filter (drawtext, overlay,
+   crop, scale, pad, rotate, zoompan, setpts/asetpts, volume — names
+   mined from each filter's `var_names[]` in libavfilter), defaulting
+   each constant to 0; arbitrary `?name=value` query pairs override
+   bindings. Response shape: `{filter, expr, variables, ok, value, error}`,
+   HTTP 200 for both success and parse-failure (the `ok` flag is the
+   truth). Round-trips covered in
+   [av/expr_test.go](../av/expr_test.go) (`TestEvalExpression`) and
+   [internal/gui/filter_eval_test.go](../internal/gui/filter_eval_test.go)
+   (`TestHandleFilterEvalExpression`): `between(t,1,8)`, scrolling
+   `w-mod(40*t,w+tw)`, `W-w` overlay arithmetic, syntax errors,
+   unknown identifiers, fallback-on-unknown-filter, missing `expr`.
+   Items (a) (the `expression: true` AVOption flag bit on
+   `FilterOption`) and (b) (the syntax-highlighted GUI input) of
+   §3.1 #6 remain open.
 8. Add the **quoting/escaping fuzzer** (Phase F.5) on top of
    `pipeline/engine.go` `buildFilterSpec` and the `compat/ffcli`
    lexer. The 04f1a0c7 fix proved this is real bug territory.
