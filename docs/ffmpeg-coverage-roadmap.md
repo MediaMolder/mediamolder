@@ -591,9 +591,27 @@ branch:
    Items (a) (the `expression: true` AVOption flag bit on
    `FilterOption`) and (b) (the syntax-highlighted GUI input) of
    §3.1 #6 remain open.
-8. Add the **quoting/escaping fuzzer** (Phase F.5) on top of
+8. ~~Add the **quoting/escaping fuzzer** (Phase F.5) on top of
    `pipeline/engine.go` `buildFilterSpec` and the `compat/ffcli`
-   lexer. The 04f1a0c7 fix proved this is real bug territory.
+   lexer. The 04f1a0c7 fix proved this is real bug territory.~~
+   **Landed.** Three Go-native fuzzers seeded against the bug class:
+   [pipeline/fuzz_filter_spec_test.go](../pipeline/fuzz_filter_spec_test.go)
+   `FuzzBuildFilterSpec` drives the filter-spec renderer with
+   arbitrary value bytes; asserts no panic, no unquoted `,`/`;`
+   leaks (the exact 04f1a0c7 regression), and balanced single-quote
+   runs under libavfilter's `'…'` + outside-`\X` escape grammar.
+   [compat/ffcli/fuzz_quoting_test.go](../compat/ffcli/fuzz_quoting_test.go)
+   `FuzzTokenize` exercises the shell-style tokenizer (no token can
+   contain an unquoted space when the input had no quote bytes; total
+   token byte budget never exceeds input length), and
+   `FuzzParseFilterExpr` exercises the `key=val:val` filter-expression
+   parser. Each fuzzer ran clean for ~900 k executions at 15 s
+   `-fuzztime` on initial validation. Extend in CI with
+   `go test -run=^$ -fuzz=FuzzBuildFilterSpec -fuzztime=60s ./pipeline/`
+   (and analogous targets in `compat/ffcli/`); seed-corpus failures
+   are auto-persisted to `pipeline/testdata/fuzz/FuzzBuildFilterSpec/`
+   and `compat/ffcli/testdata/fuzz/FuzzTokenize/` for permanent
+   regression coverage.
 
 Each of these unblocks real user scripts today and pays down the
 debt the §2 matrix is tracking.
