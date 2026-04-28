@@ -325,6 +325,7 @@ See the [Go Processor Nodes](docs/go-processor-nodes.md) guide for the full API,
 - [Observability](docs/observability.md)
 - [Graph Compilation](docs/graph-compilation.md)
 - [Pipeline Instrumentation Roadmap](docs/pipeline-instrumentation-roadmap.md)
+- [FFmpeg Coverage Roadmap](docs/ffmpeg-coverage-roadmap.md)
 - [Build & Packaging](docs/build_and_packaging.md)
 - [Contribution & Governance](docs/contribution_and_governance.md)
 - [Project Specification](docs/specification.md)
