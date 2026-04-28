@@ -114,6 +114,20 @@ export interface Output {
    *  Injected as an aresample filter node in front of the audio
    *  encoder; pure stream-copy outputs are unaffected. */
   audio_sync?: number;
+  /** Stop muxing as soon as the shortest input stream feeding this
+   *  output ends. Mirrors ffmpeg `-shortest` (per-output scope; see
+   *  `fftools/ffmpeg_mux_init.c` sync-queue setup). The runtime
+   *  records the PTS at which the first stream closes and stops
+   *  emitting on every other stream of the same output. Required for
+   *  the `add a music track to a silent clip` / `watermark loop on a
+   *  finite source` patterns. */
+  shortest?: boolean;
+  /** Cap the encoded output at this many bytes. Mirrors ffmpeg `-fs
+   *  SIZE`: before each `WritePacket` the runtime queries
+   *  `avio_tell` on the muxer's IO context and stops with EOF
+   *  (writing a clean trailer) once the limit is reached. 0 =
+   *  unlimited. */
+  max_file_size?: number;
   /** Container-level metadata key/value pairs (`-metadata key=value`).
    *  Replaces any metadata mapped from inputs via `input.map_metadata`. */
   metadata?: Record<string, string>;
@@ -155,6 +169,14 @@ export interface JobConfig {
   graph: GraphDef;
   outputs: Output[];
   global_options?: Options;
+  /** Preserve original demuxer timestamps end-to-end instead of
+   *  rebasing every input to PTS 0. Mirrors ffmpeg's global
+   *  `-copyts`: suppresses the demuxer-side ts_offset shift that
+   *  normally accompanies `-ss`, and changes the meaning of any
+   *  output-side `-ss` / `-to` (in `output.options`) to absolute
+   *  timeline values rather than offsets from the input's start.
+   *  Required for accurate broadcast / HLS PTS handling. */
+  copy_ts?: boolean;
 }
 
 /**

@@ -19,6 +19,24 @@ type Config struct {
 	Graph         GraphDef `json:"graph"`
 	Outputs       []Output `json:"outputs"`
 	GlobalOptions Options  `json:"global_options,omitempty"`
+	// CopyTS preserves the original demuxer timestamps end-to-end
+	// instead of rebasing every input to start at PTS 0. Mirrors
+	// FFmpeg's global `-copyts` flag, which is global in the FFmpeg
+	// CLI for exactly this reason: it changes both the demuxer-side
+	// `ts_offset` (suppressing the `-timestamp` shift normally applied
+	// after `-ss`) and the meaning of any output-side `-ss` / `-to`
+	// (which become absolute timeline values rather than offsets from
+	// the input's start). When false (default) the runtime keeps its
+	// existing behaviour of shifting every demuxed PTS/DTS by
+	// `-ts_offset = -seek_target` so downstream nodes see streams
+	// rooted at 0; when true, the shift is suppressed and output
+	// trim windows are interpreted in the input's native timeline.
+	// Required for accurate broadcast / HLS PTS handling and for
+	// scenarios where downstream tooling expects original wall-clock
+	// timestamps (e.g. ad-cue insertion, EBU R128 long-form
+	// loudness reports). See `fftools/ffmpeg_demux.c`'s
+	// `ts_offset` computation and `ffmpeg_mux.c::of_streamcopy`.
+	CopyTS bool `json:"copy_ts,omitempty"`
 }
 
 // Input describes a single input source.
@@ -183,6 +201,31 @@ type Output struct {
 	// transcoded audio stream; pure stream-copy outputs are unaffected
 	// because no filter graph runs.
 	AudioSync int `json:"audio_sync,omitempty"`
+	// Shortest, when true, instructs the runtime to stop muxing as
+	// soon as the shortest stream feeding this output ends. Mirrors
+	// FFmpeg's `-shortest` flag (per-output scope; see
+	// `fftools/ffmpeg_mux_init.c`'s sync-queue setup). Required for
+	// the entire "add a music track to a silent clip" / "watermark
+	// loop on top of a finite source" pattern that dominates the
+	// overlay + music-video corpus: without it the longer input runs
+	// to its own EOF and the output is padded with whatever the
+	// shorter stream's last frame holds. The runtime captures the
+	// PTS at which the shortest stream closes and stops emitting
+	// further packets on every other stream feeding the same
+	// output, mirroring the per-output-file scope FFmpeg uses.
+	Shortest bool `json:"shortest,omitempty"`
+	// MaxFileSize caps the encoded output at this many bytes.
+	// Mirrors FFmpeg's `-fs SIZE` flag and uses the same
+	// enforcement pattern: before each `WritePacket` call the
+	// runtime queries `avio_tell(pb)` and, if the current file
+	// size has reached the limit, returns EOF and writes the
+	// trailer cleanly (so the output remains a valid container).
+	// 0 (default) means unlimited. Counted in bytes of the
+	// container as written, including muxer overhead — matches
+	// FFmpeg's `OutputFile.limit_filesize` semantics in
+	// `fftools/ffmpeg_mux.c`. Negative values are rejected by
+	// validate().
+	MaxFileSize int64 `json:"max_file_size,omitempty"`
 	// Metadata is the container-level metadata table written into the
 	// output (`-metadata key=value` in FFmpeg). When non-nil it
 	// completely replaces any metadata mapped from inputs via
@@ -306,6 +349,9 @@ func validate(cfg *Config) error {
 		}
 		if out.AudioSync < 0 {
 			return fmt.Errorf("output %q: invalid audio_sync %d (must be >= 0)", out.ID, out.AudioSync)
+		}
+		if out.MaxFileSize < 0 {
+			return fmt.Errorf("output %q: invalid max_file_size %d (must be >= 0)", out.ID, out.MaxFileSize)
 		}
 	}
 	// Edge types must be valid.

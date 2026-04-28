@@ -276,15 +276,17 @@ sections:
         status: covered
         schema: pipeline.Output.Format
       - flag: "-ss / -t / -to (output-side)"
-        status: partial
+        status: covered
         schema: pipeline.Output.Options
-        notes: filter-level cut today; output-side trim with -copyts not separately modelled
+        notes: pipeline/handlers.go::handleSink resolves output-side ss/t/to via resolveOutputTiming and drops/stops packets accordingly; with Config.CopyTS the trim window is interpreted as absolute timeline values, otherwise kept packets are shifted back so the file anchors at PTS 0 (mirrors of_streamcopy).
       - flag: "-shortest"
-        status: missing
-        schema: n/a
+        status: covered
+        schema: pipeline.Output.Shortest
+        notes: handleSink records the PTS at which the first feeder channel closes and drains-and-drops further packets on the remaining channels of the same output; mirrors per-output sync-queue cap in fftools/ffmpeg_mux_init.c.
       - flag: "-fs (file size limit)"
-        status: missing
-        schema: n/a
+        status: covered
+        schema: pipeline.Output.MaxFileSize
+        notes: handleSink calls av.OutputFormatContext.BytesWritten (avio_tell) before every WritePacket and stops with a clean trailer once the limit is reached; mirrors fftools/ffmpeg_mux.c::mux_packet_filter.
       - flag: "-frames:v / -frames:a"
         status: covered
         schema: pipeline.Output.MaxFramesVideo / MaxFramesAudio
@@ -326,8 +328,9 @@ sections:
         status: covered
         schema: pipeline.Output.Options.movflags
       - flag: "-muxdelay / -muxpreload / -copyts / -start_at_zero / -avoid_negative_ts"
-        status: missing
-        schema: n/a
+        status: partial
+        schema: pipeline.Config.CopyTS
+        notes: -copyts covered (Config.CopyTS suppresses demuxer ts_offset shift and switches output-side -ss/-to to absolute timeline interpretation); -muxdelay/-muxpreload/-start_at_zero/-avoid_negative_ts still missing
       - flag: "-bsf:v / -bsf:a (single)"
         status: covered
         schema: pipeline.Output.BSFVideo / BSFAudio

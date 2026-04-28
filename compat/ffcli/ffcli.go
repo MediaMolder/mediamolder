@@ -41,6 +41,9 @@ type parser struct {
 	bsfAudio     string
 	fpsMode      string
 	audioSync    int
+	shortest     bool
+	maxFileSize  int64
+	copyTS       bool
 	hwAccel      string
 	hwDevice     string
 	hwOutFmt     string
@@ -193,6 +196,30 @@ func (p *parser) parse() (*pipeline.Config, error) {
 				return nil, fmt.Errorf("-async: invalid value %q (want non-negative integer)", v)
 			}
 			p.audioSync = n
+		case arg == "-shortest":
+			// FFmpeg `-shortest` (per-output bool, OPT_OFFSET in
+			// fftools/ffmpeg_opt.c). Latched onto the next output URL.
+			p.shortest = true
+		case arg == "-fs":
+			// FFmpeg `-fs SIZE` (per-output int64 limit_filesize).
+			// Accepts a plain byte count; the FFmpeg CLI also accepts
+			// SI suffixes (K/M/G) via av_strtod, but the production
+			// scripts in our corpus all use bare bytes.
+			if !p.hasMore() {
+				return nil, fmt.Errorf("-fs requires an argument")
+			}
+			v := p.next()
+			n, err := strconv.ParseInt(v, 10, 64)
+			if err != nil || n < 0 {
+				return nil, fmt.Errorf("-fs: invalid value %q (want non-negative integer bytes)", v)
+			}
+			p.maxFileSize = n
+		case arg == "-copyts":
+			// FFmpeg `-copyts` is a global bool. We carry it on the
+			// pipeline.Config and use it both to suppress the
+			// demuxer-side ts_offset shift and to interpret output-side
+			// -ss/-to as absolute timeline values.
+			p.copyTS = true
 		case arg == "-fps_mode" || arg == "-vsync":
 			// FFmpeg modern: -fps_mode {passthrough|cfr|vfr|drop|auto}.
 			// FFmpeg legacy: -vsync {0|1|2|drop|passthrough|cfr|vfr|auto}.
@@ -298,6 +325,12 @@ func (p *parser) parse() (*pipeline.Config, error) {
 			if p.audioSync != 0 {
 				out.AudioSync = p.audioSync
 			}
+			if p.shortest {
+				out.Shortest = true
+			}
+			if p.maxFileSize > 0 {
+				out.MaxFileSize = p.maxFileSize
+			}
 			if f, ok := p.globalOpts["format"]; ok {
 				out.Format = f
 				delete(p.globalOpts, "format")
@@ -335,6 +368,9 @@ func (p *parser) parse() (*pipeline.Config, error) {
 		Inputs:        p.inputs,
 		Graph:         pipeline.GraphDef{Nodes: nodes, Edges: edges},
 		Outputs:       p.outputs,
+	}
+	if p.copyTS {
+		cfg.CopyTS = true
 	}
 	if p.hwAccel != "" {
 		cfg.GlobalOptions.HardwareAccel = p.hwAccel

@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/MediaMolder/MediaMolder/av"
@@ -444,6 +445,36 @@ type sinkResources struct {
 	// so the encoder's PTS values would otherwise be interpreted in
 	// the wrong units and play back at the wrong rate.
 	streamRescale []*sinkRescale
+
+	// timing holds the resolved output-side -ss/-t/-to window
+	// (mirrors fftools/ffmpeg_mux_init.c's per-OutputFile
+	// `start_time` / `recording_time`). Empty when no output trim
+	// is configured.
+	timing outputTiming
+	// copyTS is the global Config.CopyTS flag, latched onto the sink
+	// for fast access. When false, kept packets are shifted back so
+	// the output anchors at PTS 0 (mirroring of_streamcopy's
+	// `pts -= ts_offset`); when true, original timestamps survive.
+	copyTS bool
+	// maxFileSize is the configured `-fs` limit in bytes (0 = unlimited).
+	maxFileSize int64
+	// shortest, when true, stops every stream of this output as soon
+	// as the shortest input stream closes (mirrors `-shortest`).
+	shortest bool
+
+	// shortestMu guards shortestPTSus. Only used when shortest is true.
+	shortestMu sync.Mutex
+	// shortestPTSus is the smallest "last muxed PTS" (in AV_TIME_BASE
+	// units) across every input channel of this output that has
+	// closed. Initialised to noLimitUS; once any channel closes it
+	// drops to that channel's last-emitted PTS, and the remaining
+	// channels stop muxing packets whose PTS reaches that bound.
+	shortestPTSus int64
+	// stopAll, when set, signals every channel of this output to
+	// stop muxing further packets (drain-and-drop). Used by the
+	// -fs (max_file_size) and output-side -t/-to enforcement to
+	// halt every stream consistently after the first hit.
+	stopAll atomic.Bool
 }
 
 type sinkRescale struct {
@@ -1238,38 +1269,181 @@ func (r *graphRunner) handleSink(ctx context.Context, node *graph.Node, ins []<-
 		return 0
 	}
 
+	// ptsToMicros converts pkt PTS (in dstTB units) to AV_TIME_BASE
+	// (microseconds) for cross-stream PTS comparison, returning
+	// (us, true) on success or (0, false) when the PTS is unset or
+	// the time_base is invalid.
+	ptsToMicros := func(pts int64, dstTB [2]int) (int64, bool) {
+		if pts == math.MinInt64 || dstTB[0] <= 0 || dstTB[1] <= 0 {
+			return 0, false
+		}
+		return pts * 1_000_000 * int64(dstTB[0]) / int64(dstTB[1]), true
+	}
+
+	// shiftPTSus converts a microsecond offset into dstTB units and
+	// subtracts it from pkt's PTS/DTS. Mirrors of_streamcopy's
+	// `pkt->pts -= ts_offset` after rebasing the output to start at 0.
+	shiftPTSus := func(pkt *av.Packet, deltaUS int64, dstTB [2]int) {
+		if deltaUS == 0 || dstTB[0] <= 0 || dstTB[1] <= 0 {
+			return
+		}
+		off := deltaUS * int64(dstTB[1]) / (1_000_000 * int64(dstTB[0]))
+		if off != 0 {
+			pkt.ShiftTS(-off)
+		}
+	}
+
+	// Output-side trim window in AV_TIME_BASE units. NoPTSValue means
+	// "no -ss"; noLimitUS means "no -t/-to".
+	startUS := sink.timing.startTimestampUS()
+	stopUS := sink.timing.stopTimestampUS(sink.copyTS)
+
+	// shiftDownUS is the offset subtracted from kept packets so the
+	// muxed file anchors at 0 (mirrors of_streamcopy's ts_offset).
+	// Suppressed under -copyts.
+	var shiftDownUS int64
+	if !sink.copyTS && startUS != int64(av.NoPTSValue) {
+		shiftDownUS = startUS
+	}
+
+	// recordShortest is called when a per-channel goroutine exits
+	// naturally (channel closed). Updates the shared shortestPTSus
+	// to min(current, last_pts) so other channels can stop.
+	recordShortest := func(lastPTSus int64, ok bool) {
+		if !sink.shortest || !ok {
+			return
+		}
+		sink.shortestMu.Lock()
+		if lastPTSus < sink.shortestPTSus {
+			sink.shortestPTSus = lastPTSus
+		}
+		sink.shortestMu.Unlock()
+	}
+
+	// shortestReached returns true when the shortest cap has been
+	// reached for `ptsUS` (only consulted when shortest is true).
+	shortestReached := func(ptsUS int64, ok bool) bool {
+		if !sink.shortest || !ok {
+			return false
+		}
+		sink.shortestMu.Lock()
+		bound := sink.shortestPTSus
+		sink.shortestMu.Unlock()
+		return bound != noLimitUS && ptsUS >= bound
+	}
+
+	// processOne runs the full per-packet pipeline for input channel
+	// i: max-frames cap, output-side trim drop / stop, ts shift,
+	// rescale, max-file-size cap, shortest cap, then WritePacket.
+	// Returns (wrote, stopAll, err) where stopAll signals every
+	// channel of this output to drain-and-drop.
+	type chanState struct {
+		written     int
+		lastPTSus   int64
+		lastPTSok   bool
+	}
+	processOne := func(i int, pkt *av.Packet, dstTB [2]int, rs *sinkRescale, st *chanState, mu *sync.Mutex) (bool, bool, error) {
+		// Per-stream max frames (counts post-encoder packets, mirrors
+		// FFmpeg's `-frames:v` / `-frames:a`).
+		if lim := limitForChan(i); lim > 0 && st.written >= lim {
+			return false, false, nil
+		}
+		pkt.SetStreamIndex(i)
+		if rs != nil {
+			pkt.Rescale(rs.srcTB, rs.dstTB)
+		}
+		// Compute pts in AV_TIME_BASE units against the muxer's
+		// time_base for trim / shortest comparisons.
+		ptsUS, hasPTS := ptsToMicros(pkt.PTS(), dstTB)
+
+		// Output-side `-ss`: drop packets whose PTS is below the
+		// configured start. Mirrors of_streamcopy's
+		// `if (dts < of->start_time) return EAGAIN`.
+		if startUS != int64(av.NoPTSValue) && hasPTS && ptsUS < startUS {
+			return false, false, nil
+		}
+
+		// Output-side `-t` / `-to`: stop the entire output when any
+		// kept packet's PTS reaches the configured end. Mirrors
+		// `check_recording_time`'s `av_compare_ts >= 0` => stop.
+		if stopUS != noLimitUS && hasPTS && ptsUS >= stopUS {
+			return false, true, nil
+		}
+
+		// `-shortest`: stop this packet (and everything else on this
+		// output) once any other channel has finished and its end
+		// PTS is reached. Mirrors the per-output sync-queue cap in
+		// fftools/ffmpeg_mux_init.c.
+		if shortestReached(ptsUS, hasPTS) {
+			return false, false, nil
+		}
+
+		// Shift kept packets back by startUS so the file anchors at
+		// PTS 0 (suppressed under -copyts).
+		shiftPTSus(pkt, shiftDownUS, dstTB)
+
+		frameStart := time.Now()
+		var wErr error
+		if mu != nil {
+			mu.Lock()
+		}
+		// `-fs` (max_file_size): query avio_tell before WritePacket
+		// and refuse to write when the limit has been reached.
+		// Mirrors fftools/ffmpeg_mux.c's
+		// `if (fs >= mux->limit_filesize) ret = AVERROR_EOF`.
+		stopAllNow := false
+		if sink.maxFileSize > 0 {
+			if cur := sink.muxer.BytesWritten(); cur >= 0 && cur >= sink.maxFileSize {
+				stopAllNow = true
+			}
+		}
+		if !stopAllNow {
+			wErr = sink.muxer.WritePacket(pkt)
+		}
+		if mu != nil {
+			mu.Unlock()
+		}
+		if stopAllNow {
+			return false, true, nil
+		}
+		if wErr != nil {
+			return false, false, wErr
+		}
+		st.written++
+		if hasPTS {
+			st.lastPTSus = ptsUS
+			st.lastPTSok = true
+			ptsNs := time.Duration(pkt.PTS()) * time.Second *
+				time.Duration(dstTB[0]) / time.Duration(dstTB[1])
+			r.pipe.Metrics().Node(node.ID).AdvanceOutputPTS(ptsNs)
+		}
+		r.pipe.Metrics().Node(node.ID).RecordLatency(time.Since(frameStart))
+		return true, false, nil
+	}
+
 	if len(ins) == 1 {
 		var rs *sinkRescale
 		if len(sink.streamRescale) > 0 {
 			rs = sink.streamRescale[0]
 		}
 		dstTB := sink.muxer.StreamTimeBase(0)
-		limit := limitForChan(0)
-		written := 0
+		st := &chanState{}
 		for v := range ins[0] {
 			pkt := v.(*av.Packet)
-			if limit > 0 && written >= limit {
+			if sink.stopAll.Load() {
 				pkt.Close()
 				continue
 			}
-			pkt.SetStreamIndex(0)
-			if rs != nil {
-				pkt.Rescale(rs.srcTB, rs.dstTB)
-			}
-			frameStart := time.Now()
-			if err := sink.muxer.WritePacket(pkt); err != nil {
-				pkt.Close()
-				return err
-			}
-			written++
-			if pts := pkt.PTS(); pts != math.MinInt64 && dstTB[1] > 0 {
-				ptsNs := time.Duration(pts) * time.Second *
-					time.Duration(dstTB[0]) / time.Duration(dstTB[1])
-				r.pipe.Metrics().Node(node.ID).AdvanceOutputPTS(ptsNs)
+			_, stopAll, err := processOne(0, pkt, dstTB, rs, st, nil)
+			if stopAll {
+				sink.stopAll.Store(true)
 			}
 			pkt.Close()
-			r.pipe.Metrics().Node(node.ID).RecordLatency(time.Since(frameStart))
+			if err != nil {
+				return err
+			}
 		}
+		recordShortest(st.lastPTSus, st.lastPTSok)
 		return sink.muxer.WriteTrailer()
 	}
 
@@ -1284,33 +1458,20 @@ func (r *graphRunner) handleSink(ctx context.Context, node *graph.Node, ins []<-
 			rs = sink.streamRescale[i]
 		}
 		dstTB := sink.muxer.StreamTimeBase(i)
-		limit := limitForChan(i)
-		written := 0
+		st := &chanState{}
 		eg.Go(func() error {
+			defer recordShortest(st.lastPTSus, st.lastPTSok)
 			for v := range in {
 				pkt := v.(*av.Packet)
-				if limit > 0 && written >= limit {
+				if sink.stopAll.Load() {
 					pkt.Close()
 					continue
 				}
-				pkt.SetStreamIndex(i)
-				if rs != nil {
-					pkt.Rescale(rs.srcTB, rs.dstTB)
-				}
-				frameStart := time.Now()
-				mu.Lock()
-				err := sink.muxer.WritePacket(pkt)
-				mu.Unlock()
-				if err == nil {
-					written++
-					if pts := pkt.PTS(); pts != math.MinInt64 && dstTB[1] > 0 {
-						ptsNs := time.Duration(pts) * time.Second *
-							time.Duration(dstTB[0]) / time.Duration(dstTB[1])
-						r.pipe.Metrics().Node(node.ID).AdvanceOutputPTS(ptsNs)
-					}
+				_, stopAll, err := processOne(i, pkt, dstTB, rs, st, &mu)
+				if stopAll {
+					sink.stopAll.Store(true)
 				}
 				pkt.Close()
-				r.pipe.Metrics().Node(node.ID).RecordLatency(time.Since(frameStart))
 				if err != nil {
 					return err
 				}
@@ -1560,8 +1721,14 @@ func (r *graphRunner) openSource(cfg Input, srcNode *graph.Node, decOpts av.Deco
 	// first PTS is non-zero); restricting it to seeked jobs preserves
 	// backward compatibility while still mirroring FFmpeg for the
 	// trim use case the user is exercising.
+	//
+	// When Config.CopyTS is true the shift is suppressed so the
+	// original demuxer PTS reach downstream nodes intact — mirrors
+	// FFmpeg's global `-copyts` flag, which sets `ifile->ts_offset`
+	// to 0 (or to `input_ts_offset`, which we don't model) instead
+	// of `-timestamp` in fftools/ffmpeg_demux.c.
 	var tsOffsetUS int64
-	if timing.haveStart {
+	if timing.haveStart && !(r.cfg != nil && r.cfg.CopyTS) {
 		tsOffsetUS = -timing.seekTimestampUS(input.StartTime())
 	}
 
@@ -1800,6 +1967,17 @@ func (r *graphRunner) openSink(_ *graph.Graph, node *graph.Node) (*sinkResources
 		return nil, fmt.Errorf("sink node %q: no matching output config", node.ID)
 	}
 
+	// Per-output timing flags (FFmpeg's output-side `-ss` / `-t` /
+	// `-to`). Stripped from the AVDict before any libav consumer sees
+	// them; enforced by handleSink against per-packet PTS, mirroring
+	// `fftools/ffmpeg_mux.c::of_streamcopy`.
+	outTiming, err := resolveOutputTiming(out.Options, func(format string, args ...any) {
+		log.Printf("output %q: "+format, append([]any{out.URL}, args...)...)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("output %q timing: %w", out.URL, err)
+	}
+
 	muxer, err := av.OpenOutputWithFormat(out.URL, out.Format)
 	if err != nil {
 		return nil, fmt.Errorf("open output %q: %w", out.URL, err)
@@ -1911,7 +2089,16 @@ func (r *graphRunner) openSink(_ *graph.Graph, node *graph.Node) (*sinkResources
 		rs.dstTB = muxer.StreamTimeBase(i)
 	}
 
-	return &sinkResources{muxer: muxer, cfg: *out, streamRescale: rescales}, nil
+	return &sinkResources{
+		muxer:         muxer,
+		cfg:           *out,
+		streamRescale: rescales,
+		timing:        outTiming,
+		copyTS:        r.cfg != nil && r.cfg.CopyTS,
+		maxFileSize:   out.MaxFileSize,
+		shortest:      out.Shortest,
+		shortestPTSus: noLimitUS,
+	}, nil
 }
 
 // copySourceFor resolves a stream-copy node back to the input it reads

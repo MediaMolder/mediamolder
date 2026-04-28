@@ -288,3 +288,53 @@ func TestParseAsyncRejectsInvalid(t *testing.T) {
 		})
 	}
 }
+
+// TestParseShortest verifies that `-shortest` lands on Output.Shortest
+// (Wave 1 #3, roadmap §2.5).
+func TestParseShortest(t *testing.T) {
+	cfg, err := Parse("ffmpeg -i a.mp4 -i b.wav -c copy -shortest out.mp4")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Outputs[0].Shortest {
+		t.Fatalf("Output.Shortest = false, want true")
+	}
+}
+
+// TestParseFS verifies that `-fs N` lands on Output.MaxFileSize. Mirrors
+// fftools/ffmpeg_mux_init.c parsing of -fs into mux->limit_filesize.
+func TestParseFS(t *testing.T) {
+	cfg, err := Parse("ffmpeg -i in.mp4 -c copy -fs 1048576 out.mp4")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.Outputs[0].MaxFileSize; got != 1048576 {
+		t.Errorf("MaxFileSize = %d, want 1048576", got)
+	}
+}
+
+func TestParseFSRejectsInvalid(t *testing.T) {
+	cases := []string{
+		"ffmpeg -i in.mp4 -fs -1 out.mp4",
+		"ffmpeg -i in.mp4 -fs banana out.mp4",
+	}
+	for _, c := range cases {
+		t.Run(c, func(t *testing.T) {
+			if _, err := Parse(c); err == nil {
+				t.Fatal("expected error, got nil")
+			}
+		})
+	}
+}
+
+// TestParseCopyTS verifies that `-copyts` lands on Config.CopyTS
+// (global flag, mirrors fftools/ffmpeg.c::copy_ts).
+func TestParseCopyTS(t *testing.T) {
+	cfg, err := Parse("ffmpeg -copyts -i in.mp4 -c copy out.mp4")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.CopyTS {
+		t.Fatalf("Config.CopyTS = false, want true")
+	}
+}

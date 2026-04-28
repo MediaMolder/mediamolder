@@ -181,9 +181,9 @@ semantics.
 |-------------------------------------------------------------------|:------:|------|
 | Container auto-detect from extension                              | ✅    | |
 | Force format (`-f mp4`)                                           | ✅    | `Output.Format` |
-| Output-side `-ss`/`-t`/`-to`                                      | ⚠️    | Engine cuts at filter level today; output-side trim with `-copyts` semantics not separately modelled |
-| `-shortest`                                                       | ❌    | "Stop when the shortest input ends" — common for music videos and overlays |
-| `-fs N` (file size limit)                                         | ❌    | |
+| Output-side `-ss`/`-t`/`-to`                                      | ✅    | `Output.Options.{ss,t,to}`; `pipeline.resolveOutputTiming` + `handleSink` drop packets below `start_time` and stop muxing at `start_time + recording_time`. With `Config.CopyTS`=true the trim window is interpreted as absolute timeline values; otherwise kept packets are shifted back so the file anchors at PTS 0 (mirrors `of_streamcopy`). |
+| `-shortest`                                                       | ✅    | `Output.Shortest`; `handleSink` records the PTS at which the first feeder channel closes and drains-and-drops further packets on the remaining channels of the same output. Mirrors per-output sync-queue cap in `fftools/ffmpeg_mux_init.c`. |
+| `-fs N` (file size limit)                                         | ✅    | `Output.MaxFileSize`; `handleSink` calls `av.OutputFormatContext.BytesWritten` (avio_tell) before every `WritePacket` and stops with a clean trailer once the limit is reached. |
 | `-frames:v N`, `-frames:a N`                                      | ✅    | `Output.MaxFramesVideo` / `Output.MaxFramesAudio`; sink drains channel and stops writing once limit is hit (post-encoder count, matches ffmpeg semantics for filter-dropping graphs) |
 | `-metadata key=value`                                             | ❌    | Global metadata write |
 | `-metadata:s:v:0 …` per-stream metadata                           | ❌    | Required for language tags, stereoscopic flags, comments |
@@ -196,7 +196,7 @@ semantics.
 | HLS muxer (`hls_time`, `hls_playlist_type`, EXT-X-MAP, byte-range, low-latency) | ⚠️ | Works via raw `Options` AVDict; no schema fields, no validation |
 | DASH muxer (representations, adaptation sets, init segment)       | ⚠️    | Same |
 | Segment muxer / fragmented MP4 (CMAF) / `movflags=+faststart`     | ⚠️    | `movflags` works; segment_* options require AVDict |
-| `-muxdelay`, `-muxpreload`, `-copyts`, `-start_at_zero`, `-avoid_negative_ts` | ❌ | Required for accurate broadcast / HLS PTS handling |
+| `-muxdelay`, `-muxpreload`, `-copyts`, `-start_at_zero`, `-avoid_negative_ts` | ⚠️ | `Config.CopyTS` covers `-copyts` (suppresses demuxer ts_offset shift; switches output-side `-ss`/`-to` to absolute timeline). `-muxdelay`/`-muxpreload`/`-start_at_zero`/`-avoid_negative_ts` still missing. |
 | Bitstream filter chains on output (`-bsf:v "h264_mp4toannexb,h264_redundant_pps"`) | ⚠️ | Single BSF only |
 
 ### 2.6 Subtitles
@@ -638,7 +638,17 @@ real jobs."
 2. **`-shortest`, `-fs`, output-side `-ss`/`-to` with `-copyts`**
    (§2.5) — `Output.Shortest`, `Output.MaxFileSize`, output-side
    trim with copyts semantics. `-shortest` is in essentially every
-   overlay/music-video job.
+   overlay/music-video job. **(landed)** — `Output.Shortest`,
+   `Output.MaxFileSize`, and `Config.CopyTS` enforced in
+   `pipeline/handlers.go::handleSink` via `resolveOutputTiming` +
+   `processOne` (drops below `start_time`, stops at
+   `start_time + recording_time`, caps shortest stream, calls
+   `av.OutputFormatContext.BytesWritten` / `avio_tell` before each
+   `WritePacket`); `-copyts` suppresses the demuxer ts_offset shift
+   and switches output-side `-ss`/`-to` to absolute timeline.
+   Out of scope for this wave: `shortest_buf_duration` tuning, `-fs`
+   SI suffix parsing, and the rest of the muxdelay cluster
+   (`-muxdelay`/`-muxpreload`/`-start_at_zero`/`-avoid_negative_ts`).
 3. **Per-stream encoder overrides + per-stream metadata** (§2.4,
    §2.5) — `Output.Streams []StreamSpec` with per-stream codec /
    bitrate / metadata. Unblocks ABR ladders, dual-language audio,

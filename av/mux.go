@@ -35,6 +35,15 @@ package av
 //     ctx->streams[idx]->codecpar->codec_tag = tag;
 //     return 0;
 // }
+// // bytes_written returns the current size of the muxed file by
+// // querying avio_tell on the format context's IO. Mirrors how
+// // fftools/ffmpeg_mux.c implements -fs (limit_filesize): it calls
+// // avio_tell(s->pb) before every WritePacket and stops with EOF
+// // when the result reaches the configured limit.
+// static int64_t bytes_written(AVFormatContext *ctx) {
+//     if (!ctx || !ctx->pb) return -1;
+//     return avio_tell(ctx->pb);
+// }
 import "C"
 
 import (
@@ -178,6 +187,19 @@ func (f *OutputFormatContext) WritePacket(pkt *Packet) error {
 func (f *OutputFormatContext) WriteTrailer() error {
 	ret := C.av_write_trailer(f.p)
 	return newErr(ret)
+}
+
+// BytesWritten returns the current size in bytes of the muxed
+// container as reported by libavformat's IO context (avio_tell).
+// Returns -1 when the context has no attached IO (e.g. AVFMT_NOFILE
+// muxers). Used by the runtime to enforce `-fs` (Output.MaxFileSize)
+// the same way fftools/ffmpeg_mux.c does: query before each
+// WritePacket and stop with EOF once the limit is reached.
+func (f *OutputFormatContext) BytesWritten() int64 {
+	if f == nil || f.p == nil {
+		return -1
+	}
+	return int64(C.bytes_written(f.p))
 }
 
 // Close flushes, closes the IO context, frees the AVFormatContext, and

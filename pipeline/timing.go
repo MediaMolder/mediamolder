@@ -151,6 +151,73 @@ func (t inputTiming) seekTimestampUS(containerStartUS int64) int64 {
 	return ts
 }
 
+// outputTiming captures per-output-file trim parameters in the same
+// form FFmpeg's fftools/ffmpeg_mux_init.c carries them on the
+// `OutputFile` struct. The semantics are intentionally parallel to
+// inputTiming, but the enforcement happens on the muxer side
+// (`ffmpeg_mux.c::of_streamcopy` / `ffmpeg_enc.c::check_recording_time`)
+// rather than on the demuxer side: packets whose PTS is below
+// `startUS` are dropped before muxing, packets whose PTS reaches
+// `startUS + recordingUS` cause the muxer to stop. The same `-t` /
+// `-to` conflict resolution applies (`-t` wins with a warning).
+type outputTiming struct {
+	haveStart   bool
+	startUS     int64
+	recordingUS int64
+}
+
+// resolveOutputTiming parses the output-side timing entries (`ss`,
+// `t`, `to`) from a pipeline.Output.Options map. Mirrors
+// resolveInputTiming so that command lines like
+// `ffmpeg -i in -ss 5 -t 10 out.mp4` (output-side trim) resolve to
+// the same windowing logic FFmpeg applies in
+// `fftools/ffmpeg_mux_init.c`.
+func resolveOutputTiming(opts map[string]any, warn func(format string, args ...any)) (outputTiming, error) {
+	t, err := resolveInputTiming(opts, warn)
+	if err != nil {
+		return outputTiming{}, err
+	}
+	return outputTiming{
+		haveStart:   t.haveStart,
+		startUS:     t.startUS,
+		recordingUS: t.recordingUS,
+	}, nil
+}
+
+// stopTimestampUS returns the absolute packet PTS at or after which the
+// muxer should stop accepting packets. Mirrors
+// `fftools/ffmpeg_mux.c::of_streamcopy`'s
+// `dts >= of->recording_time + start_time` check. `copyTS` corresponds
+// to FFmpeg's global `-copyts` flag: when false the runtime has
+// already shifted demuxed packets back to a 0-anchored timeline, so
+// the comparison is `pts_ts >= recordingUS`; when true the original
+// timestamps are preserved end-to-end so the comparison anchors at
+// `startUS + recordingUS` (or just `recordingUS` when no start is set).
+// Returns noLimitUS when no `-t` / `-to` is in effect.
+func (t outputTiming) stopTimestampUS(copyTS bool) int64 {
+	if t.recordingUS == noLimitUS {
+		return noLimitUS
+	}
+	if !copyTS {
+		return t.recordingUS
+	}
+	if t.haveStart && t.startUS != int64(av.NoPTSValue) {
+		return t.startUS + t.recordingUS
+	}
+	return t.recordingUS
+}
+
+// startTimestampUS returns the absolute packet PTS below which the
+// muxer should drop packets. Mirrors the
+// `dts < of->start_time` drop in `fftools/ffmpeg_mux.c::of_streamcopy`.
+// Returns NoPTSValue when no `-ss` is set on the output.
+func (t outputTiming) startTimestampUS() int64 {
+	if !t.haveStart {
+		return int64(av.NoPTSValue)
+	}
+	return t.startUS
+}
+
 // stopTimestampUS returns the absolute packet PTS at or after which the
 // demuxer should stop emitting, in AV_TIME_BASE units. Mirrors the
 // recording_time check in fftools/ffmpeg_demux.c::input_packet_process():
