@@ -16,7 +16,19 @@ package av
 //                                int width, int height,
 //                                int pix_fmt,
 //                                int tb_num, int tb_den,
-//                                int sar_num, int sar_den) {
+//                                int sar_num, int sar_den,
+//                                int fr_num, int fr_den) {
+//     // frame_rate is only emitted when known (>0/>0). The buffer source
+//     // accepts 0/1 but downstream filters that require constant frame
+//     // rate (e.g. xfade, framerate, minterpolate) read this value via
+//     // ff_filter_link(link)->frame_rate and refuse to configure when it
+//     // is unset. Mirrors what fftools/ffmpeg_filter.c does for input pads.
+//     if (fr_num > 0 && fr_den > 0) {
+//         return snprintf(buf, buf_size,
+//             "video_size=%dx%d:pix_fmt=%d:time_base=%d/%d:pixel_aspect=%d/%d:frame_rate=%d/%d",
+//             width, height, pix_fmt, tb_num, tb_den, sar_num, sar_den,
+//             fr_num, fr_den);
+//     }
 //     return snprintf(buf, buf_size,
 //         "video_size=%dx%d:pix_fmt=%d:time_base=%d/%d:pixel_aspect=%d/%d",
 //         width, height, pix_fmt, tb_num, tb_den, sar_num, sar_den);
@@ -74,6 +86,8 @@ type VideoFilterGraphConfig struct {
 	TBDen      int    // time_base denominator
 	SARNum     int    // sample_aspect_ratio numerator
 	SARDen     int    // sample_aspect_ratio denominator
+	FRNum      int    // frame_rate numerator (0 = unknown, omitted from buffersrc args)
+	FRDen      int    // frame_rate denominator
 	FilterSpec string // e.g. "scale=1280:720"
 }
 
@@ -110,7 +124,8 @@ func NewVideoFilterGraph(cfg VideoFilterGraphConfig) (*FilterGraph, error) {
 	C.make_video_src_args(&argsBuf[0], 512,
 		C.int(cfg.Width), C.int(cfg.Height), C.int(cfg.PixFmt),
 		C.int(cfg.TBNum), C.int(cfg.TBDen),
-		C.int(cfg.SARNum), C.int(cfg.SARDen))
+		C.int(cfg.SARNum), C.int(cfg.SARDen),
+		C.int(cfg.FRNum), C.int(cfg.FRDen))
 
 	cIn := C.CString("in")
 	defer C.free(unsafe.Pointer(cIn))
@@ -286,6 +301,28 @@ func (fg *FilterGraph) OutputChannels(idx int) int {
 	return int(C.av_buffersink_get_channels(fg.bufSinks[idx]))
 }
 
+// OutputFrameRate returns the output frame rate of the video sink at the
+// given index, as (num, den). Returns (0, 0) when the sink does not advertise
+// a frame rate (e.g. audio sinks, or video graphs whose final filter has
+// not propagated frame_rate metadata).
+func (fg *FilterGraph) OutputFrameRate(idx int) (int, int) {
+	if idx < 0 || idx >= len(fg.bufSinks) {
+		return 0, 0
+	}
+	r := C.av_buffersink_get_frame_rate(fg.bufSinks[idx])
+	return int(r.num), int(r.den)
+}
+
+// OutputTimeBase returns the output time base of the sink at the given
+// index, as (num, den). Returns (0, 0) when the index is out of range.
+func (fg *FilterGraph) OutputTimeBase(idx int) (int, int) {
+	if idx < 0 || idx >= len(fg.bufSinks) {
+		return 0, 0
+	}
+	r := C.av_buffersink_get_time_base(fg.bufSinks[idx])
+	return int(r.num), int(r.den)
+}
+
 // SendCommand sends a command to a named filter in the graph.
 // This is used for live parameter reconfiguration (e.g. changing drawtext,
 // volume, etc.) without rebuilding the graph.
@@ -411,6 +448,7 @@ type FilterPadConfig struct {
 	Width, Height, PixFmt int
 	TBNum, TBDen          int
 	SARNum, SARDen        int
+	FRNum, FRDen          int // frame_rate (0/0 = unknown, omitted from buffersrc args)
 
 	// Audio parameters (only when MediaType == MediaTypeAudio).
 	SampleFmt, SampleRate, Channels int
@@ -464,7 +502,8 @@ func NewComplexFilterGraph(cfg ComplexFilterGraphConfig) (*FilterGraph, error) {
 			C.make_video_src_args(&argsBuf[0], 512,
 				C.int(inp.Width), C.int(inp.Height), C.int(inp.PixFmt),
 				C.int(inp.TBNum), C.int(inp.TBDen),
-				C.int(inp.SARNum), C.int(inp.SARDen))
+				C.int(inp.SARNum), C.int(inp.SARDen),
+				C.int(inp.FRNum), C.int(inp.FRDen))
 
 		case MediaTypeAudio:
 			cName := C.CString("abuffer")

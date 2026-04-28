@@ -836,9 +836,21 @@ func (r *graphRunner) handleFilter(ctx context.Context, node *graph.Node, ins []
 		} else {
 			if err := fg.PushFrameAt(msg.padIdx, msg.frame); err != nil {
 				msg.frame.Close()
-				return err
+				// EOF from a buffersrc means the filter has decided it
+				// no longer wants frames on this pad (e.g. xfade after
+				// the transition window has fully consumed an input,
+				// or any "trim"-style filter past its endpoint). Mirror
+				// fftools/ffmpeg_filter.c's behaviour: treat the pad as
+				// drained and continue pulling outputs / feeding other
+				// pads. EAGAIN is also benign — the buffersrc is full
+				// and downstream needs to pull first; we'll get a
+				// pullOutputs() pass below.
+				if !av.IsEOF(err) && !av.IsEAgain(err) {
+					return err
+				}
+			} else {
+				msg.frame.Close()
 			}
-			msg.frame.Close()
 		}
 		if err := pullOutputs(); err != nil {
 			return err
@@ -1333,6 +1345,8 @@ func (r *graphRunner) createFilter(dag *graph.Graph, node *graph.Node) (*av.Filt
 				TBDen:      si.TimeBase[1],
 				SARNum:     1,
 				SARDen:     1,
+				FRNum:      si.FrameRate[0],
+				FRDen:      si.FrameRate[1],
 				FilterSpec: filterSpec,
 			})
 		}
@@ -1361,6 +1375,8 @@ func (r *graphRunner) createFilter(dag *graph.Graph, node *graph.Node) (*av.Filt
 			TBDen:      si.TimeBase[1],
 			SARNum:     1,
 			SARDen:     1,
+			FRNum:      si.FrameRate[0],
+			FRDen:      si.FrameRate[1],
 			SampleFmt:  si.SampleFmt,
 			SampleRate: si.SampleRate,
 			Channels:   si.Channels,
@@ -1701,6 +1717,17 @@ func (r *graphRunner) resolveEdgeStreamInfo(dag *graph.Graph, e *graph.Edge) (av
 				if pf := fg.OutputPixFmt(padIdx); pf >= 0 {
 					si.PixFmt = pf
 				}
+				// Frame-rate metadata advertised by the upstream filter (e.g.
+				// fps, framerate, minterpolate, settb) overrides the source's
+				// guessed rate. Required so downstream filters that demand a
+				// constant frame rate (xfade, framerate, minterpolate) can
+				// configure their buffersrc with the correct value.
+				if frn, frd := fg.OutputFrameRate(padIdx); frn > 0 && frd > 0 {
+					si.FrameRate = [2]int{frn, frd}
+				}
+				if tbn, tbd := fg.OutputTimeBase(padIdx); tbn > 0 && tbd > 0 {
+					si.TimeBase = [2]int{tbn, tbd}
+				}
 			case graph.PortAudio:
 				if sr := fg.OutputSampleRate(padIdx); sr > 0 {
 					si.SampleRate = sr
@@ -1710,6 +1737,9 @@ func (r *graphRunner) resolveEdgeStreamInfo(dag *graph.Graph, e *graph.Edge) (av
 				}
 				if sf := fg.OutputSampleFmt(padIdx); sf >= 0 {
 					si.SampleFmt = sf
+				}
+				if tbn, tbd := fg.OutputTimeBase(padIdx); tbn > 0 && tbd > 0 {
+					si.TimeBase = [2]int{tbn, tbd}
 				}
 			}
 			return si, nil

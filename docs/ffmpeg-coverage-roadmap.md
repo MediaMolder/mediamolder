@@ -28,7 +28,6 @@ Skipped (converted but blocked):
 |---------------------------|----------------------------------------------------------------------------------------|
 | `06_fade_title`           | `drawtext` requires libfreetype build option (missing in current ffstatic build)       |
 | `12_webp`                 | `libwebp_anim` encoder not in current build                                            |
-| `13_xfade`, `14_crossfade_clips` | Complex-filtergraph **frame-rate metadata not exposed** via `FilterPadConfig` (xfade requires constant FPS on both inputs) |
 
 Not convertible (15 / 35) and the underlying capability gap each one
 exposes:
@@ -138,7 +137,7 @@ semantics.
 | Source/virtual filters (`color=`, `testsrc=`, `anullsrc=`, `sine=`, `smptebars=`, `movie=`, `amovie=`) | ❌ | No node kind for "filter that has zero inputs" |
 | Sink filters (`nullsink`, `nullaudiosink`)                  | ❌    | No node kind for "filter that has zero outputs" |
 | Cross-media-type filters (`showwavespic`, `showspectrum*`, `concat=v=1:a=1`) | ⚠️ | The library supports them but the engine assumes 1 media-type per edge; needs explicit "this filter promotes audio→video" handling |
-| Frame-rate / time-base advertised on `FilterPadConfig`      | ❌    | Blocks `xfade`, `interleave`, `framerate`, anything that requires both inputs to be CFR; **see §3.4** |
+| Frame-rate / time-base advertised on `FilterPadConfig`      | ✅    | `FRNum/FRDen` added; `make_video_src_args` emits `frame_rate=N/D`; buffersink rate re-queried after each upstream filter. Unblocked `xfade`/`acrossfade` (13/14 community-scripts now pass). |
 | `-filter_complex_threads`                                   | ❌    | Per-graph thread cap |
 | `-filter_threads`                                           | ⚠️    | Set globally only |
 | Filter quoting (`,`, `;`, `'` in values)                    | ✅    | Fixed in commit `04f1a0c7` (`pipeline/engine.go` `buildFilterSpec`) |
@@ -150,7 +149,7 @@ semantics.
 | `setsar`, `setdar` (SAR/DAR overrides)                      | ⚠️    | Available as filter; not surfaced in encoder color metadata |
 | `arnndn` (RNNoise) and other model-file filters             | ⚠️    | Filter runs if model path is correct; no fixture story for filter-side data files |
 | `zscale` + `tonemap` (HDR)                                  | ⚠️    | Requires libzimg in build; no feature probe |
-| `minterpolate` (motion-compensated interpolation)           | ⚠️    | Available; needs same FrameRate/TimeBase plumbing as xfade |
+| `minterpolate` (motion-compensated interpolation)           | ⚠️    | Same FrameRate/TimeBase plumbing as xfade now landed; remaining work is exposing motion-estimation params via the inspector |
 | Audio channel manipulation: `pan`, `channelsplit`, `channelmap`, `join`, `amerge`, `amix=weights` | ⚠️ | Available as filters; GUI has no per-channel routing UI |
 
 ### 2.4 Encoders
@@ -458,12 +457,19 @@ once §3.1–§3.4 land:
 In priority order, starting from the current `feature/front-end`
 branch:
 
-1. Add `FrameRateNum/Den` and `TimeBaseNum/Den` to
+1. ~~Add `FrameRateNum/Den` and `TimeBaseNum/Den` to
    `av.FilterPadConfig` and propagate through
    `pipeline/handlers.go` complex-filtergraph wiring. Re-enable
    `13_xfade.json` and `14_crossfade_clips.json` in the
    community-scripts test (drop the `t.Skip` guard). Same plumbing
-   unblocks `minterpolate` and `framerate`.
+   unblocks `minterpolate` and `framerate`.~~ **Landed** —
+   `FilterPadConfig` / `VideoFilterGraphConfig` gained `FRNum/FRDen`
+   (TBNum/TBDen were already present), buffersink rate/timebase are
+   re-queried after each upstream filter, and `handleFilter` now
+   tolerates `EAGAIN`/`EOF` on `PushFrameAt` so xfade can close its
+   second input mid-graph. 18 / 20 community scripts pass; only
+   `06_fade_title` (drawtext/libfreetype) and `12_webp` (libwebp)
+   remain skipped.
 2. Build `Output.MaxFramesVideo` / `MaxFramesAudio` plumbing and
    write the missing five community scripts (`extract-frame`,
    `tile-thumbnails`, `scene-images`, `scene-cut`, `scene-cut-to`).

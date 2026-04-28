@@ -97,12 +97,6 @@ func runCommunityScript(t *testing.T, jsonPath, name, inputAbs, imageAbs, audioA
 	if strings.Contains(raw, `"drawtext"`) && !av.FindFilter("drawtext") {
 		t.Skip("drawtext filter not available (rebuild with libfreetype)")
 	}
-	// xfade requires a constant frame rate communicated via FilterPadConfig.FrameRateNum/Den,
-	// which MediaMolder's complex-filtergraph path does not yet expose. Skip until the
-	// FilterPadConfig is extended with frame-rate fields.
-	if strings.Contains(raw, `"xfade"`) {
-		t.Skip("xfade: complex-filtergraph frame-rate metadata not yet exposed (FilterPadConfig missing FrameRateNum/Den)")
-	}
 	if strings.Contains(raw, `"acrossfade"`) && !av.FindFilter("acrossfade") {
 		t.Skip("acrossfade filter not available")
 	}
