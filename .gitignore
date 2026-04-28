@@ -51,9 +51,8 @@ bench-*.txt
 frontend/tsconfig.tsbuildinfo
 
 # Large test media (not committed; fetched separately)
-testdata/dental_video.mp4
-testdata/dental_video_10s.mp4
-testdata/dental_video_30s.mp4
+testdata/BBB_10sec.mp4
+testdata/BBB_30sec.mp4
 
 # Stray pipeline / example processor output files when run from the repo root
 /frame_info.jsonl

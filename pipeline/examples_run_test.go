@@ -15,25 +15,24 @@ import (
 )
 
 // TestExamplesRun executes every JSON job in testdata/examples against
-// testdata/dental_video.mp4.  Examples that require unavailable hardware
+// testdata/BBB_10sec.mp4. Examples that require unavailable hardware
 // encoders, ONNX models, or Linux-only devices are skipped with an
 // explanatory message.
 func TestExamplesRun(t *testing.T) {
-	// Use the 10-second trimmed clip for fast test runs (VP9 and other slow
-	// encoders would time out against the full 18-minute source video).
-	// The clip is created by: ffmpeg -i dental_video.mp4 -t 10 -c copy dental_video_10s.mp4
-	inputAbs, err := filepath.Abs(filepath.Join("..", "testdata", "dental_video_10s.mp4"))
+	// Use the 10-second Big Buck Bunny clip for fast test runs (VP9 and
+	// other slow encoders would time out against a longer source). Fall
+	// back to the 30-second clip if the 10-second one isn't present.
+	inputAbs, err := filepath.Abs(filepath.Join("..", "testdata", "BBB_10sec.mp4"))
 	if err != nil {
 		t.Fatalf("abs path for input: %v", err)
 	}
 	if _, err := os.Stat(inputAbs); err != nil {
-		// Fall back to the full video if the short clip doesn't exist.
-		inputAbs, err = filepath.Abs(filepath.Join("..", "testdata", "dental_video.mp4"))
+		inputAbs, err = filepath.Abs(filepath.Join("..", "testdata", "BBB_30sec.mp4"))
 		if err != nil {
 			t.Fatalf("abs path for input: %v", err)
 		}
 		if _, err := os.Stat(inputAbs); err != nil {
-			t.Fatalf("dental_video_10s.mp4 (or dental_video.mp4) not found: %v", err)
+			t.Fatalf("BBB_10sec.mp4 (or BBB_30sec.mp4) not found: %v", err)
 		}
 	}
 
@@ -85,7 +84,7 @@ func runExample(t *testing.T, jsonPath, name, inputAbs, subsrtAbs, subassAbs str
 	}
 	raw := string(data)
 
-	// --- Skip: requires subtitle stream in input (dental_video.mp4 has none) ---
+	// --- Skip: requires subtitle stream in input (BBB_10sec.mp4 has none) ---
 	if strings.HasPrefix(name, "25_") {
 		t.Skip("requires MKV input with an embedded subtitle track")
 	}
