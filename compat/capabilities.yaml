@@ -1,0 +1,405 @@
+# MediaMolder ↔ FFmpeg capability registry.
+#
+# Machine-readable inventory of every FFmpeg CLI flag (or capability)
+# tracked by the coverage roadmap (docs/ffmpeg-coverage-roadmap.md §2).
+# Each entry pairs an FFmpeg flag with its current MediaMolder coverage
+# status and a pointer at the schema field / code location that handles
+# it.
+#
+# Status legend:
+#   covered      — first-class schema field; round-trip / unit tests exist
+#   partial      — works (often via AVDict passthrough) but not validated,
+#                  not surfaced in the GUI, or only the common case is wired
+#   missing      — no support today
+#   out-of-scope — intentionally not planned (e.g. obsolete flag, dev-only)
+#
+# `schema` is a dotted path into pipeline.Config (Go) or, when a flag has
+# no schema home yet, a code location (`pipeline/handlers.go:foo`) or the
+# string "n/a".
+#
+# This file is the source of truth that the GUI's "unsupported flag"
+# importer report and the compat/ffcli round-trip test selector both
+# consume. Keep it in sync with §2 of the roadmap.
+
+schema_version: 1
+
+sections:
+
+  - id: inputs
+    title: Inputs / demux (roadmap §2.1)
+    flags:
+      - flag: "-i"
+        status: covered
+        schema: pipeline.Input.URL
+        notes: forwarded to avformat_open_input; file/http/rtmp/rtsp/srt/pipe/device
+      - flag: "-ss (input)"
+        status: covered
+        schema: pipeline.Input.Options.ss
+        notes: parsed via av.ParseTime; demuxer-side seek (pipeline/timing.go)
+      - flag: "-t (input)"
+        status: covered
+        schema: pipeline.Input.Options.t
+        notes: per-packet recording_time stop check
+      - flag: "-to (input)"
+        status: covered
+        schema: pipeline.Input.Options.to
+        notes: converted to recording_time = to - max(ss,0)
+      - flag: "-itsoffset"
+        status: missing
+        schema: n/a
+        notes: per-input PTS offset; required for A/V re-sync
+      - flag: "-stream_loop"
+        status: missing
+        schema: n/a
+      - flag: "-readrate / -re"
+        status: missing
+        schema: n/a
+        notes: live-stream restreaming
+      - flag: "-framerate / -r (input)"
+        status: partial
+        schema: pipeline.Input.Options
+        notes: AVDict passthrough; not validated
+      - flag: "-pix_fmt / -video_size / -pixel_format (input)"
+        status: partial
+        schema: pipeline.Input.Options
+      - flag: "-f (input)"
+        status: partial
+        schema: pipeline.Input.Kind
+        notes: lavfi covered via Input.Kind; arbitrary forced demuxers (rawvideo,s16le) not yet first-class
+      - flag: "-thread_queue_size"
+        status: partial
+        schema: pipeline.Input.Options
+      - flag: "-accurate_seek / -noaccurate_seek / -seek_timestamp"
+        status: missing
+        schema: n/a
+      - flag: "-protocol_whitelist"
+        status: partial
+        schema: pipeline.Input.Options
+        notes: should be elevated for security review
+      - flag: "-f lavfi"
+        status: covered
+        schema: pipeline.Input.Kind
+        notes: anullsrc/color/sine/testsrc/smptebars; libavdevice linked + avdevice_register_all() at init
+      - flag: "image2 glob (-i 'frames/*.png')"
+        status: partial
+        schema: pipeline.Input.Options
+      - flag: "concat demuxer (listfile)"
+        status: missing
+        schema: n/a
+        notes: "today users build a concat filter graph; no concat: input kind"
+      - flag: "-f avfoundation / dshow / v4l2 (capture)"
+        status: partial
+        schema: pipeline.Input.Options
+      - flag: "-hwaccel / -hwaccel_device / -hwaccel_output_format"
+        status: partial
+        schema: pipeline.Config.GlobalOptions.HardwareAccel
+        notes: global only; not per-input
+
+  - id: stream_selection
+    title: Stream selection / mapping (roadmap §2.2)
+    flags:
+      - flag: "default automatic stream selection"
+        status: covered
+        schema: pipeline.Input.Streams
+      - flag: "-map 0:v:0 / -map 1:a:0"
+        status: partial
+        schema: pipeline.Input.Streams[].Track
+      - flag: "-map -0:s / -map 0:?"
+        status: missing
+        schema: n/a
+        notes: optional / negative selector
+      - flag: "-map p:N (program selection)"
+        status: missing
+        schema: n/a
+        notes: MPEG-TS multi-program inputs
+      - flag: "-map_metadata / -map_chapters"
+        status: missing
+        schema: n/a
+        notes: see §2.5
+      - flag: "-vn / -an / -sn / -dn (per output)"
+        status: partial
+        schema: graph edges
+      - flag: "split / asplit reuse of one decoded stream"
+        status: covered
+        schema: pipeline.GraphDef.Edges
+      - flag: "attachment streams"
+        status: missing
+        schema: n/a
+
+  - id: filtergraph
+    title: Filtergraph (roadmap §2.3)
+    flags:
+      - flag: "simple filter chain (1-in,1-out)"
+        status: covered
+        schema: pipeline.NodeDef
+      - flag: "complex filtergraph (N-in,M-out)"
+        status: covered
+        schema: pipeline.GraphDef
+      - flag: "multi-input filters (overlay/concat/hstack/amix)"
+        status: covered
+        schema: pipeline.GraphDef.Edges
+      - flag: "multi-output filters (split/asplit/tile)"
+        status: covered
+        schema: pipeline.GraphDef.Edges
+      - flag: "source filters (color/testsrc/anullsrc/sine/smptebars)"
+        status: partial
+        schema: pipeline.Input.Kind
+        notes: addressable via Input.Kind=lavfi; no in-graph node kind for zero-input filters
+      - flag: "sink filters (nullsink/nullaudiosink)"
+        status: missing
+        schema: n/a
+      - flag: "cross-media-type filters (showwavespic/showspectrum/concat=v=1:a=1)"
+        status: partial
+        schema: n/a
+        notes: engine assumes 1 media-type per edge
+      - flag: "FrameRate/TimeBase on FilterPadConfig"
+        status: covered
+        schema: av.FilterPadConfig.FRNum/FRDen
+        notes: unblocked xfade/acrossfade
+      - flag: "-filter_complex_threads"
+        status: missing
+        schema: n/a
+      - flag: "-filter_threads"
+        status: partial
+        schema: n/a
+      - flag: "filter quoting (, ; ' in values)"
+        status: covered
+        schema: pipeline/engine.go:buildFilterSpec
+      - flag: "hwupload / hwdownload / hwmap"
+        status: partial
+        schema: n/a
+      - flag: "filter expression engine (t,n,tw,th,enable=…)"
+        status: partial
+        schema: n/a
+        notes: strings reach libavfilter intact; no GUI authoring/validation
+      - flag: "setsar / setdar"
+        status: partial
+        schema: n/a
+      - flag: "arnndn (model-file filter)"
+        status: partial
+        schema: n/a
+      - flag: "zscale + tonemap (HDR)"
+        status: partial
+        schema: n/a
+        notes: requires libzimg; no feature probe
+      - flag: "minterpolate"
+        status: partial
+        schema: n/a
+        notes: FrameRate plumbing landed; remaining work is inspector params
+      - flag: "audio channel ops (pan/channelsplit/channelmap/join/amerge/amix)"
+        status: partial
+        schema: n/a
+
+  - id: encoders
+    title: Encoders (roadmap §2.4)
+    flags:
+      - flag: "-c:v / -vcodec"
+        status: covered
+        schema: pipeline.Output.CodecVideo
+      - flag: "-c:a / -acodec"
+        status: covered
+        schema: pipeline.Output.CodecAudio
+      - flag: "-c:s / -scodec"
+        status: covered
+        schema: pipeline.Output.CodecSubtitle
+      - flag: "-c copy / -c:v copy / -c:a copy"
+        status: covered
+        schema: graph.KindCopy
+      - flag: "-preset / -crf / -tune / -profile / -level / -g / -bf / -refs"
+        status: covered
+        schema: pipeline.Output.EncoderParamsVideo
+        notes: forwarded to avcodec_open2 via AVDict
+      - flag: "-x264-params / -x265-params / -svtav1-params / -aom-params"
+        status: covered
+        schema: pipeline.Output.EncoderParamsVideo
+      - flag: "-b:v / -b:a / -maxrate / -minrate / -bufsize"
+        status: covered
+        schema: pipeline.Output.EncoderParamsVideo / Audio
+      - flag: "hardware encoders (NVENC/QSV/VAAPI/VideoToolbox/AMF)"
+        status: covered
+        schema: av/hwencode.go
+      - flag: "-pass 1/2 -passlogfile (two-pass video)"
+        status: missing
+        schema: n/a
+      - flag: "two-pass loudnorm shuttle"
+        status: missing
+        schema: n/a
+        notes: distinct from generic two-pass; pass-1 JSON → pass-2 AVOpts
+      - flag: "lossless intermediates (FFV1/ProRes/DNxHD/HuffYUV)"
+        status: partial
+        schema: pipeline.Output.CodecVideo
+        notes: encoder availability depends on FFmpeg build; no codec↔container validation
+      - flag: "-fps_mode (cfr/vfr/passthrough/drop)"
+        status: missing
+        schema: n/a
+        notes: single biggest cause of A/V drift
+      - flag: "-async N (audio resync)"
+        status: missing
+        schema: n/a
+      - flag: "-force_key_frames"
+        status: missing
+        schema: n/a
+      - flag: "per-stream encoder options (-b:v:0 ≠ -b:v:1)"
+        status: missing
+        schema: n/a
+        notes: ABR ladder per-stream override
+      - flag: "color metadata (-color_range/-color_primaries/-color_trc/-colorspace)"
+        status: partial
+        schema: pipeline.Output.EncoderParamsVideo
+      - flag: "HDR10 mastering display + CLL metadata"
+        status: missing
+        schema: n/a
+      - flag: "Dolby Vision RPU passthrough"
+        status: missing
+        schema: n/a
+      - flag: "-aspect"
+        status: missing
+        schema: n/a
+      - flag: "-enc_time_base"
+        status: missing
+        schema: n/a
+      - flag: "-field_order (interlaced encode)"
+        status: missing
+        schema: n/a
+      - flag: "-fpre / -vpre (encoder presets from disk)"
+        status: missing
+        schema: n/a
+
+  - id: muxers
+    title: Muxers / outputs (roadmap §2.5)
+    flags:
+      - flag: "container auto-detect from extension"
+        status: covered
+        schema: pipeline.Output.URL
+      - flag: "-f (force format on output)"
+        status: covered
+        schema: pipeline.Output.Format
+      - flag: "-ss / -t / -to (output-side)"
+        status: partial
+        schema: pipeline.Output.Options
+        notes: filter-level cut today; output-side trim with -copyts not separately modelled
+      - flag: "-shortest"
+        status: missing
+        schema: n/a
+      - flag: "-fs (file size limit)"
+        status: missing
+        schema: n/a
+      - flag: "-frames:v / -frames:a"
+        status: covered
+        schema: pipeline.Output.MaxFramesVideo / MaxFramesAudio
+      - flag: "-metadata key=value (global)"
+        status: missing
+        schema: n/a
+      - flag: "-metadata:s:v:0 (per-stream)"
+        status: missing
+        schema: n/a
+      - flag: "-map_metadata / -map_chapters"
+        status: missing
+        schema: n/a
+      - flag: "chapter writing"
+        status: missing
+        schema: n/a
+      - flag: "attachments (fonts for ASS/cover art)"
+        status: missing
+        schema: n/a
+      - flag: "cover art / thumbnail embed"
+        status: missing
+        schema: n/a
+      - flag: "multiple outputs in one pipeline"
+        status: covered
+        schema: pipeline.Config.Outputs
+      - flag: "tee muxer (single-pass multi-format)"
+        status: missing
+        schema: n/a
+        notes: largest single missing output feature
+      - flag: "HLS muxer (hls_time/hls_playlist_type/EXT-X-MAP/byte-range)"
+        status: partial
+        schema: pipeline.Output.Options
+      - flag: "DASH muxer"
+        status: partial
+        schema: pipeline.Output.Options
+      - flag: "segment muxer / fragmented MP4 (CMAF)"
+        status: partial
+        schema: pipeline.Output.Options
+      - flag: "movflags=+faststart"
+        status: covered
+        schema: pipeline.Output.Options.movflags
+      - flag: "-muxdelay / -muxpreload / -copyts / -start_at_zero / -avoid_negative_ts"
+        status: missing
+        schema: n/a
+      - flag: "-bsf:v / -bsf:a (single)"
+        status: covered
+        schema: pipeline.Output.BSFVideo / BSFAudio
+      - flag: "BSF chains (-bsf:v 'h264_mp4toannexb,h264_redundant_pps')"
+        status: partial
+        schema: pipeline.Output.BSFVideo
+
+  - id: subtitles
+    title: Subtitles (roadmap §2.6)
+    flags:
+      - flag: "passthrough (text and bitmap)"
+        status: covered
+        schema: pipeline.Output.CodecSubtitle
+      - flag: "burn-in via subtitles= filter"
+        status: covered
+        schema: pipeline.NodeDef
+        notes: requires libass in the build
+      - flag: "codec conversion (mov_text↔srt↔ass↔webvtt)"
+        status: partial
+        schema: pipeline.Output.CodecSubtitle
+      - flag: "-sub_charenc"
+        status: missing
+        schema: n/a
+      - flag: "forced / hearing-impaired flags"
+        status: missing
+        schema: n/a
+      - flag: "karaoke ASS effects, fontconfig integration"
+        status: partial
+        schema: pipeline.NodeDef
+
+  - id: devices_advanced
+    title: Devices, networking, advanced (roadmap §2.7)
+    flags:
+      - flag: "RTP/RTSP/RTMP/SRT/RIST/NDI"
+        status: partial
+        schema: pipeline.Input.URL
+        notes: works through libavformat URL handlers; no schema validation
+      - flag: "screen capture (avfoundation/gdigrab/x11grab)"
+        status: partial
+        schema: pipeline.Input.Options
+      - flag: "Decklink SDI in/out"
+        status: partial
+        schema: pipeline.Input.Options
+      - flag: "ffprobe equivalence"
+        status: partial
+        schema: internal/gui/probe.go
+      - flag: "ZMQ live filter parameter updates"
+        status: missing
+        schema: n/a
+      - flag: "-init_hw_device (multi-device graphs)"
+        status: missing
+        schema: n/a
+      - flag: "scale_npp vs scale_cuda per-filter availability probe"
+        status: partial
+        schema: n/a
+      - flag: "-f rawvideo (first-class raw-stream input)"
+        status: partial
+        schema: pipeline.Input.Options
+
+  - id: globals
+    title: Global / misc
+    flags:
+      - flag: "-y / -n (overwrite)"
+        status: out-of-scope
+        schema: n/a
+        notes: handled by the runtime, not the schema
+      - flag: "-loglevel"
+        status: out-of-scope
+        schema: observability/
+      - flag: "-stats / -nostats"
+        status: out-of-scope
+        schema: observability/
+      - flag: "-progress"
+        status: covered
+        schema: GET /api/events/{jobId}
+        notes: SSE progress stream

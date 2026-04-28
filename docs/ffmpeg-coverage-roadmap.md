@@ -503,6 +503,23 @@ branch:
 4. Land the **capability registry** (a YAML file under `compat/` that
    lists every ffmpeg flag with status + schema-pointer) and the
    first batch of `compat/ffcli` round-trip tests.
+   ~~**Landed.**~~ `compat/capabilities.yaml` now ships with 105
+   entries seeded from §2.1–§2.7 (30 covered, 35 partial, 37
+   missing, 3 out-of-scope), loaded by `compat.LoadRegistry` via
+   `embed`; `compat/registry_test.go` enforces well-formedness,
+   valid statuses, all required sections, and a non-`n/a` schema
+   pointer for every `covered` flag. The first batch of round-trip
+   tests lives at `compat/ffcli/roundtrip_test.go`: for each
+   command template the harness runs both `ffmpeg(1)` and the
+   parsed `pipeline.Config` end-to-end, then `ffprobe(1)`s both
+   outputs and asserts identical stream counts, per-stream codec /
+   resolution, and format duration within 0.5s. Initial cases
+   cover stream-copy MP4→MKV, `-c:v copy -c:a aac` transcode,
+   input-side `-ss 1 -t 2 -c copy`, and `-c copy -f matroska`
+   forced-format remux; the suite is skipped (not failed) when
+   `ffmpeg`/`ffprobe` are missing from `PATH` so the default
+   `go test ./...` run stays usable on machines without the CLI
+   installed alongside the libraries.
 5. Open the schema-evolution work for chapter and per-stream
    metadata IO (`KindMetadataReader`, `KindMetadataWriter`,
    `Output.Chapters`).
