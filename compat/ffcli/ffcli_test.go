@@ -211,3 +211,42 @@ func TestParseTimingFlagsAttachToInput(t *testing.T) {
 		t.Errorf("Outputs[0].Options leaked: got %v, want nil", cfg.Outputs[0].Options)
 	}
 }
+
+// TestParseFPSModeFlag verifies that `-fps_mode <mode>` lands on
+// Output.FPSMode (Wave 1 #1, roadmap §6.1).
+func TestParseFPSModeFlag(t *testing.T) {
+	cases := []struct {
+		flag string
+		want string
+	}{
+		{"-fps_mode passthrough", "passthrough"},
+		{"-fps_mode cfr", "cfr"},
+		{"-fps_mode vfr", "vfr"},
+		{"-fps_mode drop", "drop"},
+		// Legacy `-vsync` alias rewrites: 0=passthrough, 1=cfr, 2=vfr,
+		// `auto`/`-1`=passthrough.
+		{"-vsync 0", "passthrough"},
+		{"-vsync 1", "cfr"},
+		{"-vsync 2", "vfr"},
+		{"-vsync cfr", "cfr"},
+		{"-vsync auto", "passthrough"},
+		{"-vsync drop", "drop"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.flag, func(t *testing.T) {
+			cfg, err := Parse("ffmpeg -i in.mp4 -c:v libx264 " + tc.flag + " out.mp4")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := cfg.Outputs[0].FPSMode; got != tc.want {
+				t.Errorf("FPSMode = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestParseFPSModeRejectsUnknownValue(t *testing.T) {
+	if _, err := Parse("ffmpeg -i in.mp4 -fps_mode wibble out.mp4"); err == nil {
+		t.Fatal("expected error for unknown -fps_mode value, got nil")
+	}
+}

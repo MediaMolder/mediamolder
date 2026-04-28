@@ -223,5 +223,18 @@ func (e *EncoderContext) TimeBase() [2]int {
 	return [2]int{int(e.p.time_base.num), int(e.p.time_base.den)}
 }
 
+// FrameRate returns the encoder context's configured framerate as
+// {num, den}. Returns {0,0} when unset (typical for audio encoders).
+func (e *EncoderContext) FrameRate() [2]int {
+	return [2]int{int(e.p.framerate.num), int(e.p.framerate.den)}
+}
+
+// MediaType returns AVMEDIA_TYPE_VIDEO / AVMEDIA_TYPE_AUDIO / etc.
+// for the encoder's codec. Used by pipeline-level frame-rate
+// enforcement (`Output.FPSMode`) to gate CFR logic to video streams.
+func (e *EncoderContext) MediaType() MediaType {
+	return MediaType(e.p.codec_type)
+}
+
 // raw returns the underlying C pointer. For use within the av package only.
 func (e *EncoderContext) raw() *C.AVCodecContext { return e.p }

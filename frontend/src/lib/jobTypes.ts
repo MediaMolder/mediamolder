@@ -93,6 +93,16 @@ export interface Output {
    *  tile-thumbnails and scene-image jobs. */
   max_frames_video?: number;
   max_frames_audio?: number;
+  /** Per-output video frame-rate enforcement. Mirrors ffmpeg `-fps_mode`
+   *  (and the legacy `-vsync` alias rewritten by compat/ffcli).
+   *  - `"passthrough"` / omitted: pass frames through unchanged.
+   *  - `"vfr"`: drop frames whose PTS is <= the previously emitted PTS.
+   *  - `"cfr"`: renumber PTS at constant 1/framerate intervals, duplicating
+   *    into forward gaps and dropping frames that arrive too soon. The
+   *    single biggest cure for HLS/DASH player A/V drift.
+   *  - `"drop"`: like `vfr` but also drops near-duplicates within half a
+   *    frame duration of the previous emission. */
+  fps_mode?: "" | "passthrough" | "vfr" | "cfr" | "drop";
   /** Container-level metadata key/value pairs (`-metadata key=value`).
    *  Replaces any metadata mapped from inputs via `input.map_metadata`. */
   metadata?: Record<string, string>;

@@ -38,6 +38,7 @@ type parser struct {
 	audioFilters string
 	bsfVideo     string
 	bsfAudio     string
+	fpsMode      string
 	hwAccel      string
 	hwDevice     string
 	hwOutFmt     string
@@ -174,6 +175,28 @@ func (p *parser) parse() (*pipeline.Config, error) {
 				return nil, fmt.Errorf("-bsf:a requires an argument")
 			}
 			p.bsfAudio = p.next()
+		case arg == "-fps_mode" || arg == "-vsync":
+			// FFmpeg modern: -fps_mode {passthrough|cfr|vfr|drop|auto}.
+			// FFmpeg legacy: -vsync {0|1|2|drop|passthrough|cfr|vfr|auto}.
+			// We rewrite the numeric/auto aliases to the modern names.
+			// `auto` falls back to passthrough (ffmpeg's actual default
+			// depends on the muxer; passthrough is the safest no-op).
+			if !p.hasMore() {
+				return nil, fmt.Errorf("%s requires an argument", arg)
+			}
+			v := p.next()
+			switch v {
+			case "0", "passthrough", "auto", "-1":
+				p.fpsMode = "passthrough"
+			case "1", "cfr":
+				p.fpsMode = "cfr"
+			case "2", "vfr":
+				p.fpsMode = "vfr"
+			case "drop":
+				p.fpsMode = "drop"
+			default:
+				return nil, fmt.Errorf("%s: unknown value %q (want passthrough|cfr|vfr|drop|auto|0|1|2)", arg, v)
+			}
 		case arg == "-hwaccel":
 			if !p.hasMore() {
 				return nil, fmt.Errorf("-hwaccel requires an argument")
@@ -250,6 +273,9 @@ func (p *parser) parse() (*pipeline.Config, error) {
 			}
 			if p.bsfAudio != "" {
 				out.BSFAudio = p.bsfAudio
+			}
+			if p.fpsMode != "" {
+				out.FPSMode = p.fpsMode
 			}
 			if f, ok := p.globalOpts["format"]; ok {
 				out.Format = f

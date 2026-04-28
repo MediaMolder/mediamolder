@@ -231,6 +231,13 @@ func expandImplicitEncoders(cfg *Config, def *graph.Def) {
 			}
 			nodeParams[k] = v
 		}
+		// Stash FPSMode on the synthetic encoder node for video edges so
+		// handleEncoder's per-frame renumberer can consume it. The double-
+		// underscore prefix matches the `__enc__` convention and keeps the
+		// key out of the AVDictionary path via encoderReservedParams.
+		if e.Type == "video" && out.FPSMode != "" {
+			nodeParams["__fps_mode"] = out.FPSMode
+		}
 		if codec == "copy" {
 			nodeType = "copy"
 			nodeParams = nil
@@ -940,6 +947,18 @@ func (r *graphRunner) handleEncoder(ctx context.Context, node *graph.Node, ins [
 
 	in := ins[0]
 
+	// Per-output frame-rate enforcement (Output.FPSMode → __fps_mode on the
+	// synthetic encoder node by expandImplicitEncoders). Only video frames
+	// flow through the rewriter; audio/subtitle encoders see an empty mode
+	// which degrades to passthrough.
+	var fpsRW *fpsRewriter
+	if enc.MediaType() == av.MediaTypeVideo {
+		mode := paramString(node.Params, "__fps_mode")
+		if mode != "" && mode != "passthrough" {
+			fpsRW = newFPSRewriter(mode, computeFrameDurationTB(enc.FrameRate(), enc.TimeBase()))
+		}
+	}
+
 	// Fan out each encoded packet to every downstream channel. With one
 	// output the packet is forwarded as-is; with N outputs the packet is
 	// av_packet_clone'd N-1 times so each consumer (muxer) owns an
@@ -987,9 +1006,67 @@ func (r *graphRunner) handleEncoder(ctx context.Context, node *graph.Node, ins [
 		}
 	}
 
+	// sendOne pushes a single frame through the encoder and drains any
+	// resulting packets. Used by both the passthrough path and the CFR
+	// duplication loop.
+	sendOne := func(f *av.Frame) error {
+		if err := enc.SendFrame(f); err != nil {
+			return err
+		}
+		return drainEncoder()
+	}
+
 	for v := range in {
 		f := v.(*av.Frame)
 		frameStart := time.Now()
+
+		if fpsRW != nil {
+			emit, basePTS, drop := fpsRW.rewrite(f.PTS())
+			if drop || emit == 0 {
+				f.Close()
+				r.pipe.Metrics().Node(node.ID).RecordLatency(time.Since(frameStart))
+				continue
+			}
+			// Fast path: single emission, no clone.
+			if emit == 1 {
+				f.SetPTS(basePTS)
+				if err := sendOne(f); err != nil {
+					f.Close()
+					return err
+				}
+				f.Close()
+				r.pipe.Metrics().Node(node.ID).RecordLatency(time.Since(frameStart))
+				continue
+			}
+			// CFR forward-gap fill: emit `emit` copies at basePTS,
+			// basePTS+dur, basePTS+2*dur, ... The final copy reuses f
+			// (and is closed at the end); intermediate copies are
+			// av_frame_clone'd.
+			dur := fpsRW.frameDurTB
+			for i := 0; i < emit-1; i++ {
+				dup, err := f.Clone()
+				if err != nil {
+					f.Close()
+					return err
+				}
+				dup.SetPTS(basePTS + int64(i)*dur)
+				if err := sendOne(dup); err != nil {
+					dup.Close()
+					f.Close()
+					return err
+				}
+				dup.Close()
+			}
+			f.SetPTS(basePTS + int64(emit-1)*dur)
+			if err := sendOne(f); err != nil {
+				f.Close()
+				return err
+			}
+			f.Close()
+			r.pipe.Metrics().Node(node.ID).RecordLatency(time.Since(frameStart))
+			continue
+		}
+
 		if err := enc.SendFrame(f); err != nil {
 			f.Close()
 			return err
@@ -1557,6 +1634,10 @@ var encoderReservedParams = map[string]bool{
 	"bitrate":     true,
 	"threads":     true,
 	"thread_type": true,
+	// `__fps_mode` is consumed by handleEncoder's per-frame renumberer,
+	// not by libavcodec. Keep it out of the AVDictionary forwarded to
+	// avcodec_open2 so the encoder doesn't reject the unknown option.
+	"__fps_mode": true,
 }
 
 // collectEncoderExtraOpts returns a map of AVDictionary options to forward to

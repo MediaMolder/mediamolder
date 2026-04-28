@@ -230,9 +230,9 @@ sections:
         schema: pipeline.Output.CodecVideo
         notes: encoder availability depends on FFmpeg build; no codec↔container validation
       - flag: "-fps_mode (cfr/vfr/passthrough/drop)"
-        status: missing
-        schema: n/a
-        notes: single biggest cause of A/V drift
+        status: covered
+        schema: pipeline.Output.FPSMode
+        notes: single biggest cause of A/V drift; -vsync is rewritten to -fps_mode by compat/ffcli
       - flag: "-async N (audio resync)"
         status: missing
         schema: n/a

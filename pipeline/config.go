@@ -137,6 +137,29 @@ type Output struct {
 	// extract-frame, tile-thumbnails, and scene-image patterns.
 	MaxFramesVideo int `json:"max_frames_video,omitempty"`
 	MaxFramesAudio int `json:"max_frames_audio,omitempty"`
+	// FPSMode controls how the engine reconciles incoming video frame
+	// PTS with the encoder's target framerate (the value advertised by
+	// the upstream filter graph or `EncoderParamsVideo.framerate`).
+	// Mirrors FFmpeg's `-fps_mode` flag (and the legacy `-vsync` alias
+	// the `compat/ffcli` importer rewrites). Applies only to video
+	// streams; ignored for audio and subtitles.
+	//
+	// Recognised values:
+	//   "" (default) / "passthrough" — pass frames through untouched;
+	//                                   identical to FFmpeg `-fps_mode passthrough`.
+	//   "vfr"                       — pass frames through, but drop any frame
+	//                                   whose PTS is <= the previously emitted
+	//                                   PTS (i.e. enforce strict monotonicity).
+	//   "cfr"                       — renumber frame PTS at constant 1/framerate
+	//                                   intervals; duplicate the previous frame
+	//                                   into gaps and drop frames that arrive
+	//                                   sooner than half a duration after the
+	//                                   last emission. The single biggest cure
+	//                                   for HLS/DASH player A/V drift.
+	//   "drop"                      — like vfr but also drops duplicates of the
+	//                                   previous frame (PTS within ±half a
+	//                                   duration window).
+	FPSMode string `json:"fps_mode,omitempty"`
 	// Metadata is the container-level metadata table written into the
 	// output (`-metadata key=value` in FFmpeg). When non-nil it
 	// completely replaces any metadata mapped from inputs via
@@ -252,6 +275,11 @@ func validate(cfg *Config) error {
 		seen[out.ID] = true
 		if out.URL == "" {
 			return fmt.Errorf("output %q missing url", out.ID)
+		}
+		switch out.FPSMode {
+		case "", "passthrough", "vfr", "cfr", "drop":
+		default:
+			return fmt.Errorf("output %q: invalid fps_mode %q (want passthrough|vfr|cfr|drop)", out.ID, out.FPSMode)
 		}
 	}
 	// Edge types must be valid.

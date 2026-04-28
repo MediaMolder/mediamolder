@@ -163,7 +163,7 @@ semantics.
 | Two-pass encoding (`-pass 1/2 -passlogfile`)                      | ❌    | No `pass` field in schema; not implemented in runner |
 | **Two-pass `loudnorm`** (measured-I/TP/LRA/thresh/offset feed-forward) | ❌ | Distinct inter-pass shuttle from video two-pass; pass 1 parses JSON from stderr, pass 2 consumes it. Frequently requested. |
 | **Lossless intermediate codecs** (FFV1, ProRes, DNxHD/HR, HuffYUV) for editorial round-trips | ⚠️ | Encoders exist if FFmpeg compiled with them; no schema validation of codec ↔ container compatibility |
-| `-fps_mode` (`cfr`/`vfr`/`passthrough`/`drop`) (formerly `-vsync`) | ❌    | Required for stable broadcast/HLS output; single biggest cause of A/V drift |
+| `-fps_mode` (`cfr`/`vfr`/`passthrough`/`drop`) (formerly `-vsync`) | ✅    | `Output.FPSMode`; per-frame renumber/drop/duplicate logic in `pipeline/fps_mode.go` consumed by `handleEncoder` for video streams. `compat/ffcli` rewrites the legacy `-vsync` numeric/auto aliases. |
 | `-async N` (audio resync via resampler)                            | ❌    | Audio-side counterpart to `fps_mode` |
 | `-force_key_frames "expr:gte(t,n_forced*2)"` and chapter-driven IDR placement | ❌ | |
 | Per-stream encoder options (`-b:v:0` ≠ `-b:v:1` in ABR ladders)   | ❌    | Schema has one `EncoderParamsVideo`, no per-stream override |
