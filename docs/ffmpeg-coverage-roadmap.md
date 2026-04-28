@@ -164,7 +164,7 @@ semantics.
 | **Two-pass `loudnorm`** (measured-I/TP/LRA/thresh/offset feed-forward) | ❌ | Distinct inter-pass shuttle from video two-pass; pass 1 parses JSON from stderr, pass 2 consumes it. Frequently requested. |
 | **Lossless intermediate codecs** (FFV1, ProRes, DNxHD/HR, HuffYUV) for editorial round-trips | ⚠️ | Encoders exist if FFmpeg compiled with them; no schema validation of codec ↔ container compatibility |
 | `-fps_mode` (`cfr`/`vfr`/`passthrough`/`drop`) (formerly `-vsync`) | ✅    | `Output.FPSMode`; per-frame renumber/drop/duplicate logic in `pipeline/fps_mode.go` consumed by `handleEncoder` for video streams. `compat/ffcli` rewrites the legacy `-vsync` numeric/auto aliases. |
-| `-async N` (audio resync via resampler)                            | ❌    | Audio-side counterpart to `fps_mode` |
+| `-async N` (audio resync via resampler)                            | ✅    | `Output.AudioSync`; `pipeline.spliceAudioSyncForOutputs` injects an `aresample=async=N[:first_pts=0 when N==1]` filter node in front of every audio encoder feeding the output. `compat/ffcli` accepts the legacy flag. |
 | `-force_key_frames "expr:gte(t,n_forced*2)"` and chapter-driven IDR placement | ❌ | |
 | Per-stream encoder options (`-b:v:0` ≠ `-b:v:1` in ABR ladders)   | ❌    | Schema has one `EncoderParamsVideo`, no per-stream override |
 | Color metadata on encoder (`-color_range`, `-color_primaries`, `-color_trc`, `-colorspace`, `-chroma_sample_location`) | ⚠️ | Forwardable as AVOpts; not first-class, not validated |
@@ -746,17 +746,24 @@ and rewrite it.
 | `-vsync` (legacy alias) | Deprecated upstream. Implement only the modern `-fps_mode` (Wave 1 #1). Importer rewrites; no schema field. |
 | `-deinterlace` (legacy global flag) | Deprecated upstream since 2013 in favour of `yadif`/`bwdif`/`w3fdif` filters. Importer rewrites to `yadif`. No schema field. |
 | `-target` (DVD/VCD/PAL presets) | Targets formats that are commercially dead. Importer can expand the macro; no GUI surface. |
-| `-psnr`, `-ssim` (encoder side) | Diagnostic flags better served by MediaMolder's own observability bus. Don't shadow in schema. |
-| `-dump`, `-hex`, `-debug_ts` | Pure debugging; route to MediaMolder's logging instead. |
 | `ffplay`-style interactive viewers (`scopes`, `ebu-meter`) | Already out-of-scope per §1. GUI may grow live monitoring but shouldn't pretend to be `ffplay`. |
 | `-xerror`, `-stats`, `-stats_period` | MediaMolder has its own progress/error event bus; don't mirror the CLI flags. |
 | `clip-time`, `scene-time`, `sexagesimal-time` (CLI utilities) | Move to a future `mediamolder util` subcommand if demand surfaces. Not engine work. |
 | `-bsf` shorthand without `:stream_specifier` | Importer normalises to `-bsf:v`. No deprecated form in schema. |
 | `-aspect` (encoder side) | Subsumed by `Output.SAR` / `Output.DAR` (Wave 3 #15). Don't ship two ways to spell the same thing. |
-| `-tune <macro>` for x264/x265 when codec-specific `*-params` already covers it | Importer flattens `-tune` into the relevant `*-params` string. |
 | `image2`'s `%d`-pattern globbing for **inputs** | Already side-stepped by `mjpeg` muxer choice in §5#2. For inputs, accept only explicit `-pattern_type glob` / `sequence`; reject `printf`-style patterns at schema validation as a footgun. |
 | Decklink / NDI **GUI** wizards | Keep the URL handlers (no work needed) but don't build dedicated inspectors until customer demand. AVDict passthrough is acceptable indefinitely for these. |
 | `-streamid`, `-bitexact`, `-tag` | Edge cases for spec-conformance testing. Ship as AVDict, never promote. |
+
+#### 6.8.1 Rejected deprecations (refactor as needed)
+
+These parameters were suggested to be deprecated, but should be supported and refactored for mediamolder.
+| Flag(s) | Rationale |
+|---|---|
+| `-psnr`, `-ssim` (encoder side) | Tells encoder to calculate these distortion metrics while encoding (which is much more efficient than calculating after encoding) |
+| `-tune <macro>` for x264/x265 when codec-specific `*-params` already covers it | Importer flattens `-tune` into the relevant `*-params` string. |
+| `-dump`, `-hex`, `-debug_ts` | Pure debugging; route to MediaMolder's logging instead. |
+
 
 ### 6.9 Recommended starting point
 

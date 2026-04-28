@@ -5,6 +5,7 @@ package ffcli
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/MediaMolder/MediaMolder/pipeline"
@@ -39,6 +40,7 @@ type parser struct {
 	bsfVideo     string
 	bsfAudio     string
 	fpsMode      string
+	audioSync    int
 	hwAccel      string
 	hwDevice     string
 	hwOutFmt     string
@@ -175,6 +177,22 @@ func (p *parser) parse() (*pipeline.Config, error) {
 				return nil, fmt.Errorf("-bsf:a requires an argument")
 			}
 			p.bsfAudio = p.next()
+		case arg == "-async":
+			// Legacy FFmpeg audio-sync flag. The FFmpeg 8.0 CLI removed
+			// it in favour of `-af aresample=async=N`; we accept it for
+			// import compatibility and route the value through
+			// pipeline.Output.AudioSync, which the runtime turns into
+			// an aresample filter splice in front of the audio encoder.
+			// Negative / non-numeric values are rejected.
+			if !p.hasMore() {
+				return nil, fmt.Errorf("-async requires an argument")
+			}
+			v := p.next()
+			n, err := strconv.Atoi(v)
+			if err != nil || n < 0 {
+				return nil, fmt.Errorf("-async: invalid value %q (want non-negative integer)", v)
+			}
+			p.audioSync = n
 		case arg == "-fps_mode" || arg == "-vsync":
 			// FFmpeg modern: -fps_mode {passthrough|cfr|vfr|drop|auto}.
 			// FFmpeg legacy: -vsync {0|1|2|drop|passthrough|cfr|vfr|auto}.
@@ -276,6 +294,9 @@ func (p *parser) parse() (*pipeline.Config, error) {
 			}
 			if p.fpsMode != "" {
 				out.FPSMode = p.fpsMode
+			}
+			if p.audioSync != 0 {
+				out.AudioSync = p.audioSync
 			}
 			if f, ok := p.globalOpts["format"]; ok {
 				out.Format = f

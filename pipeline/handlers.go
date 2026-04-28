@@ -47,6 +47,7 @@ func configToGraphDef(cfg *Config) *graph.Def {
 	}
 	expandImplicitEncoders(cfg, def)
 	spliceAudioAdaptersForEncoders(def)
+	spliceAudioSyncForOutputs(cfg, def)
 	return def
 }
 
@@ -134,6 +135,132 @@ func spliceAudioAdaptersForEncoders(def *graph.Def) {
 			spec += fmt.Sprintf(",asetnsamples=n=%d:p=0", req.frameSize)
 		}
 		filtID := fmt.Sprintf("__aspl__%s_%d", dstNode.ID, i)
+		filtNode := graph.NodeDef{
+			ID:     filtID,
+			Type:   "filter",
+			Filter: spec,
+		}
+		def.Nodes = append(def.Nodes, filtNode)
+		nodeByID[filtID] = filtNode
+		added = append(added, graph.EdgeDef{From: e.From, To: filtID, Type: "audio"})
+		e.From = filtID
+	}
+	def.Edges = append(def.Edges, added...)
+}
+
+// spliceAudioSyncForOutputs implements the legacy `-async N` flag (now
+// removed from the FFmpeg 8.0 CLI) by injecting an `aresample`
+// libavfilter node in front of every audio encoder that feeds an
+// output with `Output.AudioSync != 0`. The aresample filter wraps
+// libswresample's compensation engine
+// (libswresample/swresample.c::swr_next_pts → swr_inject_silence /
+// swr_drop_output for hard corrections, swr_set_compensation for soft),
+// so the runtime gets the same sample-clock locking ffmpeg.c used to
+// configure on the swresample handle directly.
+//
+// Spec emitted:
+//
+//	N == 1 → "aresample=async=1:first_pts=0"   (start-only correction;
+//	                                            the FFmpeg `-async 1`
+//	                                            historical semantics)
+//	N >  1 → "aresample=async=N"                (continuous compensation
+//	                                            up to N samples/sec)
+//
+// The pass runs after `spliceAudioAdaptersForEncoders` so the new
+// aresample node sits *upstream* of any synthetic aformat /
+// asetnsamples chain — the resampler's output is then re-conformed to
+// the encoder's required sample format and frame size, matching the
+// order ffmpeg uses internally (resampler first, packer second).
+//
+// Synthetic node IDs use the "__async__" prefix to avoid colliding
+// with user-supplied node IDs.
+func spliceAudioSyncForOutputs(cfg *Config, def *graph.Def) {
+	syncByOutput := make(map[string]int, len(cfg.Outputs))
+	for _, out := range cfg.Outputs {
+		if out.AudioSync != 0 {
+			syncByOutput[out.ID] = out.AudioSync
+		}
+	}
+	if len(syncByOutput) == 0 {
+		return
+	}
+	nodeByID := make(map[string]graph.NodeDef, len(def.Nodes))
+	for _, n := range def.Nodes {
+		nodeByID[n.ID] = n
+	}
+	head := func(ref string) string {
+		if i := strings.IndexByte(ref, ':'); i >= 0 {
+			return ref[:i]
+		}
+		return ref
+	}
+	// Map each encoder node → output ID by scanning encoder→sink
+	// edges. (After expandImplicitEncoders every audio sink edge has
+	// an encoder or copy node as its source.)
+	encoderToOutput := make(map[string]string)
+	for _, e := range def.Edges {
+		if e.Type != "audio" {
+			continue
+		}
+		fromID := head(e.From)
+		toID := head(e.To)
+		if _, isOutput := syncByOutput[toID]; !isOutput {
+			continue
+		}
+		if src, ok := nodeByID[fromID]; ok && src.Type == "encoder" {
+			encoderToOutput[fromID] = toID
+		}
+	}
+	if len(encoderToOutput) == 0 {
+		return
+	}
+
+	// We want the aresample filter to sit *upstream* of any
+	// `__aspl__` aformat+asetnsamples chain (the resampler may add or
+	// drop samples for compensation, which would invalidate any
+	// downstream `asetnsamples` exact-frame-size guarantee). So treat
+	// any single-hop `__aspl__` adapter as transparent: the splice
+	// target is the edge feeding *that* node, not the edge feeding
+	// the encoder.
+	targetToOutput := make(map[string]string, len(encoderToOutput))
+	for encID, outID := range encoderToOutput {
+		spliceTarget := encID
+		for _, e := range def.Edges {
+			if e.Type != "audio" || head(e.To) != encID {
+				continue
+			}
+			src, ok := nodeByID[head(e.From)]
+			if ok && strings.HasPrefix(src.ID, "__aspl__") {
+				spliceTarget = src.ID
+			}
+			break
+		}
+		targetToOutput[spliceTarget] = outID
+	}
+
+	var added []graph.EdgeDef
+	for i := range def.Edges {
+		e := &def.Edges[i]
+		if e.Type != "audio" {
+			continue
+		}
+		dstID := head(e.To)
+		outID, ok := targetToOutput[dstID]
+		if !ok {
+			continue
+		}
+		// Skip if the source is already an __async__ filter (idempotent).
+		if src, ok := nodeByID[head(e.From)]; ok && strings.HasPrefix(src.ID, "__async__") {
+			continue
+		}
+		n := syncByOutput[outID]
+		var spec string
+		if n == 1 {
+			spec = "aresample=async=1:first_pts=0"
+		} else {
+			spec = fmt.Sprintf("aresample=async=%d", n)
+		}
+		filtID := fmt.Sprintf("__async__%s_%d", dstID, i)
 		filtNode := graph.NodeDef{
 			ID:     filtID,
 			Type:   "filter",

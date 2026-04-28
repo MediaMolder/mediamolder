@@ -234,8 +234,9 @@ sections:
         schema: pipeline.Output.FPSMode
         notes: single biggest cause of A/V drift; -vsync is rewritten to -fps_mode by compat/ffcli
       - flag: "-async N (audio resync)"
-        status: missing
-        schema: n/a
+        status: covered
+        schema: pipeline.Output.AudioSync
+        notes: legacy flag (removed from FFmpeg 8.0 CLI); compat/ffcli accepts it and the runtime injects an aresample filter (async=N, plus first_pts=0 when N==1) in front of the audio encoder
       - flag: "-force_key_frames"
         status: missing
         schema: n/a

@@ -250,3 +250,41 @@ func TestParseFPSModeRejectsUnknownValue(t *testing.T) {
 		t.Fatal("expected error for unknown -fps_mode value, got nil")
 	}
 }
+
+// TestParseAsyncFlag verifies that `-async N` lands on Output.AudioSync
+// (Wave 1 #2, roadmap §6.1).
+func TestParseAsyncFlag(t *testing.T) {
+	cases := []struct {
+		flag string
+		want int
+	}{
+		{"-async 1", 1},
+		{"-async 1000", 1000},
+		{"-async 0", 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.flag, func(t *testing.T) {
+			cfg, err := Parse("ffmpeg -i in.mp4 -c:a aac " + tc.flag + " out.mp4")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := cfg.Outputs[0].AudioSync; got != tc.want {
+				t.Errorf("AudioSync = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestParseAsyncRejectsInvalid(t *testing.T) {
+	cases := []string{
+		"ffmpeg -i in.mp4 -async -3 out.mp4",
+		"ffmpeg -i in.mp4 -async banana out.mp4",
+	}
+	for _, c := range cases {
+		t.Run(c, func(t *testing.T) {
+			if _, err := Parse(c); err == nil {
+				t.Fatal("expected error, got nil")
+			}
+		})
+	}
+}

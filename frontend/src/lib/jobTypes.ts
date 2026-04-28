@@ -103,6 +103,17 @@ export interface Output {
    *  - `"drop"`: like `vfr` but also drops near-duplicates within half a
    *    frame duration of the previous emission. */
   fps_mode?: "" | "passthrough" | "vfr" | "cfr" | "drop";
+  /** Per-output audio resync compensation. Mirrors the legacy ffmpeg
+   *  `-async N` flag (removed from the FFmpeg 8.0 CLI in favour of
+   *  `-af aresample=async=N`).
+   *  - `0` / omitted: no compensation.
+   *  - `1`: pad/trim the start so the first sample lands at PTS 0
+   *    (rendered as `aresample=async=1:first_pts=0`).
+   *  - `N>1`: continuous soft compensation up to `N` samples/sec
+   *    (rendered as `aresample=async=N`).
+   *  Injected as an aresample filter node in front of the audio
+   *  encoder; pure stream-copy outputs are unaffected. */
+  audio_sync?: number;
   /** Container-level metadata key/value pairs (`-metadata key=value`).
    *  Replaces any metadata mapped from inputs via `input.map_metadata`. */
   metadata?: Record<string, string>;

@@ -160,6 +160,29 @@ type Output struct {
 	//                                   previous frame (PTS within ±half a
 	//                                   duration window).
 	FPSMode string `json:"fps_mode,omitempty"`
+	// AudioSync requests audio resync compensation in front of the
+	// audio encoder, mirroring the legacy FFmpeg `-async N` flag
+	// (which FFmpeg 8.0 removed in favour of
+	// `-af aresample=async=N`). When non-zero the runtime injects an
+	// `aresample` libavfilter node between the upstream graph and the
+	// audio encoder so swresample's soft / hard compensation engine
+	// (libswresample/swresample.c::swr_next_pts) keeps the output
+	// sample-clock locked to the demuxer-side PTS:
+	//
+	//   1     — only correct the start of the stream by padding with
+	//          silence or trimming so the first sample lands at PTS 0
+	//          (renders as `aresample=async=1:first_pts=0`); no later
+	//          corrections are applied.
+	//   N>1   — continuous soft compensation; up to N samples per second
+	//          are stretched / squeezed to keep the output PTS aligned
+	//          with the input PTS (`aresample=async=N`). 1000 is the
+	//          most common production value.
+	//
+	// 0 (default) leaves the audio path untouched. Negative values are
+	// rejected by validate(). Applies only to outputs that emit a
+	// transcoded audio stream; pure stream-copy outputs are unaffected
+	// because no filter graph runs.
+	AudioSync int `json:"audio_sync,omitempty"`
 	// Metadata is the container-level metadata table written into the
 	// output (`-metadata key=value` in FFmpeg). When non-nil it
 	// completely replaces any metadata mapped from inputs via
@@ -280,6 +303,9 @@ func validate(cfg *Config) error {
 		case "", "passthrough", "vfr", "cfr", "drop":
 		default:
 			return fmt.Errorf("output %q: invalid fps_mode %q (want passthrough|vfr|cfr|drop)", out.ID, out.FPSMode)
+		}
+		if out.AudioSync < 0 {
+			return fmt.Errorf("output %q: invalid audio_sync %d (must be >= 0)", out.ID, out.AudioSync)
 		}
 	}
 	// Edge types must be valid.
