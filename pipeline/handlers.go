@@ -1424,6 +1424,9 @@ func (r *graphRunner) createEncoder(dag *graph.Graph, node *graph.Node) (*av.Enc
 		if fg := r.upstreamFilterGraph(dag, node); fg != nil {
 			opts.Width = fg.OutputWidth(0)
 			opts.Height = fg.OutputHeight(0)
+			if pf := fg.OutputPixFmt(0); pf >= 0 {
+				opts.PixFmt = pf
+			}
 		} else {
 			opts.Width = si.Width
 			opts.Height = si.Height

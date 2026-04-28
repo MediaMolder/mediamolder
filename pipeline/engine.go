@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -775,7 +776,14 @@ func buildFilterSpec(node NodeDef) string {
 		} else {
 			spec += ":"
 		}
-		spec += fmt.Sprintf("%s=%v", k, node.Params[k])
+		v := fmt.Sprintf("%v", node.Params[k])
+		// avfilter_graph_parse_ptr treats ',' and ';' as separators between
+		// filter chains. Quote any value that contains those characters (or a
+		// literal single-quote) so the expression reaches the filter intact.
+		if strings.ContainsAny(v, "',;") {
+			v = "'" + strings.ReplaceAll(v, "'", `'\''`) + "'"
+		}
+		spec += k + "=" + v
 	}
 	return spec
 }

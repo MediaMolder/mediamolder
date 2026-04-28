@@ -1,0 +1,51 @@
+{
+  "schema_version": "1.0",
+  "description": "Normalize audio to -16 LUFS (louder target than EBU R128) with loudnorm filter; copy video. Matches 'normalize -i input.mp4 -o output.mp4' (loudnorm used instead of dynaudnorm to avoid NaN-frame crashes on certain content).",
+  "inputs": [
+    {
+      "id": "in0",
+      "url": "{{input}}",
+      "streams": [
+        { "input_index": 0, "type": "video", "track": 0 },
+        { "input_index": 0, "type": "audio", "track": 0 }
+      ]
+    }
+  ],
+  "graph": {
+    "nodes": [
+      {
+        "id": "loudnorm0",
+        "type": "filter",
+        "filter": "loudnorm",
+        "params": { "I": "-16", "TP": "-1.5", "LRA": "11" }
+      },
+      {
+        "id": "aformat0",
+        "type": "filter",
+        "filter": "aformat",
+        "params": { "sample_rates": "48000", "sample_fmts": "fltp" }
+      },
+      {
+        "id": "asetnsamples0",
+        "type": "filter",
+        "filter": "asetnsamples",
+        "params": { "n": "1024", "p": "0" }
+      }
+    ],
+    "edges": [
+      { "from": "in0:v:0",       "to": "out0:v",        "type": "video" },
+      { "from": "in0:a:0",       "to": "loudnorm0",     "type": "audio" },
+      { "from": "loudnorm0",     "to": "aformat0",      "type": "audio" },
+      { "from": "aformat0",      "to": "asetnsamples0", "type": "audio" },
+      { "from": "asetnsamples0", "to": "out0:a",        "type": "audio" }
+    ]
+  },
+  "outputs": [
+    {
+      "id": "out0",
+      "url": "{{output}}",
+      "codec_video": "copy",
+      "codec_audio": "aac"
+    }
+  ]
+}
