@@ -615,3 +615,153 @@ branch:
 
 Each of these unblocks real user scripts today and pays down the
 debt the §2 matrix is tracking.
+
+## 6. Parity development plan (post-§5 burn-down)
+
+The §5 backlog (items 1–8) is fully landed. The plan below is the
+**next wave**, ordered by *user-frequency × leverage* rather than by
+§3's phase letters. Each item lists the gap it closes (with §2 / §3
+back-reference) and a concrete first-PR scope. Items are sequenced so
+that earlier items create scaffolding (orchestration vocabulary,
+per-stream schema) reused by later ones.
+
+### 6.1 Wave 1 — "the 90% of real jobs"
+
+These show up in **almost every production ffmpeg invocation**. Shipping
+them moves MediaMolder from "covers most demo scripts" to "covers most
+real jobs."
+
+1. **`-fps_mode` / `-async`** (§2.4, §2.5) — `Output.FPSMode ∈
+   {cfr,vfr,passthrough,drop}`, `Output.AudioSync int`. #1 cause of
+   A/V drift in user reports. Ship `cfr` first; alone it fixes the
+   "HLS player stutters" class.
+2. **`-shortest`, `-fs`, output-side `-ss`/`-to` with `-copyts`**
+   (§2.5) — `Output.Shortest`, `Output.MaxFileSize`, output-side
+   trim with copyts semantics. `-shortest` is in essentially every
+   overlay/music-video job.
+3. **Per-stream encoder overrides + per-stream metadata** (§2.4,
+   §2.5) — `Output.Streams []StreamSpec` with per-stream codec /
+   bitrate / metadata. Unblocks ABR ladders, dual-language audio,
+   language-tagged subtitles in one PR.
+4. **`tee` muxer** (§2.5, §3.3.2) — `Output.Kind = "tee"` with
+   `Output.Targets []TeeTarget`. Encode once → mux to MP4 + HLS +
+   DASH. Pairs with #3.
+5. **`-stream_loop`, `-itsoffset`, `-re` / `-readrate`** (§2.1) —
+   Cheap demuxer-side AVDict promotions to typed fields. Unblocks
+   watermark loops, A/V slip correction, live-restream rate-limit.
+6. **Two-pass video encoding** (`-pass 1/2 -passlogfile`) (§2.4) —
+   `Output.Encoder.Pass int` + `PassLogFile string`. Reuses the
+   orchestration scaffold built for #7.
+7. **Two-pass `loudnorm` shuttle** (§3.1.7) — Same orchestration
+   primitive as #6; pass 1 parses JSON sidedata, pass 2 consumes it.
+   Top-three reason people reach for ffmpeg in the first place.
+8. **`-force_key_frames "expr:gte(t,n_forced*2)"`** (§2.4) — GOP
+   control is mandatory for HLS/DASH segmenting; without it the
+   segmenters silently produce broken playlists.
+
+### 6.2 Wave 2 — "the universal mapper" (Phase B)
+
+9. **Negative / optional `-map`** (`-map 0:s?`, `-map -0:s`) (§2.2) —
+   Single largest unaddressed schema gap per the matrix. Add
+   `optional`/`negate` to `Input.Streams[]`. Unblocks "include
+   subtitles if present" without per-job branching.
+10. **Program selection (`-map p:N`)** (§2.2) — Required for any
+    MPEG-TS broadcast input. Same struct as #9.
+11. **`KindMetadataReader` / `KindMetadataWriter` graph nodes**
+    (§5#5 deferred half) — Anchor it to the first multi-source
+    metadata-routing `compat/ffcli` round-trip case.
+
+### 6.3 Wave 3 — "modern delivery" (Phase C completion)
+
+12. **Structured HLS / DASH / CMAF outputs with ABR `Variants`**
+    (§2.5) — Promote the AVDict bag to typed fields: `hls_time`,
+    `hls_playlist_type`, `dash_segment_duration`, `init_segment`.
+    Gating for any commercial deployment.
+13. **BSF chains on output** (§2.5) — `Output.BitstreamFilters
+    []string`. Required for `h264_mp4toannexb,h264_redundant_pps`
+    in any "convert MP4 to MPEG-TS" pipeline.
+14. **Color metadata + HDR10 mastering / CLL** (§2.4) — `Output.Color`
+    + `Output.HDR`. Validate codec/container compatibility at schema
+    time.
+15. **`setsar` / `setdar` shorthand on `Output`** (§3.3.9) — Cheap,
+    universally requested for legacy SD content. Free with #14's
+    plumbing.
+
+### 6.4 Wave 4 — "hardware everywhere" (Phase D)
+
+16. **`-init_hw_device` + per-node `device:` selector** (§3.4.5) —
+    Mandatory for any mixed-vendor pipeline (CUDA decode → CPU
+    filter → QSV encode).
+17. **Per-filter availability probe** (`scale_npp` vs `scale_cuda`)
+    (§3.4.6) — Already partially done for codecs; same harness
+    pattern.
+18. **Hardware filter auto-mapping** (`scale` ↔ `scale_cuda` /
+    `scale_npp` / `scale_qsv` / `scale_vt`) (§2.3) — The GUI's
+    "this will run on GPU" indicator depends on this.
+
+### 6.5 Wave 5 — "expression authoring polish" (Phase E)
+
+19. **`expression: true` AVOption flag bit** (§3.1.6.a; deferred
+    from §5#7) — Mine `AV_OPT_FLAG_*` via `av_opt_next`; wire into
+    schema so the GUI knows which fields render the expression
+    input.
+20. **Syntax-highlighted GUI expression input** (§3.1.6.b, §3.5.8) —
+    Live-validates against the eval-expression endpoint shipped in
+    §5#7. Cookbook UI for top-5 patterns
+    (between/scroll/frame-stamp/fade-gate/conditional).
+
+### 6.6 Wave 6 — "the editorial round-trip" (Phase C.8)
+
+21. **Lossless intermediate validation harness** (FFV1/MKV,
+    ProRes/MOV, DNxHR/MXF) (§3.3.8) — Single test exercising
+    decode → intermediate → decode → final, asserting no quality
+    loss. Catches container/encoder compatibility bugs systemically.
+22. **Asset / model-file manager** (§3.5.10) — Symbolic asset
+    references (fonts, RNNoise models, YOLO weights, fontsdir for
+    ASS). Touches schema, GUI, runtime; can run in parallel with
+    Wave 1 (no engine dependencies).
+
+### 6.7 Cross-cutting accelerators (parallel with all waves)
+
+- **Capability-registry CI gate** — every PR touching
+  `pipeline.Config` must update `compat/capabilities.yaml` or the
+  build fails. Registry exists (§5#4); add the gate.
+- **`compat/ffcli` round-trip oracle expansion** — every Wave 1 item
+  ships ≥ 3 round-trip cases against real `ffmpeg(1)` (codec, stream
+  count, duration ±0.5s, SSIM ≥ 0.99). Harness exists; keep adding
+  fixtures.
+- **CLI export (JSON → ffmpeg command line)** (§3.5.7) — strongest
+  correctness signal we can build. Land as soon as Wave 1 #3 lands,
+  because per-stream syntax is where it gets interesting.
+
+### 6.8 Suggested deprecations / out-of-scope
+
+Mark these `out-of-scope` in the capability registry rather than chase
+them. Importer (`compat/ffcli`) may still accept the legacy spelling
+and rewrite it.
+
+| Flag(s) | Rationale |
+|---|---|
+| `-fpre`, `-vpre`, `-spre` (encoder presets from disk) | Superseded by encoder AVOptions with named values. The GUI's per-encoder inspector already does what `-vpre` did. |
+| `-vsync` (legacy alias) | Deprecated upstream. Implement only the modern `-fps_mode` (Wave 1 #1). Importer rewrites; no schema field. |
+| `-deinterlace` (legacy global flag) | Deprecated upstream since 2013 in favour of `yadif`/`bwdif`/`w3fdif` filters. Importer rewrites to `yadif`. No schema field. |
+| `-target` (DVD/VCD/PAL presets) | Targets formats that are commercially dead. Importer can expand the macro; no GUI surface. |
+| `-psnr`, `-ssim` (encoder side) | Diagnostic flags better served by MediaMolder's own observability bus. Don't shadow in schema. |
+| `-dump`, `-hex`, `-debug_ts` | Pure debugging; route to MediaMolder's logging instead. |
+| `ffplay`-style interactive viewers (`scopes`, `ebu-meter`) | Already out-of-scope per §1. GUI may grow live monitoring but shouldn't pretend to be `ffplay`. |
+| `-xerror`, `-stats`, `-stats_period` | MediaMolder has its own progress/error event bus; don't mirror the CLI flags. |
+| `clip-time`, `scene-time`, `sexagesimal-time` (CLI utilities) | Move to a future `mediamolder util` subcommand if demand surfaces. Not engine work. |
+| `-bsf` shorthand without `:stream_specifier` | Importer normalises to `-bsf:v`. No deprecated form in schema. |
+| `-aspect` (encoder side) | Subsumed by `Output.SAR` / `Output.DAR` (Wave 3 #15). Don't ship two ways to spell the same thing. |
+| `-tune <macro>` for x264/x265 when codec-specific `*-params` already covers it | Importer flattens `-tune` into the relevant `*-params` string. |
+| `image2`'s `%d`-pattern globbing for **inputs** | Already side-stepped by `mjpeg` muxer choice in §5#2. For inputs, accept only explicit `-pattern_type glob` / `sequence`; reject `printf`-style patterns at schema validation as a footgun. |
+| Decklink / NDI **GUI** wizards | Keep the URL handlers (no work needed) but don't build dedicated inspectors until customer demand. AVDict passthrough is acceptable indefinitely for these. |
+| `-streamid`, `-bitexact`, `-tag` | Edge cases for spec-conformance testing. Ship as AVDict, never promote. |
+
+### 6.9 Recommended starting point
+
+**Wave 1 #1 (`-fps_mode`)**, because: (a) it is the most-reported
+bug class in the wild, (b) it is the smallest item in Wave 1, (c) it
+gives us the orchestration vocabulary for output-side timing that
+#2/#7/#8 all reuse, and (d) it converts a long-standing roadmap "❌"
+in §2.4 to ✅ with one schema field plus one `av/` AVDict promotion.
