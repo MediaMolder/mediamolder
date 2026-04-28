@@ -8,6 +8,7 @@ package av
 // #include "libavutil/dict.h"
 // #include "libavutil/pixdesc.h"
 // #include "libavutil/samplefmt.h"
+// #include "libavutil/parseutils.h"
 //
 // // Helper: get stream codec parameters for stream index i.
 // static AVCodecParameters *stream_codecpar(AVFormatContext *ctx, int i) {
@@ -234,6 +235,43 @@ func (f *InputFormatContext) ReadPacket(pkt *Packet) error {
 func (f *InputFormatContext) SeekFile(targetTS int64) error {
 	ret := C.avformat_seek_file(f.p, -1, C.INT64_MIN, C.int64_t(targetTS), C.INT64_MAX, 0)
 	return newErr(ret)
+}
+
+// StartTime returns the container's reported AVFormatContext.start_time in
+// AV_TIME_BASE units (microseconds), or AV_NOPTS_VALUE when the demuxer
+// could not determine it. Used by the runtime when computing FFmpeg-style
+// `-ss` seek targets so the seek is biased by the container's own start
+// (e.g. MPEG-TS streams whose first PTS is non-zero).
+func (f *InputFormatContext) StartTime() int64 {
+	return int64(f.p.start_time)
+}
+
+// NoPTSValue is the FFmpeg sentinel for "timestamp unknown"
+// (AV_NOPTS_VALUE).
+const NoPTSValue int64 = C.AV_NOPTS_VALUE
+
+// ParseTime is a Go wrapper around av_parse_time(). It accepts the same
+// duration / timestamp grammar as the FFmpeg CLI's `-ss`, `-t` and `-to`
+// flags: bare seconds ("30", "5.5"), `[-][HH:]MM:SS[.m…]` ("00:30",
+// "1:23:45.250"), or `[-]S+[.m…][s|ms|us]`. When `duration` is true the
+// value is interpreted as a duration (no `now` keyword, may be
+// negative); otherwise it is interpreted as an absolute timestamp.
+// Returns the parsed value in microseconds (AV_TIME_BASE units).
+func ParseTime(s string, duration bool) (int64, error) {
+	if s == "" {
+		return 0, fmt.Errorf("av.ParseTime: empty time spec")
+	}
+	cs := C.CString(s)
+	defer C.free(unsafe.Pointer(cs))
+	var out C.int64_t
+	durFlag := C.int(0)
+	if duration {
+		durFlag = 1
+	}
+	if ret := C.av_parse_time(&out, cs, durFlag); ret < 0 {
+		return 0, fmt.Errorf("av.ParseTime(%q): %w", s, newErr(ret))
+	}
+	return int64(out), nil
 }
 
 // raw returns the underlying pointer for use by other av package types.

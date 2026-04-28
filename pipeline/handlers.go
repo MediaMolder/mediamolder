@@ -6,6 +6,7 @@ package pipeline
 import (
 	"context"
 	"fmt"
+	"log"
 	"math"
 	"strconv"
 	"strings"
@@ -261,6 +262,27 @@ type sourceResources struct {
 	// open-time so handleSource can publish it via the metrics
 	// registry without re-reading container metadata.
 	mediaDuration time.Duration
+	// stopPTSus is the absolute packet PTS (in AV_TIME_BASE units,
+	// i.e. microseconds) at or after which the demux loop should
+	// stop emitting packets, mirroring the recording_time check in
+	// fftools/ffmpeg_demux.c::input_packet_process(). noLimitUS means
+	// "no limit" (no `-t` / `-to` was set). The seek for `-ss` and
+	// the conflict resolution between `-t` and `-to` happen at
+	// open-time in openSource(); only the per-packet stop check
+	// remains in handleSource().
+	stopPTSus int64
+
+	// tsOffsetUS is the timestamp offset (in AV_TIME_BASE units)
+	// applied to every demuxed packet's PTS/DTS, mirroring
+	// fftools/ffmpeg_demux.c's `ifile->ts_offset` in non-`copy_ts`
+	// mode: it equals `-timestamp` where `timestamp` is the value
+	// passed to avformat_seek_file. The effect is that downstream
+	// nodes (encoders, muxers) see packets whose timestamps start at
+	// 0 even when `-ss` seeked into the middle of the source. Without
+	// this shift, a stream-copy of e.g. `-ss 450 -t 10` would write
+	// 10s of packets but tag them with PTS in the [450s, 460s] range,
+	// causing the muxer to report a 460s-long file.
+	tsOffsetUS int64
 }
 
 func (s *sourceResources) Close() {
@@ -523,6 +545,38 @@ func (r *graphRunner) handleSource(ctx context.Context, node *graph.Node, outs [
 		si, known := src.streams[pkt.StreamIndex()]
 		if dec == nil && subDec == nil && !known {
 			continue
+		}
+
+		// Honour per-input -t / -to: stop demuxing once any selected
+		// stream's packet PTS reaches the absolute stop point computed
+		// from the input's recording_time. Mirrors
+		// fftools/ffmpeg_demux.c::input_packet_process()'s `dts >=
+		// recording_time + start_time` check (with FFmpeg's default
+		// non-copy_ts start_time of 0; we apply the seek timestamp via
+		// stopPTSus instead of via per-packet ts_offset). Skips packets
+		// without a valid PTS so we don't bail out on a probe-only
+		// header. The check runs against the raw PTS (before ts_offset)
+		// so the comparison stays in source coordinates.
+		if src.stopPTSus != noLimitUS {
+			if pts := pkt.PTS(); pts != math.MinInt64 && si.TimeBase[1] > 0 {
+				// Convert pkt PTS (in stream time_base units) to
+				// AV_TIME_BASE units (microseconds).
+				ptsUS := pts * 1_000_000 * int64(si.TimeBase[0]) / int64(si.TimeBase[1])
+				if ptsUS >= src.stopPTSus {
+					break
+				}
+			}
+		}
+
+		// Apply ts_offset: rebase every packet's PTS/DTS so the
+		// pipeline starts at 0 even when -ss seeked into the middle of
+		// the source. Mirrors fftools/ffmpeg_demux.c::ts_fixup() in
+		// non-copy_ts mode. Rescales the AV_TIME_BASE-unit ts_offset
+		// into the packet's stream time_base before adding.
+		if src.tsOffsetUS != 0 && si.TimeBase[1] > 0 {
+			offsetTB := src.tsOffsetUS * int64(si.TimeBase[1]) /
+				(1_000_000 * int64(si.TimeBase[0]))
+			pkt.ShiftTS(offsetTB)
 		}
 
 		// Publish media-time progress so the GUI can compute
@@ -1108,9 +1162,36 @@ func (r *graphRunner) openSource(cfg Input, srcNode *graph.Node, decOpts av.Deco
 		}
 	}
 
+	// Per-input timing flags (FFmpeg's `-ss` / `-t` / `-to`). These
+	// are not AVOptions consumed by avformat_open_input — the runtime
+	// enforces them itself, mirroring the logic in
+	// fftools/ffmpeg_demux.c::ist_add_input_file(). Strip them from
+	// the dictionary so libav doesn't see leftover unknown options.
+	timing, err := resolveInputTiming(cfg.Options, func(format string, args ...any) {
+		log.Printf("input %q: "+format, append([]any{cfg.URL}, args...)...)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("input %q timing: %w", cfg.URL, err)
+	}
+	delete(inputOpts, "ss")
+	delete(inputOpts, "t")
+	delete(inputOpts, "to")
+
 	input, err := av.OpenInput(cfg.URL, inputOpts)
 	if err != nil {
 		return nil, fmt.Errorf("open input %q: %w", cfg.URL, err)
+	}
+
+	// Mirror fftools/ffmpeg_demux.c: compute the seek target and apply
+	// avformat_seek_file. Uses AV_TIME_BASE units (microseconds). The
+	// container's reported start_time is added in to align with FFmpeg
+	// for formats whose first PTS is non-zero (e.g. MPEG-TS).
+	if timing.haveStart {
+		targetUS := timing.seekTimestampUS(input.StartTime())
+		if err := input.SeekFile(targetUS); err != nil {
+			input.Close()
+			return nil, fmt.Errorf("seek input %q to %d us: %w", cfg.URL, targetUS, err)
+		}
 	}
 
 	allStreams, err := input.AllStreams()
@@ -1207,6 +1288,18 @@ func (r *graphRunner) openSource(cfg Input, srcNode *graph.Node, decOpts av.Deco
 		}
 	}
 
+	// Compute ts_offset only when -ss actually triggered a seek.
+	// FFmpeg additionally compensates for the container's reported
+	// start_time even without -ss, but doing so unconditionally would
+	// alter PTS for every existing job (e.g. MPEG-TS captures whose
+	// first PTS is non-zero); restricting it to seeked jobs preserves
+	// backward compatibility while still mirroring FFmpeg for the
+	// trim use case the user is exercising.
+	var tsOffsetUS int64
+	if timing.haveStart {
+		tsOffsetUS = -timing.seekTimestampUS(input.StartTime())
+	}
+
 	return &sourceResources{
 		input:         input,
 		decoders:      decoders,
@@ -1214,6 +1307,8 @@ func (r *graphRunner) openSource(cfg Input, srcNode *graph.Node, decOpts av.Deco
 		streams:       streams,
 		cfg:           cfg,
 		mediaDuration: mediaDuration,
+		stopPTSus:     timing.stopTimestampUS(input.StartTime()),
+		tsOffsetUS:    tsOffsetUS,
 	}, nil
 }
 

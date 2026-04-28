@@ -334,23 +334,28 @@ All three accept a number of seconds (`30`, `5.5`) or an
 The **side you set them on changes their meaning** — exactly like the
 FFmpeg command line:
 
-* **Set on the Input** to trim the *source* before any decoding, filtering
-  or encoding. The values become demuxer options (`Input.options`) and
-  reach libavformat via `avformat_open_input` → `AVDictionary`. This is
-  the right place to use them when you want every downstream stage —
-  filters, encoders, processors — to see only the trimmed window.
-  Example: `Start=10`, `Duration=30` on the input means "decode 30
-  seconds starting 10 seconds in".
+* **Set on the Input** to trim the *source* before any decoding,
+  filtering or encoding. The runtime applies this as a faithful Go port
+  of FFmpeg's own demuxer trim logic in `fftools/ffmpeg_demux.c`:
+  `Start` (`-ss`) becomes an `avformat_seek_file` to that timestamp
+  (with the container's reported `start_time` added when the muxer
+  reports one); `Duration` (`-t`) and `End` (`-to`) bound the demux
+  loop using the same `recording_time` rules ffmpeg.c uses (`-t` and
+  `-to` are mutually exclusive — `-t` wins with a warning; `-to` alone
+  is converted to `recording_time = to - max(ss, 0)`). Time strings
+  are parsed by `av_parse_time` so any value the FFmpeg CLI accepts
+  (`30`, `5.5`, `00:01:23.250`, `90s`) Just Works. This is the right
+  place to use them when you want every downstream stage — filters,
+  encoders, processors — to see only the trimmed window. Example:
+  `Start=10`, `Duration=30` on the input means "decode 30 seconds
+  starting 10 seconds in".
 * **Set on the Output** to trim what the *muxer* writes. The values
   become muxer options (`Output.options`). Use this when you want the
   full source to flow through the graph but only a slice of the
-  encoded result to reach the file. Particularly useful for
-  stream-copy workflows: `ffmpeg -i in.mp4 -c copy -t 30 out.mp4` →
-  set Duration=30 on the Output, leave the Input untouched, and wire
-  `Copy (video)` / `Copy (audio)` nodes through to the output. (Note:
-  muxer-side trimming via `Output.options` is currently a frontend /
-  schema-level field; the runtime honours `Input.options` today —
-  full muxer-side plumbing tracked separately.)
+  encoded result to reach the file. (Note: output-side trimming is
+  currently a frontend / schema-level field; the runtime honours the
+  input-side flags today, and muxer-side enforcement is tracked
+  separately.)
 
 Leave a field blank to omit it. The values round-trip through the
 **Import FFmpeg command…** dialog, so an existing

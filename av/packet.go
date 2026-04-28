@@ -68,6 +68,29 @@ func (pkt *Packet) DTS() int64 { return int64(pkt.p.dts) }
 // SetStreamIndex sets the packet's stream index.
 func (pkt *Packet) SetStreamIndex(i int) { pkt.p.stream_index = C.int(i) }
 
+// SetPTS sets the packet presentation timestamp.
+func (pkt *Packet) SetPTS(v int64) { pkt.p.pts = C.int64_t(v) }
+
+// SetDTS sets the packet decode timestamp.
+func (pkt *Packet) SetDTS(v int64) { pkt.p.dts = C.int64_t(v) }
+
+// ShiftTS adds offsetSrcTB (expressed in the packet's source time_base
+// srcTB) to both PTS and DTS, mirroring the ts_offset application in
+// fftools/ffmpeg_demux.c::ts_fixup(). NoPTS-valued fields are left
+// alone.
+func (pkt *Packet) ShiftTS(offset int64) {
+	if pkt.p == nil || offset == 0 {
+		return
+	}
+	const noPTS = C.int64_t(NoPTSValue)
+	if pkt.p.pts != noPTS {
+		pkt.p.pts += C.int64_t(offset)
+	}
+	if pkt.p.dts != noPTS {
+		pkt.p.dts += C.int64_t(offset)
+	}
+}
+
 // Rescale converts the packet's timestamps from srcTB to dstTB using
 // av_packet_rescale_ts. Both rationals are {num, den}; a zero denominator
 // is silently ignored to make this safe to call when one side is unknown.
