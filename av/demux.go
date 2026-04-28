@@ -117,6 +117,15 @@ type InputFormatContext struct {
 
 // OpenInput opens the file at url for reading. Options may be nil.
 func OpenInput(url string, options map[string]string) (*InputFormatContext, error) {
+	return OpenInputWithFormat(url, "", options)
+}
+
+// OpenInputWithFormat opens the input at url forcing the given input format
+// (e.g. "lavfi" for libavfilter virtual sources, "rawvideo" for raw streams).
+// When format is empty libavformat probes the URL to detect the demuxer
+// (matching OpenInput). For lavfi inputs the URL is the filtergraph spec
+// (e.g. "anullsrc=r=48000:cl=stereo", "color=black:s=1920x1080:r=30").
+func OpenInputWithFormat(url, format string, options map[string]string) (*InputFormatContext, error) {
 	cURL := C.CString(url)
 	defer C.free(unsafe.Pointer(cURL))
 
@@ -134,7 +143,16 @@ func OpenInput(url string, options map[string]string) (*InputFormatContext, erro
 	}
 
 	var ctx *C.AVFormatContext
-	ret := C.avformat_open_input(&ctx, cURL, nil, &opts)
+	var iformat *C.AVInputFormat
+	if format != "" {
+		cFmt := C.CString(format)
+		iformat = C.av_find_input_format(cFmt)
+		C.free(unsafe.Pointer(cFmt))
+		if iformat == nil {
+			return nil, fmt.Errorf("av_find_input_format(%q): unknown input format", format)
+		}
+	}
+	ret := C.avformat_open_input(&ctx, cURL, iformat, &opts)
 	if ret < 0 {
 		return nil, newErr(ret)
 	}

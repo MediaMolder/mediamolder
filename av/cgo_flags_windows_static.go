@@ -21,7 +21,7 @@ package av
 // If your MSYS2 lives elsewhere, copy this file and adjust the `-LC:/...`
 // path below, or drive the link line through pkg-config instead.
 
-// #cgo LDFLAGS: -Wl,--start-group -lavfilter -lavformat -lavcodec -lswscale -lswresample -lavutil -Wl,--end-group
+// #cgo LDFLAGS: -Wl,--start-group -lavdevice -lavfilter -lavformat -lavcodec -lswscale -lswresample -lavutil -Wl,--end-group
 // #cgo LDFLAGS: -LC:/msys64/mingw64/lib
 // #cgo LDFLAGS: -lass -lfribidi -lunibreak -lfontconfig -lexpat -lfreetype -lpng16 -lharfbuzz -lusp10 -lrpcrt4 -ldwrite
 // #cgo LDFLAGS: -lglib-2.0 -lintl -lwinmm -lshlwapi -luuid -lpcre2-8 -lgraphite2 -lbrotlidec -lbrotlicommon

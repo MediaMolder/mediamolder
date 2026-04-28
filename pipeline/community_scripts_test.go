@@ -113,10 +113,10 @@ func runCommunityScript(t *testing.T, jsonPath, name, inputAbs, imageAbs, audioA
 	imageFwd := filepath.ToSlash(imageAbs)
 	audioFwd := filepath.ToSlash(audioAbs)
 
-	raw = strings.ReplaceAll(raw, "{{input}}",  inputFwd)
+	raw = strings.ReplaceAll(raw, "{{input}}", inputFwd)
 	raw = strings.ReplaceAll(raw, "{{input2}}", inputFwd) // same file for overlay/xfade tests
-	raw = strings.ReplaceAll(raw, "{{image}}",  imageFwd)
-	raw = strings.ReplaceAll(raw, "{{audio}}",  audioFwd)
+	raw = strings.ReplaceAll(raw, "{{image}}", imageFwd)
+	raw = strings.ReplaceAll(raw, "{{audio}}", audioFwd)
 
 	// Subtitle path: rewrite to relative path so FFmpeg's colon-parsing is safe.
 	subsrtRel := filepath.ToSlash(filepath.Join("..", "testdata", "subs.srt"))
@@ -163,6 +163,8 @@ func communityOutputExt(name string) string {
 		strings.HasPrefix(name, "22_"), // tile_thumbnails
 		strings.HasPrefix(name, "23_"): // scene_images
 		return ".jpg"
+	case strings.HasPrefix(name, "26_"): // audio_silence (lavfi anullsrc → wav)
+		return ".wav"
 	default:
 		return ".mp4"
 	}

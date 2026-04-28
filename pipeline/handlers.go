@@ -1221,7 +1221,21 @@ func (r *graphRunner) openSource(cfg Input, srcNode *graph.Node, decOpts av.Deco
 	delete(inputOpts, "t")
 	delete(inputOpts, "to")
 
-	input, err := av.OpenInput(cfg.URL, inputOpts)
+	// Map Input.Kind onto a libavformat input-format name. Empty Kind (or
+	// "file") falls through to OpenInput's URL-probing behaviour. "lavfi"
+	// routes through libavformat's lavfi virtual demuxer so the URL is
+	// interpreted as a filtergraph spec (anullsrc, color, sine, testsrc, …).
+	var formatName string
+	switch cfg.Kind {
+	case "", "file":
+		// default file probing
+	case "lavfi":
+		formatName = "lavfi"
+	default:
+		return nil, fmt.Errorf("input %q: unsupported kind %q (want \"file\" or \"lavfi\")", cfg.ID, cfg.Kind)
+	}
+
+	input, err := av.OpenInputWithFormat(cfg.URL, formatName, inputOpts)
 	if err != nil {
 		return nil, fmt.Errorf("open input %q: %w", cfg.URL, err)
 	}
@@ -1229,8 +1243,11 @@ func (r *graphRunner) openSource(cfg Input, srcNode *graph.Node, decOpts av.Deco
 	// Mirror fftools/ffmpeg_demux.c: compute the seek target and apply
 	// avformat_seek_file. Uses AV_TIME_BASE units (microseconds). The
 	// container's reported start_time is added in to align with FFmpeg
-	// for formats whose first PTS is non-zero (e.g. MPEG-TS).
-	if timing.haveStart {
+	// for formats whose first PTS is non-zero (e.g. MPEG-TS). Skipped
+	// for lavfi inputs — virtual sources don't support seeking and
+	// always start at zero, so any -ss value is converted to the
+	// per-packet stop check via timing's recording_time path.
+	if timing.haveStart && formatName != "lavfi" {
 		targetUS := timing.seekTimestampUS(input.StartTime())
 		if err := input.SeekFile(targetUS); err != nil {
 			input.Close()

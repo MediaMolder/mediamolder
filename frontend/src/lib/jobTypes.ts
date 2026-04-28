@@ -13,6 +13,12 @@ export interface StreamSelect {
 export interface Input {
   id: string;
   url: string;
+  /** How to open the input. "file" (default) probes the URL with
+   *  libavformat. "lavfi" routes through the lavfi virtual demuxer
+   *  (FFmpeg's `-f lavfi`); the `url` field is then a filtergraph spec
+   *  such as `anullsrc=r=48000:cl=stereo` or
+   *  `color=black:s=1920x1080:r=30`. */
+  kind?: "file" | "lavfi";
   streams: StreamSelect[];
   options?: Record<string, unknown>;
 }

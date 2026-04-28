@@ -96,11 +96,11 @@ Legend: ✅ supported · ⚠️ partial · ❌ missing
 | `-readrate`, `-re` (real-time read)                         | ❌    | Live-stream restreaming, broadcast workflows |
 | `-framerate`, `-r` (input override)                         | ⚠️    | Can be passed in `Input.Options` AVDict; not first-class and not validated |
 | `-pix_fmt`, `-video_size`, `-pixel_format`                  | ⚠️    | Same: AVDict passthrough, no schema field |
-| `-f` (force demuxer)                                        | ❌    | Required for headless raw streams (`-f rawvideo`, `-f s16le`, `-f lavfi`) |
+| `-f` (force demuxer)                                        | ⚠️    | `Input.Kind = "lavfi"` covers the virtual-source case via `av.OpenInputWithFormat`; arbitrary forced demuxers (`rawvideo`, `s16le`) not yet first-class |
 | `-thread_queue_size`                                        | ⚠️    | AVDict only |
 | `-accurate_seek` / `-noaccurate_seek` / `-seek_timestamp`   | ❌    | Required for frame-accurate trim of long-GOP sources |
 | `-protocol_whitelist`                                       | ⚠️    | AVDict only; should be elevated for security review |
-| Lavfi virtual sources (`-f lavfi -i color=…`)               | ❌    | No virtual-source input kind — see §3.1 |
+| Lavfi virtual sources (`-f lavfi -i color=…`)               | ✅    | `Input.Kind = "lavfi"`; `URL` carries the filtergraph spec. libavdevice linked + `avdevice_register_all()` at init |
 | `image2` glob pattern (`-i 'frames/*.png'`)                 | ⚠️    | Works via AVDict if user knows the syntax; no schema affordance |
 | `concat` demuxer (listfile)                                 | ❌    | Today users must build a concat **filter** graph; no `concat:` input kind |
 | Device capture (`-f avfoundation`, `-f dshow`, `-f v4l2`)   | ⚠️    | Works through AVDict; no GUI palette, no probe |
@@ -485,6 +485,21 @@ branch:
    conflicts with the muxer's atomic-rename of `out.tmp → out`).
 3. Introduce `Input.Kind = "lavfi"` and write the `audio-silence`
    community script.
+   ~~**Landed.**~~ `Input` gained `Kind` (`"file"` default, `"lavfi"`);
+   new `av.OpenInputWithFormat(url, format, options)` wraps
+   `av_find_input_format` + `avformat_open_input`, and
+   `pipeline.openSource` switches on `Kind` to route lavfi specs
+   through libavformat's `lavfi` virtual demuxer (FFmpeg's
+   `-f lavfi`). libavdevice is now linked into the static build
+   (`-lavdevice` + `-framework CoreAudio` on darwin for
+   audiotoolbox.o) and registered at process start via
+   `avdevice_register_all()` in `av/avdevice_init.go`. `SeekFile`
+   is skipped for lavfi inputs (virtual sources don't seek; `-t`
+   still applies via the per-packet `recording_time` stop check).
+   New fixture `testdata/community-scripts/26_audio_silence.json`
+   generates 2 s of silent stereo PCM via
+   `anullsrc=channel_layout=stereo:sample_rate=44100` →
+   `aformat` → `pcm_s16le` WAV end-to-end.
 4. Land the **capability registry** (a YAML file under `compat/` that
    lists every ffmpeg flag with status + schema-pointer) and the
    first batch of `compat/ffcli` round-trip tests.

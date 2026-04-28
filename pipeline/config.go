@@ -23,8 +23,16 @@ type Config struct {
 
 // Input describes a single input source.
 type Input struct {
-	ID      string         `json:"id"`
-	URL     string         `json:"url"`
+	ID  string `json:"id"`
+	URL string `json:"url"`
+	// Kind selects how the input is opened. Defaults to "file" (or empty),
+	// meaning libavformat probes the URL. "lavfi" opens the input through
+	// libavformat's lavfi virtual demuxer (FFmpeg's `-f lavfi -i …`); the
+	// URL field then holds the filtergraph spec, e.g.
+	// "anullsrc=r=48000:cl=stereo" or "color=black:s=1920x1080:r=30".
+	// Required for synthetic sources (silent audio, test cards, color
+	// padding tracks) where there is no underlying file to demux.
+	Kind    string         `json:"kind,omitempty"`
 	Streams []StreamSelect `json:"streams"`
 	Options map[string]any `json:"options,omitempty"`
 }

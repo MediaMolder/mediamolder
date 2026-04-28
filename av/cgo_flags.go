@@ -5,10 +5,11 @@
 
 package av
 
-// #cgo pkg-config: libavcodec libavformat libavfilter libavutil libswscale libswresample
+// #cgo pkg-config: libavcodec libavformat libavdevice libavfilter libavutil libswscale libswresample
 //
 // #include "libavcodec/avcodec.h"
 // #include "libavformat/avformat.h"
+// #include "libavdevice/avdevice.h"
 // #include "libavfilter/avfilter.h"
 // #include "libavutil/avutil.h"
 // #include "libswscale/swscale.h"
