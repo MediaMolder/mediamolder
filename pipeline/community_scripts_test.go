@@ -159,6 +159,10 @@ func communityOutputExt(name string) string {
 		return ".webp"
 	case strings.HasPrefix(name, "18_"): // subtitle_add → MKV
 		return ".mkv"
+	case strings.HasPrefix(name, "21_"), // extract_frame
+		strings.HasPrefix(name, "22_"), // tile_thumbnails
+		strings.HasPrefix(name, "23_"): // scene_images
+		return ".jpg"
 	default:
 		return ".mp4"
 	}

@@ -184,7 +184,7 @@ semantics.
 | Output-side `-ss`/`-t`/`-to`                                      | ⚠️    | Engine cuts at filter level today; output-side trim with `-copyts` semantics not separately modelled |
 | `-shortest`                                                       | ❌    | "Stop when the shortest input ends" — common for music videos and overlays |
 | `-fs N` (file size limit)                                         | ❌    | |
-| `-frames:v N`, `-frames:a N`                                      | ❌    | Required for `extract-frame`, `tile-thumbnails`, `scene-images` |
+| `-frames:v N`, `-frames:a N`                                      | ✅    | `Output.MaxFramesVideo` / `Output.MaxFramesAudio`; sink drains channel and stops writing once limit is hit (post-encoder count, matches ffmpeg semantics for filter-dropping graphs) |
 | `-metadata key=value`                                             | ❌    | Global metadata write |
 | `-metadata:s:v:0 …` per-stream metadata                           | ❌    | Required for language tags, stereoscopic flags, comments |
 | `-map_metadata`, `-map_chapters`                                  | ❌    | Required for `chapter-add`, `chapter-extract` |
@@ -473,6 +473,16 @@ branch:
 2. Build `Output.MaxFramesVideo` / `MaxFramesAudio` plumbing and
    write the missing five community scripts (`extract-frame`,
    `tile-thumbnails`, `scene-images`, `scene-cut`, `scene-cut-to`).
+   ~~**Landed.**~~ `Output` gained `MaxFramesVideo` /
+   `MaxFramesAudio`; `handleSink` enforces the cap per inbound
+   channel by dropping packets after the limit while still draining
+   the channel (so upstream encoders never deadlock). Counts
+   post-encoder packets, matching ffmpeg's `-frames:v` semantics
+   when filters like `select=gt(scene,…)` drop frames. Five new
+   fixtures landed at `testdata/community-scripts/21_*.json`–
+   `25_*.json`; image outputs use the `mjpeg` muxer (raw JPEG
+   stream — sidesteps the `image2` `%d`-pattern requirement which
+   conflicts with the muxer's atomic-rename of `out.tmp → out`).
 3. Introduce `Input.Kind = "lavfi"` and write the `audio-silence`
    community script.
 4. Land the **capability registry** (a YAML file under `compat/` that

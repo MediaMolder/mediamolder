@@ -135,6 +135,8 @@
         "encoder_params_subtitle": { "type": "object", "additionalProperties": true },
         "bsf_video": { "type": "string" },
         "bsf_audio": { "type": "string" },
+        "max_frames_video": { "type": "integer", "minimum": 0, "description": "Stop muxing after N video packets. 0 = unlimited. Mirrors ffmpeg -frames:v / -vframes; required for extract-frame, tile-thumbnails, scene-image patterns." },
+        "max_frames_audio": { "type": "integer", "minimum": 0, "description": "Stop muxing after N audio packets. 0 = unlimited. Mirrors ffmpeg -frames:a / -aframes." },
         "options": {
           "type": "object",
           "additionalProperties": true

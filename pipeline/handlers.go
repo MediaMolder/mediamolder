@@ -1016,14 +1016,38 @@ func (r *graphRunner) handleSink(ctx context.Context, node *graph.Node, ins []<-
 		return fmt.Errorf("sink handler: no resources for node %q", node.ID)
 	}
 
+	// Per-channel max-frames limit derived from Output.MaxFramesVideo /
+	// MaxFramesAudio and the inbound edge's media type. 0 = unlimited.
+	// Once written >= limit, subsequent packets on that channel are
+	// drained-and-dropped so upstream encoders/copy nodes never block;
+	// the muxer trailer is written when every channel closes naturally.
+	limitForChan := func(i int) int {
+		if i >= len(node.Inbound) {
+			return 0
+		}
+		switch node.Inbound[i].Type {
+		case graph.PortVideo:
+			return sink.cfg.MaxFramesVideo
+		case graph.PortAudio:
+			return sink.cfg.MaxFramesAudio
+		}
+		return 0
+	}
+
 	if len(ins) == 1 {
 		var rs *sinkRescale
 		if len(sink.streamRescale) > 0 {
 			rs = sink.streamRescale[0]
 		}
 		dstTB := sink.muxer.StreamTimeBase(0)
+		limit := limitForChan(0)
+		written := 0
 		for v := range ins[0] {
 			pkt := v.(*av.Packet)
+			if limit > 0 && written >= limit {
+				pkt.Close()
+				continue
+			}
 			pkt.SetStreamIndex(0)
 			if rs != nil {
 				pkt.Rescale(rs.srcTB, rs.dstTB)
@@ -1033,6 +1057,7 @@ func (r *graphRunner) handleSink(ctx context.Context, node *graph.Node, ins []<-
 				pkt.Close()
 				return err
 			}
+			written++
 			if pts := pkt.PTS(); pts != math.MinInt64 && dstTB[1] > 0 {
 				ptsNs := time.Duration(pts) * time.Second *
 					time.Duration(dstTB[0]) / time.Duration(dstTB[1])
@@ -1055,9 +1080,15 @@ func (r *graphRunner) handleSink(ctx context.Context, node *graph.Node, ins []<-
 			rs = sink.streamRescale[i]
 		}
 		dstTB := sink.muxer.StreamTimeBase(i)
+		limit := limitForChan(i)
+		written := 0
 		eg.Go(func() error {
 			for v := range in {
 				pkt := v.(*av.Packet)
+				if limit > 0 && written >= limit {
+					pkt.Close()
+					continue
+				}
 				pkt.SetStreamIndex(i)
 				if rs != nil {
 					pkt.Rescale(rs.srcTB, rs.dstTB)
@@ -1067,6 +1098,7 @@ func (r *graphRunner) handleSink(ctx context.Context, node *graph.Node, ins []<-
 				err := sink.muxer.WritePacket(pkt)
 				mu.Unlock()
 				if err == nil {
+					written++
 					if pts := pkt.PTS(); pts != math.MinInt64 && dstTB[1] > 0 {
 						ptsNs := time.Duration(pts) * time.Second *
 							time.Duration(dstTB[0]) / time.Duration(dstTB[1])

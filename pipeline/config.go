@@ -107,7 +107,17 @@ type Output struct {
 	EncoderParamsVideo    map[string]any `json:"encoder_params_video,omitempty"`
 	EncoderParamsAudio    map[string]any `json:"encoder_params_audio,omitempty"`
 	EncoderParamsSubtitle map[string]any `json:"encoder_params_subtitle,omitempty"`
-	Options               map[string]any `json:"options,omitempty"`
+	// MaxFramesVideo / MaxFramesAudio cap the number of *muxed* packets
+	// of the corresponding media type written to this output. Mirrors
+	// FFmpeg's `-frames:v N` / `-frames:a N` (also spelt `-vframes` /
+	// `-aframes`). 0 means unlimited (default). Once the cap is
+	// reached for a stream, further packets on that channel are read
+	// and dropped so upstream does not stall; the muxer trailer is
+	// written when all input channels close. Required for
+	// extract-frame, tile-thumbnails, and scene-image patterns.
+	MaxFramesVideo int            `json:"max_frames_video,omitempty"`
+	MaxFramesAudio int            `json:"max_frames_audio,omitempty"`
+	Options        map[string]any `json:"options,omitempty"`
 }
 
 // Options holds global pipeline options.

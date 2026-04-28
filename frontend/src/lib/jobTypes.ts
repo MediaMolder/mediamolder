@@ -73,6 +73,12 @@ export interface Output {
   encoder_params_video?: Record<string, unknown>;
   encoder_params_audio?: Record<string, unknown>;
   encoder_params_subtitle?: Record<string, unknown>;
+  /** Cap on the number of muxed video / audio packets written to this
+   *  output. 0 (or omitted) = unlimited. Mirrors ffmpeg -frames:v /
+   *  -frames:a (also -vframes / -aframes); required for extract-frame,
+   *  tile-thumbnails and scene-image jobs. */
+  max_frames_video?: number;
+  max_frames_audio?: number;
   options?: Record<string, unknown>;
 }
 

@@ -126,6 +126,8 @@
         "encoder_params_video": { "type": "object", "additionalProperties": true, "description": "Codec-specific options (preset, crf, b, g, ...) attached to the implicit video encoder. Populated by compat/ffcli when parsing FFmpeg command lines." },
         "encoder_params_audio": { "type": "object", "additionalProperties": true },
         "encoder_params_subtitle": { "type": "object", "additionalProperties": true },
+        "max_frames_video": { "type": "integer", "minimum": 0, "description": "Stop muxing after N video packets. 0 = unlimited. Mirrors ffmpeg -frames:v / -vframes; required for extract-frame, tile-thumbnails, scene-image patterns." },
+        "max_frames_audio": { "type": "integer", "minimum": 0, "description": "Stop muxing after N audio packets. 0 = unlimited. Mirrors ffmpeg -frames:a / -aframes." },
         "options": {
           "type": "object",
           "additionalProperties": true
