@@ -519,7 +519,18 @@ branch:
    forced-format remux; the suite is skipped (not failed) when
    `ffmpeg`/`ffprobe` are missing from `PATH` so the default
    `go test ./...` run stays usable on machines without the CLI
-   installed alongside the libraries.
+   installed alongside the libraries. Two pre-existing pipeline
+   bugs surfaced and are now fixed in the same series:
+   `pipeline.buildFilterSpec` was emitting positional FFmpeg-style
+   filter args (the `_pos*` keys synthesised by
+   `compat/ffcli.parseFilterExpr` for `scale=320:240`-style
+   expressions) verbatim as named options; libx264 fed by a filter
+   graph was opened with `time_base=1/framerate` while the
+   buffersink advertised the demuxer's finer TB, so frame PTS were
+   reinterpreted in the encoder's coarser units and the container
+   duration came out ~512x too long. Round-trip cases
+   `vf_scale_positional_x264_audio_copy` and
+   `vf_scale_named_x264_no_audio` lock both fixes in.
 5. Open the schema-evolution work for chapter and per-stream
    metadata IO (`KindMetadataReader`, `KindMetadataWriter`,
    `Output.Chapters`).

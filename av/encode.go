@@ -41,6 +41,15 @@ type EncoderOptions struct {
 	FrameRate [2]int // {num, den}
 	GOPSize   int
 
+	// TimeBase, if set with TimeBase[1] > 0, is used as the encoder's
+	// time_base instead of the default 1/FrameRate. This is required when
+	// the encoder is fed by a filter graph whose buffersink advertises a
+	// finer time_base than 1/framerate (e.g. demuxer TB 1/12288 propagated
+	// through scale): without it, frame PTS produced in the buffersink's
+	// units would be reinterpreted in the encoder's coarser units, blowing
+	// up the output container duration by orders of magnitude.
+	TimeBase [2]int
+
 	// --- Audio ---
 	SampleFmt  int // AVSampleFormat
 	SampleRate int
@@ -99,6 +108,15 @@ func OpenEncoder(opts EncoderOptions) (*EncoderContext, error) {
 			ctx.framerate = C.AVRational{
 				num: C.int(opts.FrameRate[0]),
 				den: C.int(opts.FrameRate[1]),
+			}
+		}
+		// An explicit TimeBase (typically the upstream buffersink's TB) takes
+		// precedence over the framerate-derived default so frame PTS values
+		// produced by the filter graph are interpreted correctly.
+		if opts.TimeBase[1] > 0 {
+			ctx.time_base = C.AVRational{
+				num: C.int(opts.TimeBase[0]),
+				den: C.int(opts.TimeBase[1]),
 			}
 		}
 		if opts.GOPSize > 0 {

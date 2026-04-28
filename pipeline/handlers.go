@@ -1492,6 +1492,14 @@ func (r *graphRunner) createEncoder(dag *graph.Graph, node *graph.Node) (*av.Enc
 			if pf := fg.OutputPixFmt(0); pf >= 0 {
 				opts.PixFmt = pf
 			}
+			// Frames emerge from the buffersink with PTS in the sink's
+			// time_base. The encoder must use the same TB or libavcodec will
+			// reinterpret the PTS in 1/framerate units, blowing up the
+			// container duration (e.g. demuxer TB 1/12288 fed into a
+			// 24 fps encoder produces ~512x oversized timestamps).
+			if tbn, tbd := fg.OutputTimeBase(0); tbn > 0 && tbd > 0 {
+				opts.TimeBase = [2]int{tbn, tbd}
+			}
 		} else {
 			opts.Width = si.Width
 			opts.Height = si.Height

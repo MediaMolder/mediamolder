@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -760,30 +761,60 @@ func buildFilterSpec(node NodeDef) string {
 	if len(node.Params) == 0 {
 		return node.Filter
 	}
-	// Sort keys for deterministic output.
-	keys := make([]string, 0, len(node.Params))
-	for k := range node.Params {
-		keys = append(keys, k)
+	// Partition keys into positional ("_posN") and named. Positional keys
+	// come from compat/ffcli when an upstream FFmpeg-style filter expression
+	// like `scale=320:240` is parsed: each `:`-separated token without an
+	// embedded `=` is recorded as `_pos0`, `_pos1`, ... so the original
+	// argument order can be recovered. They must reach libavfilter as bare,
+	// in-order values (no `_posN=` prefix) and must precede any named args.
+	type posArg struct {
+		idx int
+		val any
 	}
-	sort.Strings(keys)
+	var positional []posArg
+	named := make([]string, 0, len(node.Params))
+	for k := range node.Params {
+		if n, ok := strings.CutPrefix(k, "_pos"); ok {
+			if i, err := strconv.Atoi(n); err == nil {
+				positional = append(positional, posArg{idx: i, val: node.Params[k]})
+				continue
+			}
+		}
+		named = append(named, k)
+	}
+	sort.Slice(positional, func(i, j int) bool { return positional[i].idx < positional[j].idx })
+	sort.Strings(named)
+
+	quote := func(v any) string {
+		s := fmt.Sprintf("%v", v)
+		// avfilter_graph_parse_ptr treats ',' and ';' as separators between
+		// filter chains. Quote any value that contains those characters (or
+		// a literal single-quote) so the expression reaches the filter intact.
+		if strings.ContainsAny(s, "',;") {
+			s = "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+		}
+		return s
+	}
 
 	spec := node.Filter
 	first := true
-	for _, k := range keys {
+	for _, p := range positional {
 		if first {
 			spec += "="
 			first = false
 		} else {
 			spec += ":"
 		}
-		v := fmt.Sprintf("%v", node.Params[k])
-		// avfilter_graph_parse_ptr treats ',' and ';' as separators between
-		// filter chains. Quote any value that contains those characters (or a
-		// literal single-quote) so the expression reaches the filter intact.
-		if strings.ContainsAny(v, "',;") {
-			v = "'" + strings.ReplaceAll(v, "'", `'\''`) + "'"
+		spec += quote(p.val)
+	}
+	for _, k := range named {
+		if first {
+			spec += "="
+			first = false
+		} else {
+			spec += ":"
 		}
-		spec += k + "=" + v
+		spec += k + "=" + quote(node.Params[k])
 	}
 	return spec
 }

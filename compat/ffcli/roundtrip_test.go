@@ -76,6 +76,26 @@ var roundTripCases = []roundTripCase{
 		outExt:      ".mkv",
 		durationTol: 0.5,
 	},
+	{
+		// Positional filter args (`scale=320:240`) — regression for the
+		// `_pos*` synthesis in parseFilterExpr being passed verbatim by
+		// pipeline.buildFilterSpec. With the fix, positional keys are
+		// emitted as bare in-order values before any named args.
+		name:        "vf_scale_positional_x264_audio_copy",
+		cmd:         "ffmpeg -y -i {{input}} -vf scale=320:240 -c:v libx264 -preset ultrafast -c:a copy {{output}}",
+		outExt:      ".mp4",
+		durationTol: 0.5,
+	},
+	{
+		// libx264 fed by a filter graph with audio dropped — regression
+		// for the encoder receiving frame PTS in the buffersink TB while
+		// its own time_base was 1/framerate. The fix propagates the
+		// upstream filter's time_base into EncoderOptions.TimeBase.
+		name:        "vf_scale_named_x264_no_audio",
+		cmd:         "ffmpeg -y -i {{input}} -vf scale=w=320:h=240 -c:v libx264 -preset ultrafast -an {{output}}",
+		outExt:      ".mp4",
+		durationTol: 0.5,
+	},
 }
 
 // TestFFCLIRoundTrip is the first batch of compat/ffcli round-trip
@@ -165,12 +185,12 @@ type probeResult struct {
 		NbStreams  int    `json:"nb_streams"`
 	} `json:"format"`
 	Streams []struct {
-		Index     int    `json:"index"`
-		CodecType string `json:"codec_type"`
-		CodecName string `json:"codec_name"`
-		Duration  string `json:"duration"`
-		Width     int    `json:"width,omitempty"`
-		Height    int    `json:"height,omitempty"`
+		Index      int    `json:"index"`
+		CodecType  string `json:"codec_type"`
+		CodecName  string `json:"codec_name"`
+		Duration   string `json:"duration"`
+		Width      int    `json:"width,omitempty"`
+		Height     int    `json:"height,omitempty"`
 		SampleRate string `json:"sample_rate,omitempty"`
 	} `json:"streams"`
 }
