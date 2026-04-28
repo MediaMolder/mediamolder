@@ -545,13 +545,29 @@ branch:
    kinds remain **deferred** — the shorthand covers the common case and
    the graph-kind work is reserved for a future PR that has a real
    per-stream / multi-source metadata-routing scenario to anchor it.
-6. Stand up the **production-pattern conformance corpus** stub at
+6. ~~Stand up the **production-pattern conformance corpus** stub at
    `testdata/production-patterns/` with the highest-leverage
    commands from §1.1 (animated `drawtext`, multi-resolution ABR,
    full GPU `scale_npp`+`h264_nvenc`, `zscale`+`tonemap`,
    `loudnorm` two-pass, raw-stream input). Even before each one
    runs, the failing `t.Skip` reason becomes machine-readable
-   roadmap signal.
+   roadmap signal.~~ **Landed (stub).** Six manifest JSONs seeded
+   under [testdata/production-patterns/](../testdata/production-patterns/)
+   (`01_animated_drawtext.json`, `02_abr_ladder.json`,
+   `03_full_gpu_scale_npp_nvenc.json`, `04_hdr_zscale_tonemap.json`,
+   `05_loudnorm_two_pass.json`, `06_raw_yuv_input.json`); harness lives
+   at [compat/ffcli/production_patterns_test.go](../compat/ffcli/production_patterns_test.go)
+   (`TestProductionPatternsCorpus`). Each manifest carries the
+   canonical FFmpeg command, a free-form description, a structured
+   `blockers: [string]` list naming the missing capability keys, and
+   `roadmap_refs` pointing back into §1.1/§2/§3. The harness emits one
+   `roadmap-ref:` log line per ref then either `Skip`s with a single
+   greppable `blocked-by: <k1>; <k2>; ...` line or — once `blockers` is
+   empty — drives the command through `ffcli.Parse` + `pipeline.Run`.
+   Today's expected outcome is 6/6 skips; the success criterion for
+   landing each upstream capability is "this pattern flips from skip
+   to pass". Capability inventory mining:
+   `go test -v -run TestProductionPatternsCorpus ./compat/ffcli/ 2>&1 | grep '^.*blocked-by:'`.
 7. Add the **filter-expression `eval-expression` HTTP endpoint** so
    the GUI can validate `enable=`, `x=`, `y=`, `text=` expressions
    without running the full graph. Cheap to ship, immediately
