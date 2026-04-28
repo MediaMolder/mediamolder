@@ -317,6 +317,46 @@ The complete option list lives below in two further sections:
   keys for anything libav adds in the future that the form doesn't
   yet recognise.
 
+#### Input and Output nodes — Timing (trim)
+
+Both the **Input** form and the **Output** form expose a **Timing**
+section with three fields, mirroring FFmpeg's per-file timing flags:
+
+| Field            | FFmpeg flag | Meaning                                                |
+|------------------|-------------|--------------------------------------------------------|
+| **Start (-ss)**  | `-ss`       | Skip to this position before processing.               |
+| **Duration (-t)**| `-t`        | Process at most this many seconds, then stop.          |
+| **End (-to)**    | `-to`       | Stop at this absolute position. (Don't combine with `-t`.) |
+
+All three accept a number of seconds (`30`, `5.5`) or an
+`HH:MM:SS[.ms]` timestamp (`00:00:30`, `01:23:45.250`).
+
+The **side you set them on changes their meaning** — exactly like the
+FFmpeg command line:
+
+* **Set on the Input** to trim the *source* before any decoding, filtering
+  or encoding. The values become demuxer options (`Input.options`) and
+  reach libavformat via `avformat_open_input` → `AVDictionary`. This is
+  the right place to use them when you want every downstream stage —
+  filters, encoders, processors — to see only the trimmed window.
+  Example: `Start=10`, `Duration=30` on the input means "decode 30
+  seconds starting 10 seconds in".
+* **Set on the Output** to trim what the *muxer* writes. The values
+  become muxer options (`Output.options`). Use this when you want the
+  full source to flow through the graph but only a slice of the
+  encoded result to reach the file. Particularly useful for
+  stream-copy workflows: `ffmpeg -i in.mp4 -c copy -t 30 out.mp4` →
+  set Duration=30 on the Output, leave the Input untouched, and wire
+  `Copy (video)` / `Copy (audio)` nodes through to the output. (Note:
+  muxer-side trimming via `Output.options` is currently a frontend /
+  schema-level field; the runtime honours `Input.options` today —
+  full muxer-side plumbing tracked separately.)
+
+Leave a field blank to omit it. The values round-trip through the
+**Import FFmpeg command…** dialog, so an existing
+`ffmpeg -ss 5 -t 30 -i in.mp4 -c copy out.mp4` lands in the editor with
+Start=5, Duration=30 already populated on the input node.
+
 ### Run panel
 
 Click **Run** to execute the current graph. The frontend POSTs the job to

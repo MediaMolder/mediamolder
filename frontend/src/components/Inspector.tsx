@@ -173,6 +173,10 @@ function InputForm({
       </div>
       {probeError && <div className="probe-error">{probeError}</div>}
       {probed && <ProbedStreamsView streams={probed} />}
+      <TimingFields
+        options={def.options}
+        onChange={(opts) => onChange({ ...def, options: opts })}
+      />
     </>
   );
 }
@@ -341,6 +345,10 @@ function OutputForm({
         value={def.codec_tag_subtitle ?? ''}
         suggestions={tagsForSubtitle(effSubtitle)}
         onChange={(v) => onChange({ ...def, codec_tag_subtitle: v || undefined })}
+      />
+      <TimingFields
+        options={def.options}
+        onChange={(opts) => onChange({ ...def, options: opts })}
       />
     </>
   );
@@ -679,6 +687,51 @@ function ParamsEditor({
         </div>
       ))}
       <button style={{ marginTop: 6 }} onClick={add}>+ add param</button>
+    </>
+  );
+}
+
+/* ---------- Timing / trim fields (-ss, -t, -to) ----------
+ * These are the FFmpeg per-file timing flags. They live in
+ * Input.Options / Output.Options as string-valued AVDictionary entries
+ * (FFmpeg parses durations like `30`, `00:00:30`, `30.5`). When placed
+ * before `-i` they restrict the demuxer (input form); when placed
+ * before an output URL they restrict the muxer (output form). The
+ * `compat/ffcli` parser routes them automatically based on position;
+ * the GUI exposes them on whichever side they ended up.
+ *
+ * Mirroring `-t` and `-to` simultaneously is rejected by FFmpeg, so
+ * the editor doesn't enforce that — it just surfaces all three. */
+function TimingFields({
+  options,
+  onChange,
+}: {
+  options: Record<string, unknown> | undefined;
+  onChange: (next: Record<string, unknown> | undefined) => void;
+}) {
+  const get = (k: string): string => {
+    const v = options?.[k];
+    return typeof v === 'string' ? v : v == null ? '' : String(v);
+  };
+  const set = (k: string, v: string) => {
+    const next: Record<string, unknown> = { ...(options ?? {}) };
+    if (v.trim() === '') {
+      delete next[k];
+    } else {
+      next[k] = v.trim();
+    }
+    onChange(Object.keys(next).length === 0 ? undefined : next);
+  };
+  return (
+    <>
+      <label style={{ marginTop: 12 }}>Timing</label>
+      <div style={{ fontSize: 11, color: 'var(--text-dim)', marginBottom: 4 }}>
+        FFmpeg <code>-ss</code> / <code>-t</code> / <code>-to</code>. Accepts
+        seconds (<code>30</code>) or <code>HH:MM:SS[.ms]</code>.
+      </div>
+      <Field label="Start (-ss)" value={get('ss')} onChange={(v) => set('ss', v)} />
+      <Field label="Duration (-t)" value={get('t')} onChange={(v) => set('t', v)} />
+      <Field label="End (-to)" value={get('to')} onChange={(v) => set('to', v)} />
     </>
   );
 }

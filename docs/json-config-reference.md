@@ -21,7 +21,7 @@ Use `"1.1"` when the graph contains `go_processor` nodes. Use `"1.2"` when the g
 | `id`       | string | yes      | Unique identifier, referenced in edge `from`   |
 | `url`      | string | yes      | File path or URL                               |
 | `streams`  | array  | yes      | Stream selections                              |
-| `options`  | object | no       | Demuxer options (key-value)                     |
+| `options`  | object | no       | Demuxer options (key-value). Includes per-input timing flags `ss` (start), `t` (duration), `to` (end), accepting seconds or `HH:MM:SS[.ms]`. These restrict the demuxer so every downstream stage sees only the trimmed window. Surfaced as the **Timing** section on the Input form in the GUI. |
 
 ### StreamSelect
 
@@ -81,7 +81,7 @@ For `"copy"` nodes, no `params` are required — the inbound edge type tells the
 | `codec_subtitle` | string | no       | Subtitle encoder name  |
 | `bsf_video`      | string | no       | Video bitstream filter |
 | `bsf_audio`      | string | no       | Audio bitstream filter |
-| `options`        | object | no       | Muxer options          |
+| `options`        | object | no       | Muxer options. Includes per-output timing flags `ss` (start), `t` (duration), `to` (end), accepting seconds or `HH:MM:SS[.ms]`. These restrict what the muxer writes (the full source still flows through the graph), which is the typical place to trim a stream-copy job. Surfaced as the **Timing** section on the Output form in the GUI. |
 
 ## GlobalOptions
 

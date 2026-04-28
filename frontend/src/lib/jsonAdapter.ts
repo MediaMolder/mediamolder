@@ -204,10 +204,21 @@ export function materializeImplicitEncoders(cfg: JobConfig): JobConfig {
       continue;
     }
 
-    let encId = `auto_enc_${toHead}_${e.type}`;
+    let encId: string;
+    if (codec === 'copy') {
+      // Match the id shape produced by dragging a Copy palette entry
+      // (`copy_video`, `copy_audio`, …) so materialised stream-copy
+      // nodes look identical to user-spawned ones in the canvas.
+      encId = `copy_${e.type}_${toHead}`;
+    } else {
+      encId = `auto_enc_${toHead}_${e.type}`;
+    }
     let suffix = 1;
     while (usedIds.has(encId)) {
-      encId = `auto_enc_${toHead}_${e.type}_${suffix++}`;
+      const base = codec === 'copy'
+        ? `copy_${e.type}_${toHead}`
+        : `auto_enc_${toHead}_${e.type}`;
+      encId = `${base}_${suffix++}`;
     }
     usedIds.add(encId);
 
@@ -254,6 +265,25 @@ export function materializeImplicitEncoders(cfg: JobConfig): JobConfig {
 }
 
 /**
+ * Walk the edge list to determine which media-type pins a stream-copy
+ * node should expose. Used by `configToFlow` to set
+ * FlowNodeData.streams for copy nodes loaded from JSON, so the canvas
+ * renders the same one-pin-per-side layout and friendly heading
+ * ("Video stream copy" / "Audio stream copy") that user-spawned Copy
+ * palette entries use. Returns an empty array when the node is
+ * unwired, in which case MMNode falls back to all four pins.
+ */
+function inferCopyStreams(nodeId: string, edges: EdgeDef[]): string[] {
+  const seen = new Set<string>();
+  for (const e of edges) {
+    if (endpointHead(e.from) === nodeId || endpointHead(e.to) === nodeId) {
+      if (e.type) seen.add(e.type);
+    }
+  }
+  return [...seen];
+}
+
+/**
  * Pick the bold heading shown on a graph NodeDef in the canvas. For
  * encoders, filters and go_processors the user-meaningful identity is
  * the codec / filter / processor name (e.g. "libx264", "scale",
@@ -267,6 +297,17 @@ export function nodeDisplayLabel(n: NodeDef): string {
   }
   if (n.type === 'filter' && n.filter) return n.filter;
   if (n.type === 'go_processor' && n.processor) return n.processor;
+  if (n.type === 'copy') {
+    // Match the bold heading shown when the user drags a `Copy (video)`
+    // / `Copy (audio)` entry from the palette: those nodes get a
+    // canonical id like `copy_video` shown both as label and sublabel.
+    // For materialised copy nodes loaded from JSON the id is something
+    // like `copy_video_output0` — strip the `_<output>` suffix so the
+    // heading is the friendly `copy_<type>` form.
+    const m = /^(copy_(?:video|audio|subtitle|data))(?:_.*)?$/.exec(n.id);
+    if (m) return m[1];
+    return 'copy';
+  }
   return n.id;
 }
 
@@ -313,6 +354,14 @@ export function configToFlow(cfg: JobConfig, opts: ConvertOptions = {}): {
         label: nodeDisplayLabel(n),
         sublabel: nodeDisplaySublabel(n),
         ref: { kind: 'node', def: n },
+        // For stream-copy nodes infer the supported media type from the
+        // edges the node participates in. This narrows MMNode's pins
+        // (video-only handles for a video copy, etc.) and lets
+        // describeKind render the friendly heading "Video stream copy"
+        // / "Audio stream copy" instead of the generic "Stream copy".
+        ...(n.type === 'copy'
+          ? { streams: inferCopyStreams(n.id, cfg.graph.edges) }
+          : {}),
       },
     });
   });
