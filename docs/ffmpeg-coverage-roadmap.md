@@ -48,6 +48,35 @@ roadmap below. They are sampled from a tiny corner of FFmpeg usage
 (20 hand-written shell scripts), so they should be treated as a
 representative *minimum*, not as a complete list.
 
+### 1.1 Second corpus: production-pattern command lines
+
+A review of typical production FFmpeg usage (animated `drawtext`,
+two-pass `loudnorm`, multi-resolution split-and-mux ABR, hardware
+pipelines mixing CUDA + NPP + NVENC, HDR `zscale`/`tonemap`,
+`minterpolate` slow-motion, RNNoise speech denoise, mixed
+labelled/unlabelled `-filter_complex` outputs) surfaced a second wave
+of gaps that the 35-script community corpus does not exercise:
+
+| Gap                                                            | Note |
+|----------------------------------------------------------------|------|
+| **Filter expression engine** (`enable=between(t,2,8)`, `x=w-tw*t/5`, `t`, `n`, `frame`, `tw`, `th`, `text_w`, `text_h`) | Used by `drawtext`, `overlay`, `fade`, `crop`, `zoompan`, `geq`, … — `params` values today are stringified verbatim, but the GUI cannot help users author or validate them. |
+| **Two-pass `loudnorm`**                                        | Pass 1 emits JSON to stderr (`measured_I`, `measured_TP`, `measured_LRA`, `measured_thresh`, `offset`); pass 2 must consume those values. Distinct from generic two-pass video encoding — needs an inter-pass shuttle in the engine. |
+| **`setsar` / `setdar` and explicit SAR/DAR encoding**          | Required for square-pixel correction of legacy 720×480 / 720×576 sources and for HDR/Dolby SAR enforcement. |
+| **Audio channel manipulation** (`pan`, `channelsplit`, `channelmap`, `join`, `amerge`, `amix=weights=…`) | Multi-track downmix / upmix / language-track splitting. |
+| **Speech denoise model files** (`arnndn=model=cb.rnnn`)        | Filter takes a model path; we have no fixture/asset story for filter-side data files. Same problem as YOLO model paths but for filters rather than processors. |
+| **HDR tonemap via `zscale`**                                   | Depends on libzimg in the build (separate from libswscale). Build-tag and feature-detection story missing. |
+| **`minterpolate` motion-compensated frame interpolation**      | Requires VFR awareness and fps targets — touches the same FrameRate/TimeBase plumbing as xfade. |
+| **Lossless intermediate codecs** (FFV1, ProRes, DNxHD/DNxHR, HuffYUV) | Multi-pass editorial workflows (decode → lossless intermediate → grade → final encode). Encoder availability + container compatibility validation. |
+| **`scale_npp` (NVIDIA NPP) vs `scale_cuda`**                   | Different libraries; some FFmpeg builds expose only one. The hardware-filter mapping table needs a per-filter availability probe. |
+| **`-init_hw_device` and multi-device graphs**                  | Pipelines that touch two hardware contexts (e.g. CUDA decode → CPU filter → QSV encode) need explicit device declarations and `hwmap` between them. |
+| **First-class raw-stream input** (`-f rawvideo -pix_fmt yuv420p -s 1920x1080 -r 30`) | Raw inputs are the dominant test fixture format and the canonical bug-report repro. They work via AVDict today; deserve a typed schema. |
+| **`-fps_mode` (cfr/vfr/passthrough/drop) and legacy `-vsync`** | Already in §2.4 but worth reiterating: this is the single most common cause of A/V drift in user reports. |
+| **`-async N` audio resync**                                    | Audio-side counterpart to `fps_mode`; resamples to maintain sync. |
+| **Mixed labelled / unlabelled `-filter_complex` outputs**      | `avfilter_graph_parse_ptr` quirk: a graph that exposes both `[v]` and an unlabelled trailing pad needs careful pad-binding order. The `compat/ffcli` importer must normalise this. |
+| **Long command lines, quoting, and shell escaping**            | Already partially addressed by the `,;'` fix in commit `04f1a0c7`; needs round-trip fuzzing. |
+
+These are folded into the matrix in §2 and the phase plan in §3.
+
 ## 2. The full FFmpeg surface area
 
 The CLI is a thin shell around four subsystems: **demux**, **filter**,
@@ -116,6 +145,13 @@ semantics.
 | Sidedata / per-frame metadata propagation                   | ⚠️    | Frames carry `AVFrame->metadata` but there is no JSON-side `metadata` filter wiring |
 | Hardware filter auto-mapping (sw `scale` → `scale_cuda` etc.) | ❌  | User must spell the hardware filter name today |
 | `hwupload`, `hwdownload`, `hwmap` filters                   | ⚠️    | Available via filter name, no first-class palette |
+| **Filter expression engine** (`t`, `n`, `frame`, `tw`, `th`, `text_w`, `text_h`, `w`, `h`, `enable=between(t,2,8)`, arithmetic) | ⚠️ | Strings reach libavfilter intact; GUI has no expression authoring/validation; `compat/ffcli` does not normalise quoting |
+| **Mixed labelled + unlabelled `-filter_complex` outputs**   | ⚠️    | Works when constructed manually; importer/exporter round-trip not yet tested |
+| `setsar`, `setdar` (SAR/DAR overrides)                      | ⚠️    | Available as filter; not surfaced in encoder color metadata |
+| `arnndn` (RNNoise) and other model-file filters             | ⚠️    | Filter runs if model path is correct; no fixture story for filter-side data files |
+| `zscale` + `tonemap` (HDR)                                  | ⚠️    | Requires libzimg in build; no feature probe |
+| `minterpolate` (motion-compensated interpolation)           | ⚠️    | Available; needs same FrameRate/TimeBase plumbing as xfade |
+| Audio channel manipulation: `pan`, `channelsplit`, `channelmap`, `join`, `amerge`, `amix=weights` | ⚠️ | Available as filters; GUI has no per-channel routing UI |
 
 ### 2.4 Encoders
 
@@ -126,7 +162,10 @@ semantics.
 | Codec-specific AVOptions (`preset`, `crf`, `tune`, `profile`, `level`, `g`, `bf`, `refs`, `x264-params`, `x265-params`, `aq-mode`, `tier`, …) | ✅ | Forwarded to `avcodec_open2` via `EncoderParams*` dict |
 | Hardware encoders (NVENC, QSV, VAAPI, VideoToolbox, AMF)          | ✅    | Per `av/hwencode.go`; tested for NVENC |
 | Two-pass encoding (`-pass 1/2 -passlogfile`)                      | ❌    | No `pass` field in schema; not implemented in runner |
-| `-fps_mode` (`cfr`/`vfr`/`passthrough`/`drop`) (formerly `-vsync`) | ❌    | Required for stable broadcast/HLS output |
+| **Two-pass `loudnorm`** (measured-I/TP/LRA/thresh/offset feed-forward) | ❌ | Distinct inter-pass shuttle from video two-pass; pass 1 parses JSON from stderr, pass 2 consumes it. Frequently requested. |
+| **Lossless intermediate codecs** (FFV1, ProRes, DNxHD/HR, HuffYUV) for editorial round-trips | ⚠️ | Encoders exist if FFmpeg compiled with them; no schema validation of codec ↔ container compatibility |
+| `-fps_mode` (`cfr`/`vfr`/`passthrough`/`drop`) (formerly `-vsync`) | ❌    | Required for stable broadcast/HLS output; single biggest cause of A/V drift |
+| `-async N` (audio resync via resampler)                            | ❌    | Audio-side counterpart to `fps_mode` |
 | `-force_key_frames "expr:gte(t,n_forced*2)"` and chapter-driven IDR placement | ❌ | |
 | Per-stream encoder options (`-b:v:0` ≠ `-b:v:1` in ABR ladders)   | ❌    | Schema has one `EncoderParamsVideo`, no per-stream override |
 | Color metadata on encoder (`-color_range`, `-color_primaries`, `-color_trc`, `-colorspace`, `-chroma_sample_location`) | ⚠️ | Forwardable as AVOpts; not first-class, not validated |
@@ -182,6 +221,9 @@ semantics.
 | `ffprobe` equivalence (stream summary)                            | ⚠️    | `/api/probe` exists but does not expose every probe field |
 | Tee muxer (see §2.5)                                              | ❌    | |
 | Dynamic per-frame metadata via ZMQ filter                         | ❌    | |
+| **`-init_hw_device` (multi-device graphs)**                       | ❌    | Pipelines that bridge CUDA decode → CPU filter → QSV encode need named device declarations + `hwmap` between them |
+| **`scale_npp` availability separate from `scale_cuda`**           | ⚠️    | Different libraries; needs per-filter availability probe at startup |
+| **First-class raw-stream input** (`-f rawvideo -pix_fmt yuv420p -s 1920x1080 -r 30 -i raw.yuv`) | ⚠️ | Works via AVDict; the canonical bug-report fixture format deserves a typed schema |
 
 ### 2.8 Frontend GUI gaps (in addition to schema gaps)
 
@@ -262,6 +304,24 @@ build.
    Plus an `Output.Chapters []Chapter` and `Output.Metadata
    map[string]string` shorthand for the common case.
    Unblocks `chapter-add`, `chapter-extract`, `chapter-csv`.
+6. **Filter expression engine surface.** `params` values are already
+   strings, so libavfilter receives expressions intact today, but the
+   GUI cannot author them safely. Ship: (a) an `expression: true` flag
+   on `FilterOption` schema entries (mined from `av_opt_next` flag
+   bits), (b) a syntax-highlighted expression input in the inspector,
+   (c) a server-side `/api/filters/{name}/eval-expression?expr=…&t=0`
+   smoke-test endpoint that asks libavfilter to parse the expression
+   without running the graph, and (d) round-trip tests for the
+   common expressions in the production corpus (`enable=between(t,a,b)`,
+   scrolling `x=w-tw*t/k`, `frame_n%N`, `if(eq(n,0),…)`).
+7. **Two-pass `loudnorm` shuttle.** A new pipeline-level orchestration
+   primitive: declare a node `type: "loudnorm_2pass"` whose runner
+   executes the graph once with `print_format=json`, captures the
+   measured-I/TP/LRA/thresh/offset values from libavfilter's metadata
+   side-data (we already plumb metadata to the event bus), and re-runs
+   the graph with those values fed back into the filter. This is the
+   minimum-viable pattern for any "measure, then process" workflow
+   (also applies to `volumedetect`, `signalstats`, `astats`).
 
 ### 3.2 Phase B — the universal mapper
 
@@ -286,23 +346,40 @@ Every production-grade ffmpeg pipeline depends on these:
    output" to "one encoded stream → many muxers".
 3. Structured HLS / DASH / fragmented-MP4 / CMAF output (with a
    `Variants []EncoderSettings` for ABR ladders).
-4. Two-pass encoding (`Encoder.Pass int`).
+4. Two-pass encoding (`Encoder.Pass int`) for video; same scaffold
+   reused by the Phase A loudnorm shuttle.
 5. Per-stream encoder param overrides; per-stream metadata.
 6. BSF chains.
 7. Color metadata, HDR10 static metadata, Dolby Vision RPU
-   passthrough.
+   passthrough — and validation that the chosen encoder/container can
+   carry them.
+8. **Lossless intermediate workflow validation.** Add an integration
+   test that decodes BBB → re-encodes to FFV1/MKV → decodes the
+   intermediate → re-encodes to H.264/MP4, and asserts that the round
+   trip produces a file at least as good (PSNR, SSIM, audio loudness)
+   as a single-pass encode. This is the canonical editorial pattern.
+9. **`setsar`/`setdar` exposed as encoder-side `Output.SAR` /
+   `Output.DAR` shorthand**, in addition to the filter.
 
 ### 3.4 Phase D — broadcast / live
 
 For real-time and broadcast workflows:
 
 1. `-readrate`/`-re`, `-stream_loop`, `-itsoffset`.
-2. `-fps_mode`, `-force_key_frames`, `-muxdelay`, `-muxpreload`,
-   `-copyts`, `-start_at_zero`, `-avoid_negative_ts`.
+2. `-fps_mode`, `-async`, `-force_key_frames`, `-muxdelay`,
+   `-muxpreload`, `-copyts`, `-start_at_zero`, `-avoid_negative_ts`.
 3. RTP/RTSP/SRT/RIST/NDI as first-class input/output kinds, with
    schema validation and reconnect/backoff policies (we already have
    error policies — extend them to network errors).
 4. Decklink SDI, ZMQ live filter parameter updates.
+5. **Multi-device hardware graphs.** Implement `init_hw_device`
+   semantics: a `hardware_devices: [{name, type, device}]` block at
+   the top of the JSON pipeline plus `device:` selectors on encoder/
+   filter nodes. Required for CUDA-decode → CPU-filter → QSV-encode
+   pipelines and for fan-out across multiple GPUs.
+6. **`scale_npp` vs `scale_cuda` per-filter availability probe.**
+   Filter palette must reflect what the linked FFmpeg actually
+   provides; today we only probe codecs.
 
 ### 3.5 Phase E — GUI completeness
 
@@ -314,11 +391,23 @@ once §3.1–§3.4 land:
 3. BSF chain editor.
 4. Chapter / metadata editor.
 5. HLS / DASH / tee output wizards.
-6. Hardware-filter mapping indicator.
+6. Hardware-filter mapping indicator + multi-device picker.
 7. Bidirectional FFmpeg-CLI conversion (existing `compat/ffcli`
    import + new export). The CLI export is the round-trip oracle for
    the entire schema and should be wired into the existing job-save
    flow as a "Show as ffmpeg command" panel.
+8. **Filter expression authoring**: monospace input with `t`/`n`/`tw`/
+   `th`/`text_w`/`text_h`/`w`/`h` autocomplete, live
+   syntax-validation against the server-side `eval-expression`
+   endpoint, and a small expression cookbook (scrolling text, fade
+   gates, frame-stamp overlays).
+9. **Audio channel-routing UI**: a bus/matrix view for `pan`,
+   `channelsplit`, `channelmap`, `join`, `amerge`. Today's free-form
+   `params` dict is unusable for non-trivial routing.
+10. **Asset/model-file manager**: shared by the YOLO processor and by
+    filters such as `arnndn`, `subtitles=…:fontsdir=…`. Pipelines
+    should reference assets by symbolic name, with the GUI managing
+    paths and the runtime resolving them from a search list.
 
 ### 3.6 Phase F — proof of universality
 
@@ -326,12 +415,26 @@ once §3.1–§3.4 land:
    `ffmpeg-doc.html` becomes a test case. Pass criterion: same
    container, same stream count, same per-stream codec, output bytes
    within tolerance, SSIM ≥ 0.99, audio loudness within ±0.5 LU.
-2. **Random-corpus fuzzer.** Generate random valid ffmpeg command
+2. **Production-pattern conformance suite.** A second corpus assembled
+   from the production-pattern command lines catalogued in §1.1 —
+   animated `drawtext`, two-pass `loudnorm`, multi-resolution
+   split-and-mux ABR, full GPU pipelines, HDR `zscale`/`tonemap`,
+   `minterpolate` slow-mo, RNNoise, mixed labelled/unlabelled
+   `-filter_complex` outputs, raw-stream inputs, lossless
+   intermediates. Same pass criteria as §3.6.1.
+3. **Random-corpus fuzzer.** Generate random valid ffmpeg command
    lines from a grammar derived from the capability registry; run
    both ffmpeg and `mediamolder run --import-cli ...`; diff outputs.
-3. **Capability registry coverage gate.** No PR can merge that adds
+4. **Capability registry coverage gate.** No PR can merge that adds
    a new flag to the registry without also adding either a schema
    field marking it `covered` or an explicit `out-of-scope` rationale.
+5. **Quoting / escaping fuzzer.** Targeted at `pipeline/engine.go`
+   `buildFilterSpec` and at the `compat/ffcli` lexer. Generate
+   filter-graph specs containing every combination of `,`, `;`, `'`,
+   `"`, `\`, `:`, `=`, `[`, `]`, and unicode whitespace; assert that
+   `parse → spec → libavfilter → re-parse` is idempotent. The
+   `04f1a0c7` quoting fix is the first known instance of a class of
+   bugs that only fuzzing will surface.
 
 ## 4. Cross-cutting principles
 
@@ -359,7 +462,8 @@ branch:
    `av.FilterPadConfig` and propagate through
    `pipeline/handlers.go` complex-filtergraph wiring. Re-enable
    `13_xfade.json` and `14_crossfade_clips.json` in the
-   community-scripts test (drop the `t.Skip` guard).
+   community-scripts test (drop the `t.Skip` guard). Same plumbing
+   unblocks `minterpolate` and `framerate`.
 2. Build `Output.MaxFramesVideo` / `MaxFramesAudio` plumbing and
    write the missing five community scripts (`extract-frame`,
    `tile-thumbnails`, `scene-images`, `scene-cut`, `scene-cut-to`).
@@ -371,6 +475,20 @@ branch:
 5. Open the schema-evolution work for chapter and per-stream
    metadata IO (`KindMetadataReader`, `KindMetadataWriter`,
    `Output.Chapters`).
+6. Stand up the **production-pattern conformance corpus** stub at
+   `testdata/production-patterns/` with the highest-leverage
+   commands from §1.1 (animated `drawtext`, multi-resolution ABR,
+   full GPU `scale_npp`+`h264_nvenc`, `zscale`+`tonemap`,
+   `loudnorm` two-pass, raw-stream input). Even before each one
+   runs, the failing `t.Skip` reason becomes machine-readable
+   roadmap signal.
+7. Add the **filter-expression `eval-expression` HTTP endpoint** so
+   the GUI can validate `enable=`, `x=`, `y=`, `text=` expressions
+   without running the full graph. Cheap to ship, immediately
+   useful for `drawtext` / `overlay` / `crop` authoring.
+8. Add the **quoting/escaping fuzzer** (Phase F.5) on top of
+   `pipeline/engine.go` `buildFilterSpec` and the `compat/ffcli`
+   lexer. The 04f1a0c7 fix proved this is real bug territory.
 
 Each of these unblocks real user scripts today and pays down the
 debt the §2 matrix is tracking.
