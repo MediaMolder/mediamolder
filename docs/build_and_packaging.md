@@ -14,8 +14,8 @@ The repo produces one artefact:
 
 - **`mediamolder`** (`mediamolder.exe` on Windows) — a single Go binary
   containing the CLI, the pipeline runtime, the `compat/ffcli` FFmpeg-flag
-  parser, and (when built with the GUI target) the embedded React web UI
-  served by `mediamolder gui`.
+  parser, and (when built with the GUI target) the embedded React web 
+  Graphical User Interface (GUI) served by `mediamolder gui`.
 
 The Go module also exposes the `av/`, `pipeline/`, `graph/`, etc. packages
 as a library; consumers import them directly with `go get`.

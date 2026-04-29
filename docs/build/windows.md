@@ -159,9 +159,12 @@ or any `mingw*.dll`, the static link did not take effect — double-check
 that you passed both build tags and that the `*.a` files exist in
 `..\ffmpeg\libav*\`.
 
-## 5. Build the GUI
+## 4. Build the Graphical User Interface (GUI)
 
 The GUI is a React/Vite app embedded into the Go binary via `//go:embed`.
+When you run the GUI, mediamolder launches a local web server that 
+hosts the user interface in your default browser.
+
 The project's `Makefile` is Unix-only, so on Windows you run the equivalent
 steps manually in PowerShell:
 
@@ -179,11 +182,10 @@ Remove-Item -Recurse -Force internal\gui\dist -ErrorAction SilentlyContinue
 New-Item  -ItemType Directory -Force internal\gui\dist | Out-Null
 Copy-Item -Recurse frontend\dist\* internal\gui\dist\
 
-# Step 4 — build the final single-file executable (use whichever -tags
-#          line matches your setup)
-go build -o mediamolder.exe .\cmd\mediamolder\
-# or for static:
-# go build -tags "ffstatic,ffstatic_windows_msys2" -o mediamolder.exe .\cmd\mediamolder\
+# Step 4 — build the final single-file executable
+# Use the same build command you used in §3:
+go build -o mediamolder.exe .\cmd\mediamolder\                          # Option A
+# go build -tags "ffstatic,ffstatic_windows_msys2" -o mediamolder.exe .\cmd\mediamolder\  # Option B2
 ```
 
 Launch with:
@@ -194,19 +196,20 @@ Launch with:
 
 Add `--no-open` to skip auto-opening the browser (useful for servers).
 
-## 6. Rebuild loops after code changes
+## 5. Rebuild loops after code changes
 
-Pick the shortest sequence that covers your edit:
+Pick the shortest sequence that covers your edit. The step numbers below
+refer to the numbered steps inside §4 (Build the GUI) above.
 
-| You changed … | Steps to repeat |
+| You changed … | Steps to repeat (from §4) |
 | --- | --- |
-| Go code only (anything outside `frontend/`) | Step 4 — `go build` |
+| Go code only (anything outside `frontend/`) | Step 4 — `go build` only |
 | Frontend code (`frontend\src\**`) | Steps 2, 3, **and** 4 |
 | `frontend\package.json` (added/upgraded a JS package) | Steps 1, 2, 3, and 4 |
 | Nothing — fresh binary | Step 4 |
 
-Step 4 is required after frontend edits because the production assets are
-baked into the binary at compile time via `//go:embed`.
+Step 4 (`go build`) is always required after frontend edits because the
+production assets are baked into the binary at compile time via `//go:embed`.
 
 A complete "rebuild after a frontend edit" looks like this:
 
@@ -217,7 +220,7 @@ Set-Location ..
 Remove-Item -Recurse -Force internal\gui\dist -ErrorAction SilentlyContinue
 New-Item  -ItemType Directory -Force internal\gui\dist | Out-Null
 Copy-Item -Recurse frontend\dist\* internal\gui\dist\
-go build -o mediamolder.exe .\cmd\mediamolder\
+go build -o mediamolder.exe .\cmd\mediamolder\   # replace with Option B2 command if applicable
 ```
 
 ### Faster GUI iteration: dev server
@@ -238,12 +241,11 @@ npm run dev
 Frontend edits reload instantly in your browser. Go code changes still
 require a `go build` and a restart of terminal 2.
 
-## 7. Run the tests
+## 6. Run the tests
 
 ```powershell
-go test .\...
-# or for static:
-go test -tags=ffstatic .\...
+go test .\...                             # Option A — default FFmpeg
+go test -tags=ffstatic .\...             # Option B2 — static FFmpeg
 ```
 
 ## Troubleshooting linker errors

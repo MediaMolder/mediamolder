@@ -49,26 +49,55 @@ node --version      # 20 or later (GUI only)
 
 ## 2. Get the source
 
+In your terminal:
+
 ```bash
 git clone https://github.com/MediaMolder/mediamolder.git
 cd mediamolder
 ```
 
-## 3. Build the CLI / library (default FFmpeg)
+## 3. Build the binary
 
-Uses the system FFmpeg via `pkg-config`:
+Choose **one** of the two options below depending on which FFmpeg you want
+MediaMolder to use. You do not need both.
+
+**Option A** is the right choice for most people: it links against the FFmpeg
+you already have installed (the one that runs when you type `ffmpeg` in your
+terminal).
+
+**Option B** is for situations where you need to control the exact FFmpeg
+version or build options — for example:
+- Your distro's FFmpeg is older than 8.1 and you've built a newer one from source.
+- You need FFmpeg compiled with codecs or flags that your package manager doesn't enable.
+- You want a fully self-contained binary that runs on machines without FFmpeg installed.
+- You're working on MediaMolder and FFmpeg side-by-side and need to test against
+  unreleased FFmpeg changes.
+
+### Option A — default (system) FFmpeg
+
+Links against the FFmpeg installed by your package manager via `pkg-config`.
+This is the `ffmpeg` binary already on your `PATH`.
 
 ```bash
-make build                  # equivalent to: go build ./...
 go build -o mediamolder ./cmd/mediamolder
 ./mediamolder version
 ```
 
-## 4. Build with a custom FFmpeg
+Or via Make:
 
-### 4a. Custom shared FFmpeg (still uses pkg-config)
+```bash
+make build          # builds all packages
+```
 
-Point `pkg-config` at your custom build's `.pc` files:
+### Option B — a specific FFmpeg source tree
+
+Use this to link against a different FFmpeg than the one your package manager
+provides.
+
+#### B1. Custom shared FFmpeg (still uses pkg-config)
+
+If you have a compiled FFmpeg source tree that publishes `.pc` files, point
+`pkg-config` at it:
 
 ```bash
 export PKG_CONFIG_PATH=/path/to/ffmpeg/build/lib/pkgconfig:$PKG_CONFIG_PATH
@@ -76,17 +105,24 @@ export LD_LIBRARY_PATH=/path/to/ffmpeg/build/lib:$LD_LIBRARY_PATH
 go build -o mediamolder ./cmd/mediamolder
 ```
 
-### 4b. Static FFmpeg from source (`ffstatic` tag)
+The binary still depends on the shared `.so` files at runtime, so
+`LD_LIBRARY_PATH` (or a system-wide `ldconfig` entry) must be set whenever
+you run it.
 
-Lay the FFmpeg source tree out as a sibling of `mediamolder/`:
+#### B2. Static FFmpeg — fully self-contained binary (`ffstatic` tag)
+
+Links FFmpeg's `.a` archives directly into the binary so it runs anywhere
+without a system FFmpeg installed.
+
+Place the FFmpeg source tree as a sibling of `mediamolder/`:
 
 ```text
 parent/
-├── ffmpeg/         ← compiled with ./configure && make
+├── ffmpeg/         ← your FFmpeg checkout
 └── mediamolder/
 ```
 
-Compile FFmpeg statically (do this once per FFmpeg upgrade):
+Compile FFmpeg as static archives (run once; repeat after FFmpeg upgrades):
 
 ```bash
 cd ../ffmpeg
@@ -97,15 +133,15 @@ make -j$(nproc)
 cd ../mediamolder
 ```
 
-Build mediamolder against it:
+Build mediamolder, linking the static archives:
 
 ```bash
-make build-static                                  # CLI/library
-# or
+make build-static
+# equivalent to:
 go build -tags=ffstatic -o mediamolder ./cmd/mediamolder
 ```
 
-To override the location of the FFmpeg source tree (default is `../ffmpeg`):
+If your FFmpeg tree is not at `../ffmpeg`, override the paths:
 
 ```bash
 export FFMPEG_SRC=/path/to/ffmpeg
@@ -116,26 +152,28 @@ CGO_LDFLAGS="-L${FFMPEG_SRC}/libavcodec -L${FFMPEG_SRC}/libavformat \
 go build -tags=ffstatic -o mediamolder ./cmd/mediamolder
 ```
 
-## 5. Build the GUI
+## 4. Build the Graphical User Interface (GUI)
 
 The GUI is a React/Vite app embedded into the Go binary via `//go:embed`.
+When you run the GUI, mediamolder launches a local web server that 
+hosts the user interface in your default browser.
 
 ```bash
 # One-time: install JS dependencies
 cd frontend && npm ci && cd ..
 
 # Build everything (frontend + Go binary with embedded assets)
-make build-gui                  # default FFmpeg
+make build-gui                  # Option A — default FFmpeg
 # or
-make build-gui-static           # static FFmpeg via ../ffmpeg
+make build-gui-static           # Option B2 — static FFmpeg via ../ffmpeg
 
 ./mediamolder gui               # opens the GUI in your browser
 ```
 
-`make build-gui` runs `frontend-build` (compiles `frontend/dist/`, copies
-into `internal/gui/dist/`) then `go build -o mediamolder ./cmd/mediamolder`.
+`make build-gui` compiles `frontend/dist/`, copies it into `internal/gui/dist/`,
+then runs `go build -o mediamolder ./cmd/mediamolder`.
 
-## 6. Rebuild loops after code changes
+## 5. Rebuild loops after code changes
 
 Pick the shortest sequence that covers your edit:
 
@@ -146,7 +184,7 @@ Pick the shortest sequence that covers your edit:
 | `frontend/package.json` (added/upgraded a JS package) | `cd frontend && npm install && cd ..` then `make build-gui` |
 | Nothing — you just want a fresh binary | `make build` |
 
-Step 4 (`go build`) is required after frontend edits because the production
+The `go build` step is required after frontend edits because the production
 assets are baked into the binary at compile time.
 
 ### Faster GUI iteration: dev server
@@ -164,11 +202,11 @@ make gui-dev
 Frontend edits reload instantly in your browser. Go code changes still
 require restarting terminal 2.
 
-## 7. Run the tests
+## 6. Run the tests
 
 ```bash
-make test                       # default FFmpeg
-make test-static                # static FFmpeg
+make test                       # Option A — default FFmpeg
+make test-static                # Option B2 — static FFmpeg
 go test ./pipeline/...          # narrow to one package
 ```
 
@@ -177,10 +215,10 @@ go test ./pipeline/...          # narrow to one package
 - **`Package libavcodec was not found`** — install `libavcodec-dev` (Debian)
   or `ffmpeg-devel` (Fedora). Check `pkg-config --modversion libavcodec`.
 - **Distro FFmpeg too old** — minimum supported is 8.1. Build FFmpeg from
-  source (see §4b) and link via `ffstatic` or a custom `PKG_CONFIG_PATH`.
+  source and use Option B1 (custom `PKG_CONFIG_PATH`) or B2 (`ffstatic`).
 - **`/usr/bin/ld: cannot find -lavcodec` with `ffstatic`** — the
   `../ffmpeg/libav*/*.a` files don't exist. Re-run `make` in the FFmpeg
   source tree.
 - **Runtime: `error while loading shared libraries: libavcodec.so.X`** —
   your custom shared FFmpeg isn't on `LD_LIBRARY_PATH`. Either set it or
-  use `ffstatic` for a self-contained binary.
+  use Option B2 (`ffstatic`) for a self-contained binary.
