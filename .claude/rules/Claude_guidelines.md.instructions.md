@@ -3,6 +3,9 @@ description: Conventions for AI-assisted edits in MediaMolder
 applyTo: "**/*.go,**/*.ts,**/*.tsx,**/*.json,**/*.md"
 ---
 
+Mediamolder is an improved version of the ffmpeg interface and media graph builder / execution engine. It started as a Go port of FFmpeg's C code. Always read and understand (and to the extent possible, port from C to Go) the FFmpeg code for each feature and structure. Consider the FFmpeg code to be the most mature, reliable, debugged version of the logic needed to construct and run a media processing graph. Our goal for the Go code is to be as reliable, accurate (bug free), and secure as the FFmpeg code while implementing new features that improve flexibility, observability, and usability.
+
+
 ## Documentation
 - Update `README.md`, `docs/gui.md`, `docs/architecture.md`, and
   `CHANGELOG.md` whenever public behaviour or APIs change.
