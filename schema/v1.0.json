@@ -160,6 +160,8 @@
         "dash": { "$ref": "#/$defs/dash_options", "description": "Typed DASH muxer options. Only valid when `format=\"dash\"`. Promoted from the generic `options` AVDict bag; on key collision the typed field wins. Mirrors `libavformat/dashenc.c`." },
         "color": { "$ref": "#/$defs/color_metadata", "description": "Per-stream color metadata (range, primaries, transfer, matrix, chroma_location). Names are the canonical libavutil av_color_*_name values; unknown names are rejected at validate time. Mirrors ffmpeg -color_range / -color_primaries / -color_trc / -colorspace / -chroma_sample_location." },
         "hdr": { "$ref": "#/$defs/hdr_metadata", "description": "SMPTE ST 2086 mastering display + CTA-861.3 content light level metadata. Requires an HDR-capable codec (hevc/av1/vp9 or copy) and container (mp4/mov/matroska/webm/mpegts), and color.transfer ∈ {smpte2084, arib-std-b67} when color is also set." },
+        "sar": { "type": "string", "description": "Output sample aspect ratio (`setsar` shorthand / FFmpeg per-encoder SAR). Forms: `A:B`, `A/B`, or decimal. Mutually exclusive with `dar`. Empty leaves the encoder default unchanged." },
+        "dar": { "type": "string", "description": "Output display aspect ratio (`setdar` shorthand / FFmpeg `-aspect`). Forms: `A:B`, `A/B`, or decimal. Resolved to SAR using the encoder's width/height: SAR = (DAR_num*H)/(DAR_den*W). Mutually exclusive with `sar`." },
         "options": {
           "type": "object",
           "additionalProperties": true

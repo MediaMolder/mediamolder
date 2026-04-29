@@ -408,6 +408,15 @@ func expandImplicitEncoders(cfg *Config, def *graph.Def) {
 		if e.Type == "video" && out.ForceKeyFrames != "" {
 			nodeParams["__force_key_frames"] = out.ForceKeyFrames
 		}
+		// SAR / DAR shorthand (FFmpeg `-aspect` / `setsar` / `setdar`).
+		// Resolved to a numeric SAR in createEncoder once the encoder's
+		// width/height are known. Honoured only on video edges.
+		if e.Type == "video" && out.SAR != "" {
+			nodeParams["__sar"] = out.SAR
+		}
+		if e.Type == "video" && out.DAR != "" {
+			nodeParams["__dar"] = out.DAR
+		}
 		if codec == "copy" {
 			nodeType = "copy"
 			nodeParams = nil
@@ -2284,6 +2293,23 @@ func (r *graphRunner) createEncoder(dag *graph.Graph, node *graph.Node) (*av.Enc
 		opts.GOPSize = v
 	}
 
+	// SAR / DAR shorthand (FFmpeg `-aspect` / `setsar` / `setdar`).
+	// Resolve against the encoder's just-decided Width/Height so DAR
+	// can be converted into a SAR fraction.
+	if sar := paramString(node.Params, "__sar"); sar != "" {
+		n, d, err := resolveSAR(sar, "", opts.Width, opts.Height)
+		if err != nil {
+			return nil, fmt.Errorf("encoder node %q: %w", node.ID, err)
+		}
+		opts.SampleAspectRatio = [2]int{n, d}
+	} else if dar := paramString(node.Params, "__dar"); dar != "" {
+		n, d, err := resolveSAR("", dar, opts.Width, opts.Height)
+		if err != nil {
+			return nil, fmt.Errorf("encoder node %q: %w", node.ID, err)
+		}
+		opts.SampleAspectRatio = [2]int{n, d}
+	}
+
 	// Pass every remaining param through as an AVDictionary entry so codec-
 	// specific options written by the GUI (preset, crf, maxrate, bufsize,
 	// x264-params, ...) actually reach the encoder.
@@ -2358,6 +2384,8 @@ var encoderReservedParams = map[string]bool{
 	"__pass":        true,
 	"__passlogfile": true,
 	"__pass_index":  true,
+	"__sar":         true,
+	"__dar":         true,
 }
 
 // collectEncoderExtraOpts returns a map of AVDictionary options to forward to

@@ -66,6 +66,13 @@ type EncoderOptions struct {
 	// up the output container duration by orders of magnitude.
 	TimeBase [2]int
 
+	// SampleAspectRatio, if set with SampleAspectRatio[1] > 0, stamps the
+	// encoder's `sample_aspect_ratio` (which the muxer propagates to
+	// `AVStream.codecpar.sample_aspect_ratio`). Mirrors FFmpeg `-aspect` /
+	// `setsar` / `setdar` for the output side. {0,0} leaves the SAR
+	// unchanged from the encoder's default.
+	SampleAspectRatio [2]int
+
 	// --- Audio ---
 	SampleFmt  int // AVSampleFormat
 	SampleRate int
@@ -155,6 +162,12 @@ func OpenEncoder(opts EncoderOptions) (*EncoderContext, error) {
 		}
 		if opts.GOPSize > 0 {
 			ctx.gop_size = C.int(opts.GOPSize)
+		}
+		if opts.SampleAspectRatio[1] > 0 {
+			ctx.sample_aspect_ratio = C.AVRational{
+				num: C.int(opts.SampleAspectRatio[0]),
+				den: C.int(opts.SampleAspectRatio[1]),
+			}
 		}
 	}
 

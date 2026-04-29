@@ -504,6 +504,20 @@ type Output struct {
 	// Validation requires Color.Transfer ∈ {"smpte2084","arib-std-b67"}
 	// and a HDR-capable codec/container combination.
 	HDR *HDRMetadata `json:"hdr,omitempty"`
+
+	// SAR / DAR set the output video stream's sample / display aspect
+	// ratio (mirrors FFmpeg's `setsar=A:B` / `setdar=A:B` filters and
+	// the legacy `-aspect A:B` shorthand). Accepted forms: "A:B",
+	// "A/B", or a decimal float ("1.5"). Empty means "leave the
+	// encoder default unchanged". At most one may be set per output
+	// (mutually exclusive: setsar and setdar both compute SAR but
+	// take different inputs). The runtime resolves DAR -> SAR using
+	// the encoder's resolved width/height (SAR_num/SAR_den =
+	// (DAR_num*H) / (DAR_den*W)). Universally requested for legacy
+	// SD content (DV-PAL 720x576 @ 4:3 needs SAR 16:15; NTSC 720x480
+	// @ 4:3 needs SAR 8:9).
+	SAR string `json:"sar,omitempty"`
+	DAR string `json:"dar,omitempty"`
 }
 
 // ColorMetadata is the typed projection of FFmpeg's per-stream color
@@ -997,6 +1011,9 @@ func validate(cfg *Config) error {
 			}
 		}
 		if err := validateColorHDR(out); err != nil {
+			return err
+		}
+		if err := validateAspect(out); err != nil {
 			return err
 		}
 	}

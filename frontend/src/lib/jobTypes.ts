@@ -233,6 +233,15 @@ export interface Output {
    *  (mp4/mov/matroska/webm/mpegts). Mirrors ffmpeg
    *  `-mastering_display_metadata` / `-content_light_level`. */
   hdr?: HDRMetadata;
+  /** Output sample aspect ratio (`setsar` shorthand / FFmpeg per-encoder
+   *  SAR). Forms: `A:B`, `A/B`, or decimal. Mutually exclusive with
+   *  `dar`. */
+  sar?: string;
+  /** Output display aspect ratio (`setdar` shorthand / FFmpeg `-aspect`).
+   *  Forms: `A:B`, `A/B`, or decimal. Resolved to SAR using the
+   *  encoder's width/height: SAR = (DAR_num*H)/(DAR_den*W). Mutually
+   *  exclusive with `sar`. */
+  dar?: string;
   options?: Record<string, unknown>;
 }
 

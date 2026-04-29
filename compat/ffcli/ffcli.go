@@ -65,10 +65,15 @@ type parser struct {
 	// next output's Color / HDR field.
 	pendingColor *pipeline.ColorMetadata
 	pendingHDR   *pipeline.HDRMetadata
-	hwAccel      string
-	hwDevice     string
-	hwOutFmt     string
-	globalOpts   map[string]string
+	// pendingSAR / pendingDAR collect the `setsar` / `setdar`
+	// shorthand (and the legacy `-aspect A:B`, which is rewritten
+	// to DAR per §6.8 of docs/ffmpeg-coverage-roadmap.md).
+	pendingSAR string
+	pendingDAR string
+	hwAccel    string
+	hwDevice   string
+	hwOutFmt   string
+	globalOpts map[string]string
 	// Container-level metadata collected from `-metadata key=value`
 	// (no specifier). Latched onto the next output.
 	containerMeta map[string]string
@@ -416,6 +421,25 @@ func (p *parser) parse() (*pipeline.Config, error) {
 				return nil, fmt.Errorf("-force_key_frames requires an argument")
 			}
 			p.forceKeyFrames = p.next()
+		case arg == "-aspect":
+			// Legacy `-aspect <ratio>` (DAR). Importer rewrites to
+			// Output.DAR per §6.8 of docs/ffmpeg-coverage-roadmap.md.
+			if !p.hasMore() {
+				return nil, fmt.Errorf("-aspect requires an argument")
+			}
+			p.pendingDAR = p.next()
+		case arg == "-setsar" || arg == "-vsar":
+			// Convenience: capture an explicit SAR string for the
+			// next output. Mirrors the `setsar=A:B` filter shorthand.
+			if !p.hasMore() {
+				return nil, fmt.Errorf("%s requires an argument", arg)
+			}
+			p.pendingSAR = p.next()
+		case arg == "-setdar":
+			if !p.hasMore() {
+				return nil, fmt.Errorf("-setdar requires an argument")
+			}
+			p.pendingDAR = p.next()
 		// ---- HLS muxer options (libavformat/hlsenc.c) ----
 		case arg == "-hls_time" || arg == "-hls_init_time" ||
 			arg == "-hls_list_size" || arg == "-hls_playlist_type" ||
@@ -763,6 +787,14 @@ func (p *parser) parse() (*pipeline.Config, error) {
 			if p.pendingHDR != nil {
 				out.HDR = p.pendingHDR
 				p.pendingHDR = nil
+			}
+			if p.pendingSAR != "" {
+				out.SAR = p.pendingSAR
+				p.pendingSAR = ""
+			}
+			if p.pendingDAR != "" {
+				out.DAR = p.pendingDAR
+				p.pendingDAR = ""
 			}
 			if len(p.containerMeta) > 0 {
 				out.Metadata = p.containerMeta

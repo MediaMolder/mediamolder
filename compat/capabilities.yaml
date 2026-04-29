@@ -175,8 +175,9 @@ sections:
         schema: n/a
         notes: strings reach libavfilter intact; no GUI authoring/validation
       - flag: "setsar / setdar"
-        status: partial
-        schema: n/a
+        status: covered
+        schema: pipeline.Output.SAR / pipeline.Output.DAR
+        notes: shorthand on Output; runtime stamps encoder.sample_aspect_ratio (DAR resolved against encoder W/H)
       - flag: "arnndn (model-file filter)"
         status: partial
         schema: n/a
@@ -259,8 +260,9 @@ sections:
         status: missing
         schema: n/a
       - flag: "-aspect"
-        status: missing
-        schema: n/a
+        status: covered
+        schema: pipeline.Output.DAR
+        notes: importer rewrites legacy `-aspect A:B` to Output.DAR
       - flag: "-enc_time_base"
         status: missing
         schema: n/a
