@@ -131,11 +131,33 @@ export interface Output {
   /** Container-level metadata key/value pairs (`-metadata key=value`).
    *  Replaces any metadata mapped from inputs via `input.map_metadata`. */
   metadata?: Record<string, string>;
+  /** Per-stream metadata + disposition overrides. Mirrors ffmpeg
+   *  `-metadata:s:<type>:<idx> key=value` and
+   *  `-disposition:s:<type>:<idx> flags`. Each entry addresses one
+   *  output stream by media type and 0-based index within that type,
+   *  counting in the order streams were added to the muxer (same
+   *  convention as FFmpeg's `check_stream_specifier` for
+   *  `s:<type>:<idx>`). Per-stream codec/bitrate is intentionally
+   *  not exposed here — model it with explicit encoder graph nodes
+   *  (see testdata/examples/35_abr_ladder.json). */
+  streams?: StreamSpec[];
   /** Explicit chapter table. Replaces any chapters mapped from inputs
    *  via `input.map_chapters`. The container must support chapters
    *  (matroska, mp4, ogg, ffmetadata, ...). */
   chapters?: Chapter[];
   options?: Record<string, unknown>;
+}
+
+export interface StreamSpec {
+  /** Media type letter: v=video, a=audio, s=subtitle, d=data. */
+  type: 'v' | 'a' | 's' | 'd';
+  /** 0-based index within the media type. */
+  index: number;
+  /** Per-stream key/value metadata (e.g. `language=eng`). */
+  metadata?: Record<string, string>;
+  /** `+`-separated AV_DISPOSITION_* flag names (e.g.
+   *  `default+forced`). Empty leaves the disposition untouched. */
+  disposition?: string;
 }
 
 export interface Chapter {

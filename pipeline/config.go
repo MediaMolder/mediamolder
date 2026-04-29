@@ -231,10 +231,29 @@ type Output struct {
 	// completely replaces any metadata mapped from inputs via
 	// `Input.MapMetadata`; when nil and at least one input has
 	// MapMetadata=true the merged input metadata is written instead.
-	// Per-stream metadata is intentionally not exposed here yet —
-	// resolving "which output stream" requires the universal mapper
-	// (roadmap §3.2) and will land alongside it.
+	// Per-stream metadata + disposition flags live on `Streams`
+	// below (mirrors `-metadata:s:<type>:<index> key=value` and
+	// `-disposition:s:<type>:<index> default+forced`).
 	Metadata map[string]string `json:"metadata,omitempty"`
+	// Streams attaches per-output-stream attributes (metadata,
+	// disposition flags) to a specific stream of this output,
+	// addressed in the FFmpeg-style `<media-type>:<index>` form.
+	// Mirrors `-metadata:s:a:0 language=eng` and
+	// `-disposition:s:v:0 default+forced`. The mapping is resolved
+	// in the runtime in [pipeline/handlers.go]::handleSink after
+	// each AVStream has been registered with the muxer (after
+	// AddStream / AddStreamFromInput) and before WriteHeader, by
+	// counting streams per media type in the order they were added
+	// (matches FFmpeg's `check_stream_specifier` semantics for
+	// `s:<type>:<idx>`). Per-stream codec / bitrate overrides are
+	// intentionally not exposed here yet — explicit encoder graph
+	// nodes already cover that need (see e.g.
+	// `testdata/examples/35_abr_ladder.json`); this field is the
+	// first PR towards the §6 Wave 1 "per-stream encoder overrides
+	// + per-stream metadata" item and ships the metadata +
+	// disposition half (the half that unblocks dual-language audio
+	// and language-tagged subtitles in real jobs).
+	Streams []StreamSpec `json:"streams,omitempty"`
 	// Chapters is the explicit chapter table for the output. Each
 	// chapter's Start/End is in seconds. When non-nil it replaces any
 	// chapters mapped from inputs via `Input.MapChapters`; when nil and
@@ -256,6 +275,41 @@ type Chapter struct {
 	End      float64           `json:"end"`
 	Title    string            `json:"title,omitempty"`
 	Metadata map[string]string `json:"metadata,omitempty"`
+}
+
+// StreamSpec attaches per-output-stream attributes to a single stream
+// of an `Output`, addressed in the FFmpeg-style `<media-type>:<index>`
+// form. Mirrors FFmpeg's `-metadata:s:<type>:<idx>` and
+// `-disposition:s:<type>:<idx>` per-stream specifiers (see
+// fftools/ffmpeg_mux_init.c::of_add_metadata + set_dispositions, and
+// the StreamSpecifier parser in fftools/cmdutils.c).
+type StreamSpec struct {
+	// Type is the media-type letter that the index counts within.
+	// One of `"v"` (video), `"a"` (audio), `"s"` (subtitle),
+	// `"d"` (data). Mirrors the second component of FFmpeg's
+	// `s:<type>:<idx>` specifier.
+	Type string `json:"type"`
+	// Index is the 0-based position within the chosen media type
+	// at this output, in the order the streams were added to the
+	// muxer (which in turn reflects the order of the inbound
+	// edges to the sink node). For example `Type:"a", Index:1`
+	// targets the second audio stream of the output.
+	Index int `json:"index"`
+	// Metadata is applied to the AVStream's AVDictionary via
+	// av_dict_set, mirroring `-metadata:s:<type>:<idx> key=value`.
+	// The killer use-case is language tagging using the ISO
+	// 639-2 three-letter codes (`{"language": "eng"}`,
+	// `{"language": "fra"}`, …); other recognised keys include
+	// `title`, `comment`, and any container-supported tag.
+	Metadata map[string]string `json:"metadata,omitempty"`
+	// Disposition is a `+`-separated list of AV_DISPOSITION_*
+	// flag names (e.g. `"default"`, `"default+forced"`,
+	// `"hearing_impaired"`). Applied via
+	// av_opt_set(stream, "disposition", value, 0) — mirrors
+	// `-disposition:s:<type>:<idx>` in FFmpeg
+	// (fftools/ffmpeg_mux_init.c::set_dispositions). Empty
+	// string leaves the muxer's default disposition unchanged.
+	Disposition string `json:"disposition,omitempty"`
 }
 
 // Options holds global pipeline options.
@@ -352,6 +406,16 @@ func validate(cfg *Config) error {
 		}
 		if out.MaxFileSize < 0 {
 			return fmt.Errorf("output %q: invalid max_file_size %d (must be >= 0)", out.ID, out.MaxFileSize)
+		}
+		for j, ss := range out.Streams {
+			switch ss.Type {
+			case "v", "a", "s", "d":
+			default:
+				return fmt.Errorf("output %q streams[%d]: invalid type %q (want v|a|s|d)", out.ID, j, ss.Type)
+			}
+			if ss.Index < 0 {
+				return fmt.Errorf("output %q streams[%d]: invalid index %d (must be >= 0)", out.ID, j, ss.Index)
+			}
 		}
 	}
 	// Edge types must be valid.

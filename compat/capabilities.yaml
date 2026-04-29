@@ -291,11 +291,17 @@ sections:
         status: covered
         schema: pipeline.Output.MaxFramesVideo / MaxFramesAudio
       - flag: "-metadata key=value (global)"
-        status: missing
-        schema: n/a
+        status: covered
+        schema: pipeline.Output.Metadata
+        notes: compat/ffcli parses bare `-metadata key=value` into Output.Metadata; handleSink applies via applyOutputMetadata before WriteHeader.
       - flag: "-metadata:s:v:0 (per-stream)"
-        status: missing
-        schema: n/a
+        status: covered
+        schema: pipeline.Output.Streams[*].Metadata
+        notes: compat/ffcli parses `-metadata:s:<type>:<idx> key=value` into Output.Streams; handleSink resolves the AVStream by counting muxer-add order per media type (mirrors check_stream_specifier `s:<type>:<idx>`) and writes via av_dict_set on AVStream.metadata, the same path fftools/ffmpeg_mux_init.c::of_add_metadata uses.
+      - flag: "-disposition:s:v:0 (per-stream)"
+        status: covered
+        schema: pipeline.Output.Streams[*].Disposition
+        notes: compat/ffcli parses `-disposition:s:<type>:<idx> default+forced`; handleSink calls av_opt_set on the AVStream's AVClass, which is the same code path fftools/ffmpeg_mux_init.c::set_dispositions uses to parse the `+`-separated AV_DISPOSITION_* flag list.
       - flag: "-map_metadata / -map_chapters"
         status: missing
         schema: n/a

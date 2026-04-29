@@ -1338,9 +1338,9 @@ func (r *graphRunner) handleSink(ctx context.Context, node *graph.Node, ins []<-
 	// Returns (wrote, stopAll, err) where stopAll signals every
 	// channel of this output to drain-and-drop.
 	type chanState struct {
-		written     int
-		lastPTSus   int64
-		lastPTSok   bool
+		written   int
+		lastPTSus int64
+		lastPTSok bool
 	}
 	processOne := func(i int, pkt *av.Packet, dstTB [2]int, rs *sinkRescale, st *chanState, mu *sync.Mutex) (bool, bool, error) {
 		// Per-stream max frames (counts post-encoder packets, mirrors
@@ -1985,6 +1985,28 @@ func (r *graphRunner) openSink(_ *graph.Graph, node *graph.Node) (*sinkResources
 
 	rescales := make([]*sinkRescale, len(node.Inbound))
 
+	// streamsByType records, for each media-type letter ("v"/"a"/"s"/
+	// "d"), the absolute output stream indices of the streams of that
+	// type in the order they were added to the muxer. This is the same
+	// counting convention FFmpeg's `check_stream_specifier` uses for
+	// `s:<type>:<idx>`, so `Output.Streams[k] = {Type:"a", Index:1}`
+	// resolves to the second audio stream of this output. Built up
+	// inside the AddStream loop below.
+	streamsByType := map[string][]int{}
+	typeLetterFor := func(t graph.PortType) string {
+		switch t {
+		case "video":
+			return "v"
+		case "audio":
+			return "a"
+		case "subtitle":
+			return "s"
+		case "data":
+			return "d"
+		}
+		return ""
+	}
+
 	// codecTagFor returns the configured FourCC codec_tag override for
 	// the given edge's stream kind, or "" if none is configured.
 	codecTagFor := func(t graph.PortType) string {
@@ -2049,6 +2071,41 @@ func (r *graphRunner) openSink(_ *graph.Graph, node *graph.Node) (*sinkResources
 			if err := muxer.SetStreamCodecTag(outIdx, tag); err != nil {
 				muxer.Abort()
 				return nil, fmt.Errorf("sink %q set codec_tag for %s stream: %w", node.ID, e.Type, err)
+			}
+		}
+
+		// Record this stream's absolute index under its media-type
+		// letter for FFmpeg-style `s:<type>:<idx>` resolution below.
+		if letter := typeLetterFor(e.Type); letter != "" {
+			streamsByType[letter] = append(streamsByType[letter], outIdx)
+		}
+	}
+
+	// Apply per-stream metadata + disposition (`Output.Streams`).
+	// Mirrors FFmpeg's `-metadata:s:<type>:<idx>` and
+	// `-disposition:s:<type>:<idx>`. Resolution counts streams of the
+	// requested media type in muxer-add order, so a job with one video
+	// + two audio streams resolves `{Type:"a", Index:1}` to the
+	// second audio AVStream regardless of the order video / audio
+	// edges were declared on the sink.
+	for j, ss := range out.Streams {
+		idxs, ok := streamsByType[ss.Type]
+		if !ok || ss.Index < 0 || ss.Index >= len(idxs) {
+			muxer.Abort()
+			return nil, fmt.Errorf("sink %q streams[%d]: no stream matches %s:%d (have %d %s stream(s))",
+				node.ID, j, ss.Type, ss.Index, len(idxs), ss.Type)
+		}
+		streamIdx := idxs[ss.Index]
+		if len(ss.Metadata) > 0 {
+			if err := muxer.SetStreamMetadata(streamIdx, ss.Metadata); err != nil {
+				muxer.Abort()
+				return nil, fmt.Errorf("sink %q streams[%d] set metadata: %w", node.ID, j, err)
+			}
+		}
+		if ss.Disposition != "" {
+			if err := muxer.SetStreamDisposition(streamIdx, ss.Disposition); err != nil {
+				muxer.Abort()
+				return nil, fmt.Errorf("sink %q streams[%d] set disposition: %w", node.ID, j, err)
 			}
 		}
 	}

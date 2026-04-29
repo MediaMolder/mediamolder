@@ -12,6 +12,7 @@ package av
 // #include "libavformat/avformat.h"
 // #include "libavutil/dict.h"
 // #include "libavutil/mem.h"
+// #include "libavutil/opt.h"
 //
 // // dict_set is a thin wrapper so the Go side can set a single key
 // // without juggling AVDictionary** indirection.
@@ -33,9 +34,17 @@ package av
 //     ctx->nb_chapters++;
 //     return ch;
 // }
+//
+// // stream_set_disposition forwards to av_opt_set on the AVStream's
+// // AVClass, which parses `+`-separated AV_DISPOSITION_* flag names
+// // exactly the way the FFmpeg CLI does for `-disposition:s:...`.
+// static int stream_set_disposition(AVStream *st, const char *val) {
+//     return av_opt_set(st, "disposition", val, 0);
+// }
 import "C"
 
 import (
+	"strings"
 	"unsafe"
 )
 
@@ -131,6 +140,35 @@ func (f *OutputFormatContext) SetStreamMetadata(idx int, kv map[string]string) e
 	st := streams[idx]
 	C.av_dict_free(&st.metadata)
 	return setDictFromMap(&st.metadata, kv)
+}
+
+// SetStreamDisposition sets the disposition flags of output stream idx
+// from a `+`-separated list of AV_DISPOSITION_* flag names (e.g.
+// `"default"`, `"default+forced"`, `"hearing_impaired"`). Mirrors
+// `-disposition:s:<type>:<idx>` in the FFmpeg CLI by forwarding to
+// av_opt_set on the AVStream's AVClass, which is the same code path
+// fftools/ffmpeg_mux_init.c::set_dispositions uses to parse the value.
+// Empty / whitespace-only values are no-ops. Must be called between
+// AddStream and WriteHeader.
+func (f *OutputFormatContext) SetStreamDisposition(idx int, disp string) error {
+	if f == nil || f.p == nil {
+		return nil
+	}
+	if idx < 0 || idx >= int(f.p.nb_streams) {
+		return nil
+	}
+	disp = strings.TrimSpace(disp)
+	if disp == "" {
+		return nil
+	}
+	streams := (*[1 << 20]*C.AVStream)(unsafe.Pointer(f.p.streams))
+	st := streams[idx]
+	cVal := C.CString(disp)
+	defer C.free(unsafe.Pointer(cVal))
+	if rc := C.stream_set_disposition(st, cVal); rc < 0 {
+		return newErr(rc)
+	}
+	return nil
 }
 
 // AddChapter appends a chapter to the output with start/end expressed in

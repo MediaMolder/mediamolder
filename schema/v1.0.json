@@ -137,6 +137,7 @@
         "shortest": { "type": "boolean", "description": "Stop muxing as soon as the shortest input stream feeding this output ends. Mirrors ffmpeg -shortest (per-output scope, see fftools/ffmpeg_mux_init.c sync-queue setup). The runtime captures the PTS at which the first stream closes and stops emitting on every other stream of the same output." },
         "max_file_size": { "type": "integer", "minimum": 0, "description": "Cap the encoded output at this many bytes. Mirrors ffmpeg -fs SIZE: before each WritePacket the runtime queries avio_tell on the muxer's IO context and stops with EOF (writing a clean trailer) once the limit is reached. 0 = unlimited." },
         "metadata": { "type": "object", "additionalProperties": { "type": "string" }, "description": "Container-level key/value metadata written into the output (`-metadata key=value`). Replaces any metadata mapped from inputs via `input.map_metadata`." },
+        "streams": { "type": "array", "items": { "$ref": "#/$defs/stream_spec" }, "description": "Per-stream metadata + disposition overrides. Mirrors ffmpeg `-metadata:s:<type>:<idx> key=value` and `-disposition:s:<type>:<idx> flags`." },
         "chapters": { "type": "array", "items": { "$ref": "#/$defs/chapter" }, "description": "Explicit chapter table. Replaces any chapters mapped from inputs via `input.map_chapters`. Container must support chapters (matroska, mp4, ogg, ffmetadata, ...)." },
         "options": {
           "type": "object",
@@ -154,6 +155,17 @@
         "end": { "type": "number", "minimum": 0, "description": "Chapter end in seconds." },
         "title": { "type": "string" },
         "metadata": { "type": "object", "additionalProperties": { "type": "string" } }
+      }
+    },
+    "stream_spec": {
+      "type": "object",
+      "required": ["type", "index"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "type": "string", "enum": ["v", "a", "s", "d"] },
+        "index": { "type": "integer", "minimum": 0 },
+        "metadata": { "type": "object", "additionalProperties": { "type": "string" } },
+        "disposition": { "type": "string" }
       }
     },
     "global_options": {

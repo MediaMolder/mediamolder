@@ -5,6 +5,7 @@ package ffcli
 
 import (
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -48,6 +49,15 @@ type parser struct {
 	hwDevice     string
 	hwOutFmt     string
 	globalOpts   map[string]string
+	// Container-level metadata collected from `-metadata key=value`
+	// (no specifier). Latched onto the next output.
+	containerMeta map[string]string
+	// Per-stream attributes collected from `-metadata:s:<type>:<idx>
+	// key=value` and `-disposition:s:<type>:<idx> flags`. Latched
+	// onto the next output. Keyed by `<type>:<idx>` (e.g. "a:0",
+	// "v:1"); each entry is a draft StreamSpec that gets finalised
+	// when the output URL is seen.
+	streamSpecs map[string]*pipeline.StreamSpec
 	// Per-stream encoder options (preset, crf, b, g, ...). Populated
 	// from CLI flags like -crf, -preset, -b:v, -tune, -profile:v,
 	// -level, -g, -bf, -maxrate, -minrate, -bufsize. Attached to the
@@ -220,6 +230,60 @@ func (p *parser) parse() (*pipeline.Config, error) {
 			// demuxer-side ts_offset shift and to interpret output-side
 			// -ss/-to as absolute timeline values.
 			p.copyTS = true
+		case arg == "-metadata" || strings.HasPrefix(arg, "-metadata:"):
+			// FFmpeg `-metadata [SPEC] key=value`. Without a spec the
+			// value lands on the container; with `:s:<type>:<idx>` it
+			// targets a single output stream. We do not yet support
+			// the `:g:`, `:c:`, `:p:`, or `:s:<type>` (no index)
+			// variants — they require either chapter/program-level
+			// dispatch (deferred) or "broadcast to every stream of
+			// type" (which the explicit-stream form already covers in
+			// practice).
+			if !p.hasMore() {
+				return nil, fmt.Errorf("%s requires an argument", arg)
+			}
+			kv := p.next()
+			eq := strings.Index(kv, "=")
+			if eq <= 0 {
+				return nil, fmt.Errorf("%s: expected key=value, got %q", arg, kv)
+			}
+			key, val := kv[:eq], kv[eq+1:]
+			spec := strings.TrimPrefix(arg, "-metadata")
+			spec = strings.TrimPrefix(spec, ":")
+			switch {
+			case spec == "":
+				if p.containerMeta == nil {
+					p.containerMeta = make(map[string]string)
+				}
+				p.containerMeta[key] = val
+			case strings.HasPrefix(spec, "s:"):
+				typ, idx, err := parseStreamSpec(spec[2:])
+				if err != nil {
+					return nil, fmt.Errorf("%s: %w", arg, err)
+				}
+				ss := p.streamSpecFor(typ, idx)
+				if ss.Metadata == nil {
+					ss.Metadata = make(map[string]string)
+				}
+				ss.Metadata[key] = val
+			default:
+				return nil, fmt.Errorf("%s: unsupported specifier %q (only `s:<type>:<idx>` supported)", arg, spec)
+			}
+		case strings.HasPrefix(arg, "-disposition:s:"):
+			// FFmpeg `-disposition:s:<type>:<idx> default+forced`. We
+			// only accept the per-stream form; the bare `-disposition`
+			// (which clears every stream) and the `:<type>` (broadcast)
+			// forms are not yet supported.
+			if !p.hasMore() {
+				return nil, fmt.Errorf("%s requires an argument", arg)
+			}
+			val := p.next()
+			typ, idx, err := parseStreamSpec(strings.TrimPrefix(arg, "-disposition:s:"))
+			if err != nil {
+				return nil, fmt.Errorf("%s: %w", arg, err)
+			}
+			ss := p.streamSpecFor(typ, idx)
+			ss.Disposition = val
 		case arg == "-fps_mode" || arg == "-vsync":
 			// FFmpeg modern: -fps_mode {passthrough|cfr|vfr|drop|auto}.
 			// FFmpeg legacy: -vsync {0|1|2|drop|passthrough|cfr|vfr|auto}.
@@ -330,6 +394,27 @@ func (p *parser) parse() (*pipeline.Config, error) {
 			}
 			if p.maxFileSize > 0 {
 				out.MaxFileSize = p.maxFileSize
+			}
+			if len(p.containerMeta) > 0 {
+				out.Metadata = p.containerMeta
+				p.containerMeta = nil
+			}
+			if len(p.streamSpecs) > 0 {
+				// Emit deterministically: sort by (type, index) so
+				// repeated calls with the same flag set produce
+				// byte-identical Output.Streams ordering. Mirrors the
+				// stable order FFmpeg's `of_add_metadata` produces by
+				// walking the OptionsContext list in declaration order.
+				keys := make([]string, 0, len(p.streamSpecs))
+				for k := range p.streamSpecs {
+					keys = append(keys, k)
+				}
+				sort.Strings(keys)
+				out.Streams = make([]pipeline.StreamSpec, 0, len(keys))
+				for _, k := range keys {
+					out.Streams = append(out.Streams, *p.streamSpecs[k])
+				}
+				p.streamSpecs = nil
 			}
 			if f, ok := p.globalOpts["format"]; ok {
 				out.Format = f

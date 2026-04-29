@@ -185,8 +185,9 @@ semantics.
 | `-shortest`                                                       | ✅    | `Output.Shortest`; `handleSink` records the PTS at which the first feeder channel closes and drains-and-drops further packets on the remaining channels of the same output. Mirrors per-output sync-queue cap in `fftools/ffmpeg_mux_init.c`. |
 | `-fs N` (file size limit)                                         | ✅    | `Output.MaxFileSize`; `handleSink` calls `av.OutputFormatContext.BytesWritten` (avio_tell) before every `WritePacket` and stops with a clean trailer once the limit is reached. |
 | `-frames:v N`, `-frames:a N`                                      | ✅    | `Output.MaxFramesVideo` / `Output.MaxFramesAudio`; sink drains channel and stops writing once limit is hit (post-encoder count, matches ffmpeg semantics for filter-dropping graphs) |
-| `-metadata key=value`                                             | ❌    | Global metadata write |
-| `-metadata:s:v:0 …` per-stream metadata                           | ❌    | Required for language tags, stereoscopic flags, comments |
+| `-metadata key=value`                                             | ✅    | `Output.Metadata`; `compat/ffcli` parses bare `-metadata`, `handleSink::applyOutputMetadata` writes via `av_dict_set` on `AVFormatContext.metadata` before `WriteHeader` (mirrors `fftools/ffmpeg_mux_init.c::of_add_metadata`). |
+| `-metadata:s:v:0 …` per-stream metadata                           | ✅    | `Output.Streams[*].Metadata`; per-stream resolution counts streams of the requested media type in muxer-add order (same convention as `check_stream_specifier` for `s:<type>:<idx>`). Required for language tags, stereoscopic flags, comments. |
+| `-disposition:s:v:0 default+forced`                               | ✅    | `Output.Streams[*].Disposition`; forwards a `+`-separated AV_DISPOSITION_* flag list to `av_opt_set` on the AVStream's AVClass — same code path `fftools/ffmpeg_mux_init.c::set_dispositions` uses. |
 | `-map_metadata`, `-map_chapters`                                  | ❌    | Required for `chapter-add`, `chapter-extract` |
 | Chapter writing API                                               | ❌    | Even without map, no node can emit `AVChapter` entries |
 | Attachments (fonts for ASS, cover art)                            | ❌    | |
@@ -650,9 +651,14 @@ real jobs."
    SI suffix parsing, and the rest of the muxdelay cluster
    (`-muxdelay`/`-muxpreload`/`-start_at_zero`/`-avoid_negative_ts`).
 3. **Per-stream encoder overrides + per-stream metadata** (§2.4,
-   §2.5) — `Output.Streams []StreamSpec` with per-stream codec /
-   bitrate / metadata. Unblocks ABR ladders, dual-language audio,
-   language-tagged subtitles in one PR.
+   §2.5) — ✅ partially landed: `Output.Streams []StreamSpec`
+   exposes per-stream `Metadata` + `Disposition` (mirrors
+   `-metadata:s:<type>:<idx>` and `-disposition:s:<type>:<idx>`),
+   unblocking dual-language audio and language-tagged /
+   forced-flagged subtitles. Per-stream codec/bitrate is
+   intentionally deferred — model it with explicit encoder graph
+   nodes (see `testdata/examples/35_abr_ladder.json`), which is the
+   shape ABR ladders already use.
 4. **`tee` muxer** (§2.5, §3.3.2) — `Output.Kind = "tee"` with
    `Output.Targets []TeeTarget`. Encode once → mux to MP4 + HLS +
    DASH. Pairs with #3.
