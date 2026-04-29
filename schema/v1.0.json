@@ -155,6 +155,8 @@
         "loudnorm_pass": { "type": "integer", "minimum": 0, "maximum": 2, "description": "Two-pass EBU R128 loudnorm shuttle. 0 = single-pass (default); 1 = analysis (libavfilter/af_loudnorm.c writes input_i / input_tp / input_lra / input_thresh / target_offset to a JSON stats file via print_format=json + stats_file); 2 = apply (the runtime reads pass-1 stats and injects measured_I / measured_TP / measured_LRA / measured_thresh / offset into the same loudnorm node). The job is run twice by the caller against the same loudnorm_statsfile prefix. FFmpeg has no flag for this — every documented two-pass loudnorm recipe wires it by hand via stderr-scraping." },
         "loudnorm_statsfile": { "type": "string", "description": "Prefix for the per-loudnorm-node JSON stats file rendered as `<prefix>-<idx>.json` where `<idx>` is the per-run loudnorm-node ordinal. Empty defaults to `mm-loudnorm`. Honoured only when `loudnorm_pass != 0`." },
         "force_key_frames": { "type": "string", "description": "FFmpeg `-force_key_frames` spec. Three grammars: `expr:EXPR` (libavutil expression evaluated per video frame; vars n / n_forced / prev_forced_n / prev_forced_t / t — canonical idiom `expr:gte(t,n_forced*2)` for a 2 s GOP); `source` (copy keyframes from source); or comma-separated time list (`3.0,7.5,10.25`, float seconds). Required for HLS / DASH segmenters. Honoured only on video encoders." },
+        "hls": { "$ref": "#/$defs/hls_options", "description": "Typed HLS muxer options. Only valid when `format=\"hls\"`. Promoted from the generic `options` AVDict bag; on key collision the typed field wins. Mirrors `libavformat/hlsenc.c`." },
+        "dash": { "$ref": "#/$defs/dash_options", "description": "Typed DASH muxer options. Only valid when `format=\"dash\"`. Promoted from the generic `options` AVDict bag; on key collision the typed field wins. Mirrors `libavformat/dashenc.c`." },
         "options": {
           "type": "object",
           "additionalProperties": true
@@ -221,6 +223,43 @@
         },
         "max_retries": { "type": "integer", "minimum": 0 },
         "fallback_node": { "type": "string" }
+      }
+    },
+    "hls_options": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "time": { "type": "number", "minimum": 0, "description": "Target segment duration in seconds (`hls_time`)." },
+        "init_time": { "type": "number", "minimum": 0, "description": "Init segment duration in seconds (`hls_init_time`)." },
+        "list_size": { "type": "integer", "minimum": 0, "description": "Maximum entries kept in the playlist (`hls_list_size`); 0 keeps all." },
+        "playlist_type": { "type": "string", "enum": ["", "event", "vod"], "description": "`hls_playlist_type`. `vod` writes EXT-X-ENDLIST on close." },
+        "segment_type": { "type": "string", "enum": ["", "mpegts", "fmp4"], "description": "`hls_segment_type`. `fmp4` switches to CMAF-style fragmented MP4 segments." },
+        "segment_filename": { "type": "string", "description": "Printf-style template for segment files (`hls_segment_filename`)." },
+        "fmp4_init_filename": { "type": "string", "description": "Init segment file name when `segment_type=\"fmp4\"` (`hls_fmp4_init_filename`)." },
+        "start_number": { "type": "integer", "minimum": 0, "description": "First sequence number in the playlist (`start_number`)." },
+        "master_pl_name": { "type": "string", "description": "Master playlist filename (`master_pl_name`); required for ABR ladders." },
+        "var_stream_map": { "type": "string", "description": "Variant-stream mapping (`var_stream_map`), e.g. `\"v:0,a:0 v:1,a:0\"`. Requires master_pl_name." },
+        "flags": { "type": "array", "items": { "type": "string" }, "description": "List of `hls_flags` token names; joined with `+` before being passed to libavformat." }
+      }
+    },
+    "dash_options": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "seg_duration": { "type": "number", "minimum": 0, "description": "Target segment duration in seconds (`seg_duration`)." },
+        "frag_duration": { "type": "number", "minimum": 0, "description": "Target fragment duration in seconds (`frag_duration`)." },
+        "window_size": { "type": "integer", "minimum": 0, "description": "Maximum segments kept in the manifest (`window_size`); 0 keeps all." },
+        "extra_window_size": { "type": "integer", "minimum": 0, "description": "Extra segments retained on disk past `window_size` (`extra_window_size`)." },
+        "init_seg_name": { "type": "string", "description": "Init segment file-name template (`init_seg_name`)." },
+        "media_seg_name": { "type": "string", "description": "Media segment file-name template (`media_seg_name`)." },
+        "single_file": { "type": "boolean", "description": "Use SegmentBase single-file output (`single_file`)." },
+        "use_template": { "type": "boolean", "description": "Emit `<SegmentTemplate>` (`use_template`); unset = libavformat default (true)." },
+        "use_timeline": { "type": "boolean", "description": "Emit `<SegmentTimeline>` (`use_timeline`); unset = libavformat default (true)." },
+        "streaming": { "type": "boolean", "description": "Low-latency progressive fragment writes (`streaming`)." },
+        "adaptation_sets": { "type": "string", "description": "Manual adaptation-set spec (`adaptation_sets`), e.g. `\"id=0,streams=v id=1,streams=a\"`." },
+        "hls_playlist": { "type": "boolean", "description": "Also emit HLS .m3u8 playlists alongside the DASH manifest (`hls_playlist`); the CMAF dual-pack mode." },
+        "ldash": { "type": "boolean", "description": "Enable low-latency DASH (`ldash`)." },
+        "flags": { "type": "array", "items": { "type": "string" }, "description": "List of `dash_flags` token names; joined with `+` before being passed to libavformat." }
       }
     }
   }

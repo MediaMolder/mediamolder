@@ -48,6 +48,14 @@ type parser struct {
 	pass           int
 	passLogFile    string
 	forceKeyFrames string
+	// pendingHLS / pendingDASH collect typed HLS/DASH muxer options
+	// (`-hls_time`, `-hls_playlist_type`, `-seg_duration`, ...).
+	// Allocated lazily on first matching flag and drained onto the
+	// next output's HLS / DASH field. Mirrors libavformat/hlsenc.c
+	// + libavformat/dashenc.c AVOption tables; the runtime renders
+	// them back into the AVDictionary before avformat_write_header.
+	pendingHLS  *pipeline.HLSOptions
+	pendingDASH *pipeline.DASHOptions
 	hwAccel        string
 	hwDevice       string
 	hwOutFmt       string
@@ -322,6 +330,41 @@ func (p *parser) parse() (*pipeline.Config, error) {
 				return nil, fmt.Errorf("-force_key_frames requires an argument")
 			}
 			p.forceKeyFrames = p.next()
+		// ---- HLS muxer options (libavformat/hlsenc.c) ----
+		case arg == "-hls_time" || arg == "-hls_init_time" ||
+			arg == "-hls_list_size" || arg == "-hls_playlist_type" ||
+			arg == "-hls_segment_type" || arg == "-hls_segment_filename" ||
+			arg == "-hls_fmp4_init_filename" || arg == "-hls_flags" ||
+			arg == "-master_pl_name" || arg == "-var_stream_map" ||
+			arg == "-start_number":
+			if !p.hasMore() {
+				return nil, fmt.Errorf("%s requires an argument", arg)
+			}
+			v := p.next()
+			if p.pendingHLS == nil {
+				p.pendingHLS = &pipeline.HLSOptions{}
+			}
+			if err := setHLSOption(p.pendingHLS, arg, v); err != nil {
+				return nil, err
+			}
+		// ---- DASH muxer options (libavformat/dashenc.c) ----
+		case arg == "-seg_duration" || arg == "-frag_duration" ||
+			arg == "-window_size" || arg == "-extra_window_size" ||
+			arg == "-init_seg_name" || arg == "-media_seg_name" ||
+			arg == "-single_file" || arg == "-use_template" ||
+			arg == "-use_timeline" || arg == "-streaming" ||
+			arg == "-adaptation_sets" || arg == "-hls_playlist" ||
+			arg == "-ldash" || arg == "-dash_flags":
+			if !p.hasMore() {
+				return nil, fmt.Errorf("%s requires an argument", arg)
+			}
+			v := p.next()
+			if p.pendingDASH == nil {
+				p.pendingDASH = &pipeline.DASHOptions{}
+			}
+			if err := setDASHOption(p.pendingDASH, arg, v); err != nil {
+				return nil, err
+			}
 		case arg == "-map":
 			// FFmpeg `-map [-]INPUT[:SPEC][?]` (Wave 2 #9 + #10).
 			// Collected here in CLI order; applied to inputs in
@@ -615,6 +658,14 @@ func (p *parser) parse() (*pipeline.Config, error) {
 			if p.forceKeyFrames != "" {
 				out.ForceKeyFrames = p.forceKeyFrames
 				p.forceKeyFrames = ""
+			}
+			if p.pendingHLS != nil {
+				out.HLS = p.pendingHLS
+				p.pendingHLS = nil
+			}
+			if p.pendingDASH != nil {
+				out.DASH = p.pendingDASH
+				p.pendingDASH = nil
 			}
 			if len(p.containerMeta) > 0 {
 				out.Metadata = p.containerMeta

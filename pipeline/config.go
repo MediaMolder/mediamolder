@@ -468,6 +468,138 @@ type Output struct {
 	//   - comma-separated time list — float seconds, e.g.
 	//     "3.0,7.5,10.25". HH:MM:SS form deferred.
 	ForceKeyFrames string `json:"force_key_frames,omitempty"`
+	// HLS carries typed HLS muxer options applied to the output
+	// when `Format == "hls"`. Promoted from the generic `Options`
+	// AVDict bag so jobs can express segment timing, playlist
+	// type, fMP4/CMAF mode, master-playlist generation, and
+	// variant-stream binding without raw AVOption strings.
+	// Mirrors `libavformat/hlsenc.c`'s AVOption table; values are
+	// rendered into the AVDictionary passed to
+	// `avformat_write_header`. Conflicting keys in `Options` lose
+	// to the typed field. Validated only when `Format == "hls"`.
+	HLS *HLSOptions `json:"hls,omitempty"`
+	// DASH carries typed DASH muxer options applied to the output
+	// when `Format == "dash"`. Same promotion model as `HLS`,
+	// against `libavformat/dashenc.c`'s AVOption table.
+	DASH *DASHOptions `json:"dash,omitempty"`
+}
+
+// HLSOptions promotes the most-asked HLS muxer AVOptions
+// (`libavformat/hlsenc.c`) to typed fields on `Output`. Only
+// applied when `Output.Format == "hls"`. Zero / empty fields are
+// omitted from the AVDictionary so libavformat's defaults apply.
+//
+// `Output.Options` remains the escape hatch for niche options
+// (`hls_enc`, `hls_key_info_file`, `hls_subtitle_path`, …); on key
+// collision the typed field wins.
+type HLSOptions struct {
+	// Time is the target segment duration in seconds (HLS
+	// `hls_time`). FFmpeg default is 2.0. Forwarded as a string
+	// with up to six decimals.
+	Time float64 `json:"time,omitempty"`
+	// InitTime is the initialisation segment duration in seconds
+	// (HLS `hls_init_time`). 0 leaves the muxer default.
+	InitTime float64 `json:"init_time,omitempty"`
+	// ListSize caps the number of entries kept in the playlist
+	// (HLS `hls_list_size`). 0 keeps every segment.
+	ListSize int `json:"list_size,omitempty"`
+	// PlaylistType is `hls_playlist_type` — `""` (live, default),
+	// `"event"`, or `"vod"`. Setting `"vod"` writes EXT-X-ENDLIST
+	// on close.
+	PlaylistType string `json:"playlist_type,omitempty"`
+	// SegmentType is `hls_segment_type` — `""` / `"mpegts"`
+	// (default) or `"fmp4"` (CMAF). When `"fmp4"`,
+	// `FMP4InitFilename` controls the init file name.
+	SegmentType string `json:"segment_type,omitempty"`
+	// SegmentFilename is the printf-style template for segment
+	// files (HLS `hls_segment_filename`). May contain `%d` /
+	// `%v` for variant-stream substitution.
+	SegmentFilename string `json:"segment_filename,omitempty"`
+	// FMP4InitFilename is the init segment file name when
+	// `SegmentType == "fmp4"` (HLS `hls_fmp4_init_filename`).
+	// Default `init.mp4`.
+	FMP4InitFilename string `json:"fmp4_init_filename,omitempty"`
+	// StartNumber is the first sequence number in the playlist
+	// (HLS `start_number`). 0 starts from 0; FFmpeg's default
+	// is also 0.
+	StartNumber int `json:"start_number,omitempty"`
+	// MasterPlName triggers master-playlist generation (HLS
+	// `master_pl_name`). Empty = single-rendition playlist only.
+	// Required for ABR ladders (combine with `VarStreamMap`).
+	MasterPlName string `json:"master_pl_name,omitempty"`
+	// VarStreamMap is the variant-stream mapping string (HLS
+	// `var_stream_map`), e.g.
+	// `"v:0,a:0 v:1,a:0 v:2,a:0"`. Required when
+	// `MasterPlName` is set and the output has more than one
+	// video / audio rendition (the standard ABR pattern).
+	VarStreamMap string `json:"var_stream_map,omitempty"`
+	// Flags is a list of `hls_flags` token names (e.g.
+	// `["delete_segments", "independent_segments",
+	// "program_date_time"]`). Joined with `+` before being
+	// written to the AVDictionary, matching libavutil's
+	// `AV_OPT_TYPE_FLAGS` parser.
+	Flags []string `json:"flags,omitempty"`
+}
+
+// DASHOptions promotes the most-asked DASH muxer AVOptions
+// (`libavformat/dashenc.c`) to typed fields on `Output`. Only
+// applied when `Output.Format == "dash"`. Zero / empty fields are
+// omitted from the AVDictionary so libavformat's defaults apply.
+//
+// `Output.Options` remains the escape hatch for niche options;
+// on key collision the typed field wins.
+type DASHOptions struct {
+	// SegDuration is the target segment duration in seconds (DASH
+	// `seg_duration`). FFmpeg default is 5.0.
+	SegDuration float64 `json:"seg_duration,omitempty"`
+	// FragDuration is the target fragment duration in seconds
+	// (DASH `frag_duration`). 0 leaves segments unfragmented.
+	FragDuration float64 `json:"frag_duration,omitempty"`
+	// WindowSize is the maximum number of segments kept in the
+	// manifest (DASH `window_size`). 0 keeps every segment.
+	WindowSize int `json:"window_size,omitempty"`
+	// ExtraWindowSize is the number of segments retained on disk
+	// past `WindowSize` before deletion (DASH
+	// `extra_window_size`). 0 leaves the muxer default (5).
+	ExtraWindowSize int `json:"extra_window_size,omitempty"`
+	// InitSegName is the init segment file-name template (DASH
+	// `init_seg_name`). Empty leaves the muxer default
+	// `init-stream$RepresentationID$.$ext$`.
+	InitSegName string `json:"init_seg_name,omitempty"`
+	// MediaSegName is the media segment file-name template
+	// (DASH `media_seg_name`). Empty leaves the muxer default
+	// `chunk-stream$RepresentationID$-$Number%05d$.$ext$`.
+	MediaSegName string `json:"media_seg_name,omitempty"`
+	// SingleFile stores every representation in one file with a
+	// SegmentBase (DASH `single_file`). Defaults to false
+	// (templated per-segment files).
+	SingleFile bool `json:"single_file,omitempty"`
+	// UseTemplate emits `<SegmentTemplate>` in the manifest
+	// (DASH `use_template`). Pointer so unset = inherit
+	// libavformat's default (true). false explicitly disables.
+	UseTemplate *bool `json:"use_template,omitempty"`
+	// UseTimeline emits `<SegmentTimeline>` (DASH
+	// `use_timeline`). Pointer so unset = inherit libavformat's
+	// default (true). false explicitly disables.
+	UseTimeline *bool `json:"use_timeline,omitempty"`
+	// Streaming enables low-latency streaming output with
+	// progressive fragment writes (DASH `streaming`).
+	Streaming bool `json:"streaming,omitempty"`
+	// AdaptationSets is the manual adaptation-set spec (DASH
+	// `adaptation_sets`), e.g.
+	// `"id=0,streams=v id=1,streams=a"`. Required for any DASH
+	// ABR ladder that mixes multiple video bitrates with one
+	// audio rendition.
+	AdaptationSets string `json:"adaptation_sets,omitempty"`
+	// HLSPlaylist also generates HLS .m3u8 playlists alongside
+	// the DASH manifest (DASH `hls_playlist`). The CMAF
+	// dual-pack delivery mode.
+	HLSPlaylist bool `json:"hls_playlist,omitempty"`
+	// LDash enables low-latency DASH (DASH `ldash`).
+	LDash bool `json:"ldash,omitempty"`
+	// Flags is a list of `dash_flags` token names. Joined with
+	// `+` before being written to the AVDictionary.
+	Flags []string `json:"flags,omitempty"`
 }
 
 // TeeTarget describes one slave of a `Kind == "tee"` Output. It
@@ -735,6 +867,53 @@ func validate(cfg *Config) error {
 		if out.ForceKeyFrames != "" {
 			if _, err := parseForceKeyFrames(out.ForceKeyFrames); err != nil {
 				return fmt.Errorf("output %q: %w", out.ID, err)
+			}
+		}
+		if out.HLS != nil {
+			if out.Format != "" && out.Format != "hls" {
+				return fmt.Errorf("output %q: hls options only valid when format=\"hls\" (have format=%q)", out.ID, out.Format)
+			}
+			if out.HLS.Time < 0 {
+				return fmt.Errorf("output %q: invalid hls.time %g (must be >= 0)", out.ID, out.HLS.Time)
+			}
+			if out.HLS.InitTime < 0 {
+				return fmt.Errorf("output %q: invalid hls.init_time %g (must be >= 0)", out.ID, out.HLS.InitTime)
+			}
+			if out.HLS.ListSize < 0 {
+				return fmt.Errorf("output %q: invalid hls.list_size %d (must be >= 0)", out.ID, out.HLS.ListSize)
+			}
+			if out.HLS.StartNumber < 0 {
+				return fmt.Errorf("output %q: invalid hls.start_number %d (must be >= 0)", out.ID, out.HLS.StartNumber)
+			}
+			switch out.HLS.PlaylistType {
+			case "", "event", "vod":
+			default:
+				return fmt.Errorf("output %q: invalid hls.playlist_type %q (want event|vod)", out.ID, out.HLS.PlaylistType)
+			}
+			switch out.HLS.SegmentType {
+			case "", "mpegts", "fmp4":
+			default:
+				return fmt.Errorf("output %q: invalid hls.segment_type %q (want mpegts|fmp4)", out.ID, out.HLS.SegmentType)
+			}
+			if out.HLS.VarStreamMap != "" && out.HLS.MasterPlName == "" {
+				return fmt.Errorf("output %q: hls.var_stream_map requires hls.master_pl_name", out.ID)
+			}
+		}
+		if out.DASH != nil {
+			if out.Format != "" && out.Format != "dash" {
+				return fmt.Errorf("output %q: dash options only valid when format=\"dash\" (have format=%q)", out.ID, out.Format)
+			}
+			if out.DASH.SegDuration < 0 {
+				return fmt.Errorf("output %q: invalid dash.seg_duration %g (must be >= 0)", out.ID, out.DASH.SegDuration)
+			}
+			if out.DASH.FragDuration < 0 {
+				return fmt.Errorf("output %q: invalid dash.frag_duration %g (must be >= 0)", out.ID, out.DASH.FragDuration)
+			}
+			if out.DASH.WindowSize < 0 {
+				return fmt.Errorf("output %q: invalid dash.window_size %d (must be >= 0)", out.ID, out.DASH.WindowSize)
+			}
+			if out.DASH.ExtraWindowSize < 0 {
+				return fmt.Errorf("output %q: invalid dash.extra_window_size %d (must be >= 0)", out.ID, out.DASH.ExtraWindowSize)
 			}
 		}
 	}

@@ -786,7 +786,18 @@ real jobs."
 12. **Structured HLS / DASH / CMAF outputs with ABR `Variants`**
     (§2.5) — Promote the AVDict bag to typed fields: `hls_time`,
     `hls_playlist_type`, `dash_segment_duration`, `init_segment`.
-    Gating for any commercial deployment.
+    Gating for any commercial deployment. ✅ **done.**
+    `Output.HLS *HLSOptions` + `Output.DASH *DASHOptions` land the
+    full hlsenc / dashenc AVOption tables as typed fields with the
+    `Options` bag retained as escape hatch (typed wins on key
+    collision). CMAF = `HLS.SegmentType="fmp4"` or
+    `DASH.HLSPlaylist=true`. ABR ladders continue to use the
+    explicit per-encoder graph node pattern from
+    [testdata/examples/35_abr_ladder.json](../testdata/examples/35_abr_ladder.json),
+    bound to the playlist via the typed `MasterPlName` /
+    `VarStreamMap` (HLS) or `AdaptationSets` (DASH). Smoke tests
+    [41_hls_vod.json](../testdata/examples/41_hls_vod.json) +
+    [42_dash_basic.json](../testdata/examples/42_dash_basic.json).
 13. **BSF chains on output** (§2.5) — `Output.BitstreamFilters
     []string`. Required for `h264_mp4toannexb,h264_redundant_pps`
     in any "convert MP4 to MPEG-TS" pipeline.

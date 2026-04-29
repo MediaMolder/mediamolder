@@ -101,12 +101,23 @@ func OpenOutputWithFormat(path, format string) (*OutputFormatContext, error) {
 			C.avformat_free_context(ctx)
 			return nil, fmt.Errorf("avio_open(%q): %w", tmpPath, newErr(ret))
 		}
+		return &OutputFormatContext{
+			p:       ctx,
+			tmpPath: tmpPath,
+			outPath: path,
+		}, nil
 	}
 
+	// AVFMT_NOFILE muxers (HLS, DASH, segment, image2 in some modes,
+	// tee) manage their own files: they write the playlist /
+	// manifest / per-segment files directly to the path stored in
+	// AVFormatContext.url, and the more recently authored ones
+	// (hlsenc, dashenc) implement their own atomic .tmp →
+	// final-name rename internally controlled by their `temp_file`
+	// AVOption. Leave tmpPath/outPath empty so our wrapper's
+	// Close() does not race the muxer with a second rename.
 	return &OutputFormatContext{
-		p:       ctx,
-		tmpPath: tmpPath,
-		outPath: path,
+		p: ctx,
 	}, nil
 }
 
@@ -194,7 +205,36 @@ func (f *OutputFormatContext) SetStreamCodecTag(idx int, tag string) error {
 // WriteHeader writes the container header. Must be called after all streams
 // have been added and before any packets are written.
 func (f *OutputFormatContext) WriteHeader() error {
-	ret := C.avformat_write_header(f.p, nil)
+	return f.WriteHeaderWithOptions(nil)
+}
+
+// WriteHeaderWithOptions writes the container header, forwarding the
+// given key/value pairs to libavformat as an AVDictionary. This is the
+// hook for muxer-specific AVOptions (e.g. HLS `hls_time`,
+// `hls_playlist_type`, `hls_segment_filename`; DASH `seg_duration`,
+// `init_seg_name`, `adaptation_sets`). Mirrors FFmpeg's
+// `fftools/ffmpeg_mux_init.c::mux_open` which builds an `AVDictionary
+// **opts` from `-muxer_opts` and per-output options before calling
+// `avformat_write_header`.
+//
+// Unconsumed entries in opts after WriteHeader returns indicate the
+// muxer did not recognise an option; callers may inspect the returned
+// `unconsumed` map to surface a warning. A non-nil error means the
+// header write itself failed.
+func (f *OutputFormatContext) WriteHeaderWithOptions(opts map[string]string) error {
+	var dict *C.AVDictionary
+	if len(opts) > 0 {
+		if err := setDictFromMap(&dict, opts); err != nil {
+			if dict != nil {
+				C.av_dict_free(&dict)
+			}
+			return fmt.Errorf("WriteHeaderWithOptions: build dict: %w", err)
+		}
+	}
+	ret := C.avformat_write_header(f.p, &dict)
+	if dict != nil {
+		C.av_dict_free(&dict)
+	}
 	return newErr(ret)
 }
 

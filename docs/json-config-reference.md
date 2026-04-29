@@ -116,6 +116,8 @@ For `"copy"` nodes, no `params` are required — the inbound edge type tells the
 | `chapters`         | array | no | Explicit chapter table; replaces input-mapped chapters when set. |
 | `kind`             | string | no | `"file"` (default) or `"tee"` for fan-out muxing; see [Tee outputs](#tee-outputs). |
 | `targets`          | array | no | Required when `kind == "tee"`; see [TeeTarget](#teetarget). |
+| `hls`              | object | no | Typed HLS muxer fields; see [HLSOptions](#hlsoptions). Honoured only when `format == "hls"` (or empty + `.m3u8` URL). |
+| `dash`             | object | no | Typed DASH muxer fields; see [DASHOptions](#dashoptions). Honoured only when `format == "dash"` (or empty + `.mpd` URL). |
 | `pass`             | int   | no | Two-pass video bit-field (FFmpeg `-pass`). `0` = single-pass; `1` = analysis pass (`AV_CODEC_FLAG_PASS1`); `2` = final pass (`AV_CODEC_FLAG_PASS2`); `3` = both. The job is run twice by the caller — once with `pass: 1`, once with `pass: 2` — against the same `passlogfile` prefix. Honoured only on the implicit video encoder. |
 | `passlogfile`      | string | no | Per-stream stats file prefix for two-pass video encoding (FFmpeg `-passlogfile`). Final filename is rendered as `<prefix>-<idx>.log`, where `<idx>` is the per-run video-encoder ordinal (mirrors FFmpeg's `<prefix>-<ost_idx>.log`). Empty defaults to `ffmpeg2pass`. Honoured only when `pass != 0`. |
 | `loudnorm_pass`    | int   | no | Two-pass EBU R128 loudnorm shuttle. `0` = single-pass; `1` = analysis (libavfilter writes input_i / input_tp / input_lra / input_thresh / target_offset to a JSON stats file via `print_format=json`+`stats_file`); `2` = apply (the runtime reads pass-1 stats and injects `measured_I` / `measured_TP` / `measured_LRA` / `measured_thresh` / `offset` into the same loudnorm node). The job is run twice by the caller against the same `loudnorm_statsfile` prefix. FFmpeg has no flag for this — every documented two-pass loudnorm recipe wires it by hand via stderr-scraping. |
@@ -153,6 +155,47 @@ When `kind == "tee"`, the output's `url` and `format` are ignored and `targets` 
 | `use_fifo`     | bool   | no       | Wrap slave in the `fifo` muxer (extra buffering thread). |
 | `fifo_options` | string | no       | `;`-separated `key=value` options forwarded to the fifo muxer when `use_fifo` is set. |
 | `options`      | object | no       | Additional `[opt=val:opt=val]` pairs prepended to the slave URL. |
+
+### HLSOptions
+
+Typed mirror of the [`libavformat/hlsenc.c`](../../ffmpeg/libavformat/hlsenc.c) AVOption table. Set on `Output.hls`. The legacy `Output.options` bag remains an escape hatch for any flag not promoted here; on key collision the typed field wins. CMAF = `segment_type: "fmp4"`.
+
+| Field                | Type            | FFmpeg flag                | Description |
+|----------------------|-----------------|----------------------------|-------------|
+| `time`               | float (seconds) | `-hls_time`                | Target segment duration. |
+| `init_time`          | float (seconds) | `-hls_init_time`           | Initial segment duration (overrides `time` for segment 0). |
+| `list_size`          | int             | `-hls_list_size`           | Maximum playlist entries (`0` = unlimited; useful for VOD). |
+| `start_number`       | int             | `-start_number`            | First segment sequence number. |
+| `playlist_type`      | string          | `-hls_playlist_type`       | `""` (live) / `"event"` / `"vod"` (writes `EXT-X-ENDLIST` on close). |
+| `segment_type`       | string          | `-hls_segment_type`        | `""` (default) / `"mpegts"` / `"fmp4"` (CMAF). |
+| `segment_filename`   | string          | `-hls_segment_filename`    | Pattern for media segments (e.g. `"seg_%03d.ts"`). |
+| `fmp4_init_filename` | string          | `-hls_fmp4_init_filename`  | Filename for the fmp4 init segment when `segment_type == "fmp4"`. |
+| `master_pl_name`     | string          | `-master_pl_name`          | Output a master playlist with this filename (required when `var_stream_map` is set). |
+| `var_stream_map`     | string          | `-var_stream_map`          | ABR rendition map (e.g. `"v:0,a:0 v:1,a:0"`). Bound by stream index to the encoders in the graph. |
+| `flags`              | array of string | `-hls_flags`               | Per-flag list joined with `+` (e.g. `["independent_segments", "delete_segments"]`). |
+
+### DASHOptions
+
+Typed mirror of the [`libavformat/dashenc.c`](../../ffmpeg/libavformat/dashenc.c) AVOption table. Set on `Output.dash`. The legacy `Output.options` bag remains an escape hatch; on key collision the typed field wins. CMAF dual-pack = `hls_playlist: true` (the dash muxer also writes a sidecar HLS `.m3u8` referencing the same fmp4 segments).
+
+| Field               | Type            | FFmpeg flag             | Description |
+|---------------------|-----------------|-------------------------|-------------|
+| `seg_duration`      | float (seconds) | `-seg_duration`         | Target segment duration. |
+| `frag_duration`     | float (seconds) | `-frag_duration`        | Sub-segment fragment duration. |
+| `window_size`       | int             | `-window_size`          | Maximum number of segments kept in the manifest (live). `0` = unlimited (VOD). |
+| `extra_window_size` | int             | `-extra_window_size`    | Number of extra segments retained on disk after they leave `window_size`. |
+| `init_seg_name`     | string          | `-init_seg_name`        | Init segment filename template (default `init-stream$RepresentationID$.m4s`). |
+| `media_seg_name`    | string          | `-media_seg_name`       | Media segment filename template (default `chunk-stream$RepresentationID$-$Number%05d$.m4s`). |
+| `adaptation_sets`   | string          | `-adaptation_sets`      | Explicit adaptation-set bindings (e.g. `"id=0,streams=v id=1,streams=a"`). |
+| `single_file`       | bool            | `-single_file`          | Write each representation as a single file with byte-range references (no per-segment files). |
+| `streaming`         | bool            | `-streaming`            | Enable chunked transfer / streaming mode. |
+| `hls_playlist`      | bool            | `-hls_playlist`         | Also write an HLS manifest alongside the MPD (CMAF dual-pack). |
+| `ldash`             | bool            | `-ldash`                | Enable low-latency DASH signalling. |
+| `use_template`      | bool (tri)      | `-use_template`         | `null` = FFmpeg default; `true` / `false` = explicit override. |
+| `use_timeline`      | bool (tri)      | `-use_timeline`         | `null` = FFmpeg default; `true` / `false` = explicit override. |
+| `flags`             | array of string | `-dash_flags`           | Per-flag list joined with `+`. |
+
+End-to-end smoke examples: [testdata/examples/41_hls_vod.json](../testdata/examples/41_hls_vod.json) and [testdata/examples/42_dash_basic.json](../testdata/examples/42_dash_basic.json). For ABR ladders, declare one explicit encoder graph node per rendition (see [testdata/examples/35_abr_ladder.json](../testdata/examples/35_abr_ladder.json)) and bind them to the master playlist via `hls.master_pl_name` + `hls.var_stream_map` or `dash.adaptation_sets`.
 
 ## GlobalOptions
 

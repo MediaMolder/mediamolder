@@ -327,14 +327,17 @@ sections:
         schema: pipeline.Output.Kind/Targets
         notes: Output.Kind="tee" + Output.Targets[]; encoded once, fanned out to N libavformat slaves via the built-in tee muxer (-f tee "[opt=val]url|[opt=val]url"). Per-target metadata/disposition is not directly supported by libavformat (slaves clone parent metadata).
       - flag: "HLS muxer (hls_time/hls_playlist_type/EXT-X-MAP/byte-range)"
-        status: partial
-        schema: pipeline.Output.Options
+        status: covered
+        schema: pipeline.Output.HLS
+        notes: Wave 3 #12 — typed HLSOptions promotes hls_time, hls_init_time, hls_list_size, hls_playlist_type, hls_segment_type (mpegts|fmp4 / CMAF), hls_segment_filename, hls_fmp4_init_filename, start_number, master_pl_name + var_stream_map (ABR), and hls_flags off the generic Options bag. Output.Options remains the escape hatch for niche options; typed fields win on key collision.
       - flag: "DASH muxer"
-        status: partial
-        schema: pipeline.Output.Options
+        status: covered
+        schema: pipeline.Output.DASH
+        notes: Wave 3 #12 — typed DASHOptions promotes seg_duration, frag_duration, window_size, extra_window_size, init_seg_name, media_seg_name, single_file, use_template, use_timeline, streaming, adaptation_sets, hls_playlist (CMAF dual-pack), ldash, dash_flags. Same escape-hatch model as HLS.
       - flag: "segment muxer / fragmented MP4 (CMAF)"
-        status: partial
-        schema: pipeline.Output.Options
+        status: covered
+        schema: pipeline.Output.HLS / pipeline.Output.DASH
+        notes: CMAF delivered via HLS.SegmentType="fmp4" (HLS-side fMP4) or DASH.HLSPlaylist=true alongside DASH (dual-pack manifest). The standalone segment muxer (-f segment) remains a partial-coverage gap; tee + HLS/DASH cover the same fan-out scenarios.
       - flag: "movflags=+faststart"
         status: covered
         schema: pipeline.Output.Options.movflags

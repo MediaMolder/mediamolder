@@ -70,6 +70,10 @@ func outputExt(name string) string {
 		return ".mkv"
 	case strings.HasPrefix(name, "27_"):
 		return ".ts"
+	case strings.HasPrefix(name, "41_"):
+		return ".m3u8"
+	case strings.HasPrefix(name, "42_"):
+		return ".mpd"
 	default:
 		return ".mp4"
 	}

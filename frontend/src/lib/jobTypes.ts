@@ -211,7 +211,80 @@ export interface Output {
    *  - comma-separated time list (`3.0,7.5,10.25`).
    *  Required for HLS / DASH segmenters. Honoured on video encoders. */
   force_key_frames?: string;
+  /** Typed HLS muxer options (only valid when `format === 'hls'`).
+   *  Promoted from the generic `options` AVDict bag; on key
+   *  collision the typed field wins. Mirrors libavformat/hlsenc.c. */
+  hls?: HLSOptions;
+  /** Typed DASH muxer options (only valid when `format === 'dash'`).
+   *  Promoted from the generic `options` AVDict bag; on key
+   *  collision the typed field wins. Mirrors libavformat/dashenc.c. */
+  dash?: DASHOptions;
   options?: Record<string, unknown>;
+}
+
+export interface HLSOptions {
+  /** Target segment duration, seconds (`hls_time`). */
+  time?: number;
+  /** Init segment duration, seconds (`hls_init_time`). */
+  init_time?: number;
+  /** Maximum entries kept in the playlist (`hls_list_size`); 0 = all. */
+  list_size?: number;
+  /** `hls_playlist_type`. `vod` writes EXT-X-ENDLIST on close. */
+  playlist_type?: '' | 'event' | 'vod';
+  /** `hls_segment_type`. `fmp4` selects CMAF-style fragmented MP4. */
+  segment_type?: '' | 'mpegts' | 'fmp4';
+  /** Printf-style template for segment files (`hls_segment_filename`). */
+  segment_filename?: string;
+  /** Init segment file name when `segment_type === 'fmp4'`
+   *  (`hls_fmp4_init_filename`). */
+  fmp4_init_filename?: string;
+  /** First sequence number in the playlist (`start_number`). */
+  start_number?: number;
+  /** Master playlist filename (`master_pl_name`); required for ABR. */
+  master_pl_name?: string;
+  /** Variant-stream mapping (`var_stream_map`),
+   *  e.g. `'v:0,a:0 v:1,a:0'`. Requires `master_pl_name`. */
+  var_stream_map?: string;
+  /** `hls_flags` token names; joined with `+` before being passed
+   *  to libavformat. */
+  flags?: string[];
+}
+
+export interface DASHOptions {
+  /** Target segment duration, seconds (`seg_duration`). */
+  seg_duration?: number;
+  /** Target fragment duration, seconds (`frag_duration`). */
+  frag_duration?: number;
+  /** Maximum segments kept in the manifest (`window_size`); 0 = all. */
+  window_size?: number;
+  /** Extra segments retained on disk past `window_size`
+   *  (`extra_window_size`). */
+  extra_window_size?: number;
+  /** Init segment file-name template (`init_seg_name`). */
+  init_seg_name?: string;
+  /** Media segment file-name template (`media_seg_name`). */
+  media_seg_name?: string;
+  /** SegmentBase single-file output (`single_file`). */
+  single_file?: boolean;
+  /** Emit `<SegmentTemplate>` (`use_template`); unset = libavformat
+   *  default (true). */
+  use_template?: boolean;
+  /** Emit `<SegmentTimeline>` (`use_timeline`); unset = libavformat
+   *  default (true). */
+  use_timeline?: boolean;
+  /** Low-latency progressive fragment writes (`streaming`). */
+  streaming?: boolean;
+  /** Manual adaptation-set spec (`adaptation_sets`),
+   *  e.g. `'id=0,streams=v id=1,streams=a'`. */
+  adaptation_sets?: string;
+  /** Also emit HLS .m3u8 playlists alongside the DASH manifest
+   *  (`hls_playlist`); the CMAF dual-pack mode. */
+  hls_playlist?: boolean;
+  /** Enable low-latency DASH (`ldash`). */
+  ldash?: boolean;
+  /** `dash_flags` token names; joined with `+` before being passed
+   *  to libavformat. */
+  flags?: string[];
 }
 
 export interface TeeTarget {

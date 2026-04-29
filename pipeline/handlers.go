@@ -2481,7 +2481,7 @@ func (r *graphRunner) openSink(_ *graph.Graph, node *graph.Node) (*sinkResources
 		return nil, fmt.Errorf("sink %q apply chapters: %w", node.ID, err)
 	}
 
-	if err := muxer.WriteHeader(); err != nil {
+	if err := muxer.WriteHeaderWithOptions(buildMuxerOptions(out)); err != nil {
 		muxer.Abort()
 		return nil, fmt.Errorf("sink %q write header: %w", node.ID, err)
 	}
