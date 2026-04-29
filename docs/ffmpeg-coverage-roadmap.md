@@ -7,6 +7,12 @@
 > Companion to [roadmap.md](roadmap.md), which is phase-based. This document
 > is **capability-based** — it enumerates the FFmpeg surface area, marks
 > what MediaMolder covers today, and prioritises the gaps.
+>
+> **Document structure:** §1–§2 form the *gap assessment* — §1 explains how
+> gaps were identified (community-scripts corpus and production-pattern review,
+> detailed below), §2 catalogues the full FFmpeg surface area. §3–§4 define
+> the strategy. §5 is the completed *initial backlog* (all 8 items done). §6
+> is the *ongoing wave plan* with items marked done as they are completed.
 
 ## 1. Provenance: the community-scripts probe
 
@@ -32,15 +38,15 @@ Skipped (converted but blocked):
 Not convertible (15 / 35) and the underlying capability gap each one
 exposes:
 
-| Group of scripts                                                | Missing capability                                       |
-|-----------------------------------------------------------------|----------------------------------------------------------|
-| `audio-silence`                                                 | **Lavfi virtual-source inputs** (`anullsrc`, `color`, `sine`, `testsrc`, `smptebars`) |
-| `chapter-add`, `chapter-extract`, `chapter-csv`                 | **Chapter metadata read/write** (and per-stream/global metadata IO) |
-| `extract-frame`, `tile-thumbnails`, `scene-images`              | **Per-output frame-count limits** (`-frames:v N`, `-vframes`) |
-| `scene-cut`, `scene-cut-to`                                     | **Multi-output batch from a cut-list** (one input, many time-windowed outputs in a single pass) |
-| `waveform`                                                      | **Cross-media-type filters** (audio→video: `showwavespic`, `showspectrumpic`) wired through MediaMolder's encoder selection |
-| `clip-time`, `scene-time`, `sexagesimal-time`                   | Pure CLI utilities — out of scope for the engine, in scope for a future `mediamolder util` subcommand |
-| `ebu-meter`, `scopes`                                           | ffplay-based interactive viewers — out of scope for the engine, possibly in scope for the GUI |
+| Group of scripts                                                | Capability gap                                           | Status |
+|-----------------------------------------------------------------|----------------------------------------------------------|--------|
+| `audio-silence`                                                 | **Lavfi virtual-source inputs** (`anullsrc`, `color`, `sine`, `testsrc`, `smptebars`) | ✅ Done — `Input.Kind = "lavfi"` (§5 #3) |
+| `chapter-add`, `chapter-extract`, `chapter-csv`                 | **Chapter metadata read/write** (and per-stream/global metadata IO) | ✅ Done — `Output.Chapters` / `Output.Metadata` shorthand (§5 #5) + `metadata_reader`/`metadata_writer` graph nodes (Wave 2 #11) |
+| `extract-frame`, `tile-thumbnails`, `scene-images`              | **Per-output frame-count limits** (`-frames:v N`, `-vframes`) | ✅ Done — `Output.MaxFramesVideo` / `MaxFramesAudio` (§5 #2) |
+| `scene-cut`, `scene-cut-to`                                     | **Multi-output batch from a cut-list** (one input, many time-windowed outputs in a single pass) | ✅ Done — resolved via `MaxFrames` + `select=gt(scene,…)` filter; fixtures `21_*`–`25_*` (§5 #2) |
+| `waveform`                                                      | **Cross-media-type filters** (audio→video: `showwavespic`, `showspectrumpic`) wired through MediaMolder's encoder selection | ❌ Open — see §2.3 |
+| `clip-time`, `scene-time`, `sexagesimal-time`                   | Pure CLI utilities — out of scope for the engine, in scope for a future `mediamolder util` subcommand | out of scope |
+| `ebu-meter`, `scopes`                                           | ffplay-based interactive viewers — out of scope for the engine, possibly in scope for the GUI | out of scope |
 
 These eight underlined capability gaps are the **first wave** of the
 roadmap below. They are sampled from a tiny corner of FFmpeg usage
@@ -58,8 +64,8 @@ of gaps that the 35-script community corpus does not exercise:
 
 | Gap                                                            | Note |
 |----------------------------------------------------------------|------|
-| **Filter expression engine** (`enable=between(t,2,8)`, `x=w-tw*t/5`, `t`, `n`, `frame`, `tw`, `th`, `text_w`, `text_h`) | Used by `drawtext`, `overlay`, `fade`, `crop`, `zoompan`, `geq`, … — `params` values today are stringified verbatim, but the GUI cannot help users author or validate them. |
-| **Two-pass `loudnorm`**                                        | ✅ Landed — `Output.LoudnormPass` / `Output.LoudnormStatsFile` carry the EBU R128 shuttle. Pass 1 sets `print_format=json`+`stats_file` on every loudnorm filter so libavfilter writes input_i/tp/lra/thresh/target_offset to a JSON file (`af_loudnorm.c::uninit`); pass 2 reads it and injects `measured_I/TP/LRA/thresh`+`offset` AVOptions. No FFmpeg flag — orchestration sugar above the manual two-run recipe. |
+| **Filter expression engine** (`enable=between(t,2,8)`, `x=w-tw*t/5`, `t`, `n`, `frame`, `tw`, `th`, `text_w`, `text_h`) | ⚠️ Partial — `GET /api/filters/{name}/eval-expression` endpoint done (§5 #7); `expression: true` AVOption flag bit and syntax-highlighted GUI input still open (§6.5 #19–20). |
+| **Two-pass `loudnorm`**                                        | ✅ Done — `Output.LoudnormPass` / `Output.LoudnormStatsFile` carry the EBU R128 shuttle. Pass 1 sets `print_format=json`+`stats_file` on every loudnorm filter so libavfilter writes input_i/tp/lra/thresh/target_offset to a JSON file (`af_loudnorm.c::uninit`); pass 2 reads it and injects `measured_I/TP/LRA/thresh`+`offset` AVOptions. No FFmpeg flag — orchestration sugar above the manual two-run recipe. |
 | **`setsar` / `setdar` and explicit SAR/DAR encoding**          | Required for square-pixel correction of legacy 720×480 / 720×576 sources and for HDR/Dolby SAR enforcement. |
 | **Audio channel manipulation** (`pan`, `channelsplit`, `channelmap`, `join`, `amerge`, `amix=weights=…`) | Multi-track downmix / upmix / language-track splitting. |
 | **Speech denoise model files** (`arnndn=model=cb.rnnn`)        | Filter takes a model path; we have no fixture/asset story for filter-side data files. Same problem as YOLO model paths but for filters rather than processors. |
@@ -69,10 +75,10 @@ of gaps that the 35-script community corpus does not exercise:
 | **`scale_npp` (NVIDIA NPP) vs `scale_cuda`**                   | Different libraries; some FFmpeg builds expose only one. The hardware-filter mapping table needs a per-filter availability probe. |
 | **`-init_hw_device` and multi-device graphs**                  | Pipelines that touch two hardware contexts (e.g. CUDA decode → CPU filter → QSV encode) need explicit device declarations and `hwmap` between them. |
 | **First-class raw-stream input** (`-f rawvideo -pix_fmt yuv420p -s 1920x1080 -r 30`) | Raw inputs are the dominant test fixture format and the canonical bug-report repro. They work via AVDict today; deserve a typed schema. |
-| **`-fps_mode` (cfr/vfr/passthrough/drop) and legacy `-vsync`** | Already in §2.4 but worth reiterating: this is the single most common cause of A/V drift in user reports. |
-| **`-async N` audio resync**                                    | Audio-side counterpart to `fps_mode`; resamples to maintain sync. |
+| **`-fps_mode` (cfr/vfr/passthrough/drop) and legacy `-vsync`** | ✅ Done — `Output.FPSMode`; `compat/ffcli` rewrites legacy `-vsync` aliases (Wave 1 #1). |
+| **`-async N` audio resync**                                    | ✅ Done — `Output.AudioSync`; `spliceAudioSyncForOutputs` injects `aresample=async=N` (Wave 1). |
 | **Mixed labelled / unlabelled `-filter_complex` outputs**      | `avfilter_graph_parse_ptr` quirk: a graph that exposes both `[v]` and an unlabelled trailing pad needs careful pad-binding order. The `compat/ffcli` importer must normalise this. |
-| **Long command lines, quoting, and shell escaping**            | Already partially addressed by the `,;'` fix in commit `04f1a0c7`; needs round-trip fuzzing. |
+| **Long command lines, quoting, and shell escaping**            | ✅ Done — `FuzzBuildFilterSpec`, `FuzzTokenize`, `FuzzParseFilterExpr` cover the `,;'` escape class; seed corpus locked in (§5 #8). |
 
 These are folded into the matrix in §2 and the phase plan in §3.
 
@@ -112,9 +118,9 @@ Legend: ✅ supported · ⚠️ partial · ❌ missing
 |-----------------------------------------------|:------:|------|
 | Default automatic stream selection            | ✅    | "best video + best audio" implied if user picks `track: 0` |
 | `-map 0:v:0` / `-map 1:a:0` style             | ✅    | `pipeline.StreamSelect.{InputIndex,Type,Track}`; ffcli `-map` parser (Wave 2 #9) |
-| Negative / optional mapping (`-map -0:s`, `-map 0:s?`) | ✅ | `StreamSelect.{Negate,Optional}`; landed Wave 2 #9 |
-| Program selection (`-map 0:p:N[:type[:idx]]`) | ✅    | `StreamSelect.Program` (matches `AVProgram.id`); landed Wave 2 #10 |
-| `-map_metadata`, `-map_chapters`              | ✅    | `metadata_reader` / `metadata_writer` graph nodes + `Input.MapMetadata` / `Input.MapChapters` shorthand; landed Wave 2 #11 |
+| Negative / optional mapping (`-map -0:s`, `-map 0:s?`) | ✅ | `StreamSelect.{Negate,Optional}`; done Wave 2 #9 |
+| Program selection (`-map 0:p:N[:type[:idx]]`) | ✅    | `StreamSelect.Program` (matches `AVProgram.id`); done Wave 2 #10 |
+| `-map_metadata`, `-map_chapters`              | ✅    | `metadata_reader` / `metadata_writer` graph nodes + `Input.MapMetadata` / `Input.MapChapters` shorthand; done Wave 2 #11 |
 | `-vn` / `-an` / `-sn` / `-dn` per output      | ⚠️    | Implied by which edges connect — works but undocumented |
 | Reuse of one decoded stream by N filters/outputs (`split`/`asplit`) | ✅ | Works via multi-output filters |
 | Per-input `-map` of *attachment* streams      | ❌    | (see §2.5 attachments) |
@@ -148,7 +154,7 @@ real-world usage in the §6 corpus.
 | `setsar`, `setdar` (SAR/DAR overrides)                      | ⚠️    | Available as filter; not surfaced in encoder color metadata |
 | `arnndn` (RNNoise) and other model-file filters             | ⚠️    | Filter runs if model path is correct; no fixture story for filter-side data files |
 | `zscale` + `tonemap` (HDR)                                  | ⚠️    | Requires libzimg in build; no feature probe |
-| `minterpolate` (motion-compensated interpolation)           | ⚠️    | Same FrameRate/TimeBase plumbing as xfade now landed; remaining work is exposing motion-estimation params via the inspector |
+| `minterpolate` (motion-compensated interpolation)           | ⚠️    | Same FrameRate/TimeBase plumbing as xfade now done; remaining work is exposing motion-estimation params via the inspector |
 | Audio channel manipulation: `pan`, `channelsplit`, `channelmap`, `join`, `amerge`, `amix=weights` | ⚠️ | Available as filters; GUI has no per-channel routing UI |
 
 ### 2.4 Encoders
@@ -160,7 +166,7 @@ real-world usage in the §6 corpus.
 | Codec-specific AVOptions (`preset`, `crf`, `tune`, `profile`, `level`, `g`, `bf`, `refs`, `x264-params`, `x265-params`, `aq-mode`, `tier`, …) | ✅ | Forwarded to `avcodec_open2` via `EncoderParams*` dict |
 | Hardware encoders (NVENC, QSV, VAAPI, VideoToolbox, AMF)          | ✅    | Per `av/hwencode.go`; tested for NVENC |
 | Two-pass encoding (`-pass 1/2 -passlogfile`)                      | ✅    | `Output.Pass` + `Output.PassLogFile` (Wave 1 #6) |
-| **Two-pass `loudnorm`** (measured-I/TP/LRA/thresh/offset feed-forward) | ✅ | Inter-pass shuttle landed. Pass 1: libavfilter writes JSON via `print_format=json`+`stats_file`. Pass 2: runtime parses JSON and injects `measured_*`+`offset` AVOptions. Carried by `Output.LoudnormPass` (0/1/2) and `Output.LoudnormStatsFile` (prefix). |
+| **Two-pass `loudnorm`** (measured-I/TP/LRA/thresh/offset feed-forward) | ✅ | Inter-pass shuttle done. Pass 1: libavfilter writes JSON via `print_format=json`+`stats_file`. Pass 2: runtime parses JSON and injects `measured_*`+`offset` AVOptions. Carried by `Output.LoudnormPass` (0/1/2) and `Output.LoudnormStatsFile` (prefix). |
 | **Lossless intermediate codecs** (FFV1, ProRes, DNxHD/HR, HuffYUV) for editorial round-trips | ⚠️ | Encoders exist if FFmpeg compiled with them; no schema validation of codec ↔ container compatibility |
 | `-fps_mode` (`cfr`/`vfr`/`passthrough`/`drop`) (formerly `-vsync`) | ✅    | `Output.FPSMode`; per-frame renumber/drop/duplicate logic in `pipeline/fps_mode.go` consumed by `handleEncoder` for video streams. `compat/ffcli` rewrites the legacy `-vsync` numeric/auto aliases. |
 | `-async N` (audio resync via resampler)                            | ✅    | `Output.AudioSync`; `pipeline.spliceAudioSyncForOutputs` injects an `aresample=async=N[:first_pts=0 when N==1]` filter node in front of every audio encoder feeding the output. `compat/ffcli` accepts the legacy flag. |
@@ -455,17 +461,17 @@ once §3.1–§3.4 land:
   byte/SSIM/loudness comparison against ffmpeg is what defines
   "covered". Anything not in a regression test will regress.
 
-## 5. Immediate next actions
+## 5. Initial backlog (completed)
 
-In priority order, starting from the current `feature/front-end`
-branch:
+These eight items were the first wave of capability gaps identified in §1–§2.
+All are now done. Listed in the order they were addressed:
 
 1. ~~Add `FrameRateNum/Den` and `TimeBaseNum/Den` to
    `av.FilterPadConfig` and propagate through
    `pipeline/handlers.go` complex-filtergraph wiring. Re-enable
    `13_xfade.json` and `14_crossfade_clips.json` in the
    community-scripts test (drop the `t.Skip` guard). Same plumbing
-   unblocks `minterpolate` and `framerate`.~~ **Landed** —
+   unblocks `minterpolate` and `framerate`.~~ **Done** —
    `FilterPadConfig` / `VideoFilterGraphConfig` gained `FRNum/FRDen`
    (TBNum/TBDen were already present), buffersink rate/timebase are
    re-queried after each upstream filter, and `handleFilter` now
@@ -476,19 +482,19 @@ branch:
 2. Build `Output.MaxFramesVideo` / `MaxFramesAudio` plumbing and
    write the missing five community scripts (`extract-frame`,
    `tile-thumbnails`, `scene-images`, `scene-cut`, `scene-cut-to`).
-   ~~**Landed.**~~ `Output` gained `MaxFramesVideo` /
+   ~~**Done.**~~ `Output` gained `MaxFramesVideo` /
    `MaxFramesAudio`; `handleSink` enforces the cap per inbound
    channel by dropping packets after the limit while still draining
    the channel (so upstream encoders never deadlock). Counts
    post-encoder packets, matching ffmpeg's `-frames:v` semantics
    when filters like `select=gt(scene,…)` drop frames. Five new
-   fixtures landed at `testdata/community-scripts/21_*.json`–
+   fixtures written to `testdata/community-scripts/21_*.json`–
    `25_*.json`; image outputs use the `mjpeg` muxer (raw JPEG
    stream — sidesteps the `image2` `%d`-pattern requirement which
    conflicts with the muxer's atomic-rename of `out.tmp → out`).
 3. Introduce `Input.Kind = "lavfi"` and write the `audio-silence`
    community script.
-   ~~**Landed.**~~ `Input` gained `Kind` (`"file"` default, `"lavfi"`);
+   ~~**Done.**~~ `Input` gained `Kind` (`"file"` default, `"lavfi"`);
    new `av.OpenInputWithFormat(url, format, options)` wraps
    `av_find_input_format` + `avformat_open_input`, and
    `pipeline.openSource` switches on `Kind` to route lavfi specs
@@ -506,7 +512,7 @@ branch:
 4. Land the **capability registry** (a YAML file under `compat/` that
    lists every ffmpeg flag with status + schema-pointer) and the
    first batch of `compat/ffcli` round-trip tests.
-   ~~**Landed.**~~ `compat/capabilities.yaml` now ships with 105
+   ~~**Done.**~~ `compat/capabilities.yaml` now ships with 105
    entries seeded from §2.1–§2.7 (30 covered, 35 partial, 37
    missing, 3 out-of-scope), loaded by `compat.LoadRegistry` via
    `embed`; `compat/registry_test.go` enforces well-formedness,
@@ -536,7 +542,7 @@ branch:
    `vf_scale_named_x264_no_audio` lock both fixes in.
 5. ~~Open the schema-evolution work for chapter and per-stream
    metadata IO (`KindMetadataReader`, `KindMetadataWriter`,
-   `Output.Chapters`).~~ **Landed (shorthand only).** `Output.Metadata`
+   `Output.Chapters`).~~ **Done (shorthand only).** `Output.Metadata`
    (`map[string]string`) and `Output.Chapters` (`[]Chapter`, seconds-based
    `Start`/`End`) now reach the muxer via `av.OutputFormatContext.SetMetadata`
    / `AddChapter`; `Input.MapMetadata` and `Input.MapChapters` provide
@@ -554,7 +560,7 @@ branch:
    full GPU `scale_npp`+`h264_nvenc`, `zscale`+`tonemap`,
    `loudnorm` two-pass, raw-stream input). Even before each one
    runs, the failing `t.Skip` reason becomes machine-readable
-   roadmap signal.~~ **Landed (stub).** Six manifest JSONs seeded
+   roadmap signal.~~ **Done (stub).** Six manifest JSONs seeded
    under [testdata/production-patterns/](../testdata/production-patterns/)
    (`01_animated_drawtext.json`, `02_abr_ladder.json`,
    `03_full_gpu_scale_npp_nvenc.json`, `04_hdr_zscale_tonemap.json`,
@@ -574,7 +580,7 @@ branch:
 7. ~~Add the **filter-expression `eval-expression` HTTP endpoint** so
    the GUI can validate `enable=`, `x=`, `y=`, `text=` expressions
    without running the full graph. Cheap to ship, immediately
-   useful for `drawtext` / `overlay` / `crop` authoring.~~ **Landed.**
+   useful for `drawtext` / `overlay` / `crop` authoring.~~ **Done.**
    `av.EvalExpression` ([av/expr.go](../av/expr.go)) wraps libavutil's
    `av_expr_parse_and_eval`; `GET /api/filters/{name}/eval-expression?expr=…&t=…&w=…`
    ([internal/gui/filter_eval.go](../internal/gui/filter_eval.go)
@@ -597,7 +603,7 @@ branch:
 8. ~~Add the **quoting/escaping fuzzer** (Phase F.5) on top of
    `pipeline/engine.go` `buildFilterSpec` and the `compat/ffcli`
    lexer. The 04f1a0c7 fix proved this is real bug territory.~~
-   **Landed.** Three Go-native fuzzers seeded against the bug class:
+   **Done.** Three Go-native fuzzers seeded against the bug class:
    [pipeline/fuzz_filter_spec_test.go](../pipeline/fuzz_filter_spec_test.go)
    `FuzzBuildFilterSpec` drives the filter-spec renderer with
    arbitrary value bytes; asserts no panic, no unquoted `,`/`;`
@@ -621,7 +627,7 @@ debt the §2 matrix is tracking.
 
 ## 6. Parity development plan (post-§5 burn-down)
 
-The §5 backlog (items 1–8) is fully landed. The plan below is the
+The §5 backlog (items 1–8) is fully done. The plan below is the
 **next wave**, ordered by *user-frequency × leverage* rather than by
 §3's phase letters. Each item lists the gap it closes (with §2 / §3
 back-reference) and a concrete first-PR scope. Items are sequenced so
@@ -641,7 +647,7 @@ real jobs."
 2. **`-shortest`, `-fs`, output-side `-ss`/`-to` with `-copyts`**
    (§2.5) — `Output.Shortest`, `Output.MaxFileSize`, output-side
    trim with copyts semantics. `-shortest` is in essentially every
-   overlay/music-video job. **(landed)** — `Output.Shortest`,
+   overlay/music-video job. **(done)** — `Output.Shortest`,
    `Output.MaxFileSize`, and `Config.CopyTS` enforced in
    `pipeline/handlers.go::handleSink` via `resolveOutputTiming` +
    `processOne` (drops below `start_time`, stops at
@@ -653,7 +659,7 @@ real jobs."
    SI suffix parsing, and the rest of the muxdelay cluster
    (`-muxdelay`/`-muxpreload`/`-start_at_zero`/`-avoid_negative_ts`).
 3. **Per-stream encoder overrides + per-stream metadata** (§2.4,
-   §2.5) — ✅ partially landed: `Output.Streams []StreamSpec`
+   §2.5) — ✅ partially done: `Output.Streams []StreamSpec`
    exposes per-stream `Metadata` + `Disposition` (mirrors
    `-metadata:s:<type>:<idx>` and `-disposition:s:<type>:<idx>`),
    unblocking dual-language audio and language-tagged /
@@ -662,7 +668,7 @@ real jobs."
    nodes (see `testdata/examples/35_abr_ladder.json`), which is the
    shape ABR ladders already use.
 4. **`-stream_loop`, `-itsoffset`, `-re` / `-readrate`** (§2.1) —
-   ✅ **landed.** `Input.StreamLoop` (0/N/-1), `Input.ITSOffset`
+   ✅ **done.** `Input.StreamLoop` (0/N/-1), `Input.ITSOffset`
    (seconds, may be negative), and `Input.ReadRate` /
    `ReadRateInitialBurst` / `ReadRateCatchup` (faithful port of
    `fftools/ffmpeg_demux.c::readrate_sleep` in
@@ -672,7 +678,7 @@ real jobs."
    promotions with no new schema discriminators or orchestration
    primitives — a lower-risk way to keep Wave 1 cadence while the
    `tee` muxer (next) gets its larger PR.
-5. **`tee` muxer** (§2.5, §3.3.2) — ✅ **landed.**
+5. **`tee` muxer** (§2.5, §3.3.2) — ✅ **done.**
    `Output.Kind = "tee"` with `Output.Targets []TeeTarget`. The
    runtime renders the FFmpeg slaves URL
    (`[opt=val:opt=val]url|[opt=val]url`) deterministically via
@@ -691,7 +697,7 @@ real jobs."
    sink, so the per-stream metadata / disposition schema (#3)
    composes naturally.
 6. **Two-pass video encoding** (`-pass 1/2 -passlogfile`) (§2.4) —
-   ✅ **landed.** `Output.Pass` (bit-field 1 / 2 / 3 mirroring
+   ✅ **done.** `Output.Pass` (bit-field 1 / 2 / 3 mirroring
    `AV_CODEC_FLAG_PASS1` / `PASS2`) and `Output.PassLogFile`
    (prefix; final filename rendered as `<prefix>-<idx>.log` where
    `<idx>` is the per-run video-encoder ordinal — matches FFmpeg's
@@ -706,7 +712,7 @@ real jobs."
    each `ReceivePacket` in `handleEncoder`). Job is run twice by
    the caller against the same prefix. `compat/ffcli` parses
    `-pass N` + `-passlogfile P`. Sixth Wave 1 item.
-7. **Two-pass `loudnorm` shuttle** (§3.1.7) — ✅ **landed.**
+7. **Two-pass `loudnorm` shuttle** (§3.1.7) — ✅ **done.**
    `Output.LoudnormPass` (0 / 1 / 2 — sequential, not a bit-field
    because libavfilter exposes no AV_CODEC_FLAG-equivalent for
    loudnorm) and `Output.LoudnormStatsFile` (prefix; final
@@ -732,7 +738,7 @@ real jobs."
    this is the orchestration sugar that makes the recipe
    declarative. Seventh Wave 1 item.
 8. **`-force_key_frames "expr:gte(t,n_forced*2)"`** (§2.4) — ✅
-   **landed.** `Output.ForceKeyFrames` accepts the three FFmpeg
+   **done.** `Output.ForceKeyFrames` accepts the three FFmpeg
    grammars (`expr:EXPR` libavutil expression evaluated per video
    frame; `source` copy keyframes from input; comma-separated
    float-second time list) parsed by `pipeline/force_key_frames.go::
@@ -761,7 +767,7 @@ real jobs."
 ### 6.2 Wave 2 — "the universal mapper" (Phase B)
 
 9. **Negative / optional `-map`** (`-map 0:s?`, `-map -0:s`) (§2.2) —
-   ✅ landed. `pipeline.StreamSelect` gained `All`, `Optional`,
+   ✅ done. `pipeline.StreamSelect` gained `All`, `Optional`,
    `Negate`, `Program` fields. Runtime resolver
    (`pipeline/stream_selection.go::resolveStreamSelection`) walks
    selectors in declaration order, treating `Negate` as a removal
@@ -772,14 +778,14 @@ real jobs."
    if present" with no per-job branching (see
    `testdata/examples/39_optional_subtitle.json`).
 10. **Program selection (`-map 0:p:N[:type[:idx]]`)** (§2.2) —
-    ✅ landed. `StreamSelect.Program` matches the `AVProgram.id`
+    ✅ done. `StreamSelect.Program` matches the `AVProgram.id`
     (NOT array index — mirrors
     `cmdutils.c::check_stream_specifier`'s `p:N`). The av layer
     grew `InputFormatContext.Programs() []ProgramInfo` to expose
     the AVProgram table. Required for MPEG-TS broadcast inputs;
-    landed alongside #9 since they share the same struct.
+    done alongside #9 since they share the same struct.
 11. **`KindMetadataReader` / `KindMetadataWriter` graph nodes**
-    (§5#5 deferred half) — ✅ landed. New `metadata_reader` /
+    (§5#5 deferred half) — ✅ done. New `metadata_reader` /
     `metadata_writer` `pipeline.NodeDef.Type` values, connected by
     a new `metadata` edge type, route container metadata or chapters
     from any input into any output. Pipeline runtime resolves the
@@ -884,12 +890,3 @@ These parameters were suggested to be deprecated, but should be supported and re
 | `-psnr`, `-ssim` (encoder side) | Tells encoder to calculate these distortion metrics while encoding (which is much more efficient than calculating after encoding) |
 | `-tune <macro>` for x264/x265 when codec-specific `*-params` already covers it | Importer flattens `-tune` into the relevant `*-params` string. |
 | `-dump`, `-hex`, `-debug_ts` | Pure debugging; route to MediaMolder's logging instead. |
-
-
-### 6.9 Recommended starting point
-
-**Wave 1 #1 (`-fps_mode`)**, because: (a) it is the most-reported
-bug class in the wild, (b) it is the smallest item in Wave 1, (c) it
-gives us the orchestration vocabulary for output-side timing that
-#2/#7/#8 all reuse, and (d) it converts a long-standing roadmap "❌"
-in §2.4 to ✅ with one schema field plus one `av/` AVDict promotion.
