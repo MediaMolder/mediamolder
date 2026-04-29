@@ -466,12 +466,7 @@ once §3.1–§3.4 land:
 These eight items were the first wave of capability gaps identified in §1–§2.
 All are now done. Listed in the order they were addressed:
 
-1. ~~Add `FrameRateNum/Den` and `TimeBaseNum/Den` to
-   `av.FilterPadConfig` and propagate through
-   `pipeline/handlers.go` complex-filtergraph wiring. Re-enable
-   `13_xfade.json` and `14_crossfade_clips.json` in the
-   community-scripts test (drop the `t.Skip` guard). Same plumbing
-   unblocks `minterpolate` and `framerate`.~~ **Done** —
+1. **Frame-rate metadata on `FilterPadConfig`** (§3.1.1) — ✅ **done.**
    `FilterPadConfig` / `VideoFilterGraphConfig` gained `FRNum/FRDen`
    (TBNum/TBDen were already present), buffersink rate/timebase are
    re-queried after each upstream filter, and `handleFilter` now
@@ -479,10 +474,8 @@ All are now done. Listed in the order they were addressed:
    second input mid-graph. 18 / 20 community scripts pass; only
    `06_fade_title` (drawtext/libfreetype) and `12_webp` (libwebp)
    remain skipped.
-2. Build `Output.MaxFramesVideo` / `MaxFramesAudio` plumbing and
-   write the missing five community scripts (`extract-frame`,
-   `tile-thumbnails`, `scene-images`, `scene-cut`, `scene-cut-to`).
-   ~~**Done.**~~ `Output` gained `MaxFramesVideo` /
+2. **`-frames:v N` / `-frames:a N`** (§3.1.2) — ✅ **done.**
+   `Output` gained `MaxFramesVideo` /
    `MaxFramesAudio`; `handleSink` enforces the cap per inbound
    channel by dropping packets after the limit while still draining
    the channel (so upstream encoders never deadlock). Counts
@@ -492,9 +485,8 @@ All are now done. Listed in the order they were addressed:
    `25_*.json`; image outputs use the `mjpeg` muxer (raw JPEG
    stream — sidesteps the `image2` `%d`-pattern requirement which
    conflicts with the muxer's atomic-rename of `out.tmp → out`).
-3. Introduce `Input.Kind = "lavfi"` and write the `audio-silence`
-   community script.
-   ~~**Done.**~~ `Input` gained `Kind` (`"file"` default, `"lavfi"`);
+3. **`Input.Kind = "lavfi"` (virtual-source inputs)** (§3.1.3) — ✅ **done.**
+   `Input` gained `Kind` (`"file"` default, `"lavfi"`);
    new `av.OpenInputWithFormat(url, format, options)` wraps
    `av_find_input_format` + `avformat_open_input`, and
    `pipeline.openSource` switches on `Kind` to route lavfi specs
@@ -509,10 +501,8 @@ All are now done. Listed in the order they were addressed:
    generates 2 s of silent stereo PCM via
    `anullsrc=channel_layout=stereo:sample_rate=44100` →
    `aformat` → `pcm_s16le` WAV end-to-end.
-4. Land the **capability registry** (a YAML file under `compat/` that
-   lists every ffmpeg flag with status + schema-pointer) and the
-   first batch of `compat/ffcli` round-trip tests.
-   ~~**Done.**~~ `compat/capabilities.yaml` now ships with 105
+4. **Capability registry + first `compat/ffcli` round-trip tests** (§3.2) — ✅ **done.**
+   `compat/capabilities.yaml` now ships with 105
    entries seeded from §2.1–§2.7 (30 covered, 35 partial, 37
    missing, 3 out-of-scope), loaded by `compat.LoadRegistry` via
    `embed`; `compat/registry_test.go` enforces well-formedness,
@@ -540,9 +530,8 @@ All are now done. Listed in the order they were addressed:
    duration came out ~512x too long. Round-trip cases
    `vf_scale_positional_x264_audio_copy` and
    `vf_scale_named_x264_no_audio` lock both fixes in.
-5. ~~Open the schema-evolution work for chapter and per-stream
-   metadata IO (`KindMetadataReader`, `KindMetadataWriter`,
-   `Output.Chapters`).~~ **Done (shorthand only).** `Output.Metadata`
+5. **Chapter and per-stream metadata IO** (§3.1.5) — ✅ **done (shorthand only).**
+   `Output.Metadata`
    (`map[string]string`) and `Output.Chapters` (`[]Chapter`, seconds-based
    `Start`/`End`) now reach the muxer via `av.OutputFormatContext.SetMetadata`
    / `AddChapter`; `Input.MapMetadata` and `Input.MapChapters` provide
@@ -554,13 +543,8 @@ All are now done. Listed in the order they were addressed:
    kinds remain **deferred** — the shorthand covers the common case and
    the graph-kind work is reserved for a future PR that has a real
    per-stream / multi-source metadata-routing scenario to anchor it.
-6. ~~Stand up the **production-pattern conformance corpus** stub at
-   `testdata/production-patterns/` with the highest-leverage
-   commands from §1.1 (animated `drawtext`, multi-resolution ABR,
-   full GPU `scale_npp`+`h264_nvenc`, `zscale`+`tonemap`,
-   `loudnorm` two-pass, raw-stream input). Even before each one
-   runs, the failing `t.Skip` reason becomes machine-readable
-   roadmap signal.~~ **Done (stub).** Six manifest JSONs seeded
+6. **Production-pattern conformance corpus stub** (§3.6.2) — ✅ **done (stub).**
+   Six manifest JSONs seeded
    under [testdata/production-patterns/](../testdata/production-patterns/)
    (`01_animated_drawtext.json`, `02_abr_ladder.json`,
    `03_full_gpu_scale_npp_nvenc.json`, `04_hdr_zscale_tonemap.json`,
@@ -577,10 +561,7 @@ All are now done. Listed in the order they were addressed:
    landing each upstream capability is "this pattern flips from skip
    to pass". Capability inventory mining:
    `go test -v -run TestProductionPatternsCorpus ./compat/ffcli/ 2>&1 | grep '^.*blocked-by:'`.
-7. ~~Add the **filter-expression `eval-expression` HTTP endpoint** so
-   the GUI can validate `enable=`, `x=`, `y=`, `text=` expressions
-   without running the full graph. Cheap to ship, immediately
-   useful for `drawtext` / `overlay` / `crop` authoring.~~ **Done.**
+7. **Filter-expression `eval-expression` HTTP endpoint** (§3.1.6) — ✅ **done.**
    `av.EvalExpression` ([av/expr.go](../av/expr.go)) wraps libavutil's
    `av_expr_parse_and_eval`; `GET /api/filters/{name}/eval-expression?expr=…&t=…&w=…`
    ([internal/gui/filter_eval.go](../internal/gui/filter_eval.go)
@@ -600,10 +581,8 @@ All are now done. Listed in the order they were addressed:
    Items (a) (the `expression: true` AVOption flag bit on
    `FilterOption`) and (b) (the syntax-highlighted GUI input) of
    §3.1 #6 remain open.
-8. ~~Add the **quoting/escaping fuzzer** (Phase F.5) on top of
-   `pipeline/engine.go` `buildFilterSpec` and the `compat/ffcli`
-   lexer. The 04f1a0c7 fix proved this is real bug territory.~~
-   **Done.** Three Go-native fuzzers seeded against the bug class:
+8. **Quoting/escaping fuzzer** (§3.6.5) — ✅ **done.**
+   Three Go-native fuzzers seeded against the bug class:
    [pipeline/fuzz_filter_spec_test.go](../pipeline/fuzz_filter_spec_test.go)
    `FuzzBuildFilterSpec` drives the filter-spec renderer with
    arbitrary value bytes; asserts no panic, no unquoted `,`/`;`
@@ -640,14 +619,18 @@ These show up in **almost every production ffmpeg invocation**. Shipping
 them moves MediaMolder from "covers most demo scripts" to "covers most
 real jobs."
 
-1. **`-fps_mode` / `-async`** (§2.4, §2.5) — `Output.FPSMode ∈
-   {cfr,vfr,passthrough,drop}`, `Output.AudioSync int`. #1 cause of
-   A/V drift in user reports. Ship `cfr` first; alone it fixes the
-   "HLS player stutters" class.
+1. **`-fps_mode` / `-async`** (§2.4, §2.5) — ✅ **done.**
+   `Output.FPSMode ∈ {cfr,vfr,passthrough,drop}`; per-frame
+   renumber/drop/duplicate logic in `pipeline/fps_mode.go` consumed
+   by `handleEncoder` for video streams. `compat/ffcli` rewrites the
+   legacy `-vsync` numeric/auto aliases. `Output.AudioSync int`;
+   `pipeline.spliceAudioSyncForOutputs` injects an
+   `aresample=async=N[:first_pts=0 when N==1]` filter node in front
+   of every audio encoder feeding the output. `compat/ffcli` accepts
+   the legacy `-async` flag. Closes the #1 cause of A/V drift in user
+   reports.
 2. **`-shortest`, `-fs`, output-side `-ss`/`-to` with `-copyts`**
-   (§2.5) — `Output.Shortest`, `Output.MaxFileSize`, output-side
-   trim with copyts semantics. `-shortest` is in essentially every
-   overlay/music-video job. **(done)** — `Output.Shortest`,
+   (§2.5) — ✅ **done.** `Output.Shortest`,
    `Output.MaxFileSize`, and `Config.CopyTS` enforced in
    `pipeline/handlers.go::handleSink` via `resolveOutputTiming` +
    `processOne` (drops below `start_time`, stops at
