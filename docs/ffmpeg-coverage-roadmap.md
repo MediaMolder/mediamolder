@@ -806,9 +806,23 @@ real jobs."
     adopt before `WriteHeader`); per-packet flow drains via
     `av_bsf_send_packet` / `av_bsf_receive_packet` between rescale
     and `WritePacket`; channel-close drains residuals.
-14. **Color metadata + HDR10 mastering / CLL** (§2.4) — `Output.Color`
-    + `Output.HDR`. Validate codec/container compatibility at schema
-    time.
+14. **Color metadata + HDR10 mastering / CLL** (§2.4) — ✅ `Output.Color`
+    (range / primaries / transfer / space / chroma_location, applied
+    via `av_opt_set` on the output AVStream) + `Output.HDR`
+    (SMPTE ST 2086 mastering display + CTA-861.3 MaxCLL/MaxFALL,
+    attached as `AV_PKT_DATA_MASTERING_DISPLAY_METADATA` /
+    `AV_PKT_DATA_CONTENT_LIGHT_LEVEL` on stream codecpar.coded_side_data
+    via `av_packet_side_data_add` before `WriteHeader`). Schema-time
+    validation rejects HDR + audio-only outputs, HDR + non-HDR codecs
+    (only hevc/av1/vp9 or copy), HDR + non-HDR-capable containers
+    (only mp4/mov/matroska/webm/mpegts), and color.transfer ∉
+    {smpte2084 (PQ), arib-std-b67 (HLG)} when paired with HDR.
+    `compat/ffcli` parses `-color_range`, `-color_primaries`,
+    `-color_trc`, `-colorspace`, `-chroma_sample_location`,
+    `-mastering_display_metadata` (canonical x265
+    `G(x,y)B(x,y)R(x,y)WP(x,y)L(max,min)` grammar) and
+    `-content_light_level "MaxCLL,MaxFALL"`. End-to-end coverage
+    in [44_hdr10.json](../testdata/examples/44_hdr10.json).
 15. **`setsar` / `setdar` shorthand on `Output`** (§3.3.9) — Cheap,
     universally requested for legacy SD content. Free with #14's
     plumbing.

@@ -248,11 +248,13 @@ sections:
         schema: n/a
         notes: ABR ladder per-stream override
       - flag: "color metadata (-color_range/-color_primaries/-color_trc/-colorspace)"
-        status: partial
-        schema: pipeline.Output.EncoderParamsVideo
+        status: covered
+        schema: pipeline.Output.Color
+        notes: per-stream color tagging via av_opt_set on AVStream codecpar before WriteHeader
       - flag: "HDR10 mastering display + CLL metadata"
-        status: missing
-        schema: n/a
+        status: covered
+        schema: pipeline.Output.HDR
+        notes: SMPTE ST 2086 + CTA-861.3 attached as AV_PKT_DATA_MASTERING_DISPLAY_METADATA / AV_PKT_DATA_CONTENT_LIGHT_LEVEL on stream codecpar.coded_side_data; codec/container compat enforced at validate time
       - flag: "Dolby Vision RPU passthrough"
         status: missing
         schema: n/a

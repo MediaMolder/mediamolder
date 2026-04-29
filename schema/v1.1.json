@@ -167,6 +167,8 @@
         "force_key_frames": { "type": "string", "description": "FFmpeg `-force_key_frames` spec. Three grammars: `expr:EXPR` (libavutil expression evaluated per video frame; vars n / n_forced / prev_forced_n / prev_forced_t / t — canonical idiom `expr:gte(t,n_forced*2)` for a 2 s GOP); `source` (copy keyframes from source); or comma-separated time list (`3.0,7.5,10.25`, float seconds). Required for HLS / DASH segmenters. Honoured only on video encoders." },
         "hls": { "$ref": "#/$defs/hls_options", "description": "Typed HLS muxer options. Only valid when `format=\"hls\"`. Promoted from the generic `options` AVDict bag; on key collision the typed field wins. Mirrors `libavformat/hlsenc.c`." },
         "dash": { "$ref": "#/$defs/dash_options", "description": "Typed DASH muxer options. Only valid when `format=\"dash\"`. Promoted from the generic `options` AVDict bag; on key collision the typed field wins. Mirrors `libavformat/dashenc.c`." },
+        "color": { "$ref": "#/$defs/color_metadata", "description": "Per-stream color metadata (range, primaries, transfer, matrix, chroma_location). Names are the canonical libavutil av_color_*_name values; unknown names are rejected at validate time. Mirrors ffmpeg -color_range / -color_primaries / -color_trc / -colorspace / -chroma_sample_location." },
+        "hdr": { "$ref": "#/$defs/hdr_metadata", "description": "SMPTE ST 2086 mastering display + CTA-861.3 content light level metadata. Requires an HDR-capable codec (hevc/av1/vp9 or copy) and container (mp4/mov/matroska/webm/mpegts), and color.transfer ∈ {smpte2084, arib-std-b67} when color is also set." },
         "options": {
           "type": "object",
           "additionalProperties": true
@@ -233,6 +235,47 @@
         },
         "max_retries": { "type": "integer", "minimum": 0 },
         "fallback_node": { "type": "string" }
+      }
+    },
+    "color_metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "range": { "type": "string", "enum": ["", "tv", "mpeg", "limited", "pc", "jpeg", "full"] },
+        "primaries": { "type": "string" },
+        "transfer": { "type": "string" },
+        "space": { "type": "string" },
+        "chroma_location": { "type": "string" }
+      }
+    },
+    "hdr_metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mastering_display": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "display_primaries_rx": { "type": "integer", "minimum": 0, "maximum": 50000 },
+            "display_primaries_ry": { "type": "integer", "minimum": 0, "maximum": 50000 },
+            "display_primaries_gx": { "type": "integer", "minimum": 0, "maximum": 50000 },
+            "display_primaries_gy": { "type": "integer", "minimum": 0, "maximum": 50000 },
+            "display_primaries_bx": { "type": "integer", "minimum": 0, "maximum": 50000 },
+            "display_primaries_by": { "type": "integer", "minimum": 0, "maximum": 50000 },
+            "white_point_x": { "type": "integer", "minimum": 0, "maximum": 50000 },
+            "white_point_y": { "type": "integer", "minimum": 0, "maximum": 50000 },
+            "min_luminance": { "type": "integer", "minimum": 0, "description": "cd/m^2 * 10000." },
+            "max_luminance": { "type": "integer", "minimum": 0, "description": "cd/m^2 * 10000." }
+          }
+        },
+        "content_light_level": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "max_cll": { "type": "integer", "minimum": 0, "description": "Per-frame peak luminance over the whole stream (cd/m^2)." },
+            "max_fall": { "type": "integer", "minimum": 0, "description": "Per-frame frame-average maximum luminance over the whole stream (cd/m^2)." }
+          }
+        }
       }
     },
     "hls_options": {

@@ -1,0 +1,56 @@
+{
+  "schema_version": "1.0",
+  "description": "HDR10 metadata on output (Wave 3 #14). Transcodes BBB_10sec.mp4 to HEVC MP4 with full Rec.2020 + PQ color tagging plus SMPTE ST 2086 mastering display + CTA-861.3 MaxCLL/MaxFALL side data. Mirrors ffmpeg -color_primaries bt2020 -color_trc smpte2084 -colorspace bt2020nc -color_range tv -mastering_display_metadata G(8500,39850)B(6550,2300)R(35400,14600)WP(15635,16450)L(10000000,1) -content_light_level 1000,400. Note: the source is SDR, so colour values are tagging only; the resulting MP4 carries the HDR boxes (mdcv/clli) for downstream players to read.",
+  "inputs": [
+    {
+      "id": "in0",
+      "url": "{{input}}",
+      "streams": [
+        { "input_index": 0, "type": "video", "track": 0 },
+        { "input_index": 0, "type": "audio", "track": 0 }
+      ]
+    }
+  ],
+  "graph": {
+    "nodes": [],
+    "edges": [
+      { "from": "in0:v:0", "to": "out0:v", "type": "video" },
+      { "from": "in0:a:0", "to": "out0:a", "type": "audio" }
+    ]
+  },
+  "outputs": [
+    {
+      "id": "out0",
+      "url": "{{output}}",
+      "format": "mp4",
+      "codec_video": "libx265",
+      "codec_audio": "copy",
+      "encoder_params_video": { "preset": "ultrafast", "crf": "32", "x265-params": "log-level=error" },
+      "color": {
+        "range": "tv",
+        "primaries": "bt2020",
+        "transfer": "smpte2084",
+        "space": "bt2020nc",
+        "chroma_location": "topleft"
+      },
+      "hdr": {
+        "mastering_display": {
+          "display_primaries_rx": 35400,
+          "display_primaries_ry": 14600,
+          "display_primaries_gx": 8500,
+          "display_primaries_gy": 39850,
+          "display_primaries_bx": 6550,
+          "display_primaries_by": 2300,
+          "white_point_x": 15635,
+          "white_point_y": 16450,
+          "min_luminance": 1,
+          "max_luminance": 10000000
+        },
+        "content_light_level": {
+          "max_cll": 1000,
+          "max_fall": 400
+        }
+      }
+    }
+  ]
+}

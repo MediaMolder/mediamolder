@@ -57,10 +57,18 @@ type parser struct {
 	// them back into the AVDictionary before avformat_write_header.
 	pendingHLS  *pipeline.HLSOptions
 	pendingDASH *pipeline.DASHOptions
-	hwAccel     string
-	hwDevice    string
-	hwOutFmt    string
-	globalOpts  map[string]string
+	// pendingColor / pendingHDR collect typed color + HDR10
+	// metadata (`-color_range`, `-color_primaries`, `-color_trc`,
+	// `-colorspace`, `-chroma_sample_location`,
+	// `-mastering_display_metadata`, `-content_light_level`).
+	// Allocated lazily on first matching flag and drained onto the
+	// next output's Color / HDR field.
+	pendingColor *pipeline.ColorMetadata
+	pendingHDR   *pipeline.HDRMetadata
+	hwAccel      string
+	hwDevice     string
+	hwOutFmt     string
+	globalOpts   map[string]string
 	// Container-level metadata collected from `-metadata key=value`
 	// (no specifier). Latched onto the next output.
 	containerMeta map[string]string
@@ -260,6 +268,78 @@ func (p *parser) parse() (*pipeline.Config, error) {
 				return nil, fmt.Errorf("-bsf:s requires an argument")
 			}
 			p.bsfSubtitle = p.next()
+		case arg == "-color_range":
+			if !p.hasMore() {
+				return nil, fmt.Errorf("-color_range requires an argument")
+			}
+			if p.pendingColor == nil {
+				p.pendingColor = &pipeline.ColorMetadata{}
+			}
+			p.pendingColor.Range = p.next()
+		case arg == "-color_primaries":
+			if !p.hasMore() {
+				return nil, fmt.Errorf("-color_primaries requires an argument")
+			}
+			if p.pendingColor == nil {
+				p.pendingColor = &pipeline.ColorMetadata{}
+			}
+			p.pendingColor.Primaries = p.next()
+		case arg == "-color_trc":
+			if !p.hasMore() {
+				return nil, fmt.Errorf("-color_trc requires an argument")
+			}
+			if p.pendingColor == nil {
+				p.pendingColor = &pipeline.ColorMetadata{}
+			}
+			p.pendingColor.Transfer = p.next()
+		case arg == "-colorspace":
+			if !p.hasMore() {
+				return nil, fmt.Errorf("-colorspace requires an argument")
+			}
+			if p.pendingColor == nil {
+				p.pendingColor = &pipeline.ColorMetadata{}
+			}
+			p.pendingColor.Space = p.next()
+		case arg == "-chroma_sample_location":
+			if !p.hasMore() {
+				return nil, fmt.Errorf("-chroma_sample_location requires an argument")
+			}
+			if p.pendingColor == nil {
+				p.pendingColor = &pipeline.ColorMetadata{}
+			}
+			p.pendingColor.ChromaLocation = p.next()
+		case arg == "-mastering_display_metadata" || arg == "-master_display":
+			// FFmpeg's x265/SVT-AV1 `-master_display` and the
+			// generic `-mastering_display_metadata` flag both
+			// accept the canonical x265 grammar:
+			// "G(x,y)B(x,y)R(x,y)WP(x,y)L(min,max)" with chromaticity
+			// in 1/50000 units and luminance in 1/10000 cd/m^2.
+			if !p.hasMore() {
+				return nil, fmt.Errorf("%s requires an argument", arg)
+			}
+			md, err := parseMasteringDisplay(p.next())
+			if err != nil {
+				return nil, fmt.Errorf("%s: %w", arg, err)
+			}
+			if p.pendingHDR == nil {
+				p.pendingHDR = &pipeline.HDRMetadata{}
+			}
+			p.pendingHDR.MasteringDisplay = md
+		case arg == "-content_light_level" || arg == "-max_cll":
+			// FFmpeg's `-max_cll` (x265) and the generic
+			// `-content_light_level` accept "MaxCLL,MaxFALL" (or
+			// "MaxCLL|MaxFALL" — both separators tolerated).
+			if !p.hasMore() {
+				return nil, fmt.Errorf("%s requires an argument", arg)
+			}
+			cll, err := parseContentLightLevel(p.next())
+			if err != nil {
+				return nil, fmt.Errorf("%s: %w", arg, err)
+			}
+			if p.pendingHDR == nil {
+				p.pendingHDR = &pipeline.HDRMetadata{}
+			}
+			p.pendingHDR.ContentLightLevel = cll
 		case arg == "-async":
 			// Legacy FFmpeg audio-sync flag. The FFmpeg 8.0 CLI removed
 			// it in favour of `-af aresample=async=N`; we accept it for
@@ -675,6 +755,14 @@ func (p *parser) parse() (*pipeline.Config, error) {
 			if p.pendingDASH != nil {
 				out.DASH = p.pendingDASH
 				p.pendingDASH = nil
+			}
+			if p.pendingColor != nil {
+				out.Color = p.pendingColor
+				p.pendingColor = nil
+			}
+			if p.pendingHDR != nil {
+				out.HDR = p.pendingHDR
+				p.pendingHDR = nil
 			}
 			if len(p.containerMeta) > 0 {
 				out.Metadata = p.containerMeta

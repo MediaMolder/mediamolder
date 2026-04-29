@@ -2610,6 +2610,80 @@ func (r *graphRunner) openSink(_ *graph.Graph, node *graph.Node) (*sinkResources
 		return nil, fmt.Errorf("sink %q apply chapters: %w", node.ID, err)
 	}
 
+	// Per-stream color metadata + HDR10 (Output.Color / Output.HDR,
+	// FFmpeg `-color_*` / `-mastering_display_metadata` /
+	// `-content_light_level`). Applied to every inbound video edge's
+	// stream codecpar (and codecpar.coded_side_data for HDR side
+	// data) before WriteHeader so the muxer writes the corresponding
+	// container boxes / SEI passthrough. Audio + subtitle edges are
+	// skipped — color metadata is meaningless for them.
+	if out.Color != nil || out.HDR != nil {
+		for i, e := range node.Inbound {
+			if e.Type != graph.PortVideo {
+				continue
+			}
+			if out.Color != nil {
+				if err := muxer.SetStreamColor(i, av.ColorParams{
+					Range:          out.Color.Range,
+					Primaries:      out.Color.Primaries,
+					Transfer:       out.Color.Transfer,
+					Space:          out.Color.Space,
+					ChromaLocation: out.Color.ChromaLocation,
+				}); err != nil {
+					for _, b := range streamBSF {
+						if b != nil {
+							_ = b.Close()
+						}
+					}
+					muxer.Abort()
+					return nil, fmt.Errorf("sink %q set color: %w", node.ID, err)
+				}
+			}
+			if out.HDR != nil {
+				if md := out.HDR.MasteringDisplay; md != nil {
+					hasPrim := md.DisplayPrimariesRX != 0 || md.WhitePointX != 0
+					hasLum := md.MaxLuminance != 0
+					if hasPrim || hasLum {
+						if err := muxer.SetStreamMasteringDisplay(i, av.MasteringDisplay{
+							HasPrimaries: hasPrim,
+							DisplayPrim: [6]int{
+								md.DisplayPrimariesRX, md.DisplayPrimariesRY,
+								md.DisplayPrimariesGX, md.DisplayPrimariesGY,
+								md.DisplayPrimariesBX, md.DisplayPrimariesBY,
+							},
+							WhitePoint:   [2]int{md.WhitePointX, md.WhitePointY},
+							HasLuminance: hasLum,
+							MinLuminance: md.MinLuminance,
+							MaxLuminance: md.MaxLuminance,
+						}); err != nil {
+							for _, b := range streamBSF {
+								if b != nil {
+									_ = b.Close()
+								}
+							}
+							muxer.Abort()
+							return nil, fmt.Errorf("sink %q set mastering display: %w", node.ID, err)
+						}
+					}
+				}
+				if cll := out.HDR.ContentLightLevel; cll != nil && (cll.MaxCLL != 0 || cll.MaxFALL != 0) {
+					if err := muxer.SetStreamContentLightLevel(i, av.ContentLightLevel{
+						MaxCLL:  cll.MaxCLL,
+						MaxFALL: cll.MaxFALL,
+					}); err != nil {
+						for _, b := range streamBSF {
+							if b != nil {
+								_ = b.Close()
+							}
+						}
+						muxer.Abort()
+						return nil, fmt.Errorf("sink %q set content light level: %w", node.ID, err)
+					}
+				}
+			}
+		}
+	}
+
 	if err := muxer.WriteHeaderWithOptions(buildMuxerOptions(out)); err != nil {
 		muxer.Abort()
 		return nil, fmt.Errorf("sink %q write header: %w", node.ID, err)

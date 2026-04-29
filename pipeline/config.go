@@ -483,6 +483,85 @@ type Output struct {
 	// when `Format == "dash"`. Same promotion model as `HLS`,
 	// against `libavformat/dashenc.c`'s AVOption table.
 	DASH *DASHOptions `json:"dash,omitempty"`
+	// Color carries per-stream color metadata (range, primaries,
+	// transfer, matrix, chroma_location) written onto every video
+	// stream of this output's codecpar before WriteHeader. Values
+	// are the canonical libavutil names (`av_color_*_name`):
+	// `"tv"`/`"pc"`, `"bt709"`/`"bt2020"`/`"smpte170m"`,
+	// `"bt709"`/`"smpte2084"` (PQ) / `"arib-std-b67"` (HLG),
+	// `"bt709"`/`"bt2020nc"`, `"left"`/`"center"`/.... Empty fields
+	// are left unchanged. Mirrors FFmpeg `-color_range` /
+	// `-color_primaries` / `-color_trc` / `-colorspace` /
+	// `-chroma_sample_location`.
+	Color *ColorMetadata `json:"color,omitempty"`
+	// HDR carries SMPTE ST 2086 mastering display + CTA-861.3
+	// content-light-level metadata attached to every video stream's
+	// codecpar.coded_side_data before WriteHeader (the muxer then
+	// writes the corresponding `mdcv` / `clli` boxes for mp4/mov,
+	// `MasteringMetadata` / `MaxCLL`/`MaxFALL` for matroska/webm,
+	// SEI passthrough for mpegts). Mirrors FFmpeg
+	// `-mastering_display_metadata` / `-content_light_level`.
+	// Validation requires Color.Transfer ∈ {"smpte2084","arib-std-b67"}
+	// and a HDR-capable codec/container combination.
+	HDR *HDRMetadata `json:"hdr,omitempty"`
+}
+
+// ColorMetadata is the typed projection of FFmpeg's per-stream color
+// AVOptions (`color_range`, `color_primaries`, `color_trc`,
+// `colorspace`, `chroma_sample_location`). Values must be one of the
+// canonical names parsed by `av_color_*_from_name`; unknown names are
+// rejected at validation time so a typo never silently writes
+// `AVCOL_*_UNSPECIFIED`. Empty strings = "do not set" (preserve the
+// muxer's default of inheriting from the encoder / input).
+type ColorMetadata struct {
+	Range          string `json:"range,omitempty"`
+	Primaries      string `json:"primaries,omitempty"`
+	Transfer       string `json:"transfer,omitempty"`
+	Space          string `json:"space,omitempty"`
+	ChromaLocation string `json:"chroma_location,omitempty"`
+}
+
+// HDRMetadata holds optional SMPTE ST 2086 mastering display and
+// CTA-861.3 content-light-level metadata. Either block may be nil.
+//
+// MasteringDisplay primaries / white point use the standard 0.00002
+// (1/50000) chromaticity units (the encoding HEVC/AV1 SEI use); luminance
+// values use 0.0001 cd/m^2 units (i.e. nits × 10000). Setting any of
+// the six DisplayPrimariesXY fields requires all six (the validator
+// enforces this); WhitePoint is similarly all-or-nothing. The
+// canonical Rec.2020 + D65 mastering display for HDR10:
+//
+//	DisplayPrimariesRX/Y = 35400/8500 (1.0,0.85*0)
+//	... (see docs/color-hdr.md for the full encoding table).
+//
+// ContentLightLevel.MaxCLL is the per-frame peak luminance over the
+// whole stream; MaxFALL is the per-frame frame-average maximum.
+// 0/0 is treated as "not present" (the side data is not attached).
+type HDRMetadata struct {
+	MasteringDisplay  *MasteringDisplayMetadata  `json:"mastering_display,omitempty"`
+	ContentLightLevel *ContentLightLevelMetadata `json:"content_light_level,omitempty"`
+}
+
+// MasteringDisplayMetadata mirrors AVMasteringDisplayMetadata's wire
+// layout. See HDRMetadata for unit conventions. Fields default to 0;
+// HasPrimaries / HasLuminance gate which side-data flags are set.
+type MasteringDisplayMetadata struct {
+	DisplayPrimariesRX int `json:"display_primaries_rx,omitempty"`
+	DisplayPrimariesRY int `json:"display_primaries_ry,omitempty"`
+	DisplayPrimariesGX int `json:"display_primaries_gx,omitempty"`
+	DisplayPrimariesGY int `json:"display_primaries_gy,omitempty"`
+	DisplayPrimariesBX int `json:"display_primaries_bx,omitempty"`
+	DisplayPrimariesBY int `json:"display_primaries_by,omitempty"`
+	WhitePointX        int `json:"white_point_x,omitempty"`
+	WhitePointY        int `json:"white_point_y,omitempty"`
+	MinLuminance       int `json:"min_luminance,omitempty"`
+	MaxLuminance       int `json:"max_luminance,omitempty"`
+}
+
+// ContentLightLevelMetadata mirrors AVContentLightMetadata.
+type ContentLightLevelMetadata struct {
+	MaxCLL  uint32 `json:"max_cll,omitempty"`
+	MaxFALL uint32 `json:"max_fall,omitempty"`
 }
 
 // HLSOptions promotes the most-asked HLS muxer AVOptions
@@ -916,6 +995,9 @@ func validate(cfg *Config) error {
 			if out.DASH.ExtraWindowSize < 0 {
 				return fmt.Errorf("output %q: invalid dash.extra_window_size %d (must be >= 0)", out.ID, out.DASH.ExtraWindowSize)
 			}
+		}
+		if err := validateColorHDR(out); err != nil {
+			return err
 		}
 	}
 	// At most one non-zero loudnorm_pass across the whole run — a

@@ -220,7 +220,55 @@ export interface Output {
    *  Promoted from the generic `options` AVDict bag; on key
    *  collision the typed field wins. Mirrors libavformat/dashenc.c. */
   dash?: DASHOptions;
+  /** Per-stream color metadata (range, primaries, transfer, matrix,
+   *  chroma_location). Names are libavutil canonical
+   *  (`av_color_*_name`). Empty fields are left unchanged on the
+   *  output stream. Mirrors ffmpeg `-color_range` / `-color_primaries`
+   *  / `-color_trc` / `-colorspace` / `-chroma_sample_location`. */
+  color?: ColorMetadata;
+  /** SMPTE ST 2086 mastering-display + CTA-861.3 content-light-level
+   *  (HDR10) metadata attached to every video stream's
+   *  codecpar.coded_side_data before WriteHeader. Requires an
+   *  HDR-capable codec (hevc/av1/vp9 or copy) and container
+   *  (mp4/mov/matroska/webm/mpegts). Mirrors ffmpeg
+   *  `-mastering_display_metadata` / `-content_light_level`. */
+  hdr?: HDRMetadata;
   options?: Record<string, unknown>;
+}
+
+export interface ColorMetadata {
+  range?: string;
+  primaries?: string;
+  transfer?: string;
+  space?: string;
+  chroma_location?: string;
+}
+
+export interface HDRMetadata {
+  mastering_display?: MasteringDisplayMetadata;
+  content_light_level?: ContentLightLevelMetadata;
+}
+
+export interface MasteringDisplayMetadata {
+  /** Chromaticity coords in 1/50000 units (HEVC/AV1 SEI encoding). */
+  display_primaries_rx?: number;
+  display_primaries_ry?: number;
+  display_primaries_gx?: number;
+  display_primaries_gy?: number;
+  display_primaries_bx?: number;
+  display_primaries_by?: number;
+  white_point_x?: number;
+  white_point_y?: number;
+  /** Luminance in 1/10000 cd/m^2 (i.e. nits * 10000). */
+  min_luminance?: number;
+  max_luminance?: number;
+}
+
+export interface ContentLightLevelMetadata {
+  /** Per-frame peak luminance over the whole stream (cd/m^2). */
+  max_cll?: number;
+  /** Per-frame frame-average maximum luminance (cd/m^2). */
+  max_fall?: number;
 }
 
 export interface HLSOptions {
