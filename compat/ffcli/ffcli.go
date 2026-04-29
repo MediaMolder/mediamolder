@@ -47,6 +47,7 @@ type parser struct {
 	copyTS       bool
 	pass         int
 	passLogFile  string
+	forceKeyFrames string
 	hwAccel      string
 	hwDevice     string
 	hwOutFmt     string
@@ -296,6 +297,18 @@ func (p *parser) parse() (*pipeline.Config, error) {
 				return nil, fmt.Errorf("-passlogfile requires an argument")
 			}
 			p.passLogFile = p.next()
+		case arg == "-force_key_frames":
+			// FFmpeg `-force_key_frames SPEC` (per-stream OPT_VIDEO
+			// string). Three grammars: `expr:EXPR` (libavutil
+			// expression evaluated per video frame), `source` (copy
+			// keyframes from source), or comma-separated time list
+			// (`3,7.5,10.25`). Latches onto the next output's
+			// Output.ForceKeyFrames; pipeline parses + builds the
+			// per-encoder matcher at run time.
+			if !p.hasMore() {
+				return nil, fmt.Errorf("-force_key_frames requires an argument")
+			}
+			p.forceKeyFrames = p.next()
 		case arg == "-stream_loop":
 			// FFmpeg per-input integer (OPT_OFFSET on InputFile.loop):
 			// `-stream_loop N -i in.mp4` plays in.mp4 N+1 times total
@@ -539,6 +552,10 @@ func (p *parser) parse() (*pipeline.Config, error) {
 			if p.passLogFile != "" {
 				out.PassLogFile = p.passLogFile
 				p.passLogFile = ""
+			}
+			if p.forceKeyFrames != "" {
+				out.ForceKeyFrames = p.forceKeyFrames
+				p.forceKeyFrames = ""
 			}
 			if len(p.containerMeta) > 0 {
 				out.Metadata = p.containerMeta

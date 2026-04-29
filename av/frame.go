@@ -70,5 +70,31 @@ func (f *Frame) PTS() int64 { return int64(f.p.pts) }
 // SetPTS sets the presentation timestamp.
 func (f *Frame) SetPTS(pts int64) { f.p.pts = C.int64_t(pts) }
 
+// AVPictureType constants mirror libavutil/avutil.h's AVPictureType
+// enum. Used by SetPictType to mark a frame as a forced keyframe
+// (AV_PICTURE_TYPE_I) — libavcodec's `forced_kf_apply` path in
+// fftools/ffmpeg_enc.c (line 738) sets exactly this on frames that
+// match the `-force_key_frames` spec, and the encoder honours it as
+// an IDR request regardless of the configured GOP cadence.
+const (
+	PictureTypeNone = 0 // AV_PICTURE_TYPE_NONE
+	PictureTypeI    = 1 // AV_PICTURE_TYPE_I — Intra (also forces IDR)
+	PictureTypeP    = 2 // AV_PICTURE_TYPE_P
+	PictureTypeB    = 3 // AV_PICTURE_TYPE_B
+	PictureTypeS    = 4 // AV_PICTURE_TYPE_S — S(GMC)-VOP MPEG-4
+	PictureTypeSI   = 5 // AV_PICTURE_TYPE_SI
+	PictureTypeSP   = 6 // AV_PICTURE_TYPE_SP
+	PictureTypeBI   = 7 // AV_PICTURE_TYPE_BI
+)
+
+// PictType returns the frame's AVPictureType.
+func (f *Frame) PictType() int { return int(f.p.pict_type) }
+
+// SetPictType sets the frame's AVPictureType. Setting PictureTypeI on
+// a video frame before sending it to a video encoder forces an IDR
+// keyframe — exactly the mechanism FFmpeg's `-force_key_frames` flag
+// uses (fftools/ffmpeg_enc.c::forced_kf_apply).
+func (f *Frame) SetPictType(pt int) { f.p.pict_type = uint32(pt) }
+
 // raw returns the underlying C pointer. For use within the av package only.
 func (f *Frame) raw() *C.AVFrame { return f.p }

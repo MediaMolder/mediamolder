@@ -389,6 +389,13 @@ func expandImplicitEncoders(cfg *Config, def *graph.Def) {
 				nodeParams["__passlogfile"] = out.PassLogFile
 			}
 		}
+		// Force-keyframe spec (FFmpeg `-force_key_frames`). Honoured
+		// only on video edges; the encoder handler builds a
+		// forceKeyFramesMatcher and stamps frame.pict_type =
+		// AV_PICTURE_TYPE_I on each matching frame before SendFrame.
+		if e.Type == "video" && out.ForceKeyFrames != "" {
+			nodeParams["__force_key_frames"] = out.ForceKeyFrames
+		}
 		if codec == "copy" {
 			nodeType = "copy"
 			nodeParams = nil
@@ -1277,6 +1284,30 @@ func (r *graphRunner) handleEncoder(ctx context.Context, node *graph.Node, ins [
 		}
 	}
 
+	// Per-output forced-keyframe spec (Output.ForceKeyFrames →
+	// __force_key_frames on the synthetic encoder node). Only video
+	// frames are eligible; audio/subtitle encoders see no marker.
+	// The matcher is consulted exactly once per frame (after any
+	// fpsRewriter rewrite resolves the final PTS) so its `n` /
+	// `n_forced` / `prev_forced_*` counters mirror the post-rewrite
+	// PTS stream the encoder actually sees.
+	var forceKF *forceKeyFramesMatcher
+	if enc.MediaType() == av.MediaTypeVideo {
+		if specStr := paramString(node.Params, "__force_key_frames"); specStr != "" {
+			spec, err := parseForceKeyFrames(specStr)
+			if err != nil {
+				return fmt.Errorf("encoder %q: %w", node.ID, err)
+			}
+			tb := enc.TimeBase()
+			m, err := newForceKeyFramesMatcher(spec, tb[0], tb[1])
+			if err != nil {
+				return fmt.Errorf("encoder %q: %w", node.ID, err)
+			}
+			forceKF = m
+			defer forceKF.Close()
+		}
+	}
+
 	// Fan out each encoded packet to every downstream channel. With one
 	// output the packet is forwarded as-is; with N outputs the packet is
 	// av_packet_clone'd N-1 times so each consumer (muxer) owns an
@@ -1343,6 +1374,16 @@ func (r *graphRunner) handleEncoder(ctx context.Context, node *graph.Node, ins [
 	// resulting packets. Used by both the passthrough path and the CFR
 	// duplication loop.
 	sendOne := func(f *av.Frame) error {
+		// Forced-keyframe stamp: must happen on the exact frame
+		// instance handed to libavcodec (cloned duplicates from the
+		// CFR fill path each get their own check, mirroring FFmpeg's
+		// per-frame `forced_kf_apply` invocation in
+		// fftools/ffmpeg_enc.c::frame_encode line 798).
+		if forceKF != nil {
+			if forceKF.shouldForce(f.PTS(), f.PictType()) {
+				f.SetPictType(av.PictureTypeI)
+			}
+		}
 		if err := enc.SendFrame(f); err != nil {
 			return err
 		}
@@ -1400,14 +1441,11 @@ func (r *graphRunner) handleEncoder(ctx context.Context, node *graph.Node, ins [
 			continue
 		}
 
-		if err := enc.SendFrame(f); err != nil {
+		if err := sendOne(f); err != nil {
 			f.Close()
 			return err
 		}
 		f.Close()
-		if err := drainEncoder(); err != nil {
-			return err
-		}
 		r.pipe.Metrics().Node(node.ID).RecordLatency(time.Since(frameStart))
 	}
 

@@ -199,6 +199,14 @@ export interface Output {
    *  `<prefix>-<idx>.json`. Empty defaults to `mm-loudnorm`. Honoured
    *  only when `loudnorm_pass !== 0`. */
   loudnorm_statsfile?: string;
+  /** FFmpeg `-force_key_frames` spec. Three grammars:
+   *  - `expr:EXPR` (libavutil expression per video frame; vars n,
+   *    n_forced, prev_forced_n, prev_forced_t, t — canonical idiom
+   *    `expr:gte(t,n_forced*2)` for a 2 s GOP),
+   *  - `source` (copy keyframes from source),
+   *  - comma-separated time list (`3.0,7.5,10.25`).
+   *  Required for HLS / DASH segmenters. Honoured on video encoders. */
+  force_key_frames?: string;
   options?: Record<string, unknown>;
 }
 

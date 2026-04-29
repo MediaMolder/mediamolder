@@ -165,7 +165,7 @@ semantics.
 | **Lossless intermediate codecs** (FFV1, ProRes, DNxHD/HR, HuffYUV) for editorial round-trips | ⚠️ | Encoders exist if FFmpeg compiled with them; no schema validation of codec ↔ container compatibility |
 | `-fps_mode` (`cfr`/`vfr`/`passthrough`/`drop`) (formerly `-vsync`) | ✅    | `Output.FPSMode`; per-frame renumber/drop/duplicate logic in `pipeline/fps_mode.go` consumed by `handleEncoder` for video streams. `compat/ffcli` rewrites the legacy `-vsync` numeric/auto aliases. |
 | `-async N` (audio resync via resampler)                            | ✅    | `Output.AudioSync`; `pipeline.spliceAudioSyncForOutputs` injects an `aresample=async=N[:first_pts=0 when N==1]` filter node in front of every audio encoder feeding the output. `compat/ffcli` accepts the legacy flag. |
-| `-force_key_frames "expr:gte(t,n_forced*2)"` and chapter-driven IDR placement | ❌ | |
+| `-force_key_frames "expr:gte(t,n_forced*2)"` and chapter-driven IDR placement | ✅ | `Output.ForceKeyFrames` covers `expr:`, `source`, and time-list grammars (per-frame `pict_type = AV_PICTURE_TYPE_I` stamp via `av.Frame.SetPictType`). Chapter-driven IDR (`chapters[+offset]`) deferred. |
 | Per-stream encoder options (`-b:v:0` ≠ `-b:v:1` in ABR ladders)   | ❌    | Schema has one `EncoderParamsVideo`, no per-stream override |
 | Color metadata on encoder (`-color_range`, `-color_primaries`, `-color_trc`, `-colorspace`, `-chroma_sample_location`) | ⚠️ | Forwardable as AVOpts; not first-class, not validated |
 | HDR10 mastering display + content light level metadata            | ❌    | Required for HDR delivery |
@@ -732,9 +732,32 @@ real jobs."
    two-pass loudnorm recipe wires it by hand via stderr-scraping;
    this is the orchestration sugar that makes the recipe
    declarative. Seventh Wave 1 item.
-8. **`-force_key_frames "expr:gte(t,n_forced*2)"`** (§2.4) — GOP
-   control is mandatory for HLS/DASH segmenting; without it the
-   segmenters silently produce broken playlists.
+8. **`-force_key_frames "expr:gte(t,n_forced*2)"`** (§2.4) — ✅
+   **landed.** `Output.ForceKeyFrames` accepts the three FFmpeg
+   grammars (`expr:EXPR` libavutil expression evaluated per video
+   frame; `source` copy keyframes from input; comma-separated
+   float-second time list) parsed by `pipeline/force_key_frames.go::
+   parseForceKeyFrames` at config-load time so a malformed spec is
+   rejected up-front. Per-encoder runtime state lives in
+   `forceKeyFramesMatcher` (built once in `handleEncoder` from the
+   encoder's time-base; expression is compiled once via
+   `av.ParseExpression` so the per-frame hot loop only does
+   `av_expr_eval`). The matcher is consulted in `sendOne` exactly
+   once per frame in PTS order; on a match it stamps
+   `frame.pict_type = AV_PICTURE_TYPE_I` via `av.Frame.SetPictType`,
+   which libavcodec honours as an IDR request regardless of GOP
+   cadence (faithful port of `fftools/ffmpeg_enc.c::forced_kf_apply`
+   line 738). Expression vars (`n` / `n_forced` / `prev_forced_n`
+   / `prev_forced_t` / `t`, mirrors ffmpeg.h:557-561) advance on
+   every call, including drops, so counters track the post-rewrite
+   PTS stream the encoder actually sees. New av-layer surface:
+   `av.Frame.SetPictType` + `PictType` accessors and the
+   `AV_PICTURE_TYPE_*` constants; `av.ParsedExpression`
+   (`ParseExpression` / `Eval` / `Close`) wrapping `av_expr_parse`
+   + `av_expr_eval` + `av_expr_free` for repeated evaluation.
+   `compat/ffcli` parses `-force_key_frames SPEC` end-to-end.
+   Eighth (and final) Wave 1 item.
+
 
 ### 6.2 Wave 2 — "the universal mapper" (Phase B)
 

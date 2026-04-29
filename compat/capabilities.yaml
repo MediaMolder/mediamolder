@@ -239,8 +239,9 @@ sections:
         schema: pipeline.Output.AudioSync
         notes: legacy flag (removed from FFmpeg 8.0 CLI); compat/ffcli accepts it and the runtime injects an aresample filter (async=N, plus first_pts=0 when N==1) in front of the audio encoder
       - flag: "-force_key_frames"
-        status: missing
-        schema: n/a
+        status: covered
+        schema: pipeline.Output.ForceKeyFrames
+        notes: expr:EXPR (libavutil per-frame expression), source (copy from input), or comma-separated time list
       - flag: "per-stream encoder options (-b:v:0 ≠ -b:v:1)"
         status: missing
         schema: n/a

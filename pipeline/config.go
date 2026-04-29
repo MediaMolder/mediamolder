@@ -414,6 +414,25 @@ type Output struct {
 	// job get unique stats files). Empty defaults to
 	// `mm-loudnorm`. Honoured only when `LoudnormPass != 0`.
 	LoudnormStatsFile string `json:"loudnorm_statsfile,omitempty"`
+	// ForceKeyFrames mirrors FFmpeg's `-force_key_frames SPEC`
+	// flag. When non-empty the runtime forces an IDR keyframe on
+	// every video frame matching SPEC by setting
+	// `frame.pict_type = AV_PICTURE_TYPE_I` before
+	// `enc.SendFrame` (mirrors fftools/ffmpeg_enc.c::forced_kf_apply
+	// line 738). Required for HLS / DASH segmenters: without
+	// keyframes at segment boundaries the segmenter silently
+	// produces broken playlists.
+	//
+	// Supported grammars (parsed by parseForceKeyFrames):
+	//   - "expr:EXPR" — libavutil expression evaluated per video
+	//     frame; vars n / n_forced / prev_forced_n /
+	//     prev_forced_t / t (mirrors ffmpeg.h:557-561). Canonical
+	//     idiom: `expr:gte(t,n_forced*2)` for a 2 s GOP.
+	//   - "source" — copy keyframes from the source (matcher fires
+	//     when the upstream frame's pict_type is I).
+	//   - comma-separated time list — float seconds, e.g.
+	//     "3.0,7.5,10.25". HH:MM:SS form deferred.
+	ForceKeyFrames string `json:"force_key_frames,omitempty"`
 }
 
 // TeeTarget describes one slave of a `Kind == "tee"` Output. It
@@ -663,6 +682,11 @@ func validate(cfg *Config) error {
 		}
 		if out.LoudnormPass == 0 && out.LoudnormStatsFile != "" {
 			return fmt.Errorf("output %q: loudnorm_statsfile is only valid when loudnorm_pass != 0", out.ID)
+		}
+		if out.ForceKeyFrames != "" {
+			if _, err := parseForceKeyFrames(out.ForceKeyFrames); err != nil {
+				return fmt.Errorf("output %q: %w", out.ID, err)
+			}
 		}
 	}
 	// At most one non-zero loudnorm_pass across the whole run — a
