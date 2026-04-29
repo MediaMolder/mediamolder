@@ -1,0 +1,17 @@
+{
+  "name": "abr_ladder_split_and_mux",
+  "description": "Multi-resolution ABR (Adaptive Bit Rate) ladder driven from a single decode using libavfilter's split — 1080p/720p/540p/360p H.264 + a single AAC audio track fanned out to four MP4 outputs in one pass. Standard pre-packaging step before HLS/DASH segmentation.",
+  "ffmpeg_cmd": "ffmpeg -y -i {{input}} -filter_complex \"[0:v]split=4[v1][v2][v3][v4];[v1]scale=1920:1080[v1080];[v2]scale=1280:720[v720];[v3]scale=960:540[v540];[v4]scale=640:360[v360]\" -map [v1080] -map 0:a -c:v:0 libx264 -b:v:0 7000k -c:a:0 aac -b:a:0 128k {{output_1080p}} -map [v720] -map 0:a -c:v:0 libx264 -b:v:0 4000k -c:a:0 aac -b:a:0 128k {{output_720p}} -map [v540] -map 0:a -c:v:0 libx264 -b:v:0 2000k -c:a:0 aac -b:a:0 96k {{output_540p}} -map [v360] -map 0:a -c:v:0 libx264 -b:v:0 1000k -c:a:0 aac -b:a:0 96k {{output_360p}}",
+  "out_ext": ".mp4",
+  "blockers": [
+    "ffcli-multi-output-cli-parsing (§2.5 multiple outputs in one ffmpeg invocation)",
+    "per-stream-encoder-options (`-b:v:0` ≠ `-b:v:1` — §2.4 'Per-stream encoder options' row)"
+  ],
+  "roadmap_refs": [
+    "§1.1 'multi-resolution split-and-mux ABR'",
+    "§2.4 'Per-stream encoder options' row",
+    "§3.3 step 3 'Structured HLS / DASH / fragmented-MP4 / CMAF output'",
+    "testdata/examples/35_abr_ladder.json (existing JSON-side example proves the runtime supports the topology)"
+  ],
+  "duration_tol": 0.5
+}

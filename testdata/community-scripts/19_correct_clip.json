@@ -1,0 +1,44 @@
+{
+  "schema_version": "1.0",
+  "description": "Apply a 'lighter' preset color correction via the curves filter. Matches 'correct-clip -i input.mp4 -c curve.txt -o output.mp4' (using a built-in curves preset instead of a GIMP curve file).",
+  "inputs": [
+    {
+      "id": "in0",
+      "url": "{{input}}",
+      "streams": [
+        { "input_index": 0, "type": "video", "track": 0 },
+        { "input_index": 0, "type": "audio", "track": 0 }
+      ]
+    }
+  ],
+  "graph": {
+    "nodes": [
+      {
+        "id": "curves0",
+        "type": "filter",
+        "filter": "curves",
+        "params": { "preset": "lighter" }
+      },
+      {
+        "id": "format0",
+        "type": "filter",
+        "filter": "format",
+        "params": { "pix_fmts": "yuv420p" }
+      }
+    ],
+    "edges": [
+      { "from": "in0:v:0", "to": "curves0", "type": "video" },
+      { "from": "curves0",  "to": "format0", "type": "video" },
+      { "from": "format0", "to": "out0:v",  "type": "video" },
+      { "from": "in0:a:0", "to": "out0:a",  "type": "audio" }
+    ]
+  },
+  "outputs": [
+    {
+      "id": "out0",
+      "url": "{{output}}",
+      "codec_video": "libx264",
+      "codec_audio": "copy"
+    }
+  ]
+}

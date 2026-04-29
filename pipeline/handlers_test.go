@@ -233,6 +233,77 @@ func TestParamHelpers(t *testing.T) {
 	}
 }
 
+func TestCollectEncoderExtraOpts(t *testing.T) {
+	t.Run("nil and empty", func(t *testing.T) {
+		if got := collectEncoderExtraOpts(nil); got != nil {
+			t.Errorf("nil params: got %v, want nil", got)
+		}
+		if got := collectEncoderExtraOpts(map[string]any{}); got != nil {
+			t.Errorf("empty params: got %v, want nil", got)
+		}
+	})
+
+	t.Run("strips reserved keys", func(t *testing.T) {
+		got := collectEncoderExtraOpts(map[string]any{
+			"codec":       "libx264",
+			"width":       1920,
+			"height":      1080,
+			"bitrate":     int64(5000000),
+			"threads":     4,
+			"thread_type": "frame",
+		})
+		if got != nil {
+			t.Errorf("only reserved keys: got %v, want nil", got)
+		}
+	})
+
+	t.Run("forwards codec options", func(t *testing.T) {
+		got := collectEncoderExtraOpts(map[string]any{
+			"codec":       "libx264",
+			"bitrate":     int64(7000000),
+			"preset":      "slow",
+			"crf":         "20",
+			"g":           250,
+			"maxrate":     "8M",
+			"bufsize":     "16M",
+			"x264-params": "keyint=240:scenecut=40",
+		})
+		want := map[string]string{
+			"preset":      "slow",
+			"crf":         "20",
+			"g":           "250",
+			"maxrate":     "8M",
+			"bufsize":     "16M",
+			"x264-params": "keyint=240:scenecut=40",
+		}
+		if len(got) != len(want) {
+			t.Fatalf("len(got) = %d, want %d (got=%v)", len(got), len(want), got)
+		}
+		for k, v := range want {
+			if got[k] != v {
+				t.Errorf("got[%q] = %q, want %q", k, got[k], v)
+			}
+		}
+	})
+
+	t.Run("skips empty and nil values", func(t *testing.T) {
+		got := collectEncoderExtraOpts(map[string]any{
+			"preset": "",
+			"tune":   nil,
+			"crf":    "23",
+		})
+		if _, ok := got["preset"]; ok {
+			t.Errorf("empty string value should be skipped: %v", got)
+		}
+		if _, ok := got["tune"]; ok {
+			t.Errorf("nil value should be skipped: %v", got)
+		}
+		if got["crf"] != "23" {
+			t.Errorf("crf = %q, want %q", got["crf"], "23")
+		}
+	})
+}
+
 // ---------- Integration: runGraph end-to-end ----------
 
 func TestRunGraphLinearChain(t *testing.T) {

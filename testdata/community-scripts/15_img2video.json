@@ -1,0 +1,50 @@
+{
+  "schema_version": "1.0",
+  "description": "Convert a still image to a 5-second 1280x720 video by looping the image at 25 fps. Matches 'img2video -i image.jpg -d 5 -o output.mp4'. Requires testdata/sample.jpg fixture (see FIXTURES.md).",
+  "inputs": [
+    {
+      "id": "in0",
+      "url": "{{image}}",
+      "options": { "loop": "1", "framerate": "25", "t": "5" },
+      "streams": [
+        { "input_index": 0, "type": "video", "track": 0 }
+      ]
+    }
+  ],
+  "graph": {
+    "nodes": [
+      {
+        "id": "scale0",
+        "type": "filter",
+        "filter": "scale",
+        "params": { "w": "1280", "h": "720", "force_original_aspect_ratio": "decrease" }
+      },
+      {
+        "id": "pad0",
+        "type": "filter",
+        "filter": "pad",
+        "params": { "w": "1280", "h": "720", "x": "(ow-iw)/2", "y": "(oh-ih)/2" }
+      },
+      {
+        "id": "fps0",
+        "type": "filter",
+        "filter": "fps",
+        "params": { "fps": "25" }
+      }
+    ],
+    "edges": [
+      { "from": "in0:v:0", "to": "scale0", "type": "video" },
+      { "from": "scale0",  "to": "pad0",   "type": "video" },
+      { "from": "pad0",    "to": "fps0",   "type": "video" },
+      { "from": "fps0",    "to": "out0:v", "type": "video" }
+    ]
+  },
+  "outputs": [
+    {
+      "id": "out0",
+      "url": "{{output}}",
+      "codec_video": "libx264",
+      "encoder_params_video": { "pix_fmt": "yuv420p" }
+    }
+  ]
+}

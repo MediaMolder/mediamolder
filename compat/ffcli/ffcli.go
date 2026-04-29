@@ -5,6 +5,8 @@ package ffcli
 
 import (
 	"fmt"
+	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/MediaMolder/MediaMolder/pipeline"
@@ -38,10 +40,36 @@ type parser struct {
 	audioFilters string
 	bsfVideo     string
 	bsfAudio     string
+	fpsMode      string
+	audioSync    int
+	shortest     bool
+	maxFileSize  int64
+	copyTS       bool
 	hwAccel      string
 	hwDevice     string
 	hwOutFmt     string
 	globalOpts   map[string]string
+	// Container-level metadata collected from `-metadata key=value`
+	// (no specifier). Latched onto the next output.
+	containerMeta map[string]string
+	// Per-stream attributes collected from `-metadata:s:<type>:<idx>
+	// key=value` and `-disposition:s:<type>:<idx> flags`. Latched
+	// onto the next output. Keyed by `<type>:<idx>` (e.g. "a:0",
+	// "v:1"); each entry is a draft StreamSpec that gets finalised
+	// when the output URL is seen.
+	streamSpecs map[string]*pipeline.StreamSpec
+	// Per-stream encoder options (preset, crf, b, g, ...). Populated
+	// from CLI flags like -crf, -preset, -b:v, -tune, -profile:v,
+	// -level, -g, -bf, -maxrate, -minrate, -bufsize. Attached to the
+	// matching pipeline.Output.EncoderParams* field so the implicit
+	// encoder pass picks them up.
+	videoEncOpts map[string]any
+	audioEncOpts map[string]any
+	// Per-file timing/demuxer options (-t, -ss, -to) collected from the
+	// CLI between file specifiers. FFmpeg attaches them to the *next*
+	// file (input or output) named on the command line, so they are
+	// queued here and drained when the next -i / output URL is seen.
+	pendingFileOpts map[string]any
 }
 
 func (p *parser) peek() string {
@@ -61,6 +89,8 @@ func (p *parser) hasMore() bool { return p.pos < len(p.args) }
 
 func (p *parser) parse() (*pipeline.Config, error) {
 	p.globalOpts = make(map[string]string)
+	p.videoEncOpts = make(map[string]any)
+	p.audioEncOpts = make(map[string]any)
 	for p.hasMore() {
 		arg := p.next()
 		switch {
@@ -80,9 +110,12 @@ func (p *parser) parse() (*pipeline.Config, error) {
 					InputIndex: 0, Type: "subtitle", Track: 0,
 				})
 			}
-			p.inputs = append(p.inputs, pipeline.Input{
-				ID: id, URL: url, Streams: streams,
-			})
+			in := pipeline.Input{ID: id, URL: url, Streams: streams}
+			if len(p.pendingFileOpts) > 0 {
+				in.Options = p.pendingFileOpts
+				p.pendingFileOpts = nil
+			}
+			p.inputs = append(p.inputs, in)
 		case arg == "-c:v" || arg == "-vcodec":
 			if !p.hasMore() {
 				return nil, fmt.Errorf("%s requires an argument", arg)
@@ -123,12 +156,12 @@ func (p *parser) parse() (*pipeline.Config, error) {
 			if !p.hasMore() {
 				return nil, fmt.Errorf("-b:v requires an argument")
 			}
-			p.globalOpts["video_bitrate"] = p.next()
+			p.videoEncOpts["b"] = p.next()
 		case arg == "-b:a":
 			if !p.hasMore() {
 				return nil, fmt.Errorf("-b:a requires an argument")
 			}
-			p.globalOpts["audio_bitrate"] = p.next()
+			p.audioEncOpts["b"] = p.next()
 		case arg == "-r":
 			if !p.hasMore() {
 				return nil, fmt.Errorf("-r requires an argument")
@@ -157,6 +190,122 @@ func (p *parser) parse() (*pipeline.Config, error) {
 				return nil, fmt.Errorf("-bsf:a requires an argument")
 			}
 			p.bsfAudio = p.next()
+		case arg == "-async":
+			// Legacy FFmpeg audio-sync flag. The FFmpeg 8.0 CLI removed
+			// it in favour of `-af aresample=async=N`; we accept it for
+			// import compatibility and route the value through
+			// pipeline.Output.AudioSync, which the runtime turns into
+			// an aresample filter splice in front of the audio encoder.
+			// Negative / non-numeric values are rejected.
+			if !p.hasMore() {
+				return nil, fmt.Errorf("-async requires an argument")
+			}
+			v := p.next()
+			n, err := strconv.Atoi(v)
+			if err != nil || n < 0 {
+				return nil, fmt.Errorf("-async: invalid value %q (want non-negative integer)", v)
+			}
+			p.audioSync = n
+		case arg == "-shortest":
+			// FFmpeg `-shortest` (per-output bool, OPT_OFFSET in
+			// fftools/ffmpeg_opt.c). Latched onto the next output URL.
+			p.shortest = true
+		case arg == "-fs":
+			// FFmpeg `-fs SIZE` (per-output int64 limit_filesize).
+			// Accepts a plain byte count; the FFmpeg CLI also accepts
+			// SI suffixes (K/M/G) via av_strtod, but the production
+			// scripts in our corpus all use bare bytes.
+			if !p.hasMore() {
+				return nil, fmt.Errorf("-fs requires an argument")
+			}
+			v := p.next()
+			n, err := strconv.ParseInt(v, 10, 64)
+			if err != nil || n < 0 {
+				return nil, fmt.Errorf("-fs: invalid value %q (want non-negative integer bytes)", v)
+			}
+			p.maxFileSize = n
+		case arg == "-copyts":
+			// FFmpeg `-copyts` is a global bool. We carry it on the
+			// pipeline.Config and use it both to suppress the
+			// demuxer-side ts_offset shift and to interpret output-side
+			// -ss/-to as absolute timeline values.
+			p.copyTS = true
+		case arg == "-metadata" || strings.HasPrefix(arg, "-metadata:"):
+			// FFmpeg `-metadata [SPEC] key=value`. Without a spec the
+			// value lands on the container; with `:s:<type>:<idx>` it
+			// targets a single output stream. We do not yet support
+			// the `:g:`, `:c:`, `:p:`, or `:s:<type>` (no index)
+			// variants — they require either chapter/program-level
+			// dispatch (deferred) or "broadcast to every stream of
+			// type" (which the explicit-stream form already covers in
+			// practice).
+			if !p.hasMore() {
+				return nil, fmt.Errorf("%s requires an argument", arg)
+			}
+			kv := p.next()
+			eq := strings.Index(kv, "=")
+			if eq <= 0 {
+				return nil, fmt.Errorf("%s: expected key=value, got %q", arg, kv)
+			}
+			key, val := kv[:eq], kv[eq+1:]
+			spec := strings.TrimPrefix(arg, "-metadata")
+			spec = strings.TrimPrefix(spec, ":")
+			switch {
+			case spec == "":
+				if p.containerMeta == nil {
+					p.containerMeta = make(map[string]string)
+				}
+				p.containerMeta[key] = val
+			case strings.HasPrefix(spec, "s:"):
+				typ, idx, err := parseStreamSpec(spec[2:])
+				if err != nil {
+					return nil, fmt.Errorf("%s: %w", arg, err)
+				}
+				ss := p.streamSpecFor(typ, idx)
+				if ss.Metadata == nil {
+					ss.Metadata = make(map[string]string)
+				}
+				ss.Metadata[key] = val
+			default:
+				return nil, fmt.Errorf("%s: unsupported specifier %q (only `s:<type>:<idx>` supported)", arg, spec)
+			}
+		case strings.HasPrefix(arg, "-disposition:s:"):
+			// FFmpeg `-disposition:s:<type>:<idx> default+forced`. We
+			// only accept the per-stream form; the bare `-disposition`
+			// (which clears every stream) and the `:<type>` (broadcast)
+			// forms are not yet supported.
+			if !p.hasMore() {
+				return nil, fmt.Errorf("%s requires an argument", arg)
+			}
+			val := p.next()
+			typ, idx, err := parseStreamSpec(strings.TrimPrefix(arg, "-disposition:s:"))
+			if err != nil {
+				return nil, fmt.Errorf("%s: %w", arg, err)
+			}
+			ss := p.streamSpecFor(typ, idx)
+			ss.Disposition = val
+		case arg == "-fps_mode" || arg == "-vsync":
+			// FFmpeg modern: -fps_mode {passthrough|cfr|vfr|drop|auto}.
+			// FFmpeg legacy: -vsync {0|1|2|drop|passthrough|cfr|vfr|auto}.
+			// We rewrite the numeric/auto aliases to the modern names.
+			// `auto` falls back to passthrough (ffmpeg's actual default
+			// depends on the muxer; passthrough is the safest no-op).
+			if !p.hasMore() {
+				return nil, fmt.Errorf("%s requires an argument", arg)
+			}
+			v := p.next()
+			switch v {
+			case "0", "passthrough", "auto", "-1":
+				p.fpsMode = "passthrough"
+			case "1", "cfr":
+				p.fpsMode = "cfr"
+			case "2", "vfr":
+				p.fpsMode = "vfr"
+			case "drop":
+				p.fpsMode = "drop"
+			default:
+				return nil, fmt.Errorf("%s: unknown value %q (want passthrough|cfr|vfr|drop|auto|0|1|2)", arg, v)
+			}
 		case arg == "-hwaccel":
 			if !p.hasMore() {
 				return nil, fmt.Errorf("-hwaccel requires an argument")
@@ -172,6 +321,42 @@ func (p *parser) parse() (*pipeline.Config, error) {
 				return nil, fmt.Errorf("-hwaccel_output_format requires an argument")
 			}
 			p.hwOutFmt = p.next()
+		// ---- Video encoder options ----
+		case arg == "-crf" || arg == "-qp" || arg == "-preset" || arg == "-tune" ||
+			arg == "-profile:v" || arg == "-level" || arg == "-g" || arg == "-bf" ||
+			arg == "-maxrate" || arg == "-minrate" || arg == "-bufsize" ||
+			arg == "-pix_fmt" || arg == "-x264-params" || arg == "-x265-params":
+			if !p.hasMore() {
+				return nil, fmt.Errorf("%s requires an argument", arg)
+			}
+			key := strings.TrimPrefix(arg, "-")
+			// `-profile:v` -> AVOption `profile`.
+			if key == "profile:v" {
+				key = "profile"
+			}
+			p.videoEncOpts[key] = p.next()
+		// ---- Audio encoder options ----
+		case arg == "-q:a" || arg == "-aq" || arg == "-ar" || arg == "-ac" ||
+			arg == "-profile:a":
+			if !p.hasMore() {
+				return nil, fmt.Errorf("%s requires an argument", arg)
+			}
+			key := strings.TrimPrefix(arg, "-")
+			switch key {
+			case "q:a", "aq":
+				key = "q"
+			case "profile:a":
+				key = "profile"
+			}
+			p.audioEncOpts[key] = p.next()
+		case arg == "-t" || arg == "-ss" || arg == "-to":
+			if !p.hasMore() {
+				return nil, fmt.Errorf("%s requires an argument", arg)
+			}
+			if p.pendingFileOpts == nil {
+				p.pendingFileOpts = make(map[string]any)
+			}
+			p.pendingFileOpts[strings.TrimPrefix(arg, "-")] = p.next()
 		case strings.HasPrefix(arg, "-"):
 			if p.hasMore() && !strings.HasPrefix(p.peek(), "-") {
 				p.globalOpts[strings.TrimPrefix(arg, "-")] = p.next()
@@ -179,6 +364,10 @@ func (p *parser) parse() (*pipeline.Config, error) {
 		default:
 			id := fmt.Sprintf("output%d", len(p.outputs))
 			out := pipeline.Output{ID: id, URL: arg}
+			if len(p.pendingFileOpts) > 0 {
+				out.Options = p.pendingFileOpts
+				p.pendingFileOpts = nil
+			}
 			if p.codecV != "" && p.codecV != "none" {
 				out.CodecVideo = p.codecV
 			}
@@ -194,9 +383,52 @@ func (p *parser) parse() (*pipeline.Config, error) {
 			if p.bsfAudio != "" {
 				out.BSFAudio = p.bsfAudio
 			}
+			if p.fpsMode != "" {
+				out.FPSMode = p.fpsMode
+			}
+			if p.audioSync != 0 {
+				out.AudioSync = p.audioSync
+			}
+			if p.shortest {
+				out.Shortest = true
+			}
+			if p.maxFileSize > 0 {
+				out.MaxFileSize = p.maxFileSize
+			}
+			if len(p.containerMeta) > 0 {
+				out.Metadata = p.containerMeta
+				p.containerMeta = nil
+			}
+			if len(p.streamSpecs) > 0 {
+				// Emit deterministically: sort by (type, index) so
+				// repeated calls with the same flag set produce
+				// byte-identical Output.Streams ordering. Mirrors the
+				// stable order FFmpeg's `of_add_metadata` produces by
+				// walking the OptionsContext list in declaration order.
+				keys := make([]string, 0, len(p.streamSpecs))
+				for k := range p.streamSpecs {
+					keys = append(keys, k)
+				}
+				sort.Strings(keys)
+				out.Streams = make([]pipeline.StreamSpec, 0, len(keys))
+				for _, k := range keys {
+					out.Streams = append(out.Streams, *p.streamSpecs[k])
+				}
+				p.streamSpecs = nil
+			}
 			if f, ok := p.globalOpts["format"]; ok {
 				out.Format = f
 				delete(p.globalOpts, "format")
+			}
+			// Attach encoder options collected from CLI flags so the
+			// implicit-encoder pass (runtime + GUI) merges them into
+			// the synthesised encoder node. Only attach for stream
+			// types that aren't disabled or copied.
+			if p.codecV != "none" && p.codecV != "copy" && len(p.videoEncOpts) > 0 {
+				out.EncoderParamsVideo = copyAnyMap(p.videoEncOpts)
+			}
+			if p.codecA != "none" && p.codecA != "copy" && len(p.audioEncOpts) > 0 {
+				out.EncoderParamsAudio = copyAnyMap(p.audioEncOpts)
 			}
 			p.outputs = append(p.outputs, out)
 		}
@@ -208,11 +440,22 @@ func (p *parser) parse() (*pipeline.Config, error) {
 		return nil, fmt.Errorf("no output specified")
 	}
 	p.buildGraph()
+	nodes := p.nodes
+	if nodes == nil {
+		nodes = []pipeline.NodeDef{}
+	}
+	edges := p.edges
+	if edges == nil {
+		edges = []pipeline.EdgeDef{}
+	}
 	cfg := &pipeline.Config{
 		SchemaVersion: "1.0",
 		Inputs:        p.inputs,
-		Graph:         pipeline.GraphDef{Nodes: p.nodes, Edges: p.edges},
+		Graph:         pipeline.GraphDef{Nodes: nodes, Edges: edges},
 		Outputs:       p.outputs,
+	}
+	if p.copyTS {
+		cfg.CopyTS = true
 	}
 	if p.hwAccel != "" {
 		cfg.GlobalOptions.HardwareAccel = p.hwAccel
@@ -322,4 +565,19 @@ func tokenize(s string) []string {
 		args = append(args, cur.String())
 	}
 	return args
+}
+
+// copyAnyMap returns a shallow copy of m. Used so that each Output
+// gets its own EncoderParams* map rather than aliasing the parser's
+// accumulator (which would let a later output mutate an earlier one's
+// params).
+func copyAnyMap(m map[string]any) map[string]any {
+	if len(m) == 0 {
+		return nil
+	}
+	out := make(map[string]any, len(m))
+	for k, v := range m {
+		out[k] = v
+	}
+	return out
 }

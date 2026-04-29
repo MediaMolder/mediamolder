@@ -1,0 +1,38 @@
+{
+  "schema_version": "1.0",
+  "description": "Add a soft-subtitle track from a separate SRT file and mux into MKV. Matches 'subtitle-add -i input.mp4 -s subtitle.srt -o output.mkv'.",
+  "inputs": [
+    {
+      "id": "in0",
+      "url": "{{input}}",
+      "streams": [
+        { "input_index": 0, "type": "video", "track": 0 },
+        { "input_index": 0, "type": "audio", "track": 0 }
+      ]
+    },
+    {
+      "id": "in1",
+      "url": "subs.srt",
+      "streams": [
+        { "input_index": 0, "type": "subtitle", "track": 0 }
+      ]
+    }
+  ],
+  "graph": {
+    "nodes": [],
+    "edges": [
+      { "from": "in0:v:0", "to": "out0:v", "type": "video" },
+      { "from": "in0:a:0", "to": "out0:a", "type": "audio" },
+      { "from": "in1:s:0", "to": "out0:s", "type": "subtitle" }
+    ]
+  },
+  "outputs": [
+    {
+      "id": "out0",
+      "url": "{{output}}",
+      "codec_video": "copy",
+      "codec_audio": "copy",
+      "codec_subtitle": "copy"
+    }
+  ]
+}

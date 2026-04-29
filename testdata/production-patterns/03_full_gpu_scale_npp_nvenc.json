@@ -1,0 +1,20 @@
+{
+  "name": "full_gpu_scale_npp_h264_nvenc",
+  "description": "Full-GPU pipeline: CUDA-accelerated decode → NPP scale → NVENC encode, no CPU round-trip. The textbook NVIDIA pipeline — and the one that exposes the multi-device hardware-graph gap when CUDA decode is paired with CPU-side filters or non-NVIDIA encoders.",
+  "ffmpeg_cmd": "ffmpeg -y -hwaccel cuda -hwaccel_output_format cuda -i {{input}} -vf \"scale_npp=1280:720\" -c:v h264_nvenc -preset p4 -b:v 4000k -an {{output}}",
+  "out_ext": ".mp4",
+  "blockers": [
+    "nvidia-cuda-runtime (no CUDA device or no NVIDIA libs in build)",
+    "scale_npp-availability-probe (§2.3 'Hardware filter auto-mapping' / §3.4 step 6 'scale_npp vs scale_cuda per-filter availability probe')",
+    "h264_nvenc-availability (encoder may not be linked into ffstatic build)",
+    "per-input-hwaccel (§2.1 '-hwaccel, -hwaccel_device, -hwaccel_output_format' row — currently global-only)"
+  ],
+  "roadmap_refs": [
+    "§1.1 'full GPU scale_npp+h264_nvenc'",
+    "§2.1 '-hwaccel*' row",
+    "§2.3 'Hardware filter auto-mapping' row",
+    "§3.4 step 5 'Multi-device hardware graphs'",
+    "§3.4 step 6 'scale_npp vs scale_cuda per-filter availability probe'"
+  ],
+  "duration_tol": 0.5
+}

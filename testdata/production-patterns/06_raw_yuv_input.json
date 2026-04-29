@@ -1,0 +1,17 @@
+{
+  "name": "raw_yuv_input",
+  "description": "Raw YUV420P input via the rawvideo demuxer — the canonical bug-report fixture format and the simplest stress test for an explicit input format/pixfmt/size/rate combination. AVDict-style input options (`-pix_fmt`, `-video_size`, `-framerate`) work today via Input.Options passthrough; the gap is a typed schema affordance so the GUI can author this without raw-text knowledge of FFmpeg's option names.",
+  "ffmpeg_cmd": "ffmpeg -y -f rawvideo -pix_fmt yuv420p -video_size 320x240 -framerate 25 -i {{raw_input}} -c:v libx264 -preset ultrafast -t 1 {{output}}",
+  "out_ext": ".mp4",
+  "raw_fixture_required": "raw_320x240_yuv420p_25fps.yuv (not currently shipped in testdata/)",
+  "blockers": [
+    "raw-input-fixture (testdata/production-patterns/raw_320x240_yuv420p_25fps.yuv missing)",
+    "typed-raw-input-schema (§2.1 'First-class raw-stream input' row — works via AVDict but no Input.Format/Pixfmt/VideoSize/FrameRate fields)"
+  ],
+  "roadmap_refs": [
+    "§1.1 'raw-stream input'",
+    "§2.1 'First-class raw-stream input' row",
+    "§2.7 raw-input bug-report fixture"
+  ],
+  "duration_tol": 0.5
+}

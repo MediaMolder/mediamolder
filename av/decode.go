@@ -26,8 +26,24 @@ type DecoderContext struct {
 	streamIndex int
 }
 
+// DecoderOptions configures optional decoder parameters.
+type DecoderOptions struct {
+	// ThreadCount sets the number of codec threads. 0 = FFmpeg auto-detect.
+	ThreadCount int
+
+	// ThreadType selects the threading model: "frame", "slice", "frame+slice",
+	// or "" (let FFmpeg choose based on codec capabilities).
+	ThreadType string
+}
+
 // OpenDecoder creates a decoder for the given stream index in the input format context.
+// Uses FFmpeg default threading (auto-detect).
 func OpenDecoder(input *InputFormatContext, streamIndex int) (*DecoderContext, error) {
+	return OpenDecoderWithOptions(input, streamIndex, DecoderOptions{})
+}
+
+// OpenDecoderWithOptions creates a decoder with explicit threading configuration.
+func OpenDecoderWithOptions(input *InputFormatContext, streamIndex int, opts DecoderOptions) (*DecoderContext, error) {
 	if streamIndex < 0 || streamIndex >= input.NumStreams() {
 		return nil, fmt.Errorf("stream index %d out of range", streamIndex)
 	}
@@ -50,6 +66,14 @@ func OpenDecoder(input *InputFormatContext, streamIndex int) (*DecoderContext, e
 
 	// Set pkt_timebase so PTS/DTS values are correct.
 	ctx.pkt_timebase = C.get_stream_time_base(input.raw(), C.int(streamIndex))
+
+	// Apply threading configuration.
+	if opts.ThreadCount > 0 {
+		ctx.thread_count = C.int(opts.ThreadCount)
+	}
+	if opts.ThreadType != "" {
+		ctx.thread_type = C.int(parseThreadType(opts.ThreadType))
+	}
 
 	if ret := C.avcodec_open2(ctx, codec, nil); ret < 0 {
 		C.avcodec_free_context(&ctx)
@@ -94,4 +118,25 @@ func (d *DecoderContext) ReceiveFrame(f *Frame) error {
 // ReceiveFrame until it returns ErrEOF.
 func (d *DecoderContext) Flush() error {
 	return d.SendPacket(nil)
+}
+
+// ThreadCount returns the number of threads the decoder is using.
+func (d *DecoderContext) ThreadCount() int {
+	return int(d.p.thread_count)
+}
+
+// parseThreadType converts a thread type string to FFmpeg's integer constants.
+// "frame" → FF_THREAD_FRAME (1), "slice" → FF_THREAD_SLICE (2),
+// "frame+slice" → both (3). Returns 0 for unknown/empty (auto).
+func parseThreadType(s string) int {
+	switch s {
+	case "frame":
+		return 1 // FF_THREAD_FRAME
+	case "slice":
+		return 2 // FF_THREAD_SLICE
+	case "frame+slice":
+		return 3 // FF_THREAD_FRAME | FF_THREAD_SLICE
+	default:
+		return 0
+	}
 }

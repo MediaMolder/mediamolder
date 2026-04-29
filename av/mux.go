@@ -15,13 +15,40 @@ package av
 //     avcodec_parameters_from_context(ctx->streams[idx]->codecpar, enc_ctx);
 //     ctx->streams[idx]->time_base = enc_ctx->time_base;
 // }
+// // Copy codec parameters from an input stream to an output stream and
+// // adopt the input stream's time_base. Used for stream-copy outputs.
+// static int copy_stream_codecpar(AVFormatContext *out_ctx, int out_idx,
+//                                  AVFormatContext *in_ctx, int in_idx) {
+//     int ret = avcodec_parameters_copy(out_ctx->streams[out_idx]->codecpar,
+//                                       in_ctx->streams[in_idx]->codecpar);
+//     if (ret < 0) return ret;
+//     // Clear codec_tag so the muxer can pick a container-appropriate one.
+//     out_ctx->streams[out_idx]->codecpar->codec_tag = 0;
+//     out_ctx->streams[out_idx]->time_base = in_ctx->streams[in_idx]->time_base;
+//     return 0;
+// }
+// static AVRational out_stream_time_base(AVFormatContext *ctx, int idx) {
+//     return ctx->streams[idx]->time_base;
+// }
+// static int set_stream_codec_tag(AVFormatContext *ctx, int idx, uint32_t tag) {
+//     if (idx < 0 || idx >= (int)ctx->nb_streams) return -1;
+//     ctx->streams[idx]->codecpar->codec_tag = tag;
+//     return 0;
+// }
+// // bytes_written returns the current size of the muxed file by
+// // querying avio_tell on the format context's IO. Mirrors how
+// // fftools/ffmpeg_mux.c implements -fs (limit_filesize): it calls
+// // avio_tell(s->pb) before every WritePacket and stops with EOF
+// // when the result reaches the configured limit.
+// static int64_t bytes_written(AVFormatContext *ctx) {
+//     if (!ctx || !ctx->pb) return -1;
+//     return avio_tell(ctx->pb);
+// }
 import "C"
 
 import (
 	"fmt"
 	"os"
-	"path/filepath"
-	"strings"
 	"unsafe"
 )
 
@@ -37,20 +64,32 @@ type OutputFormatContext struct {
 // the file extension. The actual write happens to a .tmp file; Close() performs
 // an atomic rename to the final path.
 func OpenOutput(path string) (*OutputFormatContext, error) {
+	return OpenOutputWithFormat(path, "")
+}
+
+// OpenOutputWithFormat creates an output container at path using the given
+// format name. When format is empty the format is inferred from the file
+// extension (same behaviour as OpenOutput).
+func OpenOutputWithFormat(path, format string) (*OutputFormatContext, error) {
 	tmpPath := path + ".tmp"
 	cTmpPath := C.CString(tmpPath)
 	defer C.free(unsafe.Pointer(cTmpPath))
 
-	// Determine format from the real extension, not the .tmp extension.
-	ext := strings.TrimPrefix(filepath.Ext(path), ".")
+	// Prefer an explicitly supplied format; fall back to the file extension.
+	// When an explicit format is supplied, use it as the format_name argument.
+	// Otherwise pass nil so FFmpeg auto-detects from the real filename (not the
+	// .tmp suffix, which would confuse it). avio_open still uses cTmpPath.
 	var cFmt *C.char
-	if ext != "" {
-		cFmt = C.CString(ext)
+	if format != "" {
+		cFmt = C.CString(format)
 		defer C.free(unsafe.Pointer(cFmt))
 	}
 
+	cRealPath := C.CString(path)
+	defer C.free(unsafe.Pointer(cRealPath))
+
 	var ctx *C.AVFormatContext
-	ret := C.avformat_alloc_output_context2(&ctx, nil, cFmt, cTmpPath)
+	ret := C.avformat_alloc_output_context2(&ctx, nil, cFmt, cRealPath)
 	if ret < 0 {
 		return nil, fmt.Errorf("avformat_alloc_output_context2(%q): %w", path, newErr(ret))
 	}
@@ -82,6 +121,53 @@ func (f *OutputFormatContext) AddStream(enc *EncoderContext) (int, error) {
 	return int(st.index), nil
 }
 
+// AddStreamFromInput adds a new output stream by copying codec parameters
+// directly from inputStreamIndex on src (no re-encoding). Adopts the input
+// stream's time_base. Used to wire stream-copy nodes to the muxer.
+// Returns the zero-based stream index assigned in the output container.
+func (f *OutputFormatContext) AddStreamFromInput(src *InputFormatContext, inputStreamIndex int) (int, error) {
+	if src == nil || src.p == nil {
+		return -1, fmt.Errorf("AddStreamFromInput: nil source")
+	}
+	st := C.new_stream(f.p)
+	if st == nil {
+		return -1, fmt.Errorf("avformat_new_stream: out of memory")
+	}
+	if ret := C.copy_stream_codecpar(f.p, C.int(st.index), src.p, C.int(inputStreamIndex)); ret < 0 {
+		return -1, fmt.Errorf("avcodec_parameters_copy: %w", newErr(ret))
+	}
+	return int(st.index), nil
+}
+
+// StreamTimeBase returns the time_base of output stream idx as {num, den}.
+// Valid after AddStream / AddStreamFromInput; some muxers adjust it during
+// WriteHeader, so callers wanting the post-header value should re-query.
+func (f *OutputFormatContext) StreamTimeBase(idx int) [2]int {
+	tb := C.out_stream_time_base(f.p, C.int(idx))
+	return [2]int{int(tb.num), int(tb.den)}
+}
+
+// SetStreamCodecTag sets the codecpar.codec_tag (FourCC) on output stream
+// idx. tag must be a 4-byte ASCII string (e.g. "hvc1", "hev1", "avc1").
+// Must be called after AddStream / AddStreamFromInput and before
+// WriteHeader. Equivalent to ffmpeg's -tag:v / -tag:a CLI option.
+func (f *OutputFormatContext) SetStreamCodecTag(idx int, tag string) error {
+	if len(tag) != 4 {
+		return fmt.Errorf("SetStreamCodecTag: tag %q must be exactly 4 ASCII characters", tag)
+	}
+	for _, b := range []byte(tag) {
+		if b > 0x7f {
+			return fmt.Errorf("SetStreamCodecTag: tag %q must be ASCII", tag)
+		}
+	}
+	b := []byte(tag)
+	v := uint32(b[0]) | uint32(b[1])<<8 | uint32(b[2])<<16 | uint32(b[3])<<24
+	if ret := C.set_stream_codec_tag(f.p, C.int(idx), C.uint32_t(v)); ret < 0 {
+		return fmt.Errorf("set_stream_codec_tag: invalid stream index %d", idx)
+	}
+	return nil
+}
+
 // WriteHeader writes the container header. Must be called after all streams
 // have been added and before any packets are written.
 func (f *OutputFormatContext) WriteHeader() error {
@@ -101,6 +187,19 @@ func (f *OutputFormatContext) WritePacket(pkt *Packet) error {
 func (f *OutputFormatContext) WriteTrailer() error {
 	ret := C.av_write_trailer(f.p)
 	return newErr(ret)
+}
+
+// BytesWritten returns the current size in bytes of the muxed
+// container as reported by libavformat's IO context (avio_tell).
+// Returns -1 when the context has no attached IO (e.g. AVFMT_NOFILE
+// muxers). Used by the runtime to enforce `-fs` (Output.MaxFileSize)
+// the same way fftools/ffmpeg_mux.c does: query before each
+// WritePacket and stop with EOF once the limit is reached.
+func (f *OutputFormatContext) BytesWritten() int64 {
+	if f == nil || f.p == nil {
+		return -1
+	}
+	return int64(C.bytes_written(f.p))
 }
 
 // Close flushes, closes the IO context, frees the AVFormatContext, and

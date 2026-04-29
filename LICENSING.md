@@ -62,12 +62,14 @@ ensure your distribution complies with the most restrictive applicable license.
 
 ## Patent notice
 
+The LGPL license allows you to use this copyrighted source code — it does not 
+grant rights under any third-party patents.
+
 MediaMolder links to FFmpeg's libav* libraries, which implement technologies that
 may be covered by patents in some jurisdictions. This includes, but is not limited
 to, audio and video codecs, container formats, multiplexing and demultiplexing
 methods, filtering and signal processing algorithms, and hardware acceleration
-interfaces. The LGPL license covers copyright only — it does not grant rights
-under any third-party patents.
+interfaces. 
 
 Anyone building, distributing, or deploying MediaMolder is responsible for
 understanding the applicable patent laws in their jurisdiction and obtaining

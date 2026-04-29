@@ -27,7 +27,8 @@
       "minItems": 1,
       "items": { "$ref": "#/$defs/output" }
     },
-    "global_options": { "$ref": "#/$defs/global_options" }
+    "global_options": { "$ref": "#/$defs/global_options" },
+    "copy_ts": { "type": "boolean", "description": "Preserve the original demuxer timestamps end-to-end instead of rebasing every input to PTS 0. Mirrors ffmpeg's global -copyts: suppresses the demuxer-side ts_offset shift that normally accompanies -ss, and changes the meaning of any output-side -ss / -to (in output.options) to absolute timeline values rather than offsets from the input's start. Required for accurate broadcast / HLS PTS handling." }
   },
   "$defs": {
     "input": {
@@ -37,6 +38,9 @@
       "properties": {
         "id": { "type": "string", "minLength": 1 },
         "url": { "type": "string", "minLength": 1 },
+        "kind": { "type": "string", "enum": ["file", "lavfi"], "description": "How to open the input. \"file\" (default) probes the URL with libavformat. \"lavfi\" routes through the lavfi virtual demuxer (FFmpeg's -f lavfi); the URL is then a filtergraph spec such as 'anullsrc=r=48000:cl=stereo' or 'color=black:s=1920x1080:r=30'." },
+        "map_metadata": { "type": "boolean", "description": "When true, copy this input's container-level metadata onto every output that does not set its own `metadata`. Mirrors ffmpeg `-map_metadata IDX`. Multiple inputs merge in declaration order; last writer wins per key." },
+        "map_chapters": { "type": "boolean", "description": "When true, copy this input's chapter table onto every output that does not set its own `chapters`. Mirrors ffmpeg `-map_chapters IDX`. First input with map_chapters=true wins (single-source semantics)." },
         "streams": {
           "type": "array",
           "items": { "$ref": "#/$defs/stream_select" }
@@ -127,19 +131,58 @@
         "codec_video": { "type": "string" },
         "codec_audio": { "type": "string" },
         "codec_subtitle": { "type": "string" },
+        "codec_tag_video": { "type": "string", "minLength": 4, "maxLength": 4, "description": "FourCC override for the video stream's codec_tag (e.g. 'hvc1' for HEVC in MP4). Equivalent to ffmpeg -tag:v." },
+        "codec_tag_audio": { "type": "string", "minLength": 4, "maxLength": 4 },
+        "codec_tag_subtitle": { "type": "string", "minLength": 4, "maxLength": 4 },
+        "encoder_params_video": { "type": "object", "additionalProperties": true, "description": "Codec-specific options (preset, crf, b, g, ...) attached to the implicit video encoder. Populated by compat/ffcli when parsing FFmpeg command lines." },
+        "encoder_params_audio": { "type": "object", "additionalProperties": true },
+        "encoder_params_subtitle": { "type": "object", "additionalProperties": true },
         "bsf_video": { "type": "string" },
         "bsf_audio": { "type": "string" },
+        "max_frames_video": { "type": "integer", "minimum": 0, "description": "Stop muxing after N video packets. 0 = unlimited. Mirrors ffmpeg -frames:v / -vframes; required for extract-frame, tile-thumbnails, scene-image patterns." },
+        "max_frames_audio": { "type": "integer", "minimum": 0, "description": "Stop muxing after N audio packets. 0 = unlimited. Mirrors ffmpeg -frames:a / -aframes." },
+        "fps_mode": { "type": "string", "enum": ["", "passthrough", "vfr", "cfr", "drop"], "description": "Per-output video frame-rate enforcement. Mirrors ffmpeg -fps_mode (and the legacy -vsync alias rewritten by compat/ffcli). passthrough/empty = no change; vfr = drop non-monotonic frames; cfr = renumber to constant 1/framerate intervals, duplicating frames into gaps and dropping frames that arrive too soon; drop = like vfr but also drops near-duplicates within half a frame duration of the previous emission." },
+        "audio_sync": { "type": "integer", "minimum": 0, "description": "Per-output audio resync compensation. Mirrors the legacy ffmpeg -async N flag (removed from the FFmpeg 8.0 CLI in favour of -af aresample=async=N). 0 = off; 1 = pad/trim the start so the first sample lands at PTS 0 (rendered as aresample=async=1:first_pts=0); N>1 = continuous soft compensation up to N samples/sec (rendered as aresample=async=N). Injected as an aresample filter node in front of the audio encoder." },
+        "shortest": { "type": "boolean", "description": "Stop muxing as soon as the shortest input stream feeding this output ends. Mirrors ffmpeg -shortest (per-output scope, see fftools/ffmpeg_mux_init.c sync-queue setup). The runtime captures the PTS at which the first stream closes and stops emitting on every other stream of the same output." },
+        "max_file_size": { "type": "integer", "minimum": 0, "description": "Cap the encoded output at this many bytes. Mirrors ffmpeg -fs SIZE: before each WritePacket the runtime queries avio_tell on the muxer's IO context and stops with EOF (writing a clean trailer) once the limit is reached. 0 = unlimited." },
+        "metadata": { "type": "object", "additionalProperties": { "type": "string" }, "description": "Container-level key/value metadata written into the output (`-metadata key=value`). Replaces any metadata mapped from inputs via `input.map_metadata`." },
+        "streams": { "type": "array", "items": { "$ref": "#/$defs/stream_spec" }, "description": "Per-stream metadata + disposition overrides. Mirrors ffmpeg `-metadata:s:<type>:<idx> key=value` and `-disposition:s:<type>:<idx> flags`. Each entry addresses one output stream by media type and 0-based index within that type, counting in the order streams were added to the muxer (same convention as `check_stream_specifier` for `s:<type>:<idx>`). Per-stream codec/bitrate is intentionally not exposed here — model it with explicit encoder graph nodes (see testdata/examples/35_abr_ladder.json)." },
+        "chapters": { "type": "array", "items": { "$ref": "#/$defs/chapter" }, "description": "Explicit chapter table. Replaces any chapters mapped from inputs via `input.map_chapters`. Container must support chapters (matroska, mp4, ogg, ffmetadata, ...)." },
         "options": {
           "type": "object",
           "additionalProperties": true
         }
       }
     },
+    "chapter": {
+      "type": "object",
+      "required": ["start", "end"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "integer" },
+        "start": { "type": "number", "minimum": 0, "description": "Chapter start in seconds." },
+        "end": { "type": "number", "minimum": 0, "description": "Chapter end in seconds." },
+        "title": { "type": "string" },
+        "metadata": { "type": "object", "additionalProperties": { "type": "string" } }
+      }
+    },
+    "stream_spec": {
+      "type": "object",
+      "required": ["type", "index"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "type": "string", "enum": ["v", "a", "s", "d"], "description": "Media type letter: v=video, a=audio, s=subtitle, d=data." },
+        "index": { "type": "integer", "minimum": 0, "description": "0-based index within the media type, matching FFmpeg's `s:<type>:<idx>` resolution rule." },
+        "metadata": { "type": "object", "additionalProperties": { "type": "string" }, "description": "Per-stream key/value metadata (e.g. `language=eng`, `title=Director Commentary`). Mirrors `-metadata:s:<type>:<idx>`." },
+        "disposition": { "type": "string", "description": "`+`-separated list of AV_DISPOSITION_* flag names (e.g. `default`, `default+forced`, `hearing_impaired`). Mirrors `-disposition:s:<type>:<idx>`. Empty string leaves the disposition untouched." }
+      }
+    },
     "global_options": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "threads": { "type": "integer", "minimum": 0 },
+        "threads": { "type": "integer", "minimum": 0, "description": "Default codec thread count for all decoders/encoders. 0 = FFmpeg auto-detect. Can be overridden per node via params.threads." },
+        "thread_type": { "type": "string", "enum": ["frame", "slice", "frame+slice"], "description": "Default codec threading model. Can be overridden per node via params.thread_type." },
         "hw_accel": { "type": "string" },
         "hw_device": { "type": "string" },
         "realtime": { "type": "boolean" }

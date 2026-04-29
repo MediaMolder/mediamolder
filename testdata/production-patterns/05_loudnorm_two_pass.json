@@ -1,0 +1,16 @@
+{
+  "name": "loudnorm_two_pass",
+  "description": "EBU R128 two-pass loudnorm. Pass 1 runs the analysis filter and emits measured_I / measured_TP / measured_LRA / measured_thresh / offset to stderr as JSON; pass 2 feeds those values back into a second loudnorm invocation as `measured_*` parameters for an exact, deterministic loudness target. Distinct from generic two-pass video encoding — it needs an inter-pass shuttle that captures stderr-side filter metadata and threads it into the next graph.",
+  "ffmpeg_cmd_pass1": "ffmpeg -y -i {{input}} -af loudnorm=I=-16:LRA=11:TP=-1.5:print_format=json -f null -",
+  "ffmpeg_cmd_pass2": "ffmpeg -y -i {{input}} -af loudnorm=I=-16:LRA=11:TP=-1.5:measured_I=$M_I:measured_TP=$M_TP:measured_LRA=$M_LRA:measured_thresh=$M_THRESH:offset=$M_OFFSET:linear=true -c:v copy {{output}}",
+  "out_ext": ".mp4",
+  "blockers": [
+    "loudnorm-two-pass-shuttle (§3.1 step 7 / §2.4 'Two-pass loudnorm' row — pass 1 stderr → pass 2 params is not yet a pipeline orchestration primitive)"
+  ],
+  "roadmap_refs": [
+    "§1.1 'two-pass loudnorm'",
+    "§2.4 'Two-pass loudnorm' row",
+    "§3.1 step 7 'Two-pass loudnorm shuttle'"
+  ],
+  "duration_tol": 0.5
+}
