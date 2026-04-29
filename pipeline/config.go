@@ -382,6 +382,38 @@ type Output struct {
 	// file directly and feeds AVCodecContext.stats_in / stats_out
 	// (mirrors the three-way switch in fftools/ffmpeg_mux_init.c).
 	PassLogFile string `json:"passlogfile,omitempty"`
+	// LoudnormPass selects the role of this output in a two-pass
+	// EBU R128 loudness-normalization shuttle. 0 = single-pass
+	// (default; `loudnorm` runs in measurement-only mode without
+	// the `measured_*` feed-forward, exactly as FFmpeg's
+	// `-af loudnorm` behaves with no `print_format`). 1 = analysis
+	// pass — the runtime walks the graph for any filter node with
+	// `filter == "loudnorm"`, sets `print_format=json` and
+	// `stats_file=<LoudnormStatsFile>-<idx>.json` on it, and on
+	// uninit the loudnorm filter writes the EBU R128 measurements
+	// (input_i, input_tp, input_lra, input_thresh, target_offset)
+	// to that JSON file via `avpriv_fopen_utf8` — the same code
+	// path FFmpeg's `print_format=json:stats_file=…` uses
+	// (libavfilter/af_loudnorm.c::uninit). 2 = apply pass — the
+	// runtime reads the JSON file written by pass 1 and injects
+	// `measured_I` / `measured_TP` / `measured_LRA` /
+	// `measured_thresh` / `offset` parameters into the same
+	// loudnorm filter node, so the second invocation produces a
+	// linearly-scaled output that hits the configured `I` / `TP`
+	// / `LRA` targets exactly. The job is run twice by the caller
+	// (pass 1 then pass 2) against the same `LoudnormStatsFile`
+	// prefix. This is the orchestration primitive FFmpeg itself
+	// has no flag for — every documented two-pass loudnorm
+	// recipe wires it by hand via stderr-scraping. Mirrors the
+	// shape of `Pass` for video two-pass encoding.
+	LoudnormPass int `json:"loudnorm_pass,omitempty"`
+	// LoudnormStatsFile is the prefix the loudnorm shuttle uses to
+	// build the per-loudnorm-node JSON stats file path
+	// (`<prefix>-<idx>.json` where `<idx>` is the per-run
+	// loudnorm-node ordinal so multiple loudnorm filters in one
+	// job get unique stats files). Empty defaults to
+	// `mm-loudnorm`. Honoured only when `LoudnormPass != 0`.
+	LoudnormStatsFile string `json:"loudnorm_statsfile,omitempty"`
 }
 
 // TeeTarget describes one slave of a `Kind == "tee"` Output. It
@@ -625,6 +657,27 @@ func validate(cfg *Config) error {
 		}
 		if out.Pass == 0 && out.PassLogFile != "" {
 			return fmt.Errorf("output %q: passlogfile is only valid when pass != 0", out.ID)
+		}
+		if out.LoudnormPass < 0 || out.LoudnormPass > 2 {
+			return fmt.Errorf("output %q: invalid loudnorm_pass %d (want 0|1|2)", out.ID, out.LoudnormPass)
+		}
+		if out.LoudnormPass == 0 && out.LoudnormStatsFile != "" {
+			return fmt.Errorf("output %q: loudnorm_statsfile is only valid when loudnorm_pass != 0", out.ID)
+		}
+	}
+	// At most one non-zero loudnorm_pass across the whole run — a
+	// single job invocation maps to one shuttle pass (mirrors the
+	// hand-rolled FFmpeg recipe: one ffmpeg run = pass 1 OR pass 2).
+	{
+		seen := 0
+		for _, out := range cfg.Outputs {
+			if out.LoudnormPass == 0 {
+				continue
+			}
+			if seen != 0 && seen != out.LoudnormPass {
+				return fmt.Errorf("conflicting loudnorm_pass values across outputs (got %d and %d) — a single run can carry only one pass", seen, out.LoudnormPass)
+			}
+			seen = out.LoudnormPass
 		}
 	}
 	// Edge types must be valid.

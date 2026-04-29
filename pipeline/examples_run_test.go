@@ -171,6 +171,10 @@ func runExample(t *testing.T, jsonPath, name, inputAbs, subsrtAbs, subassAbs str
 	// stats_out shuttle) does not pollute the package directory.
 	raw = strings.ReplaceAll(raw, "{{passlog}}", filepath.ToSlash(filepath.Join(tmpDir, "ffmpeg2pass")))
 
+	// Loudnorm shuttle stats prefix → tmpDir so pass-1 JSON does not
+	// pollute the package directory.
+	raw = strings.ReplaceAll(raw, "{{loudnorm_stats}}", filepath.ToSlash(filepath.Join(tmpDir, "mm-loudnorm")))
+
 	// --- Parse config ---
 	cfg, err := ParseConfig([]byte(raw))
 	if err != nil {

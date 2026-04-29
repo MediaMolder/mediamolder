@@ -50,6 +50,17 @@ func configToGraphDef(cfg *Config) *graph.Def {
 	expandImplicitEncoders(cfg, def)
 	spliceAudioAdaptersForEncoders(def)
 	spliceAudioSyncForOutputs(cfg, def)
+	// Loudnorm two-pass shuttle: walk loudnorm filter nodes and stamp
+	// pass / stats-file markers + (pass 1) print_format/stats_file
+	// AVOptions. Pass-2 measurement read deferred to createFilter so
+	// the file-not-found error flows through normal graph-init paths.
+	// Errors here only fire on cross-output validation (e.g.
+	// conflicting LoudnormPass values); those would have been caught
+	// by Config.Validate already, so we panic on the impossible case
+	// to keep the BuildDef signature stable.
+	if err := applyLoudnormShuttle(cfg, def); err != nil {
+		panic(err)
+	}
 	return def
 }
 
@@ -1939,9 +1950,34 @@ func (r *graphRunner) openSource(cfg Input, srcNode *graph.Node, decOpts av.Deco
 }
 
 func (r *graphRunner) createFilter(dag *graph.Graph, node *graph.Node) (*av.FilterGraph, error) {
+	params := node.Params
+	// Loudnorm pass-2 shuttle: read the JSON stats file written by
+	// pass 1 and inject measured_I / measured_TP / measured_LRA /
+	// measured_thresh / offset into the loudnorm node's params before
+	// the filter graph is instantiated. See pipeline/loudnorm.go.
+	if node.Filter == "loudnorm" && params != nil {
+		if pv, ok := params["__loudnorm_pass"]; ok {
+			pi, _ := pv.(int)
+			if pi == 2 {
+				statsPath, _ := params["__loudnorm_stats"].(string)
+				measured, err := loadLoudnormMeasurements(statsPath)
+				if err != nil {
+					return nil, fmt.Errorf("filter %q: %w", node.ID, err)
+				}
+				merged := make(map[string]any, len(params)+len(measured))
+				for k, v := range params {
+					merged[k] = v
+				}
+				for k, v := range measured {
+					merged[k] = v
+				}
+				params = merged
+			}
+		}
+	}
 	filterSpec := buildFilterSpec(NodeDef{
 		Filter: node.Filter,
-		Params: node.Params,
+		Params: params,
 	})
 
 	// Simple 1→1 filter.

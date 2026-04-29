@@ -59,7 +59,7 @@ of gaps that the 35-script community corpus does not exercise:
 | Gap                                                            | Note |
 |----------------------------------------------------------------|------|
 | **Filter expression engine** (`enable=between(t,2,8)`, `x=w-tw*t/5`, `t`, `n`, `frame`, `tw`, `th`, `text_w`, `text_h`) | Used by `drawtext`, `overlay`, `fade`, `crop`, `zoompan`, `geq`, … — `params` values today are stringified verbatim, but the GUI cannot help users author or validate them. |
-| **Two-pass `loudnorm`**                                        | Pass 1 emits JSON to stderr (`measured_I`, `measured_TP`, `measured_LRA`, `measured_thresh`, `offset`); pass 2 must consume those values. Distinct from generic two-pass video encoding — needs an inter-pass shuttle in the engine. |
+| **Two-pass `loudnorm`**                                        | ✅ Landed — `Output.LoudnormPass` / `Output.LoudnormStatsFile` carry the EBU R128 shuttle. Pass 1 sets `print_format=json`+`stats_file` on every loudnorm filter so libavfilter writes input_i/tp/lra/thresh/target_offset to a JSON file (`af_loudnorm.c::uninit`); pass 2 reads it and injects `measured_I/TP/LRA/thresh`+`offset` AVOptions. No FFmpeg flag — orchestration sugar above the manual two-run recipe. |
 | **`setsar` / `setdar` and explicit SAR/DAR encoding**          | Required for square-pixel correction of legacy 720×480 / 720×576 sources and for HDR/Dolby SAR enforcement. |
 | **Audio channel manipulation** (`pan`, `channelsplit`, `channelmap`, `join`, `amerge`, `amix=weights=…`) | Multi-track downmix / upmix / language-track splitting. |
 | **Speech denoise model files** (`arnndn=model=cb.rnnn`)        | Filter takes a model path; we have no fixture/asset story for filter-side data files. Same problem as YOLO model paths but for filters rather than processors. |
@@ -161,7 +161,7 @@ semantics.
 | Codec-specific AVOptions (`preset`, `crf`, `tune`, `profile`, `level`, `g`, `bf`, `refs`, `x264-params`, `x265-params`, `aq-mode`, `tier`, …) | ✅ | Forwarded to `avcodec_open2` via `EncoderParams*` dict |
 | Hardware encoders (NVENC, QSV, VAAPI, VideoToolbox, AMF)          | ✅    | Per `av/hwencode.go`; tested for NVENC |
 | Two-pass encoding (`-pass 1/2 -passlogfile`)                      | ✅    | `Output.Pass` + `Output.PassLogFile` (Wave 1 #6) |
-| **Two-pass `loudnorm`** (measured-I/TP/LRA/thresh/offset feed-forward) | ❌ | Distinct inter-pass shuttle from video two-pass; pass 1 parses JSON from stderr, pass 2 consumes it. Frequently requested. |
+| **Two-pass `loudnorm`** (measured-I/TP/LRA/thresh/offset feed-forward) | ✅ | Inter-pass shuttle landed. Pass 1: libavfilter writes JSON via `print_format=json`+`stats_file`. Pass 2: runtime parses JSON and injects `measured_*`+`offset` AVOptions. Carried by `Output.LoudnormPass` (0/1/2) and `Output.LoudnormStatsFile` (prefix). |
 | **Lossless intermediate codecs** (FFV1, ProRes, DNxHD/HR, HuffYUV) for editorial round-trips | ⚠️ | Encoders exist if FFmpeg compiled with them; no schema validation of codec ↔ container compatibility |
 | `-fps_mode` (`cfr`/`vfr`/`passthrough`/`drop`) (formerly `-vsync`) | ✅    | `Output.FPSMode`; per-frame renumber/drop/duplicate logic in `pipeline/fps_mode.go` consumed by `handleEncoder` for video streams. `compat/ffcli` rewrites the legacy `-vsync` numeric/auto aliases. |
 | `-async N` (audio resync via resampler)                            | ✅    | `Output.AudioSync`; `pipeline.spliceAudioSyncForOutputs` injects an `aresample=async=N[:first_pts=0 when N==1]` filter node in front of every audio encoder feeding the output. `compat/ffcli` accepts the legacy flag. |
@@ -707,9 +707,31 @@ real jobs."
    each `ReceivePacket` in `handleEncoder`). Job is run twice by
    the caller against the same prefix. `compat/ffcli` parses
    `-pass N` + `-passlogfile P`. Sixth Wave 1 item.
-7. **Two-pass `loudnorm` shuttle** (§3.1.7) — Same orchestration
-   primitive as #6; pass 1 parses JSON sidedata, pass 2 consumes it.
-   Top-three reason people reach for ffmpeg in the first place.
+7. **Two-pass `loudnorm` shuttle** (§3.1.7) — ✅ **landed.**
+   `Output.LoudnormPass` (0 / 1 / 2 — sequential, not a bit-field
+   because libavfilter exposes no AV_CODEC_FLAG-equivalent for
+   loudnorm) and `Output.LoudnormStatsFile` (prefix; final
+   filename rendered as `<prefix>-<idx>.json` where `<idx>` is the
+   per-run loudnorm-node ordinal). Pass 1: the runtime walks the
+   graph in `pipeline/loudnorm.go::applyLoudnormShuttle` for every
+   `filter == "loudnorm"` node, sets `print_format=json` and
+   `stats_file=<prefix>-<idx>.json` directly on the node so
+   `libavfilter/af_loudnorm.c::uninit` (lines 830-935) writes the
+   EBU R128 measurements (input_i / input_tp / input_lra /
+   input_thresh / target_offset) to the JSON file via
+   `avpriv_fopen_utf8` — exactly the same code path FFmpeg's
+   `print_format=json:stats_file=…` uses. Pass 2: the runtime
+   reads the JSON in `createFilter`, parses it with the
+   `loudnormStatsJSON` struct (every value is a `"%.2f"` string in
+   the source, so we use `strconv.ParseFloat` rather than letting
+   `encoding/json` coerce numerics), and injects `measured_I` /
+   `measured_TP` / `measured_LRA` / `measured_thresh` / `offset`
+   into the same loudnorm node before instantiating the filter
+   graph. Job is run twice by the caller against the same prefix.
+   FFmpeg has no flag for the shuttle itself — every documented
+   two-pass loudnorm recipe wires it by hand via stderr-scraping;
+   this is the orchestration sugar that makes the recipe
+   declarative. Seventh Wave 1 item.
 8. **`-force_key_frames "expr:gte(t,n_forced*2)"`** (§2.4) — GOP
    control is mandatory for HLS/DASH segmenting; without it the
    segmenters silently produce broken playlists.

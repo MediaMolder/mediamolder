@@ -780,6 +780,13 @@ func buildFilterSpec(node NodeDef) string {
 				continue
 			}
 		}
+		// Reserved internal markers used by the runtime to thread
+		// pipeline-level state into a filter node (e.g. the loudnorm
+		// shuttle's `__loudnorm_pass` / `__loudnorm_stats`). They
+		// must not reach the libavfilter parser.
+		if strings.HasPrefix(k, "__") {
+			continue
+		}
 		named = append(named, k)
 	}
 	sort.Slice(positional, func(i, j int) bool { return positional[i].idx < positional[j].idx })

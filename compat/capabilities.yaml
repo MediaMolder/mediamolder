@@ -223,8 +223,8 @@ sections:
         status: covered
         schema: pipeline.Output.Pass / pipeline.Output.PassLogFile
       - flag: "two-pass loudnorm shuttle"
-        status: missing
-        schema: n/a
+        status: covered
+        schema: pipeline.Output.LoudnormPass / pipeline.Output.LoudnormStatsFile
         notes: distinct from generic two-pass; pass-1 JSON → pass-2 AVOpts
       - flag: "lossless intermediates (FFV1/ProRes/DNxHD/HuffYUV)"
         status: partial

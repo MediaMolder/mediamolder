@@ -187,6 +187,18 @@ export interface Output {
    *  `ffmpeg2pass`. Honoured only when `pass !== 0`. Mirrors FFmpeg
    *  `-passlogfile`. */
   passlogfile?: string;
+  /** Two-pass EBU R128 loudnorm shuttle. 0 = single-pass; 1 = analysis
+   *  (libavfilter writes input_i / input_tp / input_lra / input_thresh
+   *  / target_offset to a JSON stats file); 2 = apply (the runtime
+   *  reads pass-1 stats and injects measured_I / measured_TP /
+   *  measured_LRA / measured_thresh / offset into the same loudnorm
+   *  node). Run the job twice (loudnorm_pass=1 then 2) against the
+   *  same loudnorm_statsfile prefix. FFmpeg has no flag for this. */
+  loudnorm_pass?: 0 | 1 | 2;
+  /** Prefix for the per-loudnorm-node JSON stats file rendered as
+   *  `<prefix>-<idx>.json`. Empty defaults to `mm-loudnorm`. Honoured
+   *  only when `loudnorm_pass !== 0`. */
+  loudnorm_statsfile?: string;
   options?: Record<string, unknown>;
 }
 
