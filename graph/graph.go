@@ -24,14 +24,14 @@ const (
 type NodeKind int
 
 const (
-	KindSource           NodeKind = iota // demux + decode
-	KindFilter                           // libavfilter
-	KindEncoder                          // encode
-	KindSink                             // mux
-	KindGoProcessor                      // custom Go per-frame processor
-	KindCopy                             // stream copy: forward demuxer packets to muxer
-	KindMetadataReader                   // read container/stream metadata or chapters from a source (Wave 2 #11)
-	KindMetadataWriter                   // write container/stream metadata or chapters into a sink (Wave 2 #11)
+	KindSource         NodeKind = iota // demux + decode
+	KindFilter                         // libavfilter
+	KindEncoder                        // encode
+	KindSink                           // mux
+	KindGoProcessor                    // custom Go per-frame processor
+	KindCopy                           // stream copy: forward demuxer packets to muxer
+	KindMetadataReader                 // read container/stream metadata or chapters from a source (Wave 2 #11)
+	KindMetadataWriter                 // write container/stream metadata or chapters into a sink (Wave 2 #11)
 )
 
 func (k NodeKind) String() string {
