@@ -1,0 +1,37 @@
+{
+  "schema_version": "1.0",
+  "description": "Generate a fixed-duration silent stereo WAV using libavfilter's anullsrc virtual source (FFmpeg's '-f lavfi -i anullsrc=...'). Demonstrates Input.Kind = \"lavfi\". Matches 'audio-silence -t 00:00:02 -o silence.wav' (and ffmpeg -f lavfi -i anullsrc=cl=stereo:r=44100 -t 2 silence.wav).",
+  "inputs": [
+    {
+      "id": "in0",
+      "url": "anullsrc=channel_layout=stereo:sample_rate=44100",
+      "kind": "lavfi",
+      "options": { "t": "2" },
+      "streams": [
+        { "input_index": 0, "type": "audio", "track": 0 }
+      ]
+    }
+  ],
+  "graph": {
+    "nodes": [
+      {
+        "id": "aformat0",
+        "type": "filter",
+        "filter": "aformat",
+        "params": { "sample_fmts": "s16", "sample_rates": "44100", "channel_layouts": "stereo" }
+      }
+    ],
+    "edges": [
+      { "from": "in0:a:0",  "to": "aformat0", "type": "audio" },
+      { "from": "aformat0", "to": "out0:a",   "type": "audio" }
+    ]
+  },
+  "outputs": [
+    {
+      "id": "out0",
+      "url": "{{output}}",
+      "format": "wav",
+      "codec_audio": "pcm_s16le"
+    }
+  ]
+}

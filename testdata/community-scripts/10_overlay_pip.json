@@ -1,0 +1,52 @@
+{
+  "schema_version": "1.0",
+  "description": "Picture-in-picture: scale overlay video to 1/4 width, place in bottom-right corner. Matches 'overlay-pip -i bottom.mp4 -v pip.mp4 -p 0 -x br -w 0 -o output.mp4'.",
+  "inputs": [
+    {
+      "id": "in0",
+      "url": "{{input}}",
+      "streams": [
+        { "input_index": 0, "type": "video", "track": 0 },
+        { "input_index": 0, "type": "audio", "track": 0 }
+      ]
+    },
+    {
+      "id": "in1",
+      "url": "{{input2}}",
+      "streams": [
+        { "input_index": 0, "type": "video", "track": 0 }
+      ]
+    }
+  ],
+  "graph": {
+    "nodes": [
+      {
+        "id": "scale_pip",
+        "type": "filter",
+        "filter": "scale",
+        "params": { "w": "iw/4", "h": "-1" }
+      },
+      {
+        "id": "overlay0",
+        "type": "filter",
+        "filter": "overlay",
+        "params": { "x": "W-w-10", "y": "H-h-10" }
+      }
+    ],
+    "edges": [
+      { "from": "in1:v:0",   "to": "scale_pip", "type": "video" },
+      { "from": "in0:v:0",   "to": "overlay0",  "type": "video" },
+      { "from": "scale_pip", "to": "overlay0",  "type": "video" },
+      { "from": "overlay0",  "to": "out0:v",    "type": "video" },
+      { "from": "in0:a:0",   "to": "out0:a",    "type": "audio" }
+    ]
+  },
+  "outputs": [
+    {
+      "id": "out0",
+      "url": "{{output}}",
+      "codec_video": "libx264",
+      "codec_audio": "copy"
+    }
+  ]
+}

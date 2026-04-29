@@ -8,6 +8,9 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/MediaMolder/MediaMolder/observability"
+	"github.com/MediaMolder/MediaMolder/runtime"
 )
 
 // Event is the interface implemented by all pipeline events.
@@ -90,28 +93,51 @@ type ProcessorMetadata struct {
 
 func (ProcessorMetadata) eventTag() {}
 
-// MetricsEmitter periodically posts MetricsSnapshotEvent to the event bus.
+// MetricsEmitter periodically posts MetricsSnapshotEvent to the event bus
+// and optionally bridges metrics to Prometheus collectors.
 type MetricsEmitter struct {
-	interval time.Duration
-	registry *MetricsRegistry
-	events   *EventBus
-	getState func() State
-	cancel   context.CancelFunc
-	done     chan struct{}
+	interval  time.Duration
+	registry  *MetricsRegistry
+	events    *EventBus
+	getState  func() State
+	prom      *observability.Metrics         // nil = no Prometheus export
+	edgeStats *runtime.EdgeStatsRegistry     // nil = no backpressure bridge
+	prev      map[string]NodeMetricsSnapshot // previous snapshot for delta tracking
+	cancel    context.CancelFunc
+	done      chan struct{}
 }
 
 // NewMetricsEmitter creates an emitter that fires every interval.
 // If interval <= 0, the default of 5s is used.
-func NewMetricsEmitter(interval time.Duration, registry *MetricsRegistry, events *EventBus, getState func() State) *MetricsEmitter {
+// prom and edgeStats are optional (nil-safe).
+func NewMetricsEmitter(interval time.Duration, registry *MetricsRegistry, events *EventBus, getState func() State, opts ...MetricsEmitterOption) *MetricsEmitter {
 	if interval <= 0 {
 		interval = 5 * time.Second
 	}
-	return &MetricsEmitter{
+	m := &MetricsEmitter{
 		interval: interval,
 		registry: registry,
 		events:   events,
 		getState: getState,
+		prev:     make(map[string]NodeMetricsSnapshot),
 	}
+	for _, o := range opts {
+		o(m)
+	}
+	return m
+}
+
+// MetricsEmitterOption configures optional MetricsEmitter dependencies.
+type MetricsEmitterOption func(*MetricsEmitter)
+
+// WithPrometheus enables bridging metrics to Prometheus collectors.
+func WithPrometheus(prom *observability.Metrics) MetricsEmitterOption {
+	return func(m *MetricsEmitter) { m.prom = prom }
+}
+
+// WithEdgeStats enables bridging edge backpressure to Prometheus.
+func WithEdgeStats(es *runtime.EdgeStatsRegistry) MetricsEmitterOption {
+	return func(m *MetricsEmitter) { m.edgeStats = es }
 }
 
 // Start begins emitting periodic metrics snapshots.
@@ -132,11 +158,55 @@ func (m *MetricsEmitter) Start() {
 					Snapshot: snap,
 					Time:     time.Now(),
 				})
+				m.updatePrometheus(snap)
 			case <-ctx.Done():
 				return
 			}
 		}
 	}()
+}
+
+// updatePrometheus bridges internal metrics to Prometheus collectors.
+func (m *MetricsEmitter) updatePrometheus(snap MetricsSnapshot) {
+	if m.prom == nil {
+		return
+	}
+
+	m.prom.PipelineState.WithLabelValues().Set(float64(m.getState()))
+
+	for _, ns := range snap.Nodes {
+		labels := []string{ns.NodeID, "video"}
+
+		// Compute deltas for counters.
+		prev := m.prev[ns.NodeID]
+		deltaFrames := ns.Frames - prev.Frames
+		deltaErrors := ns.Errors - prev.Errors
+		deltaBytes := ns.Bytes - prev.Bytes
+		m.prev[ns.NodeID] = ns
+
+		if deltaFrames > 0 {
+			m.prom.FramesTotal.WithLabelValues(labels...).Add(float64(deltaFrames))
+		}
+		if deltaErrors > 0 {
+			m.prom.ErrorsTotal.WithLabelValues(labels...).Add(float64(deltaErrors))
+		}
+		if deltaBytes > 0 {
+			m.prom.BytesTotal.WithLabelValues(labels...).Add(float64(deltaBytes))
+		}
+
+		m.prom.Fps.WithLabelValues(labels...).Set(ns.FPS)
+
+		if ns.AvgLatency > 0 {
+			m.prom.NodeLatency.WithLabelValues(labels...).Observe(ns.AvgLatency.Seconds())
+		}
+	}
+
+	// Bridge edge backpressure stats.
+	if m.edgeStats != nil {
+		for _, es := range m.edgeStats.Snapshot() {
+			m.prom.NodeBufFill.WithLabelValues(es.ToNode).Set(es.Fill)
+		}
+	}
 }
 
 // Stop halts the periodic emitter.

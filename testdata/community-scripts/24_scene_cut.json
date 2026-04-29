@@ -1,0 +1,32 @@
+{
+  "schema_version": "1.0",
+  "description": "Re-encode a clip starting at a (scene-detected) timestamp, capping at N video frames via Output.MaxFramesVideo. Matches 'scene-cut -i input.mp4 -s 00:00:01 -t 00:00:03 -o cut.mp4' where the start time was previously found via scene detection. Combines input -ss/-t with -frames:v.",
+  "inputs": [
+    {
+      "id": "in0",
+      "url": "{{input}}",
+      "options": { "ss": "1", "t": "3" },
+      "streams": [
+        { "input_index": 0, "type": "video", "track": 0 },
+        { "input_index": 0, "type": "audio", "track": 0 }
+      ]
+    }
+  ],
+  "graph": {
+    "nodes": [],
+    "edges": [
+      { "from": "in0:v:0", "to": "out0:v", "type": "video" },
+      { "from": "in0:a:0", "to": "out0:a", "type": "audio" }
+    ]
+  },
+  "outputs": [
+    {
+      "id": "out0",
+      "url": "{{output}}",
+      "codec_video": "libx264",
+      "encoder_params_video": { "preset": "ultrafast", "crf": "30" },
+      "codec_audio": "aac",
+      "max_frames_video": 30
+    }
+  ]
+}

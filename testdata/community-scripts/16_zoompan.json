@@ -1,0 +1,49 @@
+{
+  "schema_version": "1.0",
+  "description": "Ken Burns zoom-in effect: zoom from 1.0x to 1.5x over 5 seconds (125 frames at 25 fps). Matches 'zoompan -i image.jpg -d 5 -z in -p c -o output.mp4'. Requires testdata/sample.jpg fixture (see FIXTURES.md).",
+  "inputs": [
+    {
+      "id": "in0",
+      "url": "{{image}}",
+      "options": { "loop": "1", "framerate": "25", "t": "5" },
+      "streams": [
+        { "input_index": 0, "type": "video", "track": 0 }
+      ]
+    }
+  ],
+  "graph": {
+    "nodes": [
+      {
+        "id": "zoompan0",
+        "type": "filter",
+        "filter": "zoompan",
+        "params": {
+          "z": "min(zoom+0.0015,1.5)",
+          "x": "iw/2-(iw/zoom/2)",
+          "y": "ih/2-(ih/zoom/2)",
+          "d": "125",
+          "s": "hd720"
+        }
+      },
+      {
+        "id": "fps0",
+        "type": "filter",
+        "filter": "fps",
+        "params": { "fps": "25" }
+      }
+    ],
+    "edges": [
+      { "from": "in0:v:0", "to": "zoompan0", "type": "video" },
+      { "from": "zoompan0","to": "fps0",     "type": "video" },
+      { "from": "fps0",    "to": "out0:v",   "type": "video" }
+    ]
+  },
+  "outputs": [
+    {
+      "id": "out0",
+      "url": "{{output}}",
+      "codec_video": "libx264",
+      "encoder_params_video": { "pix_fmt": "yuv420p" }
+    }
+  ]
+}

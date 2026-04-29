@@ -12,14 +12,19 @@ package av
 // #cgo CFLAGS: -I${SRCDIR}/../../ffmpeg
 // #cgo LDFLAGS: -L${SRCDIR}/../../ffmpeg/libavcodec    -lavcodec
 // #cgo LDFLAGS: -L${SRCDIR}/../../ffmpeg/libavformat   -lavformat
+// #cgo LDFLAGS: -L${SRCDIR}/../../ffmpeg/libavdevice   -lavdevice
 // #cgo LDFLAGS: -L${SRCDIR}/../../ffmpeg/libavfilter   -lavfilter
 // #cgo LDFLAGS: -L${SRCDIR}/../../ffmpeg/libavutil     -lavutil
 // #cgo LDFLAGS: -L${SRCDIR}/../../ffmpeg/libswscale    -lswscale
 // #cgo LDFLAGS: -L${SRCDIR}/../../ffmpeg/libswresample -lswresample
+// #cgo LDFLAGS: -L${SRCDIR}/../../x264 -lx264
+// #cgo darwin LDFLAGS: -L/opt/homebrew/opt/x265/lib -lx265 -lc++
+// #cgo linux LDFLAGS: -lx265 -lstdc++
 // #cgo LDFLAGS: -lbz2 -lz -liconv -lm -lpthread
 // #cgo darwin LDFLAGS: -L/opt/homebrew/Cellar/libxcb/1.17.0/lib -lxcb -lxcb-shm -lxcb-xfixes -lxcb-shape
 // #cgo darwin LDFLAGS: -L/opt/homebrew/lib -lSDL2
 // #cgo darwin LDFLAGS: -framework AudioToolbox
+// #cgo darwin LDFLAGS: -framework CoreAudio
 // #cgo darwin LDFLAGS: -framework VideoToolbox
 // #cgo darwin LDFLAGS: -framework CoreFoundation
 // #cgo darwin LDFLAGS: -framework CoreMedia
@@ -32,6 +37,7 @@ package av
 //
 // #include "libavcodec/avcodec.h"
 // #include "libavformat/avformat.h"
+// #include "libavdevice/avdevice.h"
 // #include "libavfilter/avfilter.h"
 // #include "libavutil/avutil.h"
 // #include "libswscale/swscale.h"

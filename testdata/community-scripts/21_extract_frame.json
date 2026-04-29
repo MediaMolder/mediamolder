@@ -1,0 +1,38 @@
+{
+  "schema_version": "1.0",
+  "description": "Extract a single frame at a specific timestamp as a JPEG. Matches 'extract-frame -i input.mp4 -ss 00:00:02 -o frame.jpg' (and ffmpeg -ss 2 -i in.mp4 -frames:v 1 frame.jpg). Demonstrates Output.MaxFramesVideo plumbing.",
+  "inputs": [
+    {
+      "id": "in0",
+      "url": "{{input}}",
+      "options": { "ss": "2" },
+      "streams": [
+        { "input_index": 0, "type": "video", "track": 0 }
+      ]
+    }
+  ],
+  "graph": {
+    "nodes": [
+      {
+        "id": "fmt0",
+        "type": "filter",
+        "filter": "format",
+        "params": { "pix_fmts": "yuvj420p" }
+      }
+    ],
+    "edges": [
+      { "from": "in0:v:0", "to": "fmt0",   "type": "video" },
+      { "from": "fmt0",    "to": "out0:v", "type": "video" }
+    ]
+  },
+  "outputs": [
+    {
+      "id": "out0",
+      "url": "{{output}}",
+      "format": "mjpeg",
+      "codec_video": "mjpeg",
+      "encoder_params_video": { "pix_fmt": "yuvj420p" },
+      "max_frames_video": 1
+    }
+  ]
+}

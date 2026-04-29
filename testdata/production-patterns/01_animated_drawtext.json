@@ -1,0 +1,17 @@
+{
+  "name": "animated_drawtext_scrolling",
+  "description": "Scrolling animated drawtext overlay — the canonical filter-expression authoring stress test (FFmpeg uses 't', 'tw', 'w' inside x=). Mirrors lower-third / news-ticker / scroll-credits production patterns.",
+  "ffmpeg_cmd": "ffmpeg -y -i {{input}} -vf \"drawtext=fontfile=/System/Library/Fonts/Supplemental/Arial.ttf:text='MediaMolder roadmap §1.1':fontcolor=white:fontsize=36:x=w-mod(40*t\\,w+tw):y=h-60:enable='between(t,1,8)'\" -c:v libx264 -preset ultrafast -an {{output}}",
+  "out_ext": ".mp4",
+  "blockers": [
+    "drawtext-libfreetype-build",
+    "filter-expression-authoring (§3.1#6 / §2.3 'Filter expression engine')"
+  ],
+  "roadmap_refs": [
+    "§1.1 'Filter expression engine'",
+    "§2.3 'Filter expression engine' row",
+    "§3.1 step 6 'Filter expression engine surface'",
+    "§3.5 step 8 'Filter expression authoring'"
+  ],
+  "duration_tol": 0.5
+}

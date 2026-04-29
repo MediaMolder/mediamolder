@@ -1,0 +1,43 @@
+{
+  "schema_version": "1.0",
+  "description": "Create an animated WebP from a video clip. Matches 'webp -i input -c 4 -q 80 -f 15 -w 600 -o output.webp'. Requires libwebp (libwebp_anim encoder).",
+  "inputs": [
+    {
+      "id": "in0",
+      "url": "{{input}}",
+      "options": { "t": "5" },
+      "streams": [
+        { "input_index": 0, "type": "video", "track": 0 }
+      ]
+    }
+  ],
+  "graph": {
+    "nodes": [
+      {
+        "id": "fps0",
+        "type": "filter",
+        "filter": "fps",
+        "params": { "fps": "15" }
+      },
+      {
+        "id": "scale0",
+        "type": "filter",
+        "filter": "scale",
+        "params": { "w": "600", "h": "-1" }
+      }
+    ],
+    "edges": [
+      { "from": "in0:v:0", "to": "fps0",   "type": "video" },
+      { "from": "fps0",    "to": "scale0", "type": "video" },
+      { "from": "scale0",  "to": "out0:v", "type": "video" }
+    ]
+  },
+  "outputs": [
+    {
+      "id": "out0",
+      "url": "{{output}}",
+      "codec_video": "libwebp_anim",
+      "encoder_params_video": { "quality": "80" }
+    }
+  ]
+}

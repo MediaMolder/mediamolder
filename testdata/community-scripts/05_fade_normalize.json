@@ -1,0 +1,78 @@
+{
+  "schema_version": "1.0",
+  "description": "Fade video and audio in/out, then normalize audio loudness with loudnorm. Matches 'fade-normalize -i input -d 0.5 -o output.mp4'.",
+  "inputs": [
+    {
+      "id": "in0",
+      "url": "{{input}}",
+      "streams": [
+        { "input_index": 0, "type": "video", "track": 0 },
+        { "input_index": 0, "type": "audio", "track": 0 }
+      ]
+    }
+  ],
+  "graph": {
+    "nodes": [
+      {
+        "id": "fade_in",
+        "type": "filter",
+        "filter": "fade",
+        "params": { "t": "in", "st": "0", "d": "0.5" }
+      },
+      {
+        "id": "fade_out",
+        "type": "filter",
+        "filter": "fade",
+        "params": { "t": "out", "st": "8.5", "d": "0.5" }
+      },
+      {
+        "id": "afade_in",
+        "type": "filter",
+        "filter": "afade",
+        "params": { "t": "in", "st": "0", "d": "0.5" }
+      },
+      {
+        "id": "afade_out",
+        "type": "filter",
+        "filter": "afade",
+        "params": { "t": "out", "st": "9.0", "d": "0.5" }
+      },
+      {
+        "id": "loudnorm0",
+        "type": "filter",
+        "filter": "loudnorm"
+      },
+      {
+        "id": "aformat0",
+        "type": "filter",
+        "filter": "aformat",
+        "params": { "sample_rates": "48000", "sample_fmts": "fltp" }
+      },
+      {
+        "id": "asetnsamples0",
+        "type": "filter",
+        "filter": "asetnsamples",
+        "params": { "n": "1024", "p": "0" }
+      }
+    ],
+    "edges": [
+      { "from": "in0:v:0",       "to": "fade_in",       "type": "video" },
+      { "from": "fade_in",       "to": "fade_out",      "type": "video" },
+      { "from": "fade_out",      "to": "out0:v",        "type": "video" },
+      { "from": "in0:a:0",       "to": "afade_in",      "type": "audio" },
+      { "from": "afade_in",      "to": "afade_out",     "type": "audio" },
+      { "from": "afade_out",     "to": "loudnorm0",     "type": "audio" },
+      { "from": "loudnorm0",     "to": "aformat0",      "type": "audio" },
+      { "from": "aformat0",      "to": "asetnsamples0", "type": "audio" },
+      { "from": "asetnsamples0", "to": "out0:a",        "type": "audio" }
+    ]
+  },
+  "outputs": [
+    {
+      "id": "out0",
+      "url": "{{output}}",
+      "codec_video": "libx264",
+      "codec_audio": "aac"
+    }
+  ]
+}

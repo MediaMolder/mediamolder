@@ -4,6 +4,8 @@
 package ffcli
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -126,5 +128,213 @@ func TestTokenize(t *testing.T) {
 		if len(got) != tt.want {
 			t.Errorf("tokenize(%q): got %d tokens %v, want %d", tt.input, len(got), got, tt.want)
 		}
+	}
+}
+
+// TestParseStreamCopyEmitsEmptyNodes is a regression test for a bug
+// where stream-copy commands (`-c copy`) produced a Config whose
+// Graph.Nodes was a nil Go slice, marshalling to JSON `null`. The
+// frontend then crashed in `materializeImplicitEncoders` calling
+// `.map()` on null. The parser must always emit a non-nil (possibly
+// empty) Nodes / Edges slice so the JSON payload contains `[]`.
+func TestParseStreamCopyEmitsEmptyNodes(t *testing.T) {
+	cfg, err := Parse("ffmpeg -i in.mp4 -c copy out.mp4")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Graph.Nodes == nil {
+		t.Fatal("Graph.Nodes is nil; expected non-nil empty slice")
+	}
+	if len(cfg.Graph.Nodes) != 0 {
+		t.Errorf("Graph.Nodes: got %d nodes, want 0", len(cfg.Graph.Nodes))
+	}
+	b, err := json.Marshal(cfg.Graph)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), `"nodes":null`) {
+		t.Errorf("graph JSON contains \"nodes\":null; got %s", b)
+	}
+	if !strings.Contains(string(b), `"nodes":[]`) {
+		t.Errorf("graph JSON missing \"nodes\":[]; got %s", b)
+	}
+}
+
+// TestParseTimingFlagsAttachToOutput is a regression test for `-t`,
+// `-ss`, and `-to` being silently dropped (dumped into the parser's
+// globalOpts catch-all bucket and never round-tripped). They must be
+// attached to the next file specifier on the command line — the
+// output, in this case — as entries in `Output.Options`.
+func TestParseTimingFlagsAttachToOutput(t *testing.T) {
+	cfg, err := Parse("ffmpeg -i in.mp4 -c copy -t 30 -ss 5 out.mp4")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Outputs) != 1 {
+		t.Fatalf("outputs: got %d, want 1", len(cfg.Outputs))
+	}
+	opts := cfg.Outputs[0].Options
+	if opts == nil {
+		t.Fatal("Outputs[0].Options is nil; expected -t / -ss to populate it")
+	}
+	if opts["t"] != "30" {
+		t.Errorf("Options[t]: got %v, want \"30\"", opts["t"])
+	}
+	if opts["ss"] != "5" {
+		t.Errorf("Options[ss]: got %v, want \"5\"", opts["ss"])
+	}
+}
+
+// TestParseTimingFlagsAttachToInput verifies that `-t`/`-ss`/`-to`
+// placed *before* `-i` are attached to the input rather than the
+// output, matching FFmpeg's positional semantics.
+func TestParseTimingFlagsAttachToInput(t *testing.T) {
+	cfg, err := Parse("ffmpeg -ss 10 -t 30 -i in.mp4 -c copy out.mp4")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Inputs) != 1 {
+		t.Fatalf("inputs: got %d, want 1", len(cfg.Inputs))
+	}
+	opts := cfg.Inputs[0].Options
+	if opts == nil {
+		t.Fatal("Inputs[0].Options is nil; expected -ss / -t to populate it")
+	}
+	if opts["ss"] != "10" {
+		t.Errorf("Options[ss]: got %v, want \"10\"", opts["ss"])
+	}
+	if opts["t"] != "30" {
+		t.Errorf("Options[t]: got %v, want \"30\"", opts["t"])
+	}
+	// Output must NOT inherit the input's timing options.
+	if cfg.Outputs[0].Options != nil {
+		t.Errorf("Outputs[0].Options leaked: got %v, want nil", cfg.Outputs[0].Options)
+	}
+}
+
+// TestParseFPSModeFlag verifies that `-fps_mode <mode>` lands on
+// Output.FPSMode (Wave 1 #1, roadmap §6.1).
+func TestParseFPSModeFlag(t *testing.T) {
+	cases := []struct {
+		flag string
+		want string
+	}{
+		{"-fps_mode passthrough", "passthrough"},
+		{"-fps_mode cfr", "cfr"},
+		{"-fps_mode vfr", "vfr"},
+		{"-fps_mode drop", "drop"},
+		// Legacy `-vsync` alias rewrites: 0=passthrough, 1=cfr, 2=vfr,
+		// `auto`/`-1`=passthrough.
+		{"-vsync 0", "passthrough"},
+		{"-vsync 1", "cfr"},
+		{"-vsync 2", "vfr"},
+		{"-vsync cfr", "cfr"},
+		{"-vsync auto", "passthrough"},
+		{"-vsync drop", "drop"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.flag, func(t *testing.T) {
+			cfg, err := Parse("ffmpeg -i in.mp4 -c:v libx264 " + tc.flag + " out.mp4")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := cfg.Outputs[0].FPSMode; got != tc.want {
+				t.Errorf("FPSMode = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestParseFPSModeRejectsUnknownValue(t *testing.T) {
+	if _, err := Parse("ffmpeg -i in.mp4 -fps_mode wibble out.mp4"); err == nil {
+		t.Fatal("expected error for unknown -fps_mode value, got nil")
+	}
+}
+
+// TestParseAsyncFlag verifies that `-async N` lands on Output.AudioSync
+// (Wave 1 #2, roadmap §6.1).
+func TestParseAsyncFlag(t *testing.T) {
+	cases := []struct {
+		flag string
+		want int
+	}{
+		{"-async 1", 1},
+		{"-async 1000", 1000},
+		{"-async 0", 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.flag, func(t *testing.T) {
+			cfg, err := Parse("ffmpeg -i in.mp4 -c:a aac " + tc.flag + " out.mp4")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := cfg.Outputs[0].AudioSync; got != tc.want {
+				t.Errorf("AudioSync = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestParseAsyncRejectsInvalid(t *testing.T) {
+	cases := []string{
+		"ffmpeg -i in.mp4 -async -3 out.mp4",
+		"ffmpeg -i in.mp4 -async banana out.mp4",
+	}
+	for _, c := range cases {
+		t.Run(c, func(t *testing.T) {
+			if _, err := Parse(c); err == nil {
+				t.Fatal("expected error, got nil")
+			}
+		})
+	}
+}
+
+// TestParseShortest verifies that `-shortest` lands on Output.Shortest
+// (Wave 1 #3, roadmap §2.5).
+func TestParseShortest(t *testing.T) {
+	cfg, err := Parse("ffmpeg -i a.mp4 -i b.wav -c copy -shortest out.mp4")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Outputs[0].Shortest {
+		t.Fatalf("Output.Shortest = false, want true")
+	}
+}
+
+// TestParseFS verifies that `-fs N` lands on Output.MaxFileSize. Mirrors
+// fftools/ffmpeg_mux_init.c parsing of -fs into mux->limit_filesize.
+func TestParseFS(t *testing.T) {
+	cfg, err := Parse("ffmpeg -i in.mp4 -c copy -fs 1048576 out.mp4")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.Outputs[0].MaxFileSize; got != 1048576 {
+		t.Errorf("MaxFileSize = %d, want 1048576", got)
+	}
+}
+
+func TestParseFSRejectsInvalid(t *testing.T) {
+	cases := []string{
+		"ffmpeg -i in.mp4 -fs -1 out.mp4",
+		"ffmpeg -i in.mp4 -fs banana out.mp4",
+	}
+	for _, c := range cases {
+		t.Run(c, func(t *testing.T) {
+			if _, err := Parse(c); err == nil {
+				t.Fatal("expected error, got nil")
+			}
+		})
+	}
+}
+
+// TestParseCopyTS verifies that `-copyts` lands on Config.CopyTS
+// (global flag, mirrors fftools/ffmpeg.c::copy_ts).
+func TestParseCopyTS(t *testing.T) {
+	cfg, err := Parse("ffmpeg -copyts -i in.mp4 -c copy out.mp4")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.CopyTS {
+		t.Fatalf("Config.CopyTS = false, want true")
 	}
 }

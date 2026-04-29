@@ -7,13 +7,17 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/MediaMolder/MediaMolder/av"
 	"github.com/MediaMolder/MediaMolder/graph"
+	"github.com/MediaMolder/MediaMolder/observability"
 	"github.com/MediaMolder/MediaMolder/processors"
 	"github.com/MediaMolder/MediaMolder/runtime"
+	"go.opentelemetry.io/otel/trace"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -35,8 +39,12 @@ type Pipeline struct {
 	seekPending bool  // true when a seek has been requested
 
 	metrics     *MetricsRegistry
-	reconf      *reconfigurable // live filter parameter changes (graph mode only)
-	graphRunner *graphRunner    // running graph resources (graph mode only)
+	edgeStats   *runtime.EdgeStatsRegistry
+	prom        *observability.Metrics  // optional Prometheus metrics; nil = disabled
+	obsProvider *observability.Provider // optional OTel tracing provider; nil = disabled
+	maxThreads  int                     // per-codec thread cap from SecurityConfig; 0 = unlimited
+	reconf      *reconfigurable         // live filter parameter changes (graph mode only)
+	graphRunner *graphRunner            // running graph resources (graph mode only)
 }
 
 // NewPipeline creates a Pipeline from a validated Config.
@@ -172,6 +180,38 @@ func (p *Pipeline) GetMetrics() MetricsSnapshot {
 // Metrics returns the underlying MetricsRegistry for direct node updates.
 func (p *Pipeline) Metrics() *MetricsRegistry {
 	return p.metrics
+}
+
+// EdgeStats returns the edge backpressure registry, or nil if not running.
+func (p *Pipeline) EdgeStats() *runtime.EdgeStatsRegistry {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.edgeStats
+}
+
+// SetPrometheus sets the Prometheus metrics collector for this pipeline.
+// Must be called before SetState(StatePlaying).
+func (p *Pipeline) SetPrometheus(prom *observability.Metrics) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.prom = prom
+}
+
+// SetObsProvider sets the OpenTelemetry tracing provider for this pipeline.
+// Must be called before SetState(StatePlaying).
+func (p *Pipeline) SetObsProvider(provider *observability.Provider) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.obsProvider = provider
+}
+
+// SetMaxThreads sets the per-codec thread cap from SecurityConfig.MaxThreads.
+// When > 0, each decoder/encoder thread count is clamped to this value.
+// Must be called before SetState(StatePlaying).
+func (p *Pipeline) SetMaxThreads(n int) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.maxThreads = n
 }
 
 // Wait blocks until the pipeline finishes (EOS or error) while in PLAYING state.
@@ -419,7 +459,17 @@ func (e *Pipeline) runLinear(ctx context.Context, g *errgroup.Group) error {
 
 	si, _ := input.StreamInfo(vidIdx)
 
-	dec, err := av.OpenDecoder(input, vidIdx)
+	// Resolve global thread settings for linear pipeline.
+	globalThreads := cfg.GlobalOptions.Threads
+	globalThreadType := cfg.GlobalOptions.ThreadType
+	if e.maxThreads > 0 && globalThreads > e.maxThreads {
+		globalThreads = e.maxThreads
+	}
+
+	dec, err := av.OpenDecoderWithOptions(input, vidIdx, av.DecoderOptions{
+		ThreadCount: globalThreads,
+		ThreadType:  globalThreadType,
+	})
 	if err != nil {
 		return fmt.Errorf("open decoder: %w", err)
 	}
@@ -460,6 +510,8 @@ func (e *Pipeline) runLinear(ctx context.Context, g *errgroup.Group) error {
 		Height:       si.Height,
 		FrameRate:    frameRate,
 		GlobalHeader: true,
+		ThreadCount:  globalThreads,
+		ThreadType:   globalThreadType,
 	})
 	if err != nil {
 		return fmt.Errorf("open encoder %q: %w", outCfg.CodecVideo, err)
@@ -709,31 +761,84 @@ func buildFilterSpec(node NodeDef) string {
 	if len(node.Params) == 0 {
 		return node.Filter
 	}
-	// Sort keys for deterministic output.
-	keys := make([]string, 0, len(node.Params))
-	for k := range node.Params {
-		keys = append(keys, k)
+	// Partition keys into positional ("_posN") and named. Positional keys
+	// come from compat/ffcli when an upstream FFmpeg-style filter expression
+	// like `scale=320:240` is parsed: each `:`-separated token without an
+	// embedded `=` is recorded as `_pos0`, `_pos1`, ... so the original
+	// argument order can be recovered. They must reach libavfilter as bare,
+	// in-order values (no `_posN=` prefix) and must precede any named args.
+	type posArg struct {
+		idx int
+		val any
 	}
-	sort.Strings(keys)
+	var positional []posArg
+	named := make([]string, 0, len(node.Params))
+	for k := range node.Params {
+		if n, ok := strings.CutPrefix(k, "_pos"); ok {
+			if i, err := strconv.Atoi(n); err == nil {
+				positional = append(positional, posArg{idx: i, val: node.Params[k]})
+				continue
+			}
+		}
+		named = append(named, k)
+	}
+	sort.Slice(positional, func(i, j int) bool { return positional[i].idx < positional[j].idx })
+	sort.Strings(named)
+
+	quote := func(v any) string {
+		s := fmt.Sprintf("%v", v)
+		// avfilter_graph_parse_ptr treats ',' and ';' as separators between
+		// filter chains. Quote any value that contains those characters (or
+		// a literal single-quote) so the expression reaches the filter intact.
+		if strings.ContainsAny(s, "',;") {
+			s = "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+		}
+		return s
+	}
 
 	spec := node.Filter
 	first := true
-	for _, k := range keys {
+	for _, p := range positional {
 		if first {
 			spec += "="
 			first = false
 		} else {
 			spec += ":"
 		}
-		spec += fmt.Sprintf("%s=%v", k, node.Params[k])
+		spec += quote(p.val)
+	}
+	for _, k := range named {
+		if first {
+			spec += "="
+			first = false
+		} else {
+			spec += ":"
+		}
+		spec += k + "=" + quote(node.Params[k])
 	}
 	return spec
 }
 
 // runGraph executes the pipeline using the graph builder + scheduler for
 // configs with explicit edges (multi-input / multi-output support).
-func (p *Pipeline) runGraph(ctx context.Context) error {
+func (p *Pipeline) runGraph(ctx context.Context) (runErr error) {
 	cfg := p.cfg
+
+	// Wrap the entire run in a pipeline-level OTel span if a provider is set.
+	p.mu.Lock()
+	obs := p.obsProvider
+	p.mu.Unlock()
+	if obs != nil {
+		var pipelineSpan trace.Span
+		ctx, pipelineSpan = obs.StartPipelineSpan(ctx, cfg.Description)
+		defer func() {
+			if runErr != nil {
+				observability.EndSpanError(pipelineSpan, runErr)
+			} else {
+				observability.EndSpanOK(pipelineSpan)
+			}
+		}()
+	}
 
 	// 1. Convert pipeline config → graph definition → validated DAG.
 	def := configToGraphDef(cfg)
@@ -742,18 +847,38 @@ func (p *Pipeline) runGraph(ctx context.Context) error {
 		return fmt.Errorf("build graph: %w", err)
 	}
 
-	// 2. Pre-open all AV resources in topological order.
+	// 2. Compile: analyze the graph for stage grouping and warnings.
+	plan, err := graph.Compile(dag)
+	if err != nil {
+		return fmt.Errorf("compile graph: %w", err)
+	}
+	for _, w := range plan.Warnings {
+		p.events.Post(ErrorEvent{
+			Err:  fmt.Errorf("graph compilation warning [%s]: %s", w.Code, w.Message),
+			Time: time.Now(),
+		})
+	}
+
+	// 3. Pre-open all AV resources in topological order.
 	runner := newGraphRunner(cfg, p)
 	defer func() {
 		runner.close()
 		p.mu.Lock()
 		p.graphRunner = nil
 		p.reconf = nil
+		p.edgeStats = nil
 		p.mu.Unlock()
 	}()
 
 	for _, inp := range cfg.Inputs {
-		src, err := runner.openSource(inp)
+		// Resolve decoder threading from the corresponding source node.
+		decOpts := av.DecoderOptions{}
+		srcNode := dag.NodeByID(inp.ID)
+		if srcNode != nil {
+			decOpts.ThreadCount = runner.resolveThreadCount(srcNode)
+			decOpts.ThreadType = runner.resolveThreadType(srcNode)
+		}
+		src, err := runner.openSource(inp, srcNode, decOpts)
 		if err != nil {
 			return err
 		}
@@ -791,6 +916,10 @@ func (p *Pipeline) runGraph(ctx context.Context) error {
 				return fmt.Errorf("go_processor %q init: %w", node.ID, err)
 			}
 			runner.goProcessors[node.ID] = proc
+		case graph.KindCopy:
+			// Stream-copy nodes hold no per-node AV resources; the
+			// source already emits raw packets and the sink wires the
+			// output stream from the input codecpar at openSink time.
 		}
 	}
 
@@ -809,9 +938,30 @@ func (p *Pipeline) runGraph(ctx context.Context) error {
 	p.reconf = reconf
 	p.mu.Unlock()
 
-	// 3. Run the scheduler — one goroutine per node, channels per edge.
-	sched := &runtime.Scheduler{BufSize: 8}
-	if err := sched.Run(ctx, dag, runner.handle); err != nil {
+	// 4. Run the scheduler — one goroutine per node, channels per edge.
+	edgeStats := runtime.NewEdgeStatsRegistry()
+	p.mu.Lock()
+	p.edgeStats = edgeStats
+	p.mu.Unlock()
+
+	// Wrap handler with per-node OTel spans.
+	handler := runtime.NodeHandler(runner.handle)
+	if obs != nil {
+		inner := handler
+		handler = func(ctx context.Context, node *graph.Node, ins []<-chan any, outs []chan<- any) error {
+			ctx, span := observability.StartNodeSpan(ctx, node.ID, node.Kind.String(), "", "")
+			err := inner(ctx, node, ins, outs)
+			if err != nil {
+				observability.EndSpanError(span, err)
+			} else {
+				observability.EndSpanOK(span)
+			}
+			return err
+		}
+	}
+
+	sched := &runtime.Scheduler{BufSize: 8, EdgeBufSizes: plan.EdgeBufSizes, EdgeStats: edgeStats}
+	if err := sched.Run(ctx, dag, handler); err != nil {
 		// Abort all outputs on error.
 		for _, s := range runner.sinks {
 			s.muxer.Abort()
@@ -819,7 +969,7 @@ func (p *Pipeline) runGraph(ctx context.Context) error {
 		return err
 	}
 
-	// 4. Finalize outputs (atomic rename from .tmp).
+	// 5. Finalize outputs (atomic rename from .tmp).
 	for _, s := range runner.sinks {
 		if err := s.muxer.Close(); err != nil {
 			return err

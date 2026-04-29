@@ -133,6 +133,13 @@ go build -tags=ffstatic ./...
 go install ./cmd/mediamolder
 ```
 
+**Build with the embedded visual editor (GUI):**
+```sh
+make build-gui    # bundles the React frontend into a single binary
+./mediamolder gui # opens http://127.0.0.1:8080
+```
+See [docs/gui.md](docs/gui.md) for the full GUI guide.
+
 ---
 
 ## Quickstart
@@ -197,8 +204,14 @@ mediamolder inspect transcode.json
 
 Convert an FFmpeg command to MediaMolder JSON:
 ```sh
-mediamolder convert-cmd "ffmpeg -i input.mp4 -vf scale=1280:720 -c:v libx264 -c:a aac output.mp4"
+mediamolder convert-cmd "ffmpeg -i input.mp4 -vf scale=1280:720 -c:v libx264 -crf 22 -preset slow -c:a aac -b:a 192k output.mp4"
 ```
+Encoder options (`-crf`, `-qp`, `-preset`, `-tune`, `-profile:v`,
+`-level`, `-g`, `-bf`, `-maxrate`, `-minrate`, `-bufsize`, `-pix_fmt`,
+`-b:v`, `-b:a`, `-q:a`, `-x264-params`, `-x265-params`) are attached to
+the encoder node in the resulting graph; `-c:v copy` / `-c:a copy`
+produce a stream-copy node. The same parser is exposed in the GUI via
+the **Import FFmpeg command** toolbar button (`POST /api/convert-cmd`).
 
 List available codecs, filters, or formats:
 ```sh
@@ -301,6 +314,7 @@ See the [Go Processor Nodes](docs/go-processor-nodes.md) guide for the full API,
 ## Documentation
 
 - [JSON Config Reference](docs/json-config-reference.md)
+- [Visual Editor (GUI)](docs/gui.md)
 - [Go Processor Nodes](docs/go-processor-nodes.md)
 - [FFmpeg Migration Guide](docs/ffmpeg-migration-guide.md)
 - [Pipeline State Machine](docs/pipeline-state-machine.md)
@@ -309,10 +323,64 @@ See the [Go Processor Nodes](docs/go-processor-nodes.md) guide for the full API,
 - [Error Handling](docs/error-handling.md)
 - [Hardware Acceleration](docs/hardware-acceleration.md)
 - [Observability](docs/observability.md)
+- [Graph Compilation](docs/graph-compilation.md)
+- [Pipeline Instrumentation Roadmap](docs/pipeline-instrumentation-roadmap.md)
+- [FFmpeg Coverage Roadmap](docs/ffmpeg-coverage-roadmap.md)
 - [Build & Packaging](docs/build_and_packaging.md)
 - [Contribution & Governance](docs/contribution_and_governance.md)
 - [Project Specification](docs/specification.md)
 - [Licensing](LICENSING.md)
+
+---
+
+## Architecture
+
+### Processing Pipeline
+
+A pipeline flows through five phases:
+
+1. **Build** — Parse JSON config into a validated DAG (`graph.Build`). Catches structural errors (missing nodes, cycles).
+2. **Compile** — Analyze the graph for stage grouping, dead-branch detection, disconnected-source warnings, and per-edge buffer sizing (`graph.Compile`). See [Graph Compilation](docs/graph-compilation.md).
+3. **Open resources** — Demuxers, decoders, filters, encoders, and muxers are created in topological order.
+4. **Execute** — The scheduler launches one goroutine per node, connected by buffered channels sized per-edge by the compiler. Each node processes frames independently.
+5. **Finalize** — Outputs are flushed and atomically renamed.
+
+### Performance Monitoring
+
+MediaMolder instruments the runtime to help identify bottlenecks:
+
+- **Channel backpressure monitoring** — A sampler goroutine periodically polls the fill level of every inter-node channel. High fill ratios indicate a downstream node can't keep up. Available via `Pipeline.EdgeStats()`.
+- **Per-node processing latency** — Every handler (source, filter, encoder, sink, Go processor) records per-frame latency. Available via `Pipeline.Metrics()` snapshots (`AvgLatency`, `MaxLatency`).
+- **Adaptive buffer sizing** — The compiler assigns per-edge channel buffer sizes based on node kinds (e.g., 16 after sources for burst absorption, 4 for encoder→sink). See [Graph Compilation](docs/graph-compilation.md).
+
+Both monitoring mechanisms add zero overhead to the data path — backpressure uses periodic sampling (not channel wrapping), and latency uses lock-free atomics.
+
+### Threading Controls
+
+Codec threading is configurable at three levels:
+
+- **Per-node** — Set `"threads"` and `"thread_type"` in a node's `params` to tune individual codecs.
+- **Global** — Set `global_options.threads` and `global_options.thread_type` to apply defaults across all codecs.
+- **Security cap** — `SecurityConfig.MaxThreads` clamps every codec's thread count, preventing resource exhaustion in multi-tenant deployments.
+
+Resolution follows a fallback hierarchy: per-node → global → FFmpeg auto-detect. See [Threading Architecture](docs/threading-architecture.md) for full details.
+
+```go
+// Identify the bottleneck edge:
+for _, es := range pipe.EdgeStats().Snapshot() {
+    if es.Fill > 0.8 {
+        fmt.Printf("backpressure: %s → %s (%.0f%% full, %d stalls)\n",
+            es.FromNode, es.ToNode, es.Fill*100, es.Stalls)
+    }
+}
+
+// Check per-node latency:
+for _, ns := range pipe.Metrics().Snapshot().Nodes {
+    fmt.Printf("%s: avg=%s max=%s\n", ns.NodeID, ns.AvgLatency, ns.MaxLatency)
+}
+```
+
+See [Observability](docs/observability.md) for Prometheus metrics, OpenTelemetry tracing, and Grafana dashboard configuration.
 
 ---
 

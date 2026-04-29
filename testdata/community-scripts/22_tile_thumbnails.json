@@ -1,0 +1,58 @@
+{
+  "schema_version": "1.0",
+  "description": "Build a contact sheet of evenly-spaced thumbnails using select+scale+tile, then write a single JPEG. Matches 'tile-thumbnails -i input.mp4 -n 16 -w 160 -o sheet.jpg' (and ffmpeg -i in.mp4 -vf \"select='not(mod(n,15))',scale=160:-1,tile=4x4\" -frames:v 1 sheet.jpg).",
+  "inputs": [
+    {
+      "id": "in0",
+      "url": "{{input}}",
+      "streams": [
+        { "input_index": 0, "type": "video", "track": 0 }
+      ]
+    }
+  ],
+  "graph": {
+    "nodes": [
+      {
+        "id": "sel0",
+        "type": "filter",
+        "filter": "select",
+        "params": { "expr": "not(mod(n\\,15))" }
+      },
+      {
+        "id": "scale0",
+        "type": "filter",
+        "filter": "scale",
+        "params": { "w": "160", "h": "-1" }
+      },
+      {
+        "id": "tile0",
+        "type": "filter",
+        "filter": "tile",
+        "params": { "layout": "4x4" }
+      },
+      {
+        "id": "fmt0",
+        "type": "filter",
+        "filter": "format",
+        "params": { "pix_fmts": "yuvj420p" }
+      }
+    ],
+    "edges": [
+      { "from": "in0:v:0", "to": "sel0",   "type": "video" },
+      { "from": "sel0",    "to": "scale0", "type": "video" },
+      { "from": "scale0",  "to": "tile0",  "type": "video" },
+      { "from": "tile0",   "to": "fmt0",   "type": "video" },
+      { "from": "fmt0",    "to": "out0:v", "type": "video" }
+    ]
+  },
+  "outputs": [
+    {
+      "id": "out0",
+      "url": "{{output}}",
+      "format": "mjpeg",
+      "codec_video": "mjpeg",
+      "encoder_params_video": { "pix_fmt": "yuvj420p" },
+      "max_frames_video": 1
+    }
+  ]
+}
