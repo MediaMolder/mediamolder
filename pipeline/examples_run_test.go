@@ -166,6 +166,11 @@ func runExample(t *testing.T, jsonPath, name, inputAbs, subsrtAbs, subassAbs str
 		raw = strings.ReplaceAll(raw, "{{output}}", outFwd)
 	}
 
+	// Two-pass stats file prefix → tmpDir so the `<prefix>-<idx>.log`
+	// file the encoder writes (libx264 `stats` AVOption / generic
+	// stats_out shuttle) does not pollute the package directory.
+	raw = strings.ReplaceAll(raw, "{{passlog}}", filepath.ToSlash(filepath.Join(tmpDir, "ffmpeg2pass")))
+
 	// --- Parse config ---
 	cfg, err := ParseConfig([]byte(raw))
 	if err != nil {

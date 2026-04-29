@@ -17,12 +17,14 @@ import (
 // extraction) + libavutil/avstring.c::av_get_token (escape grammar).
 //
 // Recognised slave options promoted to typed TeeTarget fields:
-//   `f`             -> Format
-//   `select`        -> Select
-//   `bsfs`          -> BSFs
-//   `onfail`        -> OnFail (validated: empty | abort | ignore)
-//   `use_fifo`      -> UseFifo (0/1/true/false/yes/no/on/off)
-//   `fifo_options`  -> FifoOptions
+//
+//	`f`             -> Format
+//	`select`        -> Select
+//	`bsfs`          -> BSFs
+//	`onfail`        -> OnFail (validated: empty | abort | ignore)
+//	`use_fifo`      -> UseFifo (0/1/true/false/yes/no/on/off)
+//	`fifo_options`  -> FifoOptions
+//
 // Unknown keys land in Options as strings.
 func parseTeeSlaves(s string) ([]pipeline.TeeTarget, error) {
 	if s == "" {

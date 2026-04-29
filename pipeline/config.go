@@ -356,6 +356,32 @@ type Output struct {
 	// `[options]url|[options]url` grammar parsed by
 	// `libavformat/tee_common.c::ff_tee_parse_slave_options`.
 	Targets []TeeTarget `json:"targets,omitempty"`
+	// Pass enables two-pass video encoding for the implicit (or
+	// upstream) video encoder feeding this output. Bit-field that
+	// mirrors FFmpeg's `-pass N`: 1 = analysis pass
+	// (AV_CODEC_FLAG_PASS1, encoder writes statistics), 2 = final
+	// pass (AV_CODEC_FLAG_PASS2, encoder consumes the previous
+	// pass's statistics), 3 = both bits set (rare; some codecs
+	// support single-pass rate control fed pass-1 stats). 0
+	// (default) is single-pass. The job is run twice by the
+	// caller \u2014 once with Pass=1, once with Pass=2 \u2014 against the
+	// same `PassLogFile` prefix; only video encoders honour this
+	// field. Mirrors fftools/ffmpeg_mux_init.c (the `do_pass`
+	// branch around line 700).
+	Pass int `json:"pass,omitempty"`
+	// PassLogFile is the per-stream statistics file prefix used by
+	// two-pass video encoding. The runtime renders the actual file
+	// path as `<prefix>-<stream_idx>.log` where `<stream_idx>` is
+	// the global index of the video stream within the run (mirrors
+	// FFmpeg's `<prefix>-<ost_idx>.log` naming in
+	// fftools/ffmpeg_mux_init.c). Empty defaults to FFmpeg's
+	// `ffmpeg2pass`. Honoured only when `Pass != 0`. For
+	// libx264 / libvvenc the runtime translates this into the
+	// `stats` AVOption on the encoder; for libx265 into
+	// `x265-stats`; for any other encoder the runtime opens the
+	// file directly and feeds AVCodecContext.stats_in / stats_out
+	// (mirrors the three-way switch in fftools/ffmpeg_mux_init.c).
+	PassLogFile string `json:"passlogfile,omitempty"`
 }
 
 // TeeTarget describes one slave of a `Kind == "tee"` Output. It
@@ -593,6 +619,12 @@ func validate(cfg *Config) error {
 			}
 		default:
 			return fmt.Errorf("output %q: invalid kind %q (want \"\"|file|tee)", out.ID, out.Kind)
+		}
+		if out.Pass < 0 || out.Pass > 3 {
+			return fmt.Errorf("output %q: invalid pass %d (want 0|1|2|3)", out.ID, out.Pass)
+		}
+		if out.Pass == 0 && out.PassLogFile != "" {
+			return fmt.Errorf("output %q: passlogfile is only valid when pass != 0", out.ID)
 		}
 	}
 	// Edge types must be valid.

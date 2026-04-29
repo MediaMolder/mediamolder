@@ -45,6 +45,8 @@ type parser struct {
 	shortest     bool
 	maxFileSize  int64
 	copyTS       bool
+	pass         int
+	passLogFile  string
 	hwAccel      string
 	hwDevice     string
 	hwOutFmt     string
@@ -270,6 +272,30 @@ func (p *parser) parse() (*pipeline.Config, error) {
 			// demuxer-side ts_offset shift and to interpret output-side
 			// -ss/-to as absolute timeline values.
 			p.copyTS = true
+		case arg == "-pass":
+			// FFmpeg `-pass N` (per-stream OPT_VIDEO int). Bit-field:
+			// 1 = analysis pass (AV_CODEC_FLAG_PASS1), 2 = final pass
+			// (AV_CODEC_FLAG_PASS2), 3 = both. Latched onto the next
+			// output's Output.Pass; the runtime then propagates it to
+			// the implicit video encoder via __pass.
+			if !p.hasMore() {
+				return nil, fmt.Errorf("-pass requires an argument")
+			}
+			v := p.next()
+			n, err := strconv.Atoi(v)
+			if err != nil || n < 1 || n > 3 {
+				return nil, fmt.Errorf("-pass: invalid value %q (want 1|2|3)", v)
+			}
+			p.pass = n
+		case arg == "-passlogfile":
+			// FFmpeg `-passlogfile PREFIX` (per-stream OPT_VIDEO
+			// string; default `ffmpeg2pass`). Latched onto the next
+			// output's Output.PassLogFile; the runtime renders the
+			// final filename as `<prefix>-<global-stream-idx>.log`.
+			if !p.hasMore() {
+				return nil, fmt.Errorf("-passlogfile requires an argument")
+			}
+			p.passLogFile = p.next()
 		case arg == "-stream_loop":
 			// FFmpeg per-input integer (OPT_OFFSET on InputFile.loop):
 			// `-stream_loop N -i in.mp4` plays in.mp4 N+1 times total
@@ -505,6 +531,14 @@ func (p *parser) parse() (*pipeline.Config, error) {
 			}
 			if p.maxFileSize > 0 {
 				out.MaxFileSize = p.maxFileSize
+			}
+			if p.pass != 0 {
+				out.Pass = p.pass
+				p.pass = 0
+			}
+			if p.passLogFile != "" {
+				out.PassLogFile = p.passLogFile
+				p.passLogFile = ""
 			}
 			if len(p.containerMeta) > 0 {
 				out.Metadata = p.containerMeta

@@ -59,6 +59,8 @@ The following per-input / per-output flags landed in the §6 Wave 1 burn-down. E
 | `-metadata:s:<t>:<i> k=v` | `outputs[].streams[].metadata` | Per-stream. |
 | `-disposition:s:<t>:<i> v` | `outputs[].streams[].disposition` | `+`-separated AV_DISPOSITION_* names. |
 | `-f tee "[f=mp4]a.mp4|[f=hls:hls_time=4]b.m3u8"` | `outputs[].kind = "tee"` + `targets[]` | Encode once, mux N times. |
+| `-pass N`        | `outputs[].pass`       | `1` / `2` / `3` (bit-field). Run the job twice (pass=1 then pass=2). |
+| `-passlogfile P` | `outputs[].passlogfile` | Stats file prefix; rendered as `<prefix>-<idx>.log`. Defaults to `ffmpeg2pass`. |
 
 ## Key differences from FFmpeg CLI
 

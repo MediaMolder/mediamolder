@@ -177,6 +177,16 @@ export interface Output {
   /** Slaves for a `kind === "tee"` output. Required in that case;
    *  must be empty otherwise. */
   targets?: TeeTarget[];
+  /** Two-pass video encoding bit-field. 0 = single-pass; 1 = analysis
+   *  pass (AV_CODEC_FLAG_PASS1); 2 = final pass (AV_CODEC_FLAG_PASS2);
+   *  3 = both. Run the job twice (pass=1 then pass=2) against the same
+   *  passlogfile prefix. Mirrors FFmpeg `-pass N`. */
+  pass?: 0 | 1 | 2 | 3;
+  /** Per-stream statistics file prefix for two-pass video encoding.
+   *  Rendered as `<prefix>-<stream-idx>.log`. Empty defaults to
+   *  `ffmpeg2pass`. Honoured only when `pass !== 0`. Mirrors FFmpeg
+   *  `-passlogfile`. */
+  passlogfile?: string;
   options?: Record<string, unknown>;
 }
 

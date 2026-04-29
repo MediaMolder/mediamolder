@@ -3,9 +3,25 @@
 
 package av
 
+// #include <string.h>
 // #include "libavcodec/avcodec.h"
+// #include "libavutil/mem.h"
 // #include "libavutil/opt.h"
 // #include "libavutil/pixdesc.h"
+//
+// // set_stats_in copies a Go-supplied stats buffer into an av_malloc'd
+// // C string and assigns it to ctx->stats_in. The encoder takes ownership
+// // and frees it via av_freep when the codec context is closed (mirrors
+// // fftools/ffmpeg_enc.c::enc_free which does av_freep(&enc->stats_in)).
+// static int set_stats_in(AVCodecContext *ctx, const char *data, size_t n) {
+//     char *buf = av_malloc(n + 1);
+//     if (!buf) return -1;
+//     memcpy(buf, data, n);
+//     buf[n] = 0;
+//     av_freep(&ctx->stats_in);
+//     ctx->stats_in = buf;
+//     return 0;
+// }
 //
 // // select_supported_sample_fmt ensures ctx->sample_fmt is in the codec's
 // // supported list. When it is not, the first supported format is used.
@@ -68,6 +84,24 @@ type EncoderOptions struct {
 
 	// ExtraOpts are passed as AVDictionary options (e.g. {"preset": "medium", "crf": "23"}).
 	ExtraOpts map[string]string
+
+	// Pass is a bit-field that mirrors FFmpeg's `-pass N` flag. Bit 0 is
+	// AV_CODEC_FLAG_PASS1 (analysis pass: encoder produces stats_out and,
+	// for libx264/libx265/libvvenc, writes a stats file directly via the
+	// codec's own AVOption); bit 1 is AV_CODEC_FLAG_PASS2 (final pass:
+	// encoder consumes stats_in or reads its codec-private stats file).
+	// Typical values: 0 (off), 1 (-pass 1), 2 (-pass 2), 3 (single-pass
+	// rate control fed analysis stats — rare).
+	Pass int
+
+	// StatsIn is the pass-1 statistics buffer for codecs that consume it
+	// via AVCodecContext.stats_in (mpeg2video, mpeg4, libxvid, etc.).
+	// Ignored when nil. The bytes are copied into an av_malloc'd C
+	// string at OpenEncoder time; the encoder takes ownership and frees
+	// it on close. Not used by libx264/libx265/libvvenc — those expose
+	// their stats path through the `stats` / `x265-stats` AVOptions in
+	// ExtraOpts instead.
+	StatsIn []byte
 }
 
 // EncoderContext wraps an AVCodecContext configured for encoding.
@@ -143,6 +177,20 @@ func OpenEncoder(opts EncoderOptions) (*EncoderContext, error) {
 
 	if opts.GlobalHeader {
 		ctx.flags |= C.AV_CODEC_FLAG_GLOBAL_HEADER
+	}
+
+	if opts.Pass&1 != 0 {
+		ctx.flags |= C.AV_CODEC_FLAG_PASS1
+	}
+	if opts.Pass&2 != 0 {
+		ctx.flags |= C.AV_CODEC_FLAG_PASS2
+	}
+	if len(opts.StatsIn) > 0 {
+		cdata := (*C.char)(unsafe.Pointer(&opts.StatsIn[0]))
+		if rc := C.set_stats_in(ctx, cdata, C.size_t(len(opts.StatsIn))); rc < 0 {
+			C.avcodec_free_context(&ctx)
+			return nil, &Err{Code: -12, Message: "set_stats_in: out of memory"}
+		}
 	}
 
 	// Apply threading configuration.
@@ -227,6 +275,22 @@ func (e *EncoderContext) TimeBase() [2]int {
 // {num, den}. Returns {0,0} when unset (typical for audio encoders).
 func (e *EncoderContext) FrameRate() [2]int {
 	return [2]int{int(e.p.framerate.num), int(e.p.framerate.den)}
+}
+
+// StatsOut returns the encoder's pass-1 statistics line(s) accumulated
+// since the last call. Mirrors AVCodecContext.stats_out, which codecs
+// like mpeg2video/mpeg4/libxvid populate after each encoded frame when
+// AV_CODEC_FLAG_PASS1 is set. libx264/libx265/libvvenc bypass this and
+// write their stats file directly via the codec's `stats` AVOption,
+// so this returns the empty string for those encoders. The caller is
+// expected to append the result to its log file and call again after
+// each ReceivePacket — fftools/ffmpeg_enc.c does the equivalent
+// fprintf(ost->logfile, "%s", enc->stats_out).
+func (e *EncoderContext) StatsOut() string {
+	if e == nil || e.p == nil || e.p.stats_out == nil {
+		return ""
+	}
+	return C.GoString(e.p.stats_out)
 }
 
 // MediaType returns AVMEDIA_TYPE_VIDEO / AVMEDIA_TYPE_AUDIO / etc.

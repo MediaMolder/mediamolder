@@ -104,6 +104,8 @@ For `"copy"` nodes, no `params` are required — the inbound edge type tells the
 | `chapters`         | array | no | Explicit chapter table; replaces input-mapped chapters when set. |
 | `kind`             | string | no | `"file"` (default) or `"tee"` for fan-out muxing; see [Tee outputs](#tee-outputs). |
 | `targets`          | array | no | Required when `kind == "tee"`; see [TeeTarget](#teetarget). |
+| `pass`             | int   | no | Two-pass video bit-field (FFmpeg `-pass`). `0` = single-pass; `1` = analysis pass (`AV_CODEC_FLAG_PASS1`); `2` = final pass (`AV_CODEC_FLAG_PASS2`); `3` = both. The job is run twice by the caller — once with `pass: 1`, once with `pass: 2` — against the same `passlogfile` prefix. Honoured only on the implicit video encoder. |
+| `passlogfile`      | string | no | Per-stream stats file prefix for two-pass video encoding (FFmpeg `-passlogfile`). Final filename is rendered as `<prefix>-<idx>.log`, where `<idx>` is the per-run video-encoder ordinal (mirrors FFmpeg's `<prefix>-<ost_idx>.log`). Empty defaults to `ffmpeg2pass`. Honoured only when `pass != 0`. |
 | `encoder_params_video`    | object | no | Codec-specific options forwarded to the implicit video encoder (`crf`, `preset`, …). |
 | `encoder_params_audio`    | object | no | Codec-specific options forwarded to the implicit audio encoder. |
 | `encoder_params_subtitle` | object | no | Codec-specific options forwarded to the implicit subtitle encoder. |

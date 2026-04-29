@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -366,6 +367,17 @@ func expandImplicitEncoders(cfg *Config, def *graph.Def) {
 		if e.Type == "video" && out.FPSMode != "" {
 			nodeParams["__fps_mode"] = out.FPSMode
 		}
+		// Two-pass video encoding (FFmpeg `-pass N -passlogfile P`).
+		// Honoured only on video edges; the global stream index is
+		// computed below after all synthetic encoders are added so it
+		// matches the `<prefix>-<idx>.log` numbering FFmpeg uses
+		// (one entry per video encoder in declaration order).
+		if e.Type == "video" && out.Pass != 0 {
+			nodeParams["__pass"] = out.Pass
+			if out.PassLogFile != "" {
+				nodeParams["__passlogfile"] = out.PassLogFile
+			}
+		}
 		if codec == "copy" {
 			nodeType = "copy"
 			nodeParams = nil
@@ -381,6 +393,25 @@ func expandImplicitEncoders(cfg *Config, def *graph.Def) {
 		e.To = encID
 	}
 	def.Edges = append(def.Edges, added...)
+
+	// Assign sequential `__pass_index` to each video encoder that
+	// requested two-pass mode, in node-declaration order. The index
+	// drives the `<prefix>-<idx>.log` naming so multiple two-pass
+	// video streams in one run (e.g. ABR ladder) get unique stats
+	// files \u2014 mirrors FFmpeg's `ost_idx` computation in
+	// fftools/ffmpeg_mux_init.c.
+	passIdx := 0
+	for i := range def.Nodes {
+		n := &def.Nodes[i]
+		if n.Type != "encoder" || n.Params == nil {
+			continue
+		}
+		if _, ok := n.Params["__pass"]; !ok {
+			continue
+		}
+		n.Params["__pass_index"] = passIdx
+		passIdx++
+	}
 }
 
 // ---------- Pre-opened resource containers ----------
@@ -513,6 +544,13 @@ type graphRunner struct {
 	encoders     map[string]*av.EncoderContext
 	sinks        map[string]*sinkResources
 	goProcessors map[string]processors.Processor
+	// passLogFiles holds open pass-1 statistics files for video
+	// encoders that consume `Output.Pass` / `Output.PassLogFile`
+	// via the generic AVCodecContext.stats_out path (i.e. not
+	// libx264 / libx265 / libvvenc, which manage their own stats
+	// files via the codec's `stats` AVOption). Keyed by encoder
+	// node ID. Populated by createEncoder and closed in close().
+	passLogFiles map[string]*os.File
 }
 
 func newGraphRunner(cfg *Config, pipe *Pipeline) *graphRunner {
@@ -524,6 +562,7 @@ func newGraphRunner(cfg *Config, pipe *Pipeline) *graphRunner {
 		encoders:     make(map[string]*av.EncoderContext),
 		sinks:        make(map[string]*sinkResources),
 		goProcessors: make(map[string]processors.Processor),
+		passLogFiles: make(map[string]*os.File),
 	}
 }
 
@@ -564,6 +603,9 @@ func (r *graphRunner) close() {
 	}
 	for _, p := range r.goProcessors {
 		p.Close()
+	}
+	for _, f := range r.passLogFiles {
+		_ = f.Close()
 	}
 	// Sinks are finalized by the caller (muxer.Close for atomic rename).
 }
@@ -1252,6 +1294,13 @@ func (r *graphRunner) handleEncoder(ctx context.Context, node *graph.Node, ins [
 		return nil
 	}
 
+	// Pass-1 stats sink for the generic codec path (mpeg2video,
+	// mpeg4, libxvid, ...). libx264 / libvvenc / libx265 manage
+	// their own stats file via the codec's `stats` AVOption and
+	// leave AVCodecContext.stats_out empty, so the writer below
+	// stays a no-op for them.
+	passLog := r.passLogFiles[node.ID]
+
 	drainEncoder := func() error {
 		for {
 			p, err := av.AllocPacket()
@@ -1264,6 +1313,14 @@ func (r *graphRunner) handleEncoder(ctx context.Context, node *graph.Node, ins [
 					return nil
 				}
 				return err
+			}
+			if passLog != nil {
+				if s := enc.StatsOut(); s != "" {
+					if _, werr := passLog.WriteString(s); werr != nil {
+						p.Close()
+						return fmt.Errorf("encoder %q: write pass-1 stats: %w", node.ID, werr)
+					}
+				}
 			}
 			if err := sendPacket(p); err != nil {
 				return err
@@ -2051,6 +2108,48 @@ func (r *graphRunner) createEncoder(dag *graph.Graph, node *graph.Node) (*av.Enc
 	// x264-params, ...) actually reach the encoder.
 	opts.ExtraOpts = collectEncoderExtraOpts(node.Params)
 
+	// Two-pass video encoding. Mirrors fftools/ffmpeg_mux_init.c:705 et seq.
+	if pass := paramInt(node.Params, "__pass"); pass != 0 {
+		opts.Pass = pass
+		prefix := paramString(node.Params, "__passlogfile")
+		if prefix == "" {
+			prefix = "ffmpeg2pass"
+		}
+		idx := paramInt(node.Params, "__pass_index")
+		logfile := fmt.Sprintf("%s-%d.log", prefix, idx)
+		switch codecName {
+		case "libx264", "libvvenc":
+			if opts.ExtraOpts == nil {
+				opts.ExtraOpts = make(map[string]string)
+			}
+			if _, set := opts.ExtraOpts["stats"]; !set {
+				opts.ExtraOpts["stats"] = logfile
+			}
+		case "libx265":
+			if opts.ExtraOpts == nil {
+				opts.ExtraOpts = make(map[string]string)
+			}
+			if _, set := opts.ExtraOpts["x265-stats"]; !set {
+				opts.ExtraOpts["x265-stats"] = logfile
+			}
+		default:
+			if pass&2 != 0 {
+				buf, ferr := os.ReadFile(logfile)
+				if ferr != nil {
+					return nil, fmt.Errorf("encoder node %q: read pass-2 stats %q: %w", node.ID, logfile, ferr)
+				}
+				opts.StatsIn = buf
+			}
+			if pass&1 != 0 {
+				f, ferr := os.Create(logfile)
+				if ferr != nil {
+					return nil, fmt.Errorf("encoder node %q: open pass-1 stats %q: %w", node.ID, logfile, ferr)
+				}
+				r.passLogFiles[node.ID] = f
+			}
+		}
+	}
+
 	return av.OpenEncoder(opts)
 }
 
@@ -2069,6 +2168,15 @@ var encoderReservedParams = map[string]bool{
 	// not by libavcodec. Keep it out of the AVDictionary forwarded to
 	// avcodec_open2 so the encoder doesn't reject the unknown option.
 	"__fps_mode": true,
+	// `__pass`, `__passlogfile`, `__pass_index` are consumed by
+	// createEncoder to drive two-pass video encoding. They never
+	// reach avcodec_open2 directly \u2014 createEncoder either sets the
+	// codec-specific stats AVOption (libx264 / libvvenc / libx265)
+	// or wires AVCodecContext.stats_in / opens a log file for
+	// stats_out (generic codecs).
+	"__pass":        true,
+	"__passlogfile": true,
+	"__pass_index":  true,
 }
 
 // collectEncoderExtraOpts returns a map of AVDictionary options to forward to

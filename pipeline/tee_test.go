@@ -104,28 +104,28 @@ func TestValidateTeeOutput(t *testing.T) {
 		wantErr string
 	}{
 		{
-			name: "kind=tee requires targets",
-			out:  Output{ID: "o", URL: "tee", Kind: "tee"},
+			name:    "kind=tee requires targets",
+			out:     Output{ID: "o", URL: "tee", Kind: "tee"},
 			wantErr: "requires at least one entry in targets",
 		},
 		{
-			name: "kind=tee with target missing url",
-			out:  Output{ID: "o", URL: "tee", Kind: "tee", Targets: []TeeTarget{{Format: "mp4"}}},
+			name:    "kind=tee with target missing url",
+			out:     Output{ID: "o", URL: "tee", Kind: "tee", Targets: []TeeTarget{{Format: "mp4"}}},
 			wantErr: "missing url",
 		},
 		{
-			name: "kind=tee invalid onfail",
-			out:  Output{ID: "o", URL: "tee", Kind: "tee", Targets: []TeeTarget{{URL: "a.mp4", OnFail: "panic"}}},
+			name:    "kind=tee invalid onfail",
+			out:     Output{ID: "o", URL: "tee", Kind: "tee", Targets: []TeeTarget{{URL: "a.mp4", OnFail: "panic"}}},
 			wantErr: "invalid onfail",
 		},
 		{
-			name: "kind=file with targets is rejected",
-			out:  Output{ID: "o", URL: "x.mp4", Kind: "file", Targets: []TeeTarget{{URL: "a.mp4"}}},
+			name:    "kind=file with targets is rejected",
+			out:     Output{ID: "o", URL: "x.mp4", Kind: "file", Targets: []TeeTarget{{URL: "a.mp4"}}},
 			wantErr: "targets is only valid",
 		},
 		{
-			name: "invalid kind",
-			out:  Output{ID: "o", URL: "x.mp4", Kind: "split"},
+			name:    "invalid kind",
+			out:     Output{ID: "o", URL: "x.mp4", Kind: "split"},
 			wantErr: "invalid kind",
 		},
 		{

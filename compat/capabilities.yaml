@@ -220,8 +220,8 @@ sections:
         status: covered
         schema: av/hwencode.go
       - flag: "-pass 1/2 -passlogfile (two-pass video)"
-        status: missing
-        schema: n/a
+        status: covered
+        schema: pipeline.Output.Pass / pipeline.Output.PassLogFile
       - flag: "two-pass loudnorm shuttle"
         status: missing
         schema: n/a

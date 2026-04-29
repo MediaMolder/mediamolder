@@ -160,7 +160,7 @@ semantics.
 | Stream copy (`-c copy`)                                           | ✅    | Implicit `KindCopy` expansion |
 | Codec-specific AVOptions (`preset`, `crf`, `tune`, `profile`, `level`, `g`, `bf`, `refs`, `x264-params`, `x265-params`, `aq-mode`, `tier`, …) | ✅ | Forwarded to `avcodec_open2` via `EncoderParams*` dict |
 | Hardware encoders (NVENC, QSV, VAAPI, VideoToolbox, AMF)          | ✅    | Per `av/hwencode.go`; tested for NVENC |
-| Two-pass encoding (`-pass 1/2 -passlogfile`)                      | ❌    | No `pass` field in schema; not implemented in runner |
+| Two-pass encoding (`-pass 1/2 -passlogfile`)                      | ✅    | `Output.Pass` + `Output.PassLogFile` (Wave 1 #6) |
 | **Two-pass `loudnorm`** (measured-I/TP/LRA/thresh/offset feed-forward) | ❌ | Distinct inter-pass shuttle from video two-pass; pass 1 parses JSON from stderr, pass 2 consumes it. Frequently requested. |
 | **Lossless intermediate codecs** (FFV1, ProRes, DNxHD/HR, HuffYUV) for editorial round-trips | ⚠️ | Encoders exist if FFmpeg compiled with them; no schema validation of codec ↔ container compatibility |
 | `-fps_mode` (`cfr`/`vfr`/`passthrough`/`drop`) (formerly `-vsync`) | ✅    | `Output.FPSMode`; per-frame renumber/drop/duplicate logic in `pipeline/fps_mode.go` consumed by `handleEncoder` for video streams. `compat/ffcli` rewrites the legacy `-vsync` numeric/auto aliases. |
@@ -692,8 +692,21 @@ real jobs."
    sink, so the per-stream metadata / disposition schema (#3)
    composes naturally.
 6. **Two-pass video encoding** (`-pass 1/2 -passlogfile`) (§2.4) —
-   `Output.Encoder.Pass int` + `PassLogFile string`. Reuses the
-   orchestration scaffold built for #7.
+   ✅ **landed.** `Output.Pass` (bit-field 1 / 2 / 3 mirroring
+   `AV_CODEC_FLAG_PASS1` / `PASS2`) and `Output.PassLogFile`
+   (prefix; final filename rendered as `<prefix>-<idx>.log` where
+   `<idx>` is the per-run video-encoder ordinal — matches FFmpeg's
+   `<prefix>-<ost_idx>.log` naming). The runtime branches on the
+   encoder name in `pipeline/handlers.go::createEncoder`, faithfully
+   porting `fftools/ffmpeg_mux_init.c:705`: libx264 / libvvenc set
+   the `stats` AVOption, libx265 sets `x265-stats`, every other
+   codec uses the generic `AVCodecContext.stats_in` (pass 2,
+   contents `os.ReadFile`d into `av.EncoderOptions.StatsIn` →
+   `av_malloc`'d C buffer that the encoder owns) /
+   `stats_out` (pass 1, appended to a Go-owned `*os.File` after
+   each `ReceivePacket` in `handleEncoder`). Job is run twice by
+   the caller against the same prefix. `compat/ffcli` parses
+   `-pass N` + `-passlogfile P`. Sixth Wave 1 item.
 7. **Two-pass `loudnorm` shuttle** (§3.1.7) — Same orchestration
    primitive as #6; pass 1 parses JSON sidedata, pass 2 consumes it.
    Top-three reason people reach for ffmpeg in the first place.
