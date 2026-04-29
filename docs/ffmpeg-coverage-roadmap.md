@@ -219,7 +219,7 @@ semantics.
 | Screen capture (`avfoundation`, `gdigrab`, `x11grab`)             | ⚠️    | Same |
 | Decklink SDI input/output                                         | ⚠️    | Same |
 | `ffprobe` equivalence (stream summary)                            | ⚠️    | `/api/probe` exists but does not expose every probe field |
-| Tee muxer (see §2.5)                                              | ❌    | |
+| Tee muxer (see §2.5)                                              | ✅    | `Output.Kind="tee"` + `Output.Targets[]` (Wave 1 #5) |
 | Dynamic per-frame metadata via ZMQ filter                         | ❌    | |
 | **`-init_hw_device` (multi-device graphs)**                       | ❌    | Pipelines that bridge CUDA decode → CPU filter → QSV encode need named device declarations + `hwmap` between them |
 | **`scale_npp` availability separate from `scale_cuda`**           | ⚠️    | Different libraries; needs per-filter availability probe at startup |
@@ -246,7 +246,10 @@ filled, the GUI also needs:
   flag the schema gains, with a clear "unsupported flag" report.
 - **Live FFmpeg-CLI export**: round-trip the JSON job back to a CLI
   command for users who want to copy/paste into ffmpeg directly. This
-  is the strongest correctness signal we can ship.
+  is the strongest correctness signal we can ship. Note that mediamolder
+  has a superset of FFmpeg features, so some mediamolder JSONs may
+  not have an FFmpeg CLI equivalent, and this feature must fail
+  gracefully, explaining why no FFmpeg command line can be generated.
 
 ## 3. Strategy
 
@@ -670,10 +673,24 @@ real jobs."
    promotions with no new schema discriminators or orchestration
    primitives — a lower-risk way to keep Wave 1 cadence while the
    `tee` muxer (next) gets its larger PR.
-5. **`tee` muxer** (§2.5, §3.3.2) — `Output.Kind = "tee"` with
-   `Output.Targets []TeeTarget`. Encode once → mux to MP4 + HLS +
-   DASH. Pairs with #3 (the per-stream metadata / disposition
-   schema generalises naturally to per-target overrides).
+5. **`tee` muxer** (§2.5, §3.3.2) — ✅ **landed.**
+   `Output.Kind = "tee"` with `Output.Targets []TeeTarget`. The
+   runtime renders the FFmpeg slaves URL
+   (`[opt=val:opt=val]url|[opt=val]url`) deterministically via
+   `pipeline.buildTeeSlavesURL` and opens libavformat's built-in
+   tee muxer once via `av.OpenTeeOutput`; encoding happens once,
+   the tee muxer fans the encoded packet stream out to every
+   slave with no re-encoding. Promoted typed fields per target:
+   `Format` (`f=`), `Select` (`select=`), `BSFs` (`bsfs=`),
+   `OnFail` (`abort`/`ignore`), `UseFifo`, `FifoOptions`; obscure
+   slave AVOptions land in `Options`. `compat/ffcli` parses
+   `-f tee "[f=mp4]a.mp4|[f=hls:hls_time=4]b.m3u8"` end-to-end
+   into the typed structure. Per-slave metadata/disposition is
+   not supported by libavformat (slaves clone parent metadata) —
+   set values via the parent `Output.Metadata` / `Output.Streams`
+   instead. The encoder graph still wires through one logical
+   sink, so the per-stream metadata / disposition schema (#3)
+   composes naturally.
 6. **Two-pass video encoding** (`-pass 1/2 -passlogfile`) (§2.4) —
    `Output.Encoder.Pass int` + `PassLogFile string`. Reuses the
    orchestration scaffold built for #7.

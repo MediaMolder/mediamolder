@@ -39,6 +39,27 @@ mediamolder convert-cmd "ffmpeg -i input.mp4 -c:v libx264 out.mp4"
 | 27 | `ffmpeg -i in.mp4 -c copy -bsf:v h264_mp4toannexb out.ts` | BSF: MP4→TS remux | [JSON](../testdata/examples/27_bsf_remux.json) |
 | 28 | `ffmpeg -hwaccel qsv -i in.mp4 -c:v h264_qsv -bsf:v h264_metadata=level=4.1 out.mp4` | QSV + BSF | [JSON](../testdata/examples/28_qsv_bsf.json) |
 
+## Wave 1 flag → field mapping
+
+The following per-input / per-output flags landed in the §6 Wave 1 burn-down. Each maps to a typed field rather than an `options` bag entry, so round-trip via `compat/ffcli` is lossless.
+
+| FFmpeg flag | JSON field | Notes |
+|-------------|------------|-------|
+| `-stream_loop N` | `inputs[].stream_loop` | `-1` for infinite. PTS continues monotonically across iterations. |
+| `-itsoffset T`   | `inputs[].itsoffset`   | Seconds; may be negative. |
+| `-re`            | `inputs[].read_rate: 1.0` | Realtime pacing. |
+| `-readrate R`    | `inputs[].read_rate`   | Multiplier (e.g. `2.0` = 2× realtime). |
+| `-readrate_initial_burst S` | `inputs[].read_rate_initial_burst` | Default 0.5s when `read_rate>0`. |
+| `-readrate_catchup C` | `inputs[].read_rate_catchup` | Must be ≥ `read_rate`. |
+| `-shortest`      | `outputs[].shortest`   | Per-output scope. |
+| `-fs SIZE`       | `outputs[].max_file_size` | Bytes. |
+| `-fps_mode M`    | `outputs[].fps_mode`   | `passthrough` / `vfr` / `cfr` / `drop`. |
+| `-async N`       | `outputs[].audio_sync` | Injects `aresample=async=N`. |
+| `-copyts`        | top-level `copy_ts`    | Global. |
+| `-metadata:s:<t>:<i> k=v` | `outputs[].streams[].metadata` | Per-stream. |
+| `-disposition:s:<t>:<i> v` | `outputs[].streams[].disposition` | `+`-separated AV_DISPOSITION_* names. |
+| `-f tee "[f=mp4]a.mp4|[f=hls:hls_time=4]b.m3u8"` | `outputs[].kind = "tee"` + `targets[]` | Encode once, mux N times. |
+
 ## Key differences from FFmpeg CLI
 
 | Feature | FFmpeg CLI | MediaMolder |

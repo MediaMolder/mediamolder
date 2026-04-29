@@ -144,10 +144,27 @@
         "metadata": { "type": "object", "additionalProperties": { "type": "string" }, "description": "Container-level key/value metadata written into the output (`-metadata key=value`). Replaces any metadata mapped from inputs via `input.map_metadata`." },
         "streams": { "type": "array", "items": { "$ref": "#/$defs/stream_spec" }, "description": "Per-stream metadata + disposition overrides. Mirrors ffmpeg `-metadata:s:<type>:<idx> key=value` and `-disposition:s:<type>:<idx> flags`." },
         "chapters": { "type": "array", "items": { "$ref": "#/$defs/chapter" }, "description": "Explicit chapter table. Replaces any chapters mapped from inputs via `input.map_chapters`. Container must support chapters (matroska, mp4, ogg, ffmetadata, ...)." },
+        "kind": { "type": "string", "enum": ["", "file", "tee"], "description": "Output discriminator. '' / 'file' open a single muxer at `url`; 'tee' uses libavformat's tee muxer to fan one encoded stream out to N targets. When 'tee', `targets` is required and `url` / `format` are ignored." },
+        "targets": { "type": "array", "items": { "$ref": "#/$defs/tee_target" }, "description": "Slaves of a tee output (only valid when kind='tee'). Mirrors the FFmpeg `-f tee \"[opt=val]url|[opt=val]url\"` slaves grammar." },
         "options": {
           "type": "object",
           "additionalProperties": true
         }
+      }
+    },
+    "tee_target": {
+      "type": "object",
+      "required": ["url"],
+      "additionalProperties": false,
+      "properties": {
+        "url": { "type": "string", "minLength": 1 },
+        "format": { "type": "string", "description": "Force the slave's container (`f=`)." },
+        "select": { "type": "string", "description": "Comma-separated FFmpeg stream specifiers (`v`, `a:0`, ...). Empty = all streams." },
+        "bsfs": { "type": "string", "description": "Per-slave bitstream-filter chain." },
+        "onfail": { "type": "string", "enum": ["", "abort", "ignore"], "description": "Slave-failure policy." },
+        "use_fifo": { "type": "boolean", "description": "Wrap slave in libavformat's fifo muxer for buffered async writes." },
+        "fifo_options": { "type": "string", "description": "`;`-separated key=value forwarded to the fifo muxer when use_fifo is set." },
+        "options": { "type": "object", "additionalProperties": true, "description": "Free-form additional `[opt=val]` pairs for obscure tee-slave AVOptions." }
       }
     },
     "chapter": {

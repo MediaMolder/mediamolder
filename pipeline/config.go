@@ -336,6 +336,72 @@ type Output struct {
 	// (matroska, mp4, ogg, ffmetadata, …) for them to surface.
 	Chapters []Chapter      `json:"chapters,omitempty"`
 	Options  map[string]any `json:"options,omitempty"`
+	// Kind selects the output discriminator. `""` (default) and
+	// `"file"` open a single muxer at `URL` (the historical
+	// behaviour). `"tee"` switches the runtime to libavformat's
+	// built-in tee muxer: `URL` and `Format` are ignored, and
+	// `Targets` is required. Encoding happens once; the tee muxer
+	// fans the encoded packet stream out to every target with no
+	// re-encoding (FFmpeg `-f tee "[f=mp4]a.mp4|[f=hls]b.m3u8"`).
+	// Per-target metadata / disposition is not directly supported
+	// by libavformat (slaves clone the parent context); use
+	// `Output.Metadata` / `Output.Streams` for values shared by
+	// every target.
+	Kind string `json:"kind,omitempty"`
+	// Targets is the list of tee slaves. Required when
+	// `Kind == "tee"`; must be empty otherwise. The runtime
+	// builds the FFmpeg slaves URL by joining each target with
+	// `|` and prepending each with its `[opt=val:opt=val]` block,
+	// then opens the tee muxer once via libavformat. Mirrors the
+	// `[options]url|[options]url` grammar parsed by
+	// `libavformat/tee_common.c::ff_tee_parse_slave_options`.
+	Targets []TeeTarget `json:"targets,omitempty"`
+}
+
+// TeeTarget describes one slave of a `Kind == "tee"` Output. It
+// becomes one `[opt=val:opt=val]url` clause in the slaves URL passed
+// to libavformat's tee muxer. Mirrors `libavformat/tee.c::open_slave`
+// (the AVOption set on each tee slave context).
+type TeeTarget struct {
+	// URL is the slave's output URL (file path or scheme). Required.
+	// `:`, `]`, `\`, and `|` inside the URL are escaped automatically
+	// when the slaves string is built (matches `av_get_token`'s
+	// backslash-escape grammar in libavutil/avstring.c).
+	URL string `json:"url"`
+	// Format forces the slave's container format (the tee muxer's
+	// `f=` AVOption). Usually required since auto-detection from
+	// `URL` may fail (e.g. when writing through a pipe).
+	Format string `json:"format,omitempty"`
+	// Select is the tee muxer's `select=` AVOption — a comma-
+	// separated list of FFmpeg stream specifiers that picks which
+	// streams from the parent context this slave receives
+	// (e.g. `"v"`, `"a:0"`, `"v,a:0"`). Empty means all streams.
+	Select string `json:"select,omitempty"`
+	// BSFs is the tee muxer's `bsfs=` AVOption — a per-slave
+	// bitstream-filter chain (e.g. `"h264_mp4toannexb"`). Use the
+	// FFmpeg per-stream form (`bsfs/v=...`) by passing it through
+	// `Options` when stream-type-specific chains are needed.
+	BSFs string `json:"bsfs,omitempty"`
+	// OnFail is the tee muxer's `onfail=` AVOption — slave-failure
+	// policy. `""` / `"abort"` (default) propagate the error; the
+	// other accepted value is `"ignore"` which closes the failed
+	// slave and continues writing to the rest.
+	OnFail string `json:"onfail,omitempty"`
+	// UseFifo wraps the slave in libavformat's `fifo` muxer (the
+	// tee muxer's `use_fifo` AVOption). Adds an extra buffering
+	// thread; required for slaves that must absorb downstream
+	// stalls without blocking the encode loop.
+	UseFifo bool `json:"use_fifo,omitempty"`
+	// FifoOptions is the tee muxer's `fifo_options` AVOption,
+	// forwarded as a `;`-separated `key=value` string to the fifo
+	// muxer when `UseFifo` is true. Ignored otherwise.
+	FifoOptions string `json:"fifo_options,omitempty"`
+	// Options is a free-form bag of additional `[opt=val:opt=val]`
+	// pairs prepended to the slave's `[...]` block. Accepted as an
+	// escape hatch for obscure tee-slave AVOptions
+	// (e.g. `use_hardware_acceleration`) that are not promoted to
+	// typed fields.
+	Options map[string]any `json:"options,omitempty"`
 }
 
 // Chapter is one entry in `Output.Chapters`. Start/End are in seconds;
@@ -505,6 +571,28 @@ func validate(cfg *Config) error {
 			if ss.Index < 0 {
 				return fmt.Errorf("output %q streams[%d]: invalid index %d (must be >= 0)", out.ID, j, ss.Index)
 			}
+		}
+		switch out.Kind {
+		case "", "file":
+			if len(out.Targets) > 0 {
+				return fmt.Errorf("output %q: targets is only valid when kind=\"tee\" (have kind=%q)", out.ID, out.Kind)
+			}
+		case "tee":
+			if len(out.Targets) == 0 {
+				return fmt.Errorf("output %q: kind=\"tee\" requires at least one entry in targets", out.ID)
+			}
+			for j, t := range out.Targets {
+				if t.URL == "" {
+					return fmt.Errorf("output %q targets[%d]: missing url", out.ID, j)
+				}
+				switch t.OnFail {
+				case "", "abort", "ignore":
+				default:
+					return fmt.Errorf("output %q targets[%d]: invalid onfail %q (want abort|ignore)", out.ID, j, t.OnFail)
+				}
+			}
+		default:
+			return fmt.Errorf("output %q: invalid kind %q (want \"\"|file|tee)", out.ID, out.Kind)
 		}
 	}
 	// Edge types must be valid.

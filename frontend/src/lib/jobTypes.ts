@@ -169,6 +169,35 @@ export interface Output {
    *  via `input.map_chapters`. The container must support chapters
    *  (matroska, mp4, ogg, ffmetadata, ...). */
   chapters?: Chapter[];
+  /** Output discriminator. `""` / `"file"` open a single muxer at
+   *  `url`; `"tee"` switches to libavformat's built-in tee muxer to
+   *  fan one encoded stream out to N targets (`url` / `format` are
+   *  ignored when `kind === "tee"`). */
+  kind?: '' | 'file' | 'tee';
+  /** Slaves for a `kind === "tee"` output. Required in that case;
+   *  must be empty otherwise. */
+  targets?: TeeTarget[];
+  options?: Record<string, unknown>;
+}
+
+export interface TeeTarget {
+  /** Slave URL (file path or scheme). */
+  url: string;
+  /** Force the slave's container (`f=`). */
+  format?: string;
+  /** Comma-separated FFmpeg stream specifiers (`v`, `a:0`, ...). */
+  select?: string;
+  /** Per-slave bitstream-filter chain. */
+  bsfs?: string;
+  /** Slave-failure policy. */
+  onfail?: '' | 'abort' | 'ignore';
+  /** Wrap slave in libavformat's `fifo` muxer (extra buffering thread). */
+  use_fifo?: boolean;
+  /** `;`-separated `key=value` forwarded to the fifo muxer when
+   *  `use_fifo` is set. */
+  fifo_options?: string;
+  /** Free-form additional `[opt=val]` pairs for obscure tee-slave
+   *  AVOptions. */
   options?: Record<string, unknown>;
 }
 

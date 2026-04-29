@@ -541,6 +541,20 @@ func (p *parser) parse() (*pipeline.Config, error) {
 			if p.codecA != "none" && p.codecA != "copy" && len(p.audioEncOpts) > 0 {
 				out.EncoderParamsAudio = copyAnyMap(p.audioEncOpts)
 			}
+			// `-f tee URL` (where URL is `[opt=val]slave|[opt=val]slave`):
+			// promote to typed Output.Kind="tee" + Output.Targets[]. The
+			// pipeline runtime then reconstructs the slaves URL deterministically
+			// via pipeline.buildTeeSlavesURL when it opens the tee muxer.
+			if out.Format == "tee" {
+				targets, terr := parseTeeSlaves(out.URL)
+				if terr != nil {
+					return nil, fmt.Errorf("output -f tee: %w", terr)
+				}
+				out.Kind = "tee"
+				out.Targets = targets
+				out.Format = ""
+				out.URL = "tee"
+			}
 			p.outputs = append(p.outputs, out)
 		}
 	}

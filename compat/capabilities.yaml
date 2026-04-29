@@ -319,9 +319,9 @@ sections:
         status: covered
         schema: pipeline.Config.Outputs
       - flag: "tee muxer (single-pass multi-format)"
-        status: missing
-        schema: n/a
-        notes: largest single missing output feature
+        status: covered
+        schema: pipeline.Output.Kind/Targets
+        notes: Output.Kind="tee" + Output.Targets[]; encoded once, fanned out to N libavformat slaves via the built-in tee muxer (-f tee "[opt=val]url|[opt=val]url"). Per-target metadata/disposition is not directly supported by libavformat (slaves clone parent metadata).
       - flag: "HLS muxer (hls_time/hls_playlist_type/EXT-X-MAP/byte-range)"
         status: partial
         schema: pipeline.Output.Options

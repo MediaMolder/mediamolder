@@ -110,6 +110,29 @@ func OpenOutputWithFormat(path, format string) (*OutputFormatContext, error) {
 	}, nil
 }
 
+// OpenTeeOutput opens libavformat's built-in tee muxer with the given
+// `slavesURL` (the FFmpeg `[opt=val:opt=val]url|[opt=val]url` slaves
+// grammar parsed by libavformat/tee.c::tee_write_header). Each slave's
+// output file is created and managed by libavformat itself; the parent
+// tee context is `AVFMT_NOFILE` (no avio_open, no `.tmp` shadow file,
+// no atomic rename on close). Use this for `Output.Kind == "tee"`.
+func OpenTeeOutput(slavesURL string) (*OutputFormatContext, error) {
+	cSlaves := C.CString(slavesURL)
+	defer C.free(unsafe.Pointer(cSlaves))
+
+	cFmt := C.CString("tee")
+	defer C.free(unsafe.Pointer(cFmt))
+
+	var ctx *C.AVFormatContext
+	ret := C.avformat_alloc_output_context2(&ctx, nil, cFmt, cSlaves)
+	if ret < 0 {
+		return nil, fmt.Errorf("avformat_alloc_output_context2(tee, %q): %w", slavesURL, newErr(ret))
+	}
+	// The tee muxer is AVFMT_NOFILE — its slaves manage their own IO.
+	// Leave tmpPath/outPath empty so Close() does not attempt a rename.
+	return &OutputFormatContext{p: ctx}, nil
+}
+
 // AddStream adds a new output stream using the given encoder context's codec/format.
 // Returns the zero-based stream index assigned.
 func (f *OutputFormatContext) AddStream(enc *EncoderContext) (int, error) {

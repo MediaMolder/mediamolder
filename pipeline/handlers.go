@@ -2115,9 +2115,24 @@ func (r *graphRunner) openSink(_ *graph.Graph, node *graph.Node) (*sinkResources
 		return nil, fmt.Errorf("output %q timing: %w", out.URL, err)
 	}
 
-	muxer, err := av.OpenOutputWithFormat(out.URL, out.Format)
-	if err != nil {
-		return nil, fmt.Errorf("open output %q: %w", out.URL, err)
+	var muxer *av.OutputFormatContext
+	switch out.Kind {
+	case "tee":
+		slavesURL, terr := buildTeeSlavesURL(out.Targets)
+		if terr != nil {
+			return nil, fmt.Errorf("output %q: %w", out.ID, terr)
+		}
+		m, oerr := av.OpenTeeOutput(slavesURL)
+		if oerr != nil {
+			return nil, fmt.Errorf("open tee output %q: %w", out.ID, oerr)
+		}
+		muxer = m
+	default:
+		m, oerr := av.OpenOutputWithFormat(out.URL, out.Format)
+		if oerr != nil {
+			return nil, fmt.Errorf("open output %q: %w", out.URL, oerr)
+		}
+		muxer = m
 	}
 
 	rescales := make([]*sinkRescale, len(node.Inbound))
