@@ -418,6 +418,26 @@ type sourceResources struct {
 	// 10s of packets but tag them with PTS in the [450s, 460s] range,
 	// causing the muxer to report a 460s-long file.
 	tsOffsetUS int64
+
+	// streamLoopRemaining counts how many additional EOF→rewind
+	// cycles the demux loop should still perform. -1 = infinite.
+	// Decremented by handleSource each time the runtime seeks back
+	// to start. Mirrors `Demuxer.loop` in
+	// fftools/ffmpeg_demux.c::seek_to_start.
+	streamLoopRemaining int
+	// loopOffsetUS is the cumulative media duration of completed
+	// loop iterations, in AV_TIME_BASE units. Added to every
+	// post-rewind packet's PTS/DTS so timestamps remain monotone
+	// across iterations. Mirrors `Demuxer.duration.ts` rescaled to
+	// AV_TIME_BASE_Q in fftools/ffmpeg_demux.c::ts_fixup. Updated
+	// after each successful seek by adding the current iteration's
+	// `(maxPTSus - minPTSus)`.
+	loopOffsetUS int64
+	// pacer enforces FFmpeg's `-readrate` / `-re` /
+	// `-readrate_initial_burst` / `-readrate_catchup` semantics on
+	// the demux loop. Nil when no pacing is configured. See
+	// readRatePacer for the algorithm details.
+	pacer *readRatePacer
 }
 
 func (s *sourceResources) Close() {
@@ -693,6 +713,14 @@ func (r *graphRunner) handleSource(ctx context.Context, node *graph.Node, outs [
 	}
 	defer pkt.Close()
 
+	// Per-loop-iteration min/max packet PTS (in AV_TIME_BASE
+	// microseconds) — used by the `-stream_loop` rewind path to
+	// compute the cycle's media duration so post-rewind packets can
+	// be PTS-shifted by the right amount. Mirrors `Demuxer.min_pts`
+	// / `Demuxer.max_pts` in fftools/ffmpeg_demux.c::ts_fixup.
+	// Reset at every successful seek_to_start.
+	var iterMinPTSus, iterMaxPTSus int64 = math.MaxInt64, math.MinInt64
+
 	for {
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -701,6 +729,35 @@ func (r *graphRunner) handleSource(ctx context.Context, node *graph.Node, outs [
 		frameStart := time.Now()
 		if err := src.input.ReadPacket(pkt); err != nil {
 			if av.IsEOF(err) {
+				// `-stream_loop` semantics. Mirrors
+				// fftools/ffmpeg_demux.c::seek_to_start:
+				// rewind, accumulate the cycle's media
+				// duration into loopOffsetUS, decrement the
+				// remaining-loops counter (unless it is -1,
+				// which means infinite), and continue
+				// reading. On seek failure we fall through
+				// to the normal EOF break (matches FFmpeg's
+				// behaviour: any failure inside seek_to_start
+				// terminates the input).
+				if src.streamLoopRemaining != 0 && iterMaxPTSus > math.MinInt64 {
+					seekTo := src.input.StartTime()
+					if seekTo == av.NoPTSValue {
+						seekTo = 0
+					}
+					if serr := src.input.SeekFile(seekTo); serr == nil {
+						minPTSus := iterMinPTSus
+						if minPTSus == math.MaxInt64 {
+							minPTSus = 0
+						}
+						src.loopOffsetUS += iterMaxPTSus - minPTSus
+						iterMinPTSus = math.MaxInt64
+						iterMaxPTSus = math.MinInt64
+						if src.streamLoopRemaining > 0 {
+							src.streamLoopRemaining--
+						}
+						continue
+					}
+				}
 				break
 			}
 			return err
@@ -742,6 +799,56 @@ func (r *graphRunner) handleSource(ctx context.Context, node *graph.Node, outs [
 			offsetTB := src.tsOffsetUS * int64(si.TimeBase[1]) /
 				(1_000_000 * int64(si.TimeBase[0]))
 			pkt.ShiftTS(offsetTB)
+		}
+
+		// Apply the per-iteration loop offset for `-stream_loop`.
+		// loopOffsetUS is the cumulative duration (in AV_TIME_BASE
+		// microseconds) of all completed iterations; adding it
+		// keeps post-rewind PTS monotone. Mirrors `pkt->pts +=
+		// duration` in fftools/ffmpeg_demux.c::ts_fixup. Tracked
+		// separately from tsOffsetUS so the cycle-duration
+		// arithmetic doesn't entangle with the `-ss` /
+		// `-itsoffset` shift.
+		if src.loopOffsetUS != 0 && si.TimeBase[1] > 0 {
+			loopTB := src.loopOffsetUS * int64(si.TimeBase[1]) /
+				(1_000_000 * int64(si.TimeBase[0]))
+			pkt.ShiftTS(loopTB)
+		}
+
+		// Track per-iteration min/max packet PTS in AV_TIME_BASE
+		// microseconds so the loop rewind path (above) can compute
+		// `max - min` as the cycle's media duration. Done in
+		// post-shift coordinates, exactly as
+		// fftools/ffmpeg_demux.c::ts_fixup updates `Demuxer.min_pts`
+		// / `Demuxer.max_pts` after the offset additions.
+		if src.streamLoopRemaining != 0 {
+			if pts := pkt.PTS(); pts != math.MinInt64 && si.TimeBase[1] > 0 {
+				ptsUSshifted := pts * 1_000_000 * int64(si.TimeBase[0]) / int64(si.TimeBase[1])
+				if ptsUSshifted < iterMinPTSus {
+					iterMinPTSus = ptsUSshifted
+				}
+				dur := pkt.Duration()
+				endUS := ptsUSshifted
+				if dur > 0 {
+					endUS += dur * 1_000_000 * int64(si.TimeBase[0]) / int64(si.TimeBase[1])
+				}
+				if endUS > iterMaxPTSus {
+					iterMaxPTSus = endUS
+				}
+			}
+		}
+
+		// Pace the demux loop when the user requested
+		// `-readrate` / `-re`. Done after PTS shifts so the
+		// pacer compares wallclock-elapsed against the
+		// post-offset packet PTS — matches
+		// fftools/ffmpeg_demux.c::readrate_sleep, which uses
+		// `ds->dts` *after* `ts_fixup` has finished.
+		if src.pacer != nil {
+			if pts := pkt.PTS(); pts != math.MinInt64 && si.TimeBase[1] > 0 {
+				ptsUS := pts * 1_000_000 * int64(si.TimeBase[0]) / int64(si.TimeBase[1])
+				src.pacer.maybeSleep(ctx, ptsUS)
+			}
 		}
 
 		// Publish media-time progress so the GUI can compute
@@ -1732,15 +1839,45 @@ func (r *graphRunner) openSource(cfg Input, srcNode *graph.Node, decOpts av.Deco
 		tsOffsetUS = -timing.seekTimestampUS(input.StartTime())
 	}
 
+	// Compose `-itsoffset` additively with the seek compensation.
+	// FFmpeg's fftools/ffmpeg_demux.c does the same:
+	//   `f->ts_offset = o->input_ts_offset - timestamp;`
+	// (where `timestamp` is the value passed to avformat_seek_file).
+	// `Input.ITSOffset` is in seconds; convert to AV_TIME_BASE
+	// microseconds before adding.
+	if cfg.ITSOffset != 0 {
+		tsOffsetUS += int64(cfg.ITSOffset * 1_000_000)
+	}
+
+	// Build the read-rate pacer when the user enabled pacing.
+	// Mirrors fftools/ffmpeg_demux.c's `Demuxer.readrate` /
+	// `readrate_initial_burst` / `readrate_catchup` defaults: when
+	// burst is unset it falls back to 0.5s, and catchup falls back
+	// to readrate × 1.05.
+	var pacer *readRatePacer
+	if cfg.ReadRate > 0 {
+		burst := cfg.ReadRateInitialBurst
+		if burst == 0 {
+			burst = 0.5
+		}
+		catchup := cfg.ReadRateCatchup
+		if catchup == 0 {
+			catchup = cfg.ReadRate * 1.05
+		}
+		pacer = newReadRatePacer(cfg.ReadRate, burst, catchup)
+	}
+
 	return &sourceResources{
-		input:         input,
-		decoders:      decoders,
-		subDecoders:   subDecoders,
-		streams:       streams,
-		cfg:           cfg,
-		mediaDuration: mediaDuration,
-		stopPTSus:     timing.stopTimestampUS(input.StartTime()),
-		tsOffsetUS:    tsOffsetUS,
+		input:               input,
+		decoders:            decoders,
+		subDecoders:         subDecoders,
+		streams:             streams,
+		cfg:                 cfg,
+		mediaDuration:       mediaDuration,
+		stopPTSus:           timing.stopTimestampUS(input.StartTime()),
+		tsOffsetUS:          tsOffsetUS,
+		streamLoopRemaining: cfg.StreamLoop,
+		pacer:               pacer,
 	}, nil
 }
 

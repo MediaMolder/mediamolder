@@ -65,6 +65,80 @@ type Input struct {
 	// MapChapters=true the first such input wins (matches FFmpeg's
 	// single-source semantics for chapters).
 	MapChapters bool `json:"map_chapters,omitempty"`
+	// StreamLoop counts how many additional times the demuxer should
+	// rewind to the start and re-emit packets after EOF. `0` (default)
+	// disables looping, `N>0` plays the input N+1 times total, and
+	// `-1` loops forever (until a downstream node — typically a
+	// `-shortest` sibling — closes the pipeline). Mirrors FFmpeg's
+	// per-input `-stream_loop N` flag (parsed in
+	// fftools/ffmpeg_opt.c, enforced by fftools/ffmpeg_demux.c's
+	// `seek_to_start` + `ts_fixup` cycle): on EOF the runtime
+	// captures `max_pts - min_pts` of the first iteration as the
+	// loop's media duration, calls `avformat_seek_file(..., 0)` to
+	// rewind, and adds the accumulated cycle duration to every
+	// subsequent packet's PTS/DTS so timestamps remain monotone
+	// across iterations. The unblock pattern is the canonical
+	// "watermark / bug overlay loop" job: a 5 s logo PNG looped
+	// indefinitely against a finite main video with `-shortest`
+	// ending the output. Without this flag the overlay runs out at
+	// 5 s and the rest of the main clip carries the last logo
+	// frame instead.
+	StreamLoop int `json:"stream_loop,omitempty"`
+	// ITSOffset shifts every packet's PTS/DTS by this many seconds
+	// at demux time. Mirrors FFmpeg's per-input `-itsoffset T`
+	// flag (parsed as OPT_TYPE_TIME in fftools/ffmpeg_opt.c, stored
+	// in `InputFile.input_ts_offset`, applied via
+	// `pkt->pts += av_rescale_q(ifile->ts_offset, AV_TIME_BASE_Q,
+	// pkt->time_base)` in ts_fixup). Positive values delay the
+	// input on the global timeline (the file's t=0 lands at
+	// t=ITSOffset in the output); negative values advance it.
+	// Composes additively with the implicit `-ss` ts_offset shift
+	// the runtime already applies, exactly as FFmpeg composes
+	// `f->ts_offset = o->input_ts_offset - timestamp`. The
+	// canonical use case is correcting A/V slip on dubbed sources
+	// (e.g. `-itsoffset -0.030 -i dubbed_audio.wav` to advance the
+	// dub by 30 ms against the picture). Sub-millisecond resolution
+	// is preserved end-to-end via AV_TIME_BASE microseconds.
+	ITSOffset float64 `json:"itsoffset,omitempty"`
+	// ReadRate paces packet reads to (ReadRate × realtime). `0`
+	// (default) disables pacing — the demuxer reads as fast as the
+	// pipeline can consume. `1.0` mirrors FFmpeg's `-re` flag
+	// (read at native frame rate, the canonical live-restream
+	// throttle); `2.0` reads at 2× realtime; `0.5` at half speed.
+	// Implementation mirrors fftools/ffmpeg_demux.c::readrate_sleep:
+	// per-packet, the runtime computes
+	// `max_pts = stream_ts_offset + initial_burst_us +
+	//           wallclock_elapsed_us × ReadRate` and, when the
+	// packet's PTS exceeds that limit, sleeps for the difference
+	// before forwarding the packet downstream. Required for
+	// every "live-restream / RTMP / SRT egress" pipeline (without
+	// pacing the muxer overruns the wallclock budget the
+	// destination expects), and for any HLS / DASH push that
+	// relies on segment-duration walltime equalling media
+	// duration. Negative values are rejected by validate().
+	ReadRate float64 `json:"read_rate,omitempty"`
+	// ReadRateInitialBurst is the size of the unpaced burst window
+	// at the start of the input, expressed in seconds of media
+	// time. Mirrors FFmpeg's `-readrate_initial_burst SECS` flag.
+	// Defaults to `0.5` (the FFmpeg default) when ReadRate is
+	// non-zero and this field is unset; ignored when ReadRate is
+	// zero. The first `ReadRateInitialBurst` seconds of every
+	// stream are read at full speed regardless of pacing — useful
+	// for filling a downstream segmenter's lookahead before the
+	// throttle kicks in. Negative values are rejected by
+	// validate().
+	ReadRateInitialBurst float64 `json:"read_rate_initial_burst,omitempty"`
+	// ReadRateCatchup is the multiplier used to recover from a
+	// pacing lag. Mirrors FFmpeg's `-readrate_catchup` flag and
+	// must be ≥ ReadRate when both are set. When the runtime
+	// detects that the demuxer has fallen behind the schedule by
+	// more than 0.3 s of media time (matches the same threshold
+	// in fftools/ffmpeg_demux.c::readrate_sleep), it switches to
+	// pacing at this higher rate until the lag is gone. Defaults
+	// to `ReadRate × 1.05` when unset and ReadRate is non-zero;
+	// ignored when ReadRate is zero. Rejected by validate when
+	// `0 < ReadRateCatchup < ReadRate`.
+	ReadRateCatchup float64 `json:"read_rate_catchup,omitempty"`
 }
 
 // StreamSelect selects a specific stream from an input.
@@ -381,6 +455,21 @@ func validate(cfg *Config) error {
 			if s.Type == "" {
 				return fmt.Errorf("input %q streams[%d] missing type", inp.ID, j)
 			}
+		}
+		if inp.StreamLoop < -1 {
+			return fmt.Errorf("input %q: invalid stream_loop %d (must be >= -1; -1 = infinite)", inp.ID, inp.StreamLoop)
+		}
+		if inp.ReadRate < 0 {
+			return fmt.Errorf("input %q: invalid read_rate %g (must be >= 0)", inp.ID, inp.ReadRate)
+		}
+		if inp.ReadRateInitialBurst < 0 {
+			return fmt.Errorf("input %q: invalid read_rate_initial_burst %g (must be >= 0)", inp.ID, inp.ReadRateInitialBurst)
+		}
+		if inp.ReadRateCatchup < 0 {
+			return fmt.Errorf("input %q: invalid read_rate_catchup %g (must be >= 0)", inp.ID, inp.ReadRateCatchup)
+		}
+		if inp.ReadRateCatchup > 0 && inp.ReadRate > 0 && inp.ReadRateCatchup < inp.ReadRate {
+			return fmt.Errorf("input %q: read_rate_catchup %g must be >= read_rate %g (mirrors fftools/ffmpeg_demux.c)", inp.ID, inp.ReadRateCatchup, inp.ReadRate)
 		}
 	}
 	// All output IDs must be unique.

@@ -41,6 +41,11 @@
         "kind": { "type": "string", "enum": ["file", "lavfi"], "description": "How to open the input. \"file\" (default) probes the URL with libavformat. \"lavfi\" routes through the lavfi virtual demuxer (FFmpeg's -f lavfi); the URL is then a filtergraph spec such as 'anullsrc=r=48000:cl=stereo' or 'color=black:s=1920x1080:r=30'." },
         "map_metadata": { "type": "boolean", "description": "When true, copy this input's container-level metadata onto every output that does not set its own `metadata`. Mirrors ffmpeg `-map_metadata IDX`. Multiple inputs merge in declaration order; last writer wins per key." },
         "map_chapters": { "type": "boolean", "description": "When true, copy this input's chapter table onto every output that does not set its own `chapters`. Mirrors ffmpeg `-map_chapters IDX`. First input with map_chapters=true wins (single-source semantics)." },
+        "stream_loop": { "type": "integer", "minimum": -1, "description": "Number of additional times the demuxer rewinds to the start and re-emits packets after EOF. 0 = no loop, N>0 = play N+1 times total, -1 = infinite. Mirrors ffmpeg `-stream_loop N`." },
+        "itsoffset": { "type": "number", "description": "Per-input timestamp offset in seconds. Mirrors ffmpeg `-itsoffset T`." },
+        "read_rate": { "type": "number", "minimum": 0, "description": "Pace packet reads to (read_rate × realtime). 0 = unpaced; 1.0 mirrors ffmpeg `-re`." },
+        "read_rate_initial_burst": { "type": "number", "minimum": 0, "description": "Seconds of media time read unpaced at the start of the input. Defaults to 0.5s when read_rate is non-zero." },
+        "read_rate_catchup": { "type": "number", "minimum": 0, "description": "Multiplier used to recover from a pacing lag; must be >= read_rate when set." },
         "streams": {
           "type": "array",
           "items": { "$ref": "#/$defs/stream_select" }

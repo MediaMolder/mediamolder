@@ -45,16 +45,17 @@ sections:
         schema: pipeline.Input.Options.to
         notes: converted to recording_time = to - max(ss,0)
       - flag: "-itsoffset"
-        status: missing
-        schema: n/a
-        notes: per-input PTS offset; required for A/V re-sync
+        status: covered
+        schema: pipeline.Input.ITSOffset
+        notes: per-input PTS offset in seconds; openSource composes additively with the implicit -ss ts_offset (matches FFmpeg's `f->ts_offset = o->input_ts_offset - timestamp` in fftools/ffmpeg_demux.c). Applied via Packet.ShiftTS in handleSource for every demuxed packet.
       - flag: "-stream_loop"
-        status: missing
-        schema: n/a
+        status: covered
+        schema: pipeline.Input.StreamLoop
+        notes: per-input integer (-1 = infinite). handleSource tracks per-iteration min/max PTS in AV_TIME_BASE us; on EOF, if loops remain, calls SeekFile(StartTime), accumulates `(max - min)` into loopOffsetUS, and shifts subsequent packets so PTS stay monotone. Mirrors fftools/ffmpeg_demux.c::seek_to_start + ts_fixup `pkt->pts += duration` arithmetic.
       - flag: "-readrate / -re"
-        status: missing
-        schema: n/a
-        notes: live-stream restreaming
+        status: covered
+        schema: pipeline.Input.ReadRate / ReadRateInitialBurst / ReadRateCatchup
+        notes: per-input pacing. -re is shorthand for -readrate 1. Implemented by pipeline.readRatePacer (pipeline/read_rate.go) — faithful port of fftools/ffmpeg_demux.c::readrate_sleep including the 0.3 s lag-detection threshold and catchup multiplier. Sleeps via a context-aware time.Timer so cancellation aborts pacing immediately. Required for live-restream / RTMP / SRT egress and any HLS/DASH push that relies on segment walltime equalling media time.
       - flag: "-framerate / -r (input)"
         status: partial
         schema: pipeline.Input.Options

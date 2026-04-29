@@ -70,6 +70,26 @@ type parser struct {
 	// file (input or output) named on the command line, so they are
 	// queued here and drained when the next -i / output URL is seen.
 	pendingFileOpts map[string]any
+	// Pending demuxer-side typed flags collected between -i flags;
+	// drained onto the next pipeline.Input. FFmpeg's options table
+	// marks `-stream_loop`, `-itsoffset`, `-re`,
+	// `-readrate{,_initial_burst,_catchup}` as `OPT_INPUT |
+	// OPT_OFFSET`, which means they latch onto the *next* `-i`,
+	// not the previous one. Mirror that here so command lines like
+	// `-stream_loop -1 -i logo.png -i main.mp4` apply the loop to
+	// `logo.png` only. The `*Set` companion booleans tell the input
+	// emission code whether the user actually set the flag (so a
+	// `-readrate 0` would still differ from "unset").
+	pendingStreamLoop     int
+	pendingStreamLoopSet  bool
+	pendingITSOffset      float64
+	pendingITSOffsetSet   bool
+	pendingReadRate       float64
+	pendingReadRateSet    bool
+	pendingReadBurst      float64
+	pendingReadBurstSet   bool
+	pendingReadCatchup    float64
+	pendingReadCatchupSet bool
 }
 
 func (p *parser) peek() string {
@@ -114,6 +134,26 @@ func (p *parser) parse() (*pipeline.Config, error) {
 			if len(p.pendingFileOpts) > 0 {
 				in.Options = p.pendingFileOpts
 				p.pendingFileOpts = nil
+			}
+			if p.pendingStreamLoopSet {
+				in.StreamLoop = p.pendingStreamLoop
+				p.pendingStreamLoop, p.pendingStreamLoopSet = 0, false
+			}
+			if p.pendingITSOffsetSet {
+				in.ITSOffset = p.pendingITSOffset
+				p.pendingITSOffset, p.pendingITSOffsetSet = 0, false
+			}
+			if p.pendingReadRateSet {
+				in.ReadRate = p.pendingReadRate
+				p.pendingReadRate, p.pendingReadRateSet = 0, false
+			}
+			if p.pendingReadBurstSet {
+				in.ReadRateInitialBurst = p.pendingReadBurst
+				p.pendingReadBurst, p.pendingReadBurstSet = 0, false
+			}
+			if p.pendingReadCatchupSet {
+				in.ReadRateCatchup = p.pendingReadCatchup
+				p.pendingReadCatchup, p.pendingReadCatchupSet = 0, false
 			}
 			p.inputs = append(p.inputs, in)
 		case arg == "-c:v" || arg == "-vcodec":
@@ -230,6 +270,77 @@ func (p *parser) parse() (*pipeline.Config, error) {
 			// demuxer-side ts_offset shift and to interpret output-side
 			// -ss/-to as absolute timeline values.
 			p.copyTS = true
+		case arg == "-stream_loop":
+			// FFmpeg per-input integer (OPT_OFFSET on InputFile.loop):
+			// `-stream_loop N -i in.mp4` plays in.mp4 N+1 times total
+			// (-1 = infinite). Latches onto the next -i; rejecting
+			// values < -1 mirrors the demuxer's
+			// "if (d->loop > 0) d->loop--" arithmetic, where -1 is
+			// the magic infinite sentinel and any other negative
+			// value is undefined.
+			if !p.hasMore() {
+				return nil, fmt.Errorf("-stream_loop requires an argument")
+			}
+			v := p.next()
+			n, err := strconv.Atoi(v)
+			if err != nil || n < -1 {
+				return nil, fmt.Errorf("-stream_loop: invalid value %q (want integer >= -1)", v)
+			}
+			p.pendingStreamLoop, p.pendingStreamLoopSet = n, true
+		case arg == "-itsoffset":
+			// FFmpeg per-input OPT_TYPE_TIME (seconds, may be
+			// negative). Stored on InputFile.input_ts_offset and
+			// applied via `pkt->pts += av_rescale_q(ifile->ts_offset,
+			// AV_TIME_BASE_Q, pkt->time_base)` in
+			// fftools/ffmpeg_demux.c::ts_fixup. We accept the bare
+			// seconds form (the FFmpeg CLI also accepts
+			// HH:MM:SS via av_parse_time, deferred until we have
+			// a corpus job that needs it).
+			if !p.hasMore() {
+				return nil, fmt.Errorf("-itsoffset requires an argument")
+			}
+			v := p.next()
+			f, err := strconv.ParseFloat(v, 64)
+			if err != nil {
+				return nil, fmt.Errorf("-itsoffset: invalid value %q (want seconds, e.g. -0.030)", v)
+			}
+			p.pendingITSOffset, p.pendingITSOffsetSet = f, true
+		case arg == "-re":
+			// FFmpeg shorthand for `-readrate 1`. Per-input bool.
+			// FFmpeg warns when both -re and -readrate are set
+			// (-readrate wins); we mirror that policy by letting
+			// any subsequent -readrate overwrite the latched value.
+			p.pendingReadRate, p.pendingReadRateSet = 1.0, true
+		case arg == "-readrate":
+			if !p.hasMore() {
+				return nil, fmt.Errorf("-readrate requires an argument")
+			}
+			v := p.next()
+			f, err := strconv.ParseFloat(v, 64)
+			if err != nil || f < 0 {
+				return nil, fmt.Errorf("-readrate: invalid value %q (want non-negative float, e.g. 1.0)", v)
+			}
+			p.pendingReadRate, p.pendingReadRateSet = f, true
+		case arg == "-readrate_initial_burst":
+			if !p.hasMore() {
+				return nil, fmt.Errorf("-readrate_initial_burst requires an argument")
+			}
+			v := p.next()
+			f, err := strconv.ParseFloat(v, 64)
+			if err != nil || f < 0 {
+				return nil, fmt.Errorf("-readrate_initial_burst: invalid value %q (want non-negative seconds)", v)
+			}
+			p.pendingReadBurst, p.pendingReadBurstSet = f, true
+		case arg == "-readrate_catchup":
+			if !p.hasMore() {
+				return nil, fmt.Errorf("-readrate_catchup requires an argument")
+			}
+			v := p.next()
+			f, err := strconv.ParseFloat(v, 64)
+			if err != nil || f < 0 {
+				return nil, fmt.Errorf("-readrate_catchup: invalid value %q (want non-negative float)", v)
+			}
+			p.pendingReadCatchup, p.pendingReadCatchupSet = f, true
 		case arg == "-metadata" || strings.HasPrefix(arg, "-metadata:"):
 			// FFmpeg `-metadata [SPEC] key=value`. Without a spec the
 			// value lands on the container; with `:s:<type>:<idx>` it

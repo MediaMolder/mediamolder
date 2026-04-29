@@ -91,9 +91,9 @@ Legend: ✅ supported · ⚠️ partial · ❌ missing
 |-------------------------------------------------------------|:------:|------------------------------|
 | `-i URL` (file, http, rtmp, rtsp, srt, pipe, device)        | ✅    | `pipeline/config.go` `Input.URL`; URL forwarded to `avformat_open_input` |
 | `-ss`, `-t`, `-to` (input-side)                             | ✅    | `pipeline/timing.go` (matches FFmpeg conflict semantics) |
-| `-itsoffset`                                                | ❌    | Per-input PTS offset; required for A/V re-sync workflows |
-| `-stream_loop N`                                            | ❌    | Required for looping image-sequence intros, watermarks, etc. |
-| `-readrate`, `-re` (real-time read)                         | ❌    | Live-stream restreaming, broadcast workflows |
+| `-itsoffset`                                                | ✅    | `Input.ITSOffset` (seconds). `pipeline/handlers.go::openSource` composes additively with the implicit `-ss` ts_offset (matches FFmpeg's `f->ts_offset = o->input_ts_offset - timestamp` in `fftools/ffmpeg_demux.c`); applied via `Packet.ShiftTS` for every demuxed packet. |
+| `-stream_loop N`                                            | ✅    | `Input.StreamLoop` (0=off, N>0=play N+1 times, -1=infinite). `handleSource` tracks per-iteration min/max packet PTS in AV_TIME_BASE us; on EOF, if loops remain, calls `SeekFile(StartTime)`, accumulates `(max - min)` into `loopOffsetUS`, decrements the counter, and shifts subsequent packets so PTS stay monotone. Mirrors `fftools/ffmpeg_demux.c::seek_to_start` + `ts_fixup`. |
+| `-readrate`, `-re` (real-time read)                         | ✅    | `Input.ReadRate` / `ReadRateInitialBurst` / `ReadRateCatchup`. `-re` is shorthand for `-readrate 1`. Implemented by `pipeline.readRatePacer` (faithful port of `fftools/ffmpeg_demux.c::readrate_sleep` including the 0.3 s lag-detection threshold); pacing sleep is context-aware so cancellation aborts immediately. |
 | `-framerate`, `-r` (input override)                         | ⚠️    | Can be passed in `Input.Options` AVDict; not first-class and not validated |
 | `-pix_fmt`, `-video_size`, `-pixel_format`                  | ⚠️    | Same: AVDict passthrough, no schema field |
 | `-f` (force demuxer)                                        | ⚠️    | `Input.Kind = "lavfi"` covers the virtual-source case via `av.OpenInputWithFormat`; arbitrary forced demuxers (`rawvideo`, `s16le`) not yet first-class |
@@ -659,12 +659,21 @@ real jobs."
    intentionally deferred — model it with explicit encoder graph
    nodes (see `testdata/examples/35_abr_ladder.json`), which is the
    shape ABR ladders already use.
-4. **`tee` muxer** (§2.5, §3.3.2) — `Output.Kind = "tee"` with
+4. **`-stream_loop`, `-itsoffset`, `-re` / `-readrate`** (§2.1) —
+   ✅ **landed.** `Input.StreamLoop` (0/N/-1), `Input.ITSOffset`
+   (seconds, may be negative), and `Input.ReadRate` /
+   `ReadRateInitialBurst` / `ReadRateCatchup` (faithful port of
+   `fftools/ffmpeg_demux.c::readrate_sleep` in
+   `pipeline.readRatePacer`). Unblocks watermark loops, A/V slip
+   correction, and live-restream rate-limit in one PR. Promoted
+   from #5 ahead of `tee` because it is three small typed-field
+   promotions with no new schema discriminators or orchestration
+   primitives — a lower-risk way to keep Wave 1 cadence while the
+   `tee` muxer (next) gets its larger PR.
+5. **`tee` muxer** (§2.5, §3.3.2) — `Output.Kind = "tee"` with
    `Output.Targets []TeeTarget`. Encode once → mux to MP4 + HLS +
-   DASH. Pairs with #3.
-5. **`-stream_loop`, `-itsoffset`, `-re` / `-readrate`** (§2.1) —
-   Cheap demuxer-side AVDict promotions to typed fields. Unblocks
-   watermark loops, A/V slip correction, live-restream rate-limit.
+   DASH. Pairs with #3 (the per-stream metadata / disposition
+   schema generalises naturally to per-target overrides).
 6. **Two-pass video encoding** (`-pass 1/2 -passlogfile`) (§2.4) —
    `Output.Encoder.Pass int` + `PassLogFile string`. Reuses the
    orchestration scaffold built for #7.

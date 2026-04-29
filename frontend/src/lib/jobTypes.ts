@@ -27,6 +27,30 @@ export interface Input {
    *  own `chapters` (mirrors ffmpeg `-map_chapters IDX`). First input
    *  with map_chapters=true wins. */
   map_chapters?: boolean;
+  /** Number of additional times the demuxer rewinds and replays after
+   *  EOF. 0 = no loop, N>0 = play N+1 times total, -1 = infinite.
+   *  Mirrors ffmpeg `-stream_loop N`. On rewind the runtime captures
+   *  the previous iteration's `(max_pts - min_pts)` and adds it to
+   *  every subsequent packet so PTS stay monotone. */
+  stream_loop?: number;
+  /** Per-input timestamp offset in seconds (may be negative). Mirrors
+   *  ffmpeg `-itsoffset T`. Positive delays the input on the global
+   *  timeline; negative advances it. Composes additively with the
+   *  implicit `-ss` ts_offset. */
+  itsoffset?: number;
+  /** Pace packet reads to (read_rate × realtime). 0 = unpaced;
+   *  1.0 mirrors ffmpeg `-re`. Required for live-restream and any
+   *  HLS/DASH push that relies on segment walltime equalling
+   *  media time. */
+  read_rate?: number;
+  /** Seconds of media time read unpaced at the start of the input.
+   *  Mirrors ffmpeg `-readrate_initial_burst SECS`; defaults to 0.5
+   *  when read_rate is non-zero. */
+  read_rate_initial_burst?: number;
+  /** Multiplier used to recover from a pacing lag (mirrors ffmpeg
+   *  `-readrate_catchup`); must be >= read_rate when set. Defaults
+   *  to read_rate × 1.05 when unset and read_rate is non-zero. */
+  read_rate_catchup?: number;
   streams: StreamSelect[];
   options?: Record<string, unknown>;
 }
