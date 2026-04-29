@@ -93,6 +93,12 @@ type parser struct {
 	pendingReadBurstSet   bool
 	pendingReadCatchup    float64
 	pendingReadCatchupSet bool
+
+	// `-map` selectors collected in CLI order; drained over inputs
+	// just before buildGraph runs so the implicit per-input
+	// "first-of-each-type" defaults are replaced when any map is
+	// present (mirrors FFmpeg's `fftools/ffmpeg_opt.c::map_manual`).
+	mapSpecs []parsedMap
 }
 
 func (p *parser) peek() string {
@@ -124,13 +130,13 @@ func (p *parser) parse() (*pipeline.Config, error) {
 			url := p.next()
 			id := fmt.Sprintf("input%d", len(p.inputs))
 			streams := []pipeline.StreamSelect{
-				{InputIndex: 0, Type: "video", Track: 0},
-				{InputIndex: 0, Type: "audio", Track: 0},
+				{InputIndex: 0, Type: "video", Track: 0, Optional: true},
+				{InputIndex: 0, Type: "audio", Track: 0, Optional: true},
 			}
 			// Add subtitle stream unless -sn was specified before -i.
 			if p.codecS != "none" {
 				streams = append(streams, pipeline.StreamSelect{
-					InputIndex: 0, Type: "subtitle", Track: 0,
+					InputIndex: 0, Type: "subtitle", Track: 0, Optional: true,
 				})
 			}
 			in := pipeline.Input{ID: id, URL: url, Streams: streams}
@@ -309,6 +315,21 @@ func (p *parser) parse() (*pipeline.Config, error) {
 				return nil, fmt.Errorf("-force_key_frames requires an argument")
 			}
 			p.forceKeyFrames = p.next()
+		case arg == "-map":
+			// FFmpeg `-map [-]INPUT[:SPEC][?]` (Wave 2 #9 + #10).
+			// Collected here in CLI order; applied to inputs in
+			// applyMapSelectors() once all flags are consumed so the
+			// implicit per-input "first-of-each-type" defaults are
+			// suppressed exactly as FFmpeg does in
+			// fftools/ffmpeg_opt.c::map_manual.
+			if !p.hasMore() {
+				return nil, fmt.Errorf("-map requires an argument")
+			}
+			m, err := parseMapArg(p.next())
+			if err != nil {
+				return nil, err
+			}
+			p.mapSpecs = append(p.mapSpecs, m)
 		case arg == "-stream_loop":
 			// FFmpeg per-input integer (OPT_OFFSET on InputFile.loop):
 			// `-stream_loop N -i in.mp4` plays in.mp4 N+1 times total
@@ -614,6 +635,9 @@ func (p *parser) parse() (*pipeline.Config, error) {
 	}
 	if len(p.outputs) == 0 {
 		return nil, fmt.Errorf("no output specified")
+	}
+	if err := p.applyMapSelectors(); err != nil {
+		return nil, err
 	}
 	p.buildGraph()
 	nodes := p.nodes

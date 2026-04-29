@@ -1864,51 +1864,55 @@ func (r *graphRunner) openSource(cfg Input, srcNode *graph.Node, decOpts av.Deco
 	subDecoders := make(map[int]*av.SubtitleDecoderContext)
 	streams := make(map[int]av.StreamInfo)
 
-	for _, sel := range cfg.Streams {
-		count := 0
-		for _, si := range allStreams {
-			if si.Type.String() == sel.Type {
-				if count == sel.Track {
-					switch {
-					case copyOnly[sel.Type]:
-						// Stream-copy only: don't open a decoder.
-						// Data streams always land here (no decoder
-						// available). For subtitle/video/audio, the
-						// muxer will be wired with the input
-						// codecpar via AddStreamFromInput.
-					case sel.Type == "subtitle":
-						subDec, err := av.OpenSubtitleDecoder(input, si.Index)
-						if err != nil {
-							for _, d := range decoders {
-								d.Close()
-							}
-							for _, d := range subDecoders {
-								d.Close()
-							}
-							input.Close()
-							return nil, fmt.Errorf("open subtitle decoder for track %d: %w", sel.Track, err)
-						}
-						subDecoders[si.Index] = subDec
-					default:
-						dec, err := av.OpenDecoderWithOptions(input, si.Index, decOpts)
-						if err != nil {
-							for _, d := range decoders {
-								d.Close()
-							}
-							for _, d := range subDecoders {
-								d.Close()
-							}
-							input.Close()
-							return nil, fmt.Errorf("open decoder for %s track %d: %w", sel.Type, sel.Track, err)
-						}
-						decoders[si.Index] = dec
-					}
-					streams[si.Index] = si
-					break
+	// Resolve the selector list (handles All / Optional / Negate /
+	// Program — Wave 2 #9 + #10) into the concrete set of input
+	// stream indices to demux. Selectors are walked in declaration
+	// order; Negate selectors subtract from the running set; missing
+	// non-Optional matches fail fast (the previous silent-skip
+	// behaviour produced confusing downstream graph errors).
+	selectedIdx, err := resolveStreamSelection(cfg.Streams, allStreams, input.Programs())
+	if err != nil {
+		input.Close()
+		return nil, fmt.Errorf("input %q: %w", cfg.URL, err)
+	}
+	streamByIdx := make(map[int]av.StreamInfo, len(allStreams))
+	for _, si := range allStreams {
+		streamByIdx[si.Index] = si
+	}
+	for _, idx := range selectedIdx {
+		si := streamByIdx[idx]
+		typ := si.Type.String()
+		switch {
+		case copyOnly[typ]:
+			// Stream-copy only: don't open a decoder.
+		case typ == "subtitle":
+			subDec, err := av.OpenSubtitleDecoder(input, si.Index)
+			if err != nil {
+				for _, d := range decoders {
+					d.Close()
 				}
-				count++
+				for _, d := range subDecoders {
+					d.Close()
+				}
+				input.Close()
+				return nil, fmt.Errorf("open subtitle decoder for stream %d: %w", si.Index, err)
 			}
+			subDecoders[si.Index] = subDec
+		default:
+			dec, err := av.OpenDecoderWithOptions(input, si.Index, decOpts)
+			if err != nil {
+				for _, d := range decoders {
+					d.Close()
+				}
+				for _, d := range subDecoders {
+					d.Close()
+				}
+				input.Close()
+				return nil, fmt.Errorf("open decoder for %s stream %d: %w", typ, si.Index, err)
+			}
+			decoders[si.Index] = dec
 		}
+		streams[si.Index] = si
 	}
 
 	// Compute longest selected stream duration for progress reporting.

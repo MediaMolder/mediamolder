@@ -103,16 +103,17 @@ sections:
         status: covered
         schema: pipeline.Input.Streams
       - flag: "-map 0:v:0 / -map 1:a:0"
-        status: partial
-        schema: pipeline.Input.Streams[].Track
-      - flag: "-map -0:s / -map 0:?"
-        status: missing
-        schema: n/a
-        notes: optional / negative selector
+        status: covered
+        schema: pipeline.Input.Streams[].{InputIndex,Type,Track}
+        notes: ffcli `-map` parser; All=true selects every stream of type
+      - flag: "-map -0:s / -map 0:s?"
+        status: covered
+        schema: pipeline.Input.Streams[].{Negate,Optional}
+        notes: Wave 2 #9; Negate removes from selection, Optional silences missing matches
       - flag: "-map p:N (program selection)"
-        status: missing
-        schema: n/a
-        notes: MPEG-TS multi-program inputs
+        status: covered
+        schema: pipeline.Input.Streams[].Program
+        notes: Wave 2 #10; matches AVProgram.id (NOT array index) for MPEG-TS / multi-program inputs
       - flag: "-map_metadata / -map_chapters"
         status: missing
         schema: n/a

@@ -8,6 +8,10 @@ export interface StreamSelect {
   input_index: number;
   type: StreamType;
   track: number;
+  all?: boolean;
+  optional?: boolean;
+  negate?: boolean;
+  program?: number;
 }
 
 export interface Input {

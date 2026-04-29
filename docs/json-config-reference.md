@@ -38,7 +38,19 @@ Use `"1.1"` when the graph contains `go_processor` nodes. Use `"1.2"` when the g
 |---------------|--------|----------|------------------------------------|
 | `input_index` | int    | yes      | Index into the input's streams     |
 | `type`        | string | yes      | `"video"`, `"audio"`, `"subtitle"`, `"data"` |
-| `track`       | int    | yes      | Zero-based track number            |
+| `track`       | int    | yes      | Zero-based track number (ignored when `all=true`) |
+| `all`         | bool   | no       | Select every stream of `type` (and `program`); FFmpeg `-map 0:v` |
+| `optional`    | bool   | no       | Silently skip when no input stream matches; FFmpeg `-map 0:s?` |
+| `negate`      | bool   | no       | Remove matching streams from the running selection; FFmpeg `-map -0:s` |
+| `program`     | int    | no       | Restrict matches to a specific MPEG-TS program (`AVProgram.id`, NOT array index); FFmpeg `-map 0:p:N` |
+
+`negate` and `optional` are mutually exclusive (mirrors FFmpeg's
+`-map -0:s?` parse error). When `program > 0`, only streams that
+appear in the program's `AVProgram.stream_index` table are eligible
+for matching. Selectors are walked in declaration order; non-negate
+selectors append, negate selectors remove. See
+[`docs/ffmpeg-coverage-roadmap.md`](ffmpeg-coverage-roadmap.md)
+§2.2 for the full grammar table.
 
 ## Graph
 

@@ -142,10 +142,45 @@ type Input struct {
 }
 
 // StreamSelect selects a specific stream from an input.
+//
+// Mirrors FFmpeg's `-map [-]input_file_id[:program_id][:stream_specifier][?]`
+// grammar (fftools/ffmpeg_opt.c::map_manual). The runtime resolves the
+// selection list against the demuxed input by walking entries in
+// declaration order: each non-Negate entry adds matching streams to
+// the selection, each Negate entry removes them. `Optional` makes a
+// missing match a silent skip rather than a fatal error.
 type StreamSelect struct {
 	InputIndex int    `json:"input_index"`
 	Type       string `json:"type"`  // "video", "audio", "subtitle", "data"
 	Track      int    `json:"track"` // zero-based track number within the type
+	// All, when true, selects every stream of `Type` rather than the
+	// single track at `Track`. Mirrors FFmpeg's no-index form
+	// (`-map 0:v` selects all video streams; `-map 0:v:0` selects
+	// only the first). When `All` is true `Track` is ignored.
+	All bool `json:"all,omitempty"`
+	// Optional, when true, makes a missing match (no stream of the
+	// requested type / index / program in the input) a silent skip
+	// instead of a fatal error. Mirrors FFmpeg's `?` suffix
+	// (`-map 0:s?` = include subtitles if present, no error if
+	// absent). The canonical "include subtitles if present" recipe
+	// that today requires per-job branching.
+	Optional bool `json:"optional,omitempty"`
+	// Negate, when true, removes matching streams from the
+	// selection that prior entries added (rather than adding them).
+	// Mirrors FFmpeg's leading `-` (`-map -0:s` = drop every
+	// subtitle from the default selection). Order matters: a
+	// Negate entry only affects entries that come before it.
+	Negate bool `json:"negate,omitempty"`
+	// Program, when > 0, restricts the match to streams that
+	// belong to the input's program with this `id` (NOT array
+	// index). Mirrors FFmpeg's `-map 0:p:N[:stream_specifier]`
+	// (per `cmdutils.c::check_stream_specifier` the `p:N` token
+	// is matched against `AVProgram.id`). Required for any
+	// MPEG-TS broadcast input where multiple programs share the
+	// same transport stream. `0` (default) means program-agnostic
+	// — match against every stream regardless of program
+	// membership.
+	Program int `json:"program,omitempty"`
 }
 
 // GraphDef is the directed acyclic graph of processing nodes and edges.
@@ -597,6 +632,20 @@ func validate(cfg *Config) error {
 		for j, s := range inp.Streams {
 			if s.Type == "" {
 				return fmt.Errorf("input %q streams[%d] missing type", inp.ID, j)
+			}
+			switch s.Type {
+			case "video", "audio", "subtitle", "data":
+			default:
+				return fmt.Errorf("input %q streams[%d]: invalid type %q (want video|audio|subtitle|data)", inp.ID, j, s.Type)
+			}
+			if !s.All && s.Track < 0 {
+				return fmt.Errorf("input %q streams[%d]: negative track %d (use all=true for the no-index form)", inp.ID, j, s.Track)
+			}
+			if s.Program < 0 {
+				return fmt.Errorf("input %q streams[%d]: invalid program %d (must be >= 0; 0 = unset)", inp.ID, j, s.Program)
+			}
+			if s.Negate && s.Optional {
+				return fmt.Errorf("input %q streams[%d]: optional and negate are mutually exclusive (mirrors FFmpeg's `-map -0:s?` parse error)", inp.ID, j)
 			}
 		}
 		if inp.StreamLoop < -1 {

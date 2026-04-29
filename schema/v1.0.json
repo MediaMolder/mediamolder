@@ -66,7 +66,11 @@
           "type": "string",
           "enum": ["video", "audio", "subtitle", "data"]
         },
-        "track": { "type": "integer", "minimum": 0 }
+        "track": { "type": "integer", "minimum": 0 },
+        "all": { "type": "boolean", "default": false },
+        "optional": { "type": "boolean", "default": false },
+        "negate": { "type": "boolean", "default": false },
+        "program": { "type": "integer", "minimum": 0, "default": 0 }
       }
     },
     "graph": {

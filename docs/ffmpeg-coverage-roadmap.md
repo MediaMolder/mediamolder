@@ -111,20 +111,19 @@ Legend: ✅ supported · ⚠️ partial · ❌ missing
 | FFmpeg flag(s)                                | Status | Note |
 |-----------------------------------------------|:------:|------|
 | Default automatic stream selection            | ✅    | "best video + best audio" implied if user picks `track: 0` |
-| `-map 0:v:0` / `-map 1:a:0` style             | ⚠️    | Modelled by `Input.Streams[].track`; covers the common case |
-| Negative / optional mapping (`-map -0:s`, `-map 0:?`) | ❌ | Required for "include subtitle if present" patterns |
-| Program selection (`-map p:1`)                | ❌    | MPEG-TS multi-program inputs |
-| `-map_metadata`, `-map_chapters`              | ❌    | See §2.5 |
+| `-map 0:v:0` / `-map 1:a:0` style             | ✅    | `pipeline.StreamSelect.{InputIndex,Type,Track}`; ffcli `-map` parser (Wave 2 #9) |
+| Negative / optional mapping (`-map -0:s`, `-map 0:s?`) | ✅ | `StreamSelect.{Negate,Optional}`; landed Wave 2 #9 |
+| Program selection (`-map 0:p:N[:type[:idx]]`) | ✅    | `StreamSelect.Program` (matches `AVProgram.id`); landed Wave 2 #10 |
+| `-map_metadata`, `-map_chapters`              | ❌    | See §2.5 — Wave 2 #11 (KindMetadataReader/Writer) covers this |
 | `-vn` / `-an` / `-sn` / `-dn` per output      | ⚠️    | Implied by which edges connect — works but undocumented |
 | Reuse of one decoded stream by N filters/outputs (`split`/`asplit`) | ✅ | Works via multi-output filters |
 | Per-input `-map` of *attachment* streams      | ❌    | (see §2.5 attachments) |
 
-This is the single **biggest** gap. FFmpeg's `-map` is universal
-addressing of `(input, stream-type, stream-index, optional, negation)`
-across **inputs and outputs**. MediaMolder's edge model can express any
-mapping, but the schema does not yet have first-class options for
-optional/negative mapping, program selection, or fall-back-when-absent
-semantics.
+§2.2 is now covered for all four common selector grammars (track,
+all-of-type, optional, negate, program). FFmpeg's full `-map` grammar
+also supports `m:KEY[:VALUE]` metadata-based filters and `M:i:N`
+id-based selection, which remain out of scope; both have negligible
+real-world usage in the §6 corpus.
 
 ### 2.3 Filtergraph
 
@@ -762,11 +761,23 @@ real jobs."
 ### 6.2 Wave 2 — "the universal mapper" (Phase B)
 
 9. **Negative / optional `-map`** (`-map 0:s?`, `-map -0:s`) (§2.2) —
-   Single largest unaddressed schema gap per the matrix. Add
-   `optional`/`negate` to `Input.Streams[]`. Unblocks "include
-   subtitles if present" without per-job branching.
-10. **Program selection (`-map p:N`)** (§2.2) — Required for any
-    MPEG-TS broadcast input. Same struct as #9.
+   ✅ landed. `pipeline.StreamSelect` gained `All`, `Optional`,
+   `Negate`, `Program` fields. Runtime resolver
+   (`pipeline/stream_selection.go::resolveStreamSelection`) walks
+   selectors in declaration order, treating `Negate` as a removal
+   pass and `Optional` as a silent-on-miss flag (mirrors
+   `fftools/ffmpeg_opt.c::map_manual`). `compat/ffcli` parses
+   `-map [-]N[:p:M][:T[:I]][?]` end-to-end via
+   `compat/ffcli/map.go::parseMapArg`. Unblocks "include subtitles
+   if present" with no per-job branching (see
+   `testdata/examples/39_optional_subtitle.json`).
+10. **Program selection (`-map 0:p:N[:type[:idx]]`)** (§2.2) —
+    ✅ landed. `StreamSelect.Program` matches the `AVProgram.id`
+    (NOT array index — mirrors
+    `cmdutils.c::check_stream_specifier`'s `p:N`). The av layer
+    grew `InputFormatContext.Programs() []ProgramInfo` to expose
+    the AVProgram table. Required for MPEG-TS broadcast inputs;
+    landed alongside #9 since they share the same struct.
 11. **`KindMetadataReader` / `KindMetadataWriter` graph nodes**
     (§5#5 deferred half) — Anchor it to the first multi-source
     metadata-routing `compat/ffcli` round-trip case.
