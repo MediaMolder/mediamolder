@@ -756,6 +756,7 @@ func validate(cfg *Config) error {
 	// Edge types must be valid.
 	validTypes := map[string]bool{
 		"video": true, "audio": true, "subtitle": true, "data": true,
+		"metadata": true,
 	}
 	for i, e := range cfg.Graph.Edges {
 		if !validTypes[e.Type] {
@@ -768,5 +769,58 @@ func validate(cfg *Config) error {
 			return fmt.Errorf("node[%d] %q: go_processor requires a \"processor\" field", i, node.ID)
 		}
 	}
+	// Validate metadata_reader / metadata_writer nodes (Wave 2 #11).
+	// Reader requires params.source = input id; writer requires
+	// params.target = output id. Optional params: section
+	// ("global"|"chapters", default "global"). Reader+writer pairs
+	// are connected by edges of type "metadata".
+	inputIDs := make(map[string]bool, len(cfg.Inputs))
+	for _, in := range cfg.Inputs {
+		inputIDs[in.ID] = true
+	}
+	outputIDs := make(map[string]bool, len(cfg.Outputs))
+	for _, out := range cfg.Outputs {
+		outputIDs[out.ID] = true
+	}
+	for i, node := range cfg.Graph.Nodes {
+		switch node.Type {
+		case "metadata_reader":
+			src := paramStringConfig(node.Params, "source")
+			if src == "" {
+				return fmt.Errorf("node[%d] %q: metadata_reader requires params.source (input id)", i, node.ID)
+			}
+			if !inputIDs[src] {
+				return fmt.Errorf("node[%d] %q: metadata_reader params.source %q does not match any input", i, node.ID, src)
+			}
+			if sec := paramStringConfig(node.Params, "section"); sec != "" && sec != "global" && sec != "chapters" {
+				return fmt.Errorf("node[%d] %q: metadata_reader params.section must be \"global\" or \"chapters\" (got %q)", i, node.ID, sec)
+			}
+		case "metadata_writer":
+			tgt := paramStringConfig(node.Params, "target")
+			if tgt == "" {
+				return fmt.Errorf("node[%d] %q: metadata_writer requires params.target (output id)", i, node.ID)
+			}
+			if !outputIDs[tgt] {
+				return fmt.Errorf("node[%d] %q: metadata_writer params.target %q does not match any output", i, node.ID, tgt)
+			}
+			if sec := paramStringConfig(node.Params, "section"); sec != "" && sec != "global" && sec != "chapters" {
+				return fmt.Errorf("node[%d] %q: metadata_writer params.section must be \"global\" or \"chapters\" (got %q)", i, node.ID, sec)
+			}
+		}
+	}
 	return nil
+}
+
+// paramStringConfig is a local helper for validation; the runtime
+// uses paramString in handlers.go (same shape).
+func paramStringConfig(m map[string]any, key string) string {
+	if m == nil {
+		return ""
+	}
+	v, ok := m[key]
+	if !ok {
+		return ""
+	}
+	s, _ := v.(string)
+	return s
 }

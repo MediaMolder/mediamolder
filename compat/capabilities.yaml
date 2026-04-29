@@ -115,9 +115,9 @@ sections:
         schema: pipeline.Input.Streams[].Program
         notes: Wave 2 #10; matches AVProgram.id (NOT array index) for MPEG-TS / multi-program inputs
       - flag: "-map_metadata / -map_chapters"
-        status: missing
-        schema: n/a
-        notes: see §2.5
+        status: covered
+        schema: pipeline.NodeDef{Type:"metadata_reader"|"metadata_writer"} + pipeline.EdgeDef{Type:"metadata"}
+        notes: Wave 2 #11; reader.params.source/section + writer.params.target/section pair routes container metadata or chapters per-output; Input.MapMetadata/MapChapters shorthand still works for single-input cases
       - flag: "-vn / -an / -sn / -dn (per output)"
         status: partial
         schema: graph edges
@@ -306,11 +306,13 @@ sections:
         schema: pipeline.Output.Streams[*].Disposition
         notes: compat/ffcli parses `-disposition:s:<type>:<idx> default+forced`; handleSink calls av_opt_set on the AVStream's AVClass, which is the same code path fftools/ffmpeg_mux_init.c::set_dispositions uses to parse the `+`-separated AV_DISPOSITION_* flag list.
       - flag: "-map_metadata / -map_chapters"
-        status: missing
-        schema: n/a
+        status: covered
+        schema: pipeline.NodeDef{Type:"metadata_reader"|"metadata_writer"} + pipeline.EdgeDef{Type:"metadata"}
+        notes: Wave 2 #11; reader.params.source/section + writer.params.target/section pair routes container metadata or chapters per-output; compat/ffcli emits the node pair on `-map_metadata IDX` / `-map_chapters IDX`.
       - flag: "chapter writing"
-        status: missing
-        schema: n/a
+        status: covered
+        schema: pipeline.Output.Chapters
+        notes: explicit chapter list always works; metadata_writer with section=chapters routes input chapters into the output (Wave 2 #11).
       - flag: "attachments (fonts for ASS/cover art)"
         status: missing
         schema: n/a

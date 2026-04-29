@@ -114,7 +114,7 @@ Legend: ✅ supported · ⚠️ partial · ❌ missing
 | `-map 0:v:0` / `-map 1:a:0` style             | ✅    | `pipeline.StreamSelect.{InputIndex,Type,Track}`; ffcli `-map` parser (Wave 2 #9) |
 | Negative / optional mapping (`-map -0:s`, `-map 0:s?`) | ✅ | `StreamSelect.{Negate,Optional}`; landed Wave 2 #9 |
 | Program selection (`-map 0:p:N[:type[:idx]]`) | ✅    | `StreamSelect.Program` (matches `AVProgram.id`); landed Wave 2 #10 |
-| `-map_metadata`, `-map_chapters`              | ❌    | See §2.5 — Wave 2 #11 (KindMetadataReader/Writer) covers this |
+| `-map_metadata`, `-map_chapters`              | ✅    | `metadata_reader` / `metadata_writer` graph nodes + `Input.MapMetadata` / `Input.MapChapters` shorthand; landed Wave 2 #11 |
 | `-vn` / `-an` / `-sn` / `-dn` per output      | ⚠️    | Implied by which edges connect — works but undocumented |
 | Reuse of one decoded stream by N filters/outputs (`split`/`asplit`) | ✅ | Works via multi-output filters |
 | Per-input `-map` of *attachment* streams      | ❌    | (see §2.5 attachments) |
@@ -187,8 +187,8 @@ real-world usage in the §6 corpus.
 | `-metadata key=value`                                             | ✅    | `Output.Metadata`; `compat/ffcli` parses bare `-metadata`, `handleSink::applyOutputMetadata` writes via `av_dict_set` on `AVFormatContext.metadata` before `WriteHeader` (mirrors `fftools/ffmpeg_mux_init.c::of_add_metadata`). |
 | `-metadata:s:v:0 …` per-stream metadata                           | ✅    | `Output.Streams[*].Metadata`; per-stream resolution counts streams of the requested media type in muxer-add order (same convention as `check_stream_specifier` for `s:<type>:<idx>`). Required for language tags, stereoscopic flags, comments. |
 | `-disposition:s:v:0 default+forced`                               | ✅    | `Output.Streams[*].Disposition`; forwards a `+`-separated AV_DISPOSITION_* flag list to `av_opt_set` on the AVStream's AVClass — same code path `fftools/ffmpeg_mux_init.c::set_dispositions` uses. |
-| `-map_metadata`, `-map_chapters`                                  | ❌    | Required for `chapter-add`, `chapter-extract` |
-| Chapter writing API                                               | ❌    | Even without map, no node can emit `AVChapter` entries |
+| `-map_metadata`, `-map_chapters`                                  | ✅    | `metadata_reader` / `metadata_writer` graph nodes connected by a `metadata` edge route container metadata or chapters from any input into any output (Wave 2 #11); `Input.MapMetadata` / `Input.MapChapters` shorthand still works for single-input cases. `compat/ffcli` parses both flags into the node pair. |
+| Chapter writing API                                               | ✅    | `Output.Chapters []ChapterInfo`; `metadata_writer` with `section=chapters` routes `AVChapter` entries from any input. |
 | Attachments (fonts for ASS, cover art)                            | ❌    | |
 | Cover art / thumbnail embed in MP4/M4A                            | ❌    | Common end-user request |
 | Multiple outputs in one pipeline                                  | ✅    | Multiple `Output` entries |
@@ -779,8 +779,18 @@ real jobs."
     the AVProgram table. Required for MPEG-TS broadcast inputs;
     landed alongside #9 since they share the same struct.
 11. **`KindMetadataReader` / `KindMetadataWriter` graph nodes**
-    (§5#5 deferred half) — Anchor it to the first multi-source
-    metadata-routing `compat/ffcli` round-trip case.
+    (§5#5 deferred half) — ✅ landed. New `metadata_reader` /
+    `metadata_writer` `pipeline.NodeDef.Type` values, connected by
+    a new `metadata` edge type, route container metadata or chapters
+    from any input into any output. Pipeline runtime resolves the
+    pair in `applyOutputMetadata` / `applyOutputChapters` ahead of
+    the `Input.MapMetadata` / `Input.MapChapters` shorthand
+    fallback. `compat/ffcli` parses `-map_metadata IDX` /
+    `-map_chapters IDX` into the node pair so multi-input jobs can
+    route per-output independently. Validation gates: reader
+    requires `params.source` matching an input id, writer requires
+    `params.target` matching an output id, `params.section` ∈
+    {`global`, `chapters`}.
 
 ### 6.3 Wave 3 — "modern delivery" (Phase C completion)
 

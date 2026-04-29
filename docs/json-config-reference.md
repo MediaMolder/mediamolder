@@ -64,7 +64,7 @@ selectors append, negate selectors remove. See
 | Field          | Type   | Required | Description                                                                |
 |----------------|--------|----------|----------------------------------------------------------------------------|
 | `id`           | string | yes      | Unique node identifier                                                     |
-| `type`         | string | yes      | `"filter"`, `"encoder"`, `"copy"`, `"source"`, `"sink"`, `"go_processor"`   |
+| `type`         | string | yes      | `"filter"`, `"encoder"`, `"copy"`, `"source"`, `"sink"`, `"go_processor"`, `"metadata_reader"`, `"metadata_writer"` |
 | `filter`       | string | no       | Filter name (for filter nodes)                                             |
 | `processor`    | string | no       | Registered Go processor name (required for `go_processor` nodes)           |
 | `params`       | object | no       | Parameters (key-value)                                                     |
@@ -80,7 +80,7 @@ For `"copy"` nodes, no `params` are required — the inbound edge type tells the
 |--------|--------|----------|------------------------------------------------------|
 | `from` | string | yes      | Source endpoint: `"nodeID"`, `"nodeID:port"`, or `"inputID:type:track"` |
 | `to`   | string | yes      | Destination endpoint (same format)                   |
-| `type` | string | yes      | `"video"`, `"audio"`, `"subtitle"`, `"data"`         |
+| `type` | string | yes      | `"video"`, `"audio"`, `"subtitle"`, `"data"`, `"metadata"` |
 
 ### Edge reference formats
 
@@ -309,5 +309,31 @@ See [Go Processor Nodes](go-processor-nodes.md) for the full guide.
       "codec_video": "libx264"
     }
   ]
+}
+```
+
+## Metadata routing nodes (`metadata_reader` / `metadata_writer`)
+
+Wave 2 #11 introduces an explicit graph-node form for routing
+container metadata or chapters between inputs and outputs. The
+shorthand `Input.MapMetadata` / `Input.MapChapters` booleans still
+work for single-input jobs; the node form is required when different
+outputs need metadata or chapters routed from different inputs.
+
+| Node type         | Required `params`               | Optional `params`                              |
+|-------------------|---------------------------------|------------------------------------------------|
+| `metadata_reader` | `source` (input id)             | `section`: `"global"` (default) or `"chapters"` |
+| `metadata_writer` | `target` (output id)            | `section`: `"global"` (default) or `"chapters"` |
+
+A reader and writer with matching `section` are connected by an edge
+of `type: "metadata"`. The runtime resolves the pair inof `type: "metadata"`. The runtime resolves the pair inof `type: "metadata"`. The `Iof `type: "metadata"`. The runtime resolves the pair inof `type:t.Chapters` literals continue to win
+outright when present (mirrooutright when present (mirrooutright when present (mirrooutrioute container metadata from input 1 and chapters from
+input 0 into ainput 0 into ainput 0 into ainput 0 into ainput 0 into ainput 0 int 1input 0 into ainput 0 into ainput 0 into ainput 0 into ainpu     input 0 into ainput 0 into ainput 0 into ainput 0 into ainput 0 into ainput 0 int 1input 0 into ainpu   {input 0 into ainput 0 into ainput 0 into ainput 0 into ainput 0 into ainput 0 int 1input 0 into ainput  { "id": "chap_r",  "type": "metadata_reader", "params": {"source": "in0", "section": "chapters"} },
+      {      {      {      {      {      {      {      {      {      {      {      {      {      {      {      ,
+    "edges": [
+      { "from": "meta_r", "to": "meta_w", "type": "metadata" },
+      { "from": "chap_r", "to": "chap_w", "type": "metadata" }
+    ]
+  }
 }
 ```

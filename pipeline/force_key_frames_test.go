@@ -96,7 +96,7 @@ func TestForceKeyFramesMatcher_TimeList(t *testing.T) {
 		{0, false},
 		{500, false},
 		{999, false},
-		{1000, true},  // t=1.0 fires
+		{1000, true}, // t=1.0 fires
 		{1500, false},
 		{2000, true},  // t=2.0 fires
 		{3000, false}, // exhausted

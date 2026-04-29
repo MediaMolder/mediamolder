@@ -27,31 +27,31 @@ func ParseArgs(args []string) (*pipeline.Config, error) {
 }
 
 type parser struct {
-	args         []string
-	pos          int
-	inputs       []pipeline.Input
-	outputs      []pipeline.Output
-	nodes        []pipeline.NodeDef
-	edges        []pipeline.EdgeDef
-	codecV       string
-	codecA       string
-	codecS       string
-	videoFilters string
-	audioFilters string
-	bsfVideo     string
-	bsfAudio     string
-	fpsMode      string
-	audioSync    int
-	shortest     bool
-	maxFileSize  int64
-	copyTS       bool
-	pass         int
-	passLogFile  string
+	args           []string
+	pos            int
+	inputs         []pipeline.Input
+	outputs        []pipeline.Output
+	nodes          []pipeline.NodeDef
+	edges          []pipeline.EdgeDef
+	codecV         string
+	codecA         string
+	codecS         string
+	videoFilters   string
+	audioFilters   string
+	bsfVideo       string
+	bsfAudio       string
+	fpsMode        string
+	audioSync      int
+	shortest       bool
+	maxFileSize    int64
+	copyTS         bool
+	pass           int
+	passLogFile    string
 	forceKeyFrames string
-	hwAccel      string
-	hwDevice     string
-	hwOutFmt     string
-	globalOpts   map[string]string
+	hwAccel        string
+	hwDevice       string
+	hwOutFmt       string
+	globalOpts     map[string]string
 	// Container-level metadata collected from `-metadata key=value`
 	// (no specifier). Latched onto the next output.
 	containerMeta map[string]string
@@ -99,6 +99,13 @@ type parser struct {
 	// "first-of-each-type" defaults are replaced when any map is
 	// present (mirrors FFmpeg's `fftools/ffmpeg_opt.c::map_manual`).
 	mapSpecs []parsedMap
+
+	// Pending `-map_metadata IDX` / `-map_chapters IDX` (Wave 2 #11).
+	// nil = unset; non-nil holds the input index. Latched onto the
+	// next output and rendered as metadata_reader+metadata_writer
+	// nodes connected by a metadata edge.
+	pendingMapMetadata *int
+	pendingMapChapters *int
 }
 
 func (p *parser) peek() string {
@@ -330,6 +337,37 @@ func (p *parser) parse() (*pipeline.Config, error) {
 				return nil, err
 			}
 			p.mapSpecs = append(p.mapSpecs, m)
+		case arg == "-map_metadata":
+			// FFmpeg `-map_metadata IDX` (Wave 2 #11). IDX is the
+			// 0-based index of an input file whose container metadata
+			// is copied into the next output. Latches onto the next
+			// output as a metadata_reader + metadata_writer node pair
+			// linked by a metadata edge so multiple outputs can
+			// independently route from different sources. The simple
+			// `IDX = next-output-index` case (single input → single
+			// output) is also covered by Input.MapMetadata; this
+			// flag form lets multi-input jobs route per-output.
+			if !p.hasMore() {
+				return nil, fmt.Errorf("-map_metadata requires an argument")
+			}
+			v := p.next()
+			n, err := strconv.Atoi(v)
+			if err != nil || n < 0 {
+				return nil, fmt.Errorf("-map_metadata: invalid index %q (want non-negative integer; -1 / per-section selectors not yet supported)", v)
+			}
+			p.pendingMapMetadata = &n
+		case arg == "-map_chapters":
+			// FFmpeg `-map_chapters IDX` (Wave 2 #11). Single-source
+			// per-output chapter routing.
+			if !p.hasMore() {
+				return nil, fmt.Errorf("-map_chapters requires an argument")
+			}
+			v := p.next()
+			n, err := strconv.Atoi(v)
+			if err != nil || n < 0 {
+				return nil, fmt.Errorf("-map_chapters: invalid index %q (want non-negative integer; -1 not yet supported)", v)
+			}
+			p.pendingMapChapters = &n
 		case arg == "-stream_loop":
 			// FFmpeg per-input integer (OPT_OFFSET on InputFile.loop):
 			// `-stream_loop N -i in.mp4` plays in.mp4 N+1 times total
@@ -628,6 +666,24 @@ func (p *parser) parse() (*pipeline.Config, error) {
 				out.URL = "tee"
 			}
 			p.outputs = append(p.outputs, out)
+			// Wave 2 #11: drain pending -map_metadata / -map_chapters
+			// onto this output. Emit metadata_reader + metadata_writer
+			// nodes connected by a metadata edge so the runtime can
+			// route per-output independently from any other output.
+			if p.pendingMapMetadata != nil {
+				if *p.pendingMapMetadata >= len(p.inputs) {
+					return nil, fmt.Errorf("-map_metadata %d: only %d input(s) declared", *p.pendingMapMetadata, len(p.inputs))
+				}
+				p.emitMetadataRoute(out.ID, p.inputs[*p.pendingMapMetadata].ID, "global")
+				p.pendingMapMetadata = nil
+			}
+			if p.pendingMapChapters != nil {
+				if *p.pendingMapChapters >= len(p.inputs) {
+					return nil, fmt.Errorf("-map_chapters %d: only %d input(s) declared", *p.pendingMapChapters, len(p.inputs))
+				}
+				p.emitMetadataRoute(out.ID, p.inputs[*p.pendingMapChapters].ID, "chapters")
+				p.pendingMapChapters = nil
+			}
 		}
 	}
 	if len(p.inputs) == 0 {
@@ -664,6 +720,36 @@ func (p *parser) parse() (*pipeline.Config, error) {
 		cfg.GlobalOptions.HardwareDevice = p.hwDevice
 	}
 	return cfg, nil
+}
+
+// emitMetadataRoute appends a metadata_reader + metadata_writer node
+// pair connected by a metadata edge so the runtime routes the named
+// section ("global" or "chapters") from inputID into outputID. Wave 2
+// #11 ffcli emission counterpart of pipeline's runtime resolver.
+func (p *parser) emitMetadataRoute(outputID, inputID, section string) {
+	suffix := "meta"
+	if section == "chapters" {
+		suffix = "chapters"
+	}
+	readerID := fmt.Sprintf("__%s_reader_%s", suffix, outputID)
+	writerID := fmt.Sprintf("__%s_writer_%s", suffix, outputID)
+	p.nodes = append(p.nodes,
+		pipeline.NodeDef{
+			ID:     readerID,
+			Type:   "metadata_reader",
+			Params: map[string]any{"source": inputID, "section": section},
+		},
+		pipeline.NodeDef{
+			ID:     writerID,
+			Type:   "metadata_writer",
+			Params: map[string]any{"target": outputID, "section": section},
+		},
+	)
+	p.edges = append(p.edges, pipeline.EdgeDef{
+		From: readerID,
+		To:   writerID,
+		Type: "metadata",
+	})
 }
 
 func (p *parser) buildGraph() {

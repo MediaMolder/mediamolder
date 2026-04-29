@@ -2,7 +2,7 @@
 // Only fields used by the editor are typed; unknown JSON fields are preserved
 // via passthrough during round-trip in adapter.ts.
 
-export type StreamType = 'video' | 'audio' | 'subtitle' | 'data';
+export type StreamType = 'video' | 'audio' | 'subtitle' | 'data' | 'metadata';
 
 export interface StreamSelect {
   input_index: number;
@@ -61,7 +61,7 @@ export interface Input {
 
 export interface NodeDef {
   id: string;
-  type: string; // "filter" | "encoder" | "source" | "sink" | "go_processor"
+  type: string; // "filter" | "encoder" | "source" | "sink" | "go_processor" | "metadata_reader" | "metadata_writer"
   filter?: string;
   processor?: string;
   params?: Record<string, unknown>;

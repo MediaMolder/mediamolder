@@ -17,18 +17,21 @@ const (
 	PortAudio    PortType = "audio"
 	PortSubtitle PortType = "subtitle"
 	PortData     PortType = "data"
+	PortMetadata PortType = "metadata" // routes container/stream metadata or chapters (Wave 2 #11)
 )
 
 // NodeKind classifies a node in the processing graph.
 type NodeKind int
 
 const (
-	KindSource      NodeKind = iota // demux + decode
-	KindFilter                      // libavfilter
-	KindEncoder                     // encode
-	KindSink                        // mux
-	KindGoProcessor                 // custom Go per-frame processor
-	KindCopy                        // stream copy: forward demuxer packets to muxer
+	KindSource           NodeKind = iota // demux + decode
+	KindFilter                           // libavfilter
+	KindEncoder                          // encode
+	KindSink                             // mux
+	KindGoProcessor                      // custom Go per-frame processor
+	KindCopy                             // stream copy: forward demuxer packets to muxer
+	KindMetadataReader                   // read container/stream metadata or chapters from a source (Wave 2 #11)
+	KindMetadataWriter                   // write container/stream metadata or chapters into a sink (Wave 2 #11)
 )
 
 func (k NodeKind) String() string {
@@ -45,6 +48,10 @@ func (k NodeKind) String() string {
 		return "go_processor"
 	case KindCopy:
 		return "copy"
+	case KindMetadataReader:
+		return "metadata_reader"
+	case KindMetadataWriter:
+		return "metadata_writer"
 	default:
 		return fmt.Sprintf("NodeKind(%d)", int(k))
 	}
@@ -320,6 +327,10 @@ func parseNodeKind(s string) (NodeKind, error) {
 		return KindGoProcessor, nil
 	case "copy":
 		return KindCopy, nil
+	case "metadata_reader":
+		return KindMetadataReader, nil
+	case "metadata_writer":
+		return KindMetadataWriter, nil
 	default:
 		return 0, fmt.Errorf("unknown node type %q", s)
 	}

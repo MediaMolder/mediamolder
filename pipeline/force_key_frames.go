@@ -129,11 +129,11 @@ type forceKeyFramesMatcher struct {
 	tbDen int
 
 	// Per-frame counters tracked across frames. Mirror ffmpeg.h:557-561.
-	n            int64
-	nForced      int64
-	prevForcedN  int64
-	prevForcedT  float64
-	timeListIdx  int
+	n           int64
+	nForced     int64
+	prevForcedN int64
+	prevForcedT float64
+	timeListIdx int
 }
 
 // newForceKeyFramesMatcher builds a per-encoder matcher. The encoder's

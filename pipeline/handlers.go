@@ -29,6 +29,14 @@ func configToGraphDef(cfg *Config) *graph.Def {
 		def.Inputs = append(def.Inputs, graph.InputDef{ID: inp.ID})
 	}
 	for _, node := range cfg.Graph.Nodes {
+		// metadata_reader / metadata_writer nodes (Wave 2 #11) do
+		// not move media frames; they are resolved by the runtime
+		// at WriteHeader time via r.cfg.Graph directly. Skip them
+		// here so the DAG compiler does not require media edges
+		// for them.
+		if node.Type == "metadata_reader" || node.Type == "metadata_writer" {
+			continue
+		}
 		def.Nodes = append(def.Nodes, graph.NodeDef{
 			ID:        node.ID,
 			Type:      node.Type,
@@ -41,6 +49,10 @@ func configToGraphDef(cfg *Config) *graph.Def {
 		def.Outputs = append(def.Outputs, graph.OutputDef{ID: out.ID})
 	}
 	for _, e := range cfg.Graph.Edges {
+		// Skip metadata-routing edges; they are runtime-only.
+		if e.Type == "metadata" {
+			continue
+		}
 		def.Edges = append(def.Edges, graph.EdgeDef{
 			From: e.From,
 			To:   e.To,
@@ -2701,11 +2713,18 @@ func paramInt64(m map[string]any, key string) int64 {
 
 // applyOutputMetadata writes container-level metadata onto muxer
 // according to the precedence rules documented at the call site:
-// Output.Metadata wins outright; otherwise every input with
-// Input.MapMetadata=true contributes in declaration order.
+// Output.Metadata wins outright; otherwise an explicit
+// metadata_writer/reader graph-node pair wins (Wave 2 #11);
+// otherwise every input with Input.MapMetadata=true contributes in
+// declaration order.
 func (r *graphRunner) applyOutputMetadata(muxer *av.OutputFormatContext, out *Output) error {
 	if out.Metadata != nil {
 		return muxer.SetMetadata(out.Metadata)
+	}
+	// Wave 2 #11: metadata_writer node targeting this output wins
+	// over the input-wide MapMetadata fallback.
+	if md, ok := r.routedContainerMetadata(out.ID); ok {
+		return muxer.SetMetadata(md)
 	}
 	var merged map[string]string
 	for _, in := range r.cfg.Inputs {
@@ -2742,6 +2761,16 @@ func (r *graphRunner) applyOutputChapters(muxer *av.OutputFormatContext, out *Ou
 		}
 		return nil
 	}
+	// Wave 2 #11: metadata_writer node with section=chapters
+	// targeting this output wins.
+	if chs, ok := r.routedChapters(out.ID); ok {
+		for _, ch := range chs {
+			if err := muxer.AddChapter(ch.ID, ch.Start, ch.End, ch.Title, ch.Metadata); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
 	for _, in := range r.cfg.Inputs {
 		if !in.MapChapters {
 			continue
@@ -2758,4 +2787,102 @@ func (r *graphRunner) applyOutputChapters(muxer *av.OutputFormatContext, out *Ou
 		return nil
 	}
 	return nil
+}
+
+// routedContainerMetadata resolves a metadata_writer node targeting
+// outputID with section!=chapters and walks back along its inbound
+// metadata edges to find a metadata_reader node, returning the source
+// input's container metadata. Returns ok=false when no such routing
+// exists.
+func (r *graphRunner) routedContainerMetadata(outputID string) (map[string]string, bool) {
+	reader := r.findMetadataReaderFor(outputID, false)
+	if reader == nil {
+		return nil, false
+	}
+	src := paramString(reader.Params, "source")
+	in := r.sources[src]
+	if in == nil || in.input == nil {
+		return nil, false
+	}
+	md := in.input.Metadata()
+	if md == nil {
+		md = map[string]string{}
+	}
+	return md, true
+}
+
+// routedChapters mirrors routedContainerMetadata for the chapter
+// section.
+func (r *graphRunner) routedChapters(outputID string) ([]av.ChapterInfo, bool) {
+	reader := r.findMetadataReaderFor(outputID, true)
+	if reader == nil {
+		return nil, false
+	}
+	src := paramString(reader.Params, "source")
+	in := r.sources[src]
+	if in == nil || in.input == nil {
+		return nil, false
+	}
+	return in.input.Chapters(), true
+}
+
+// findMetadataReaderFor locates the metadata_reader connected by a
+// metadata edge to a metadata_writer targeting outputID. When
+// wantChapters is true the writer/reader pair must opt into
+// section=chapters; otherwise both must be the default (global)
+// section.
+func (r *graphRunner) findMetadataReaderFor(outputID string, wantChapters bool) *NodeDef {
+	wantSection := "global"
+	if wantChapters {
+		wantSection = "chapters"
+	}
+	nodesByID := make(map[string]*NodeDef, len(r.cfg.Graph.Nodes))
+	for i := range r.cfg.Graph.Nodes {
+		n := &r.cfg.Graph.Nodes[i]
+		nodesByID[n.ID] = n
+	}
+	for i := range r.cfg.Graph.Nodes {
+		w := &r.cfg.Graph.Nodes[i]
+		if w.Type != "metadata_writer" {
+			continue
+		}
+		if paramString(w.Params, "target") != outputID {
+			continue
+		}
+		section := paramString(w.Params, "section")
+		if section == "" {
+			section = "global"
+		}
+		if section != wantSection {
+			continue
+		}
+		// Find metadata edge feeding this writer.
+		for _, e := range r.cfg.Graph.Edges {
+			if e.Type != "metadata" || edgeNodeID(e.To) != w.ID {
+				continue
+			}
+			reader := nodesByID[edgeNodeID(e.From)]
+			if reader == nil || reader.Type != "metadata_reader" {
+				continue
+			}
+			rsec := paramString(reader.Params, "section")
+			if rsec == "" {
+				rsec = "global"
+			}
+			if rsec != wantSection {
+				continue
+			}
+			return reader
+		}
+	}
+	return nil
+}
+
+// edgeNodeID strips the optional ":port" / ":type:track" suffix from
+// an edge endpoint reference.
+func edgeNodeID(ref string) string {
+	if i := strings.IndexByte(ref, ':'); i >= 0 {
+		return ref[:i]
+	}
+	return ref
 }

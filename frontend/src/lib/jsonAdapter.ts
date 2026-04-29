@@ -23,6 +23,7 @@ const STREAM_LETTER: Record<StreamType, string> = {
   audio: 'a',
   subtitle: 's',
   data: 'd',
+  metadata: 'm',
 };
 
 const LETTER_STREAM: Record<string, StreamType> = {

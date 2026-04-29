@@ -96,7 +96,7 @@
         "id": { "type": "string", "minLength": 1 },
         "type": {
           "type": "string",
-          "enum": ["filter", "encoder", "source", "sink"]
+          "enum": ["filter", "encoder", "source", "sink", "metadata_reader", "metadata_writer"]
         },
         "filter": { "type": "string" },
         "processor": { "type": "string" },
@@ -116,7 +116,7 @@
         "to": { "type": "string", "minLength": 1 },
         "type": {
           "type": "string",
-          "enum": ["video", "audio", "subtitle", "data"]
+          "enum": ["video", "audio", "subtitle", "data", "metadata"]
         }
       }
     },
