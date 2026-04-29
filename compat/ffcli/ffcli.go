@@ -40,6 +40,7 @@ type parser struct {
 	audioFilters   string
 	bsfVideo       string
 	bsfAudio       string
+	bsfSubtitle    string
 	fpsMode        string
 	audioSync      int
 	shortest       bool
@@ -56,10 +57,10 @@ type parser struct {
 	// them back into the AVDictionary before avformat_write_header.
 	pendingHLS  *pipeline.HLSOptions
 	pendingDASH *pipeline.DASHOptions
-	hwAccel        string
-	hwDevice       string
-	hwOutFmt       string
-	globalOpts     map[string]string
+	hwAccel     string
+	hwDevice    string
+	hwOutFmt    string
+	globalOpts  map[string]string
 	// Container-level metadata collected from `-metadata key=value`
 	// (no specifier). Latched onto the next output.
 	containerMeta map[string]string
@@ -254,6 +255,11 @@ func (p *parser) parse() (*pipeline.Config, error) {
 				return nil, fmt.Errorf("-bsf:a requires an argument")
 			}
 			p.bsfAudio = p.next()
+		case arg == "-bsf:s":
+			if !p.hasMore() {
+				return nil, fmt.Errorf("-bsf:s requires an argument")
+			}
+			p.bsfSubtitle = p.next()
 		case arg == "-async":
 			// Legacy FFmpeg audio-sync flag. The FFmpeg 8.0 CLI removed
 			// it in favour of `-af aresample=async=N`; we accept it for
@@ -634,6 +640,9 @@ func (p *parser) parse() (*pipeline.Config, error) {
 			}
 			if p.bsfAudio != "" {
 				out.BSFAudio = p.bsfAudio
+			}
+			if p.bsfSubtitle != "" {
+				out.BSFSubtitle = p.bsfSubtitle
 			}
 			if p.fpsMode != "" {
 				out.FPSMode = p.fpsMode

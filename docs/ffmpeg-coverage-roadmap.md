@@ -203,7 +203,7 @@ real-world usage in the §6 corpus.
 | DASH muxer (representations, adaptation sets, init segment)       | ⚠️    | Same |
 | Segment muxer / fragmented MP4 (CMAF) / `movflags=+faststart`     | ⚠️    | `movflags` works; segment_* options require AVDict |
 | `-muxdelay`, `-muxpreload`, `-copyts`, `-start_at_zero`, `-avoid_negative_ts` | ⚠️ | `Config.CopyTS` covers `-copyts` (suppresses demuxer ts_offset shift; switches output-side `-ss`/`-to` to absolute timeline). `-muxdelay`/`-muxpreload`/`-start_at_zero`/`-avoid_negative_ts` still missing. |
-| Bitstream filter chains on output (`-bsf:v "h264_mp4toannexb,h264_redundant_pps"`) | ⚠️ | Single BSF only |
+| Bitstream filter chains on output (`-bsf:v "h264_mp4toannexb,h264_redundant_pps"`) | ✅ | Chain syntax parsed by `av_bsf_list_parse_str`; per-stream-type via `BSFVideo`/`BSFAudio`/`BSFSubtitle` |
 
 ### 2.6 Subtitles
 
@@ -798,9 +798,14 @@ real jobs."
     `VarStreamMap` (HLS) or `AdaptationSets` (DASH). Smoke tests
     [41_hls_vod.json](../testdata/examples/41_hls_vod.json) +
     [42_dash_basic.json](../testdata/examples/42_dash_basic.json).
-13. **BSF chains on output** (§2.5) — `Output.BitstreamFilters
-    []string`. Required for `h264_mp4toannexb,h264_redundant_pps`
-    in any "convert MP4 to MPEG-TS" pipeline.
+13. **BSF chains on output** (§2.5) — ✅ `Output.BSFVideo` /
+    `BSFAudio` / `BSFSubtitle` accept FFmpeg chain syntax
+    (`f1[=k=v[:k=v]][,f2]`) parsed by `av_bsf_list_parse_str`.
+    Runtime ports `fftools/ffmpeg_mux.c::bsf_init` (par_in copy →
+    time_base_in → av_bsf_init → par_out copy back → time_base_out
+    adopt before `WriteHeader`); per-packet flow drains via
+    `av_bsf_send_packet` / `av_bsf_receive_packet` between rescale
+    and `WritePacket`; channel-close drains residuals.
 14. **Color metadata + HDR10 mastering / CLL** (§2.4) — `Output.Color`
     + `Output.HDR`. Validate codec/container compatibility at schema
     time.

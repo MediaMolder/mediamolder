@@ -232,6 +232,7 @@ type Output struct {
 	CodecSubtitle string `json:"codec_subtitle,omitempty"`
 	BSFVideo      string `json:"bsf_video,omitempty"`
 	BSFAudio      string `json:"bsf_audio,omitempty"`
+	BSFSubtitle   string `json:"bsf_subtitle,omitempty"`
 	// CodecTagVideo / CodecTagAudio / CodecTagSubtitle override the
 	// FourCC codec_tag set by the muxer on the corresponding output
 	// stream. Equivalent to ffmpeg's -tag:v / -tag:a / -tag:s. Most

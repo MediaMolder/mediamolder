@@ -345,12 +345,13 @@ sections:
         status: partial
         schema: pipeline.Config.CopyTS
         notes: -copyts covered (Config.CopyTS suppresses demuxer ts_offset shift and switches output-side -ss/-to to absolute timeline interpretation); -muxdelay/-muxpreload/-start_at_zero/-avoid_negative_ts still missing
-      - flag: "-bsf:v / -bsf:a (single)"
+      - flag: "-bsf:v / -bsf:a / -bsf:s (single)"
         status: covered
-        schema: pipeline.Output.BSFVideo / BSFAudio
+        schema: pipeline.Output.BSFVideo / BSFAudio / BSFSubtitle
       - flag: "BSF chains (-bsf:v 'h264_mp4toannexb,h264_redundant_pps')"
-        status: partial
-        schema: pipeline.Output.BSFVideo
+        status: covered
+        schema: pipeline.Output.BSFVideo / BSFAudio / BSFSubtitle
+        notes: parsed by libavcodec av_bsf_list_parse_str; chain spec `f1[=k=v[:k=v]][,f2]`
 
   - id: subtitles
     title: Subtitles (roadmap §2.6)

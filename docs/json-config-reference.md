@@ -100,8 +100,9 @@ For `"copy"` nodes, no `params` are required — the inbound edge type tells the
 | `codec_video`    | string | no       | Video encoder name     |
 | `codec_audio`    | string | no       | Audio encoder name     |
 | `codec_subtitle` | string | no       | Subtitle encoder name  |
-| `bsf_video`      | string | no       | Video bitstream filter |
-| `bsf_audio`      | string | no       | Audio bitstream filter |
+| `bsf_video`      | string | no       | Video bitstream-filter chain (FFmpeg `-bsf:v`); chain syntax `f1[=k=v[:k=v]][,f2]` parsed by `av_bsf_list_parse_str` (e.g. `"h264_mp4toannexb,h264_redundant_pps"` for MP4→MPEG-TS). |
+| `bsf_audio`      | string | no       | Audio bitstream-filter chain (FFmpeg `-bsf:a`), same chain syntax (e.g. `"aac_adtstoasc"`).    |
+| `bsf_subtitle`   | string | no       | Subtitle bitstream-filter chain (FFmpeg `-bsf:s`), same chain syntax (e.g. `"text2movsub"`). |
 | `codec_tag_video`    | string | no | FourCC override for video (`-tag:v`, e.g. `"hvc1"`). Must be exactly 4 ASCII chars. |
 | `codec_tag_audio`    | string | no | FourCC override for audio (`-tag:a`).    |
 | `codec_tag_subtitle` | string | no | FourCC override for subtitles (`-tag:s`). |

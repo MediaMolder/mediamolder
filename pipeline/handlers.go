@@ -527,6 +527,13 @@ type sinkResources struct {
 	// the wrong units and play back at the wrong rate.
 	streamRescale []*sinkRescale
 
+	// streamBSF[i] is the per-channel bitstream-filter chain (parsed
+	// via av_bsf_list_parse_str from the FFmpeg `-bsf` chain syntax
+	// `f1[=k=v[:k=v]][,f2]`) applied between rescale and WritePacket.
+	// nil when no BSF is configured for that channel's media type.
+	// Mirrors fftools/ffmpeg_mux.c::bsf_init.
+	streamBSF []*av.BitstreamFilter
+
 	// timing holds the resolved output-side -ss/-t/-to window
 	// (mirrors fftools/ffmpeg_mux_init.c's per-OutputFile
 	// `start_time` / `recording_time`). Empty when no output trim
@@ -636,6 +643,13 @@ func (r *graphRunner) close() {
 	}
 	for _, f := range r.passLogFiles {
 		_ = f.Close()
+	}
+	for _, s := range r.sinks {
+		for _, b := range s.streamBSF {
+			if b != nil {
+				_ = b.Close()
+			}
+		}
 	}
 	// Sinks are finalized by the caller (muxer.Close for atomic rename).
 }
@@ -1607,43 +1621,107 @@ func (r *graphRunner) handleSink(ctx context.Context, node *graph.Node, ins []<-
 		// PTS 0 (suppressed under -copyts).
 		shiftPTSus(pkt, shiftDownUS, dstTB)
 
-		frameStart := time.Now()
-		var wErr error
-		if mu != nil {
-			mu.Lock()
-		}
-		// `-fs` (max_file_size): query avio_tell before WritePacket
-		// and refuse to write when the limit has been reached.
-		// Mirrors fftools/ffmpeg_mux.c's
-		// `if (fs >= mux->limit_filesize) ret = AVERROR_EOF`.
-		stopAllNow := false
-		if sink.maxFileSize > 0 {
-			if cur := sink.muxer.BytesWritten(); cur >= 0 && cur >= sink.maxFileSize {
-				stopAllNow = true
+		// writeOne handles a single muxer-bound packet: max_file_size
+		// check, WritePacket, and per-channel bookkeeping. Returns
+		// (wrote, stopAll, err).
+		writeOne := func(p *av.Packet) (bool, bool, error) {
+			frameStart := time.Now()
+			var wErr error
+			if mu != nil {
+				mu.Lock()
 			}
+			stopAllNow := false
+			if sink.maxFileSize > 0 {
+				if cur := sink.muxer.BytesWritten(); cur >= 0 && cur >= sink.maxFileSize {
+					stopAllNow = true
+				}
+			}
+			if !stopAllNow {
+				wErr = sink.muxer.WritePacket(p)
+			}
+			if mu != nil {
+				mu.Unlock()
+			}
+			if stopAllNow {
+				return false, true, nil
+			}
+			if wErr != nil {
+				return false, false, wErr
+			}
+			st.written++
+			if pPTS, hasP := ptsToMicros(p.PTS(), dstTB); hasP {
+				st.lastPTSus = pPTS
+				st.lastPTSok = true
+				ptsNs := time.Duration(p.PTS()) * time.Second *
+					time.Duration(dstTB[0]) / time.Duration(dstTB[1])
+				r.pipe.Metrics().Node(node.ID).AdvanceOutputPTS(ptsNs)
+			}
+			r.pipe.Metrics().Node(node.ID).RecordLatency(time.Since(frameStart))
+			return true, false, nil
 		}
-		if !stopAllNow {
-			wErr = sink.muxer.WritePacket(pkt)
+
+		// BSF chain (if any): drive the input packet through
+		// av_bsf_send_packet / av_bsf_receive_packet and call
+		// writeOne for each output packet. Mirrors
+		// fftools/ffmpeg_mux.c::write_packet's BSF loop.
+		var bsf *av.BitstreamFilter
+		if i < len(sink.streamBSF) {
+			bsf = sink.streamBSF[i]
 		}
-		if mu != nil {
-			mu.Unlock()
+		if bsf != nil {
+			outs, err := bsf.FilterPacket(pkt)
+			if err != nil {
+				return false, false, fmt.Errorf("bsf filter: %w", err)
+			}
+			var wroteAny bool
+			for _, op := range outs {
+				op.SetStreamIndex(i)
+				wrote, stopAll, werr := writeOne(op)
+				op.Close()
+				wroteAny = wroteAny || wrote
+				if stopAll || werr != nil {
+					return wroteAny, stopAll, werr
+				}
+			}
+			return wroteAny, false, nil
 		}
-		if stopAllNow {
-			return false, true, nil
+
+		return writeOne(pkt)
+	}
+
+	// flushBSF drains any residual packets buffered inside the BSF
+	// chain at end-of-stream by sending a null packet (EOF signal),
+	// then writing the drained output packets through the same
+	// per-channel write path. Mirrors fftools/ffmpeg_mux.c::mux_thread
+	// flushing the BSF before WriteTrailer.
+	flushBSF := func(i int, dstTB [2]int, st *chanState, mu *sync.Mutex) error {
+		var bsf *av.BitstreamFilter
+		if i < len(sink.streamBSF) {
+			bsf = sink.streamBSF[i]
 		}
-		if wErr != nil {
-			return false, false, wErr
+		if bsf == nil {
+			return nil
 		}
-		st.written++
-		if hasPTS {
-			st.lastPTSus = ptsUS
-			st.lastPTSok = true
-			ptsNs := time.Duration(pkt.PTS()) * time.Second *
-				time.Duration(dstTB[0]) / time.Duration(dstTB[1])
-			r.pipe.Metrics().Node(node.ID).AdvanceOutputPTS(ptsNs)
+		outs, err := bsf.Flush()
+		if err != nil {
+			return fmt.Errorf("bsf flush: %w", err)
 		}
-		r.pipe.Metrics().Node(node.ID).RecordLatency(time.Since(frameStart))
-		return true, false, nil
+		for _, op := range outs {
+			op.SetStreamIndex(i)
+			if mu != nil {
+				mu.Lock()
+			}
+			werr := sink.muxer.WritePacket(op)
+			if mu != nil {
+				mu.Unlock()
+			}
+			op.Close()
+			if werr != nil {
+				return werr
+			}
+			st.written++
+		}
+		return nil
 	}
 
 	if len(ins) == 1 {
@@ -1651,7 +1729,14 @@ func (r *graphRunner) handleSink(ctx context.Context, node *graph.Node, ins []<-
 		if len(sink.streamRescale) > 0 {
 			rs = sink.streamRescale[0]
 		}
+		// Use rs.dstTB (which equals the muxer's pre-WriteHeader
+		// stream TB for BSF streams, post-header otherwise) so PTS
+		// comparisons stay in the same units packets arrive in
+		// after rescale.
 		dstTB := sink.muxer.StreamTimeBase(0)
+		if rs != nil {
+			dstTB = rs.dstTB
+		}
 		st := &chanState{}
 		for v := range ins[0] {
 			pkt := v.(*av.Packet)
@@ -1669,6 +1754,9 @@ func (r *graphRunner) handleSink(ctx context.Context, node *graph.Node, ins []<-
 			}
 		}
 		recordShortest(st.lastPTSus, st.lastPTSok)
+		if err := flushBSF(0, dstTB, st, nil); err != nil {
+			return err
+		}
 		return sink.muxer.WriteTrailer()
 	}
 
@@ -1683,6 +1771,9 @@ func (r *graphRunner) handleSink(ctx context.Context, node *graph.Node, ins []<-
 			rs = sink.streamRescale[i]
 		}
 		dstTB := sink.muxer.StreamTimeBase(i)
+		if rs != nil {
+			dstTB = rs.dstTB
+		}
 		st := &chanState{}
 		eg.Go(func() error {
 			defer recordShortest(st.lastPTSus, st.lastPTSok)
@@ -1701,7 +1792,7 @@ func (r *graphRunner) handleSink(ctx context.Context, node *graph.Node, ins []<-
 					return err
 				}
 			}
-			return nil
+			return flushBSF(i, dstTB, st, &mu)
 		})
 	}
 
@@ -2460,6 +2551,44 @@ func (r *graphRunner) openSink(_ *graph.Graph, node *graph.Node) (*sinkResources
 		}
 	}
 
+	// Per-stream bitstream-filter chains (Output.BSFVideo /
+	// BSFAudio / BSFSubtitle, FFmpeg `-bsf:v` / `-bsf:a` / `-bsf:s`).
+	// Each value is the FFmpeg chain spec `f1[=k=v[:k=v]][,f2]` parsed
+	// by libavcodec's av_bsf_list_parse_str. Attached after stream
+	// creation and before WriteHeader so the chain's par_out replaces
+	// the muxer's stream codecpar — exactly the order
+	// fftools/ffmpeg_mux.c::bsf_init follows. Stored per inbound
+	// channel for processOne to drive packets through.
+	bsfSpecFor := func(t graph.PortType) string {
+		switch t {
+		case graph.PortVideo:
+			return out.BSFVideo
+		case graph.PortAudio:
+			return out.BSFAudio
+		case graph.PortSubtitle:
+			return out.BSFSubtitle
+		}
+		return ""
+	}
+	streamBSF := make([]*av.BitstreamFilter, len(node.Inbound))
+	for i, e := range node.Inbound {
+		spec := bsfSpecFor(e.Type)
+		if spec == "" {
+			continue
+		}
+		bsf, err := muxer.AttachStreamBSF(i, spec)
+		if err != nil {
+			for _, b := range streamBSF {
+				if b != nil {
+					_ = b.Close()
+				}
+			}
+			muxer.Abort()
+			return nil, fmt.Errorf("sink %q attach %s bsf chain %q: %w", node.ID, e.Type, spec, err)
+		}
+		streamBSF[i] = bsf
+	}
+
 	// Container metadata + chapters. Resolution rules:
 	//   - Output.Metadata, when non-nil, fully replaces any
 	//     metadata mapped from inputs (mirrors FFmpeg's behaviour
@@ -2488,9 +2617,15 @@ func (r *graphRunner) openSink(_ *graph.Graph, node *graph.Node) (*sinkResources
 
 	// Some muxers adjust stream time_base in WriteHeader; refresh the
 	// post-header value so per-packet rescaling targets the actual
-	// container timebase.
+	// container timebase. BSF-attached streams keep the pre-header
+	// rescale target (= bsf.time_base_in), since the BSF chain was
+	// initialised against that TB and av_interleaved_write_frame
+	// rescales the BSF's output PTS to the post-header stream TB.
 	for i, rs := range rescales {
 		if rs == nil {
+			continue
+		}
+		if i < len(streamBSF) && streamBSF[i] != nil {
 			continue
 		}
 		rs.dstTB = muxer.StreamTimeBase(i)
@@ -2500,6 +2635,7 @@ func (r *graphRunner) openSink(_ *graph.Graph, node *graph.Node) (*sinkResources
 		muxer:         muxer,
 		cfg:           *out,
 		streamRescale: rescales,
+		streamBSF:     streamBSF,
 		timing:        outTiming,
 		copyTS:        r.cfg != nil && r.cfg.CopyTS,
 		maxFileSize:   out.MaxFileSize,
