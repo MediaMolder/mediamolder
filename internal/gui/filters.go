@@ -46,12 +46,30 @@ func handleFilterOptions(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusNotFound, err)
 		return
 	}
+	annotateExpressionOptions(&info)
 
 	filterOptionsCacheMu.Lock()
 	filterOptionsCache[name] = info
 	filterOptionsCacheMu.Unlock()
 
 	writeFilterOptions(w, info)
+}
+
+// annotateExpressionOptions stamps the curated `Expression` /
+// `Variables` fields onto every option that the filterExprOptions
+// registry marks as expression-typed (Wave 5 #19). The variable list
+// is the same one served by the eval-expression endpoint, so the
+// frontend's syntax-highlight + cookbook + live-validation flow has
+// a single source of truth.
+func annotateExpressionOptions(info *av.FilterOptionsInfo) {
+	vars := FilterExprVariables(info.Name)
+	for i := range info.Options {
+		opt := &info.Options[i]
+		if IsExpressionOption(info.Name, opt.Name) {
+			opt.Expression = true
+			opt.Variables = vars
+		}
+	}
 }
 
 func writeFilterOptions(w http.ResponseWriter, info av.FilterOptionsInfo) {

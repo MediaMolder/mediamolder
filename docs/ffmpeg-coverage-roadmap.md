@@ -316,36 +316,17 @@ once §3.1–§3.4 land:
    container, same stream count, same per-stream codec, output bytes within tolerance, SSIM ≥ 0.99, audio loudness within ±0.5 LU.
 2. **Production-pattern conformance suite.** A second corpus assembled from the production-pattern command lines catalogued in §1.1 —
    animated `drawtext`, two-pass `loudnorm`, multi-resolution split-and-mux ABR, full GPU pipelines, HDR `zscale`/`tonemap`, `minterpolate` slow-mo, RNNoise, mixed labelled/unlabelled `-filter_complex` outputs, raw-stream inputs, lossless intermediates. Same pass criteria as §3.6.1.
-3. **Random-corpus fuzzer.** Generate random valid ffmpeg command
-   lines from a grammar derived from the capability registry; run
-   both ffmpeg and `mediamolder run --import-cli ...`; diff outputs.
-4. **Capability registry coverage gate.** No PR can merge that adds
-   a new flag to the registry without also adding either a schema
+3. **Random-corpus fuzzer.** Generate random valid ffmpeg command lines from a grammar derived from the capability registry; run both ffmpeg and `mediamolder run --import-cli ...`; diff outputs.
+4. **Capability registry coverage gate.** No PR can merge that adds a new flag to the registry without also adding either a schema
    field marking it `covered` or an explicit `out-of-scope` rationale.
-5. **Quoting / escaping fuzzer.** Targeted at `pipeline/engine.go`
-   `buildFilterSpec` and at the `compat/ffcli` lexer. Generate
-   filter-graph specs containing every combination of `,`, `;`, `'`,
-   `"`, `\`, `:`, `=`, `[`, `]`, and unicode whitespace; assert that
-   `parse → spec → libavfilter → re-parse` is idempotent. The
-   `04f1a0c7` quoting fix is the first known instance of a class of
-   bugs that only fuzzing will surface.
+5. **Quoting / escaping fuzzer.** Targeted at `pipeline/engine.go` `buildFilterSpec` and at the `compat/ffcli` lexer. Generate filter-graph specs containing every combination of `,`, `;`, `'`, `"`, `\`, `:`, `=`, `[`, `]`, and unicode whitespace; assert that `parse → spec → libavfilter → re-parse` is idempotent. The `04f1a0c7` quoting fix is the first known instance of a class of bugs that only fuzzing will surface.
 
 ## 4. Cross-cutting principles
 
-- **Library-first.** Every feature has to be a real binding in `av/`,
-  not a string forwarded blindly to AVDict. AVDict passthrough is a
-  legitimate transitional state but it should be tracked in the
-  registry as `partial` and burned down.
-- **Schema-validated.** Every new schema field needs matching JSON
-  Schema entries in `schema/v1.0.json` and `schema/v1.1.json`, and
-  matching TS types in `frontend/src/lib/jobTypes.ts`. The existing
-  `TestSchemaSyncWithGoStructs` is the enforcement mechanism.
-- **GUI must be able to author it.** A schema field that the GUI
-  cannot produce or edit is a schema field nobody will use. Every
-  Phase-B/C/D feature has a GUI deliverable in Phase E.
-- **The oracle is FFmpeg.** Round-trip CLI ↔ JSON conversion plus
-  byte/SSIM/loudness comparison against ffmpeg is what defines
-  "covered". Anything not in a regression test will regress.
+- **Library-first.** Every feature has to be a real binding in `av/`, not a string forwarded blindly to AVDict. AVDict passthrough is a legitimate transitional state but it should be tracked in the registry as `partial` and burned down.
+- **Schema-validated.** Every new schema field needs matching JSON Schema entries in `schema/v1.0.json` and `schema/v1.1.json`, and matching TS types in `frontend/src/lib/jobTypes.ts`. The existing `TestSchemaSyncWithGoStructs` is the enforcement mechanism.
+- **GUI must be able to author it.** A schema field that the GUI cannot produce or edit is a schema field nobody will use. Every Phase-B/C/D feature has a GUI deliverable in Phase E.
+- **The oracle is FFmpeg.** Round-trip CLI ↔ JSON conversion plus byte/SSIM/loudness comparison against ffmpeg is what defines "covered". Anything not in a regression test will regress.
 
 ## 5. Initial backlog (completed)
 
@@ -730,7 +711,63 @@ real jobs."
     (ffprobe-asserts the muxed-in SAR matches 16:15 for DV-PAL
     and 8:9 for NTSC respectively).
 
-### 6.4 Wave 4 — "hardware everywhere" (Phase D)
+### 6.4 Wave 4 — "expression authoring polish" (Phase D)
+
+19. **`expression: true` AVOption flag bit** (§3.1.6.a; deferred
+    from §5#7) — ✅ done. FFmpeg has no `AV_OPT_FLAG_EXPRESSION`
+    bit, so the implementation has two halves: (a) the av layer
+    now exposes the raw `AVOption.flags` bitfield + every
+    decoded `AV_OPT_FLAG_*` bit (`IsEncodingParam` /
+    `IsDecodingParam` / `IsAudioParam` / `IsVideoParam` /
+    `IsSubtitleParam` / `IsExport` / `IsReadOnly` / `IsBSFParam` /
+    `IsRuntimeParam` / `IsFilteringParam` / `IsDeprecated` /
+    `IsChildConsts`) on every `EncoderOption` returned by
+    `EncoderOptionsByName` and `FilterOptionsByName`; (b) a
+    curated `(filter, option) → expression-typed` registry lives
+    in [internal/gui/filter_eval.go](../internal/gui/filter_eval.go)
+    (`filterExprOptions`, paired with the existing
+    `filterExprVars` table that the eval-expression endpoint
+    already uses, so a single source of truth feeds both the GUI
+    Inspector and the validator). The
+    `GET /api/filters/{name}/options` handler annotates matching
+    `EncoderOption`s with `Expression: true` + `Variables: [...]`
+    on the way out the door, mirrored in `frontend/src/lib/
+    encoderSchema.ts`'s `EncoderOption` type. Ten well-known
+    expression-typed pairs registered today (drawtext.x/.y/
+    .text_x/.text_y/.box_w/.box_h/.fontsize/.alpha/.enable;
+    overlay.x/.y/.enable; crop.x/.y/.w/.h/.out_w/.out_h/.enable;
+    scale.w/.h/.width/.height; pad.w/.h/.x/.y/.enable; rotate.angle/
+    .a/.out_w/.ow/.out_h/.oh/.enable; zoompan.zoom/.z/.x/.y/.d/
+    .fps/.enable; setpts.expr; asetpts.expr; volume.volume/.enable).
+20. **Syntax-highlighted GUI expression input** (§3.1.6.b, §3.5.8) —
+    ✅ done. New
+    [frontend/src/components/controls/ExpressionInput.tsx](../frontend/src/components/controls/ExpressionInput.tsx)
+    renders a transparent `<textarea>` over a styled `<pre>`
+    overlay (no Monaco / CodeMirror dependency) that
+    syntax-colours functions vs. variables vs. numbers vs.
+    operators by tokenising the input against the curated
+    libavutil function list (`abs`, `between`, `if`, `mod`,
+    `lt`, `gte`, …) and the per-filter variable list shipped on
+    the option schema. Unknown identifiers get a red wavy
+    underline so the user gets immediate feedback before the
+    round-trip. A 250 ms-debounced background fetch hits
+    `GET /api/filters/{name}/eval-expression?expr=...` (the
+    endpoint shipped in §5#7) under default-zero variable
+    bindings; the response's `ok` / `value` / `error` is
+    surfaced inline beneath the input (green `= <value>` on
+    parse-success, red message on libavutil rejection). A
+    cookbook `<select>` exposes the five canonical patterns
+    called out in the roadmap (between / scroll / frame-stamp /
+    fade-gate / conditional) which are inserted at the cursor
+    position. The control is wired into `OptionControl` on a
+    per-`(filter, option)` basis: when the schema marks the
+    option as `expression: true` and the form supplies the
+    `filter` prop (currently `FilterForm` does so), the
+    `ExpressionInput` is rendered in place of the plain text
+    input — every other AVOption rendering path is unchanged.
+
+
+### 6.5 Wave 5 — "hardware everywhere" (Phase E)
 
 16. **`-init_hw_device` + per-node `device:` selector** (§3.4.5) —
     Mandatory for any mixed-vendor pipeline (CUDA decode → CPU
@@ -741,17 +778,6 @@ real jobs."
 18. **Hardware filter auto-mapping** (`scale` ↔ `scale_cuda` /
     `scale_npp` / `scale_qsv` / `scale_vt`) (§2.3) — The GUI's
     "this will run on GPU" indicator depends on this.
-
-### 6.5 Wave 5 — "expression authoring polish" (Phase E)
-
-19. **`expression: true` AVOption flag bit** (§3.1.6.a; deferred
-    from §5#7) — Mine `AV_OPT_FLAG_*` via `av_opt_next`; wire into
-    schema so the GUI knows which fields render the expression
-    input.
-20. **Syntax-highlighted GUI expression input** (§3.1.6.b, §3.5.8) —
-    Live-validates against the eval-expression endpoint shipped in
-    §5#7. Cookbook UI for top-5 patterns
-    (between/scroll/frame-stamp/fade-gate/conditional).
 
 ### 6.6 Wave 6 — "the editorial round-trip" (Phase C.8)
 
@@ -779,9 +805,7 @@ real jobs."
 
 ### 6.8 Suggested deprecations / out-of-scope
 
-Mark these `out-of-scope` in the capability registry rather than chase
-them. Importer (`compat/ffcli`) may still accept the legacy spelling
-and rewrite it.
+Mark these `out-of-scope` in the capability registry rather than chase them. Importer (`compat/ffcli`) may still accept the legacy spelling and rewrite it.
 
 | Flag(s) | Rationale |
 |---|---|

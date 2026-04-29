@@ -130,6 +130,7 @@ export function FilterForm({ def, onChange }: Props) {
           {visible.map((opt) => (
             <OptionRow
               key={opt.name}
+              filter={info.name}
               option={opt}
               value={getParam(opt.name)}
               onChange={(v) => setParam(opt.name, v)}
@@ -144,10 +145,12 @@ export function FilterForm({ def, onChange }: Props) {
 /* ---------- Single labelled option row ---------- */
 
 function OptionRow({
+  filter,
   option,
   value,
   onChange,
 }: {
+  filter: string;
   option: FilterOption;
   value: string;
   onChange: (next: string) => void;
@@ -163,7 +166,7 @@ function OptionRow({
       >
         {option.name}
       </label>
-      <OptionControl option={option} value={value} onChange={onChange} />
+      <OptionControl filter={filter} option={option} value={value} onChange={onChange} />
       {meta && (
         <div className="empty" style={{ fontSize: 10, marginTop: 2 }}>
           {meta}

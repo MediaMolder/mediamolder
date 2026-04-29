@@ -79,15 +79,43 @@ const (
 
 // EncoderOption describes a single AVOption exposed by an encoder.
 type EncoderOption struct {
-	Name      string             `json:"name"`
-	Help      string             `json:"help,omitempty"`
-	Type      OptionType         `json:"type"`
-	Unit      string             `json:"unit,omitempty"`
-	Min       float64            `json:"min,omitempty"`
-	Max       float64            `json:"max,omitempty"`
-	Default   *EncoderOptionVal  `json:"default,omitempty"`
+	Name      string              `json:"name"`
+	Help      string              `json:"help,omitempty"`
+	Type      OptionType          `json:"type"`
+	Unit      string              `json:"unit,omitempty"`
+	Min       float64             `json:"min,omitempty"`
+	Max       float64             `json:"max,omitempty"`
+	Default   *EncoderOptionVal   `json:"default,omitempty"`
 	Constants []EncoderOptionEnum `json:"constants,omitempty"`
-	IsPrivate bool               `json:"is_private"` // true => codec-specific (e.g. libx264 preset); false => generic AVCodecContext (e.g. b, g)
+	IsPrivate bool                `json:"is_private"` // true => codec-specific (e.g. libx264 preset); false => generic AVCodecContext (e.g. b, g)
+
+	// Flags is the raw `AVOption.flags` bitmask (see AV_OPT_FLAG_* in
+	// libavutil/opt.h). The decoded booleans below mirror the bits the
+	// GUI needs to render correctly; Flags is preserved so callers can
+	// inspect future bits without an av-layer bump.
+	Flags uint32 `json:"flags,omitempty"`
+
+	IsEncodingParam  bool `json:"is_encoding_param,omitempty"`  // AV_OPT_FLAG_ENCODING_PARAM
+	IsDecodingParam  bool `json:"is_decoding_param,omitempty"`  // AV_OPT_FLAG_DECODING_PARAM
+	IsAudioParam     bool `json:"is_audio_param,omitempty"`     // AV_OPT_FLAG_AUDIO_PARAM
+	IsVideoParam     bool `json:"is_video_param,omitempty"`     // AV_OPT_FLAG_VIDEO_PARAM
+	IsSubtitleParam  bool `json:"is_subtitle_param,omitempty"`  // AV_OPT_FLAG_SUBTITLE_PARAM
+	IsExport         bool `json:"is_export,omitempty"`          // AV_OPT_FLAG_EXPORT
+	IsReadOnly       bool `json:"is_read_only,omitempty"`       // AV_OPT_FLAG_READONLY
+	IsBSFParam       bool `json:"is_bsf_param,omitempty"`       // AV_OPT_FLAG_BSF_PARAM
+	IsRuntimeParam   bool `json:"is_runtime_param,omitempty"`   // AV_OPT_FLAG_RUNTIME_PARAM
+	IsFilteringParam bool `json:"is_filtering_param,omitempty"` // AV_OPT_FLAG_FILTERING_PARAM
+	IsDeprecated     bool `json:"is_deprecated,omitempty"`      // AV_OPT_FLAG_DEPRECATED
+	IsChildConsts    bool `json:"is_child_consts,omitempty"`    // AV_OPT_FLAG_CHILD_CONSTS
+
+	// Expression is set by the GUI layer (not the av layer) for
+	// (filter, option) pairs known to accept a libavutil expression
+	// string. FFmpeg has no AV_OPT_FLAG_EXPRESSION bit (Wave 5 #19) —
+	// the curated registry in `internal/gui/filter_eval.go` is the
+	// single source of truth. Variables, when set, names the constants
+	// the expression may reference (e.g. `t`, `n`, `w`, `h`).
+	Expression bool     `json:"expression,omitempty"`
+	Variables  []string `json:"variables,omitempty"`
 }
 
 // EncoderOptionEnum is one named constant attached to an option's `unit`.
@@ -210,14 +238,28 @@ func collectConstants(clsPtr **C.AVClass, unit string) []EncoderOptionEnum {
 
 func optionToEncoderOption(opt *C.AVOption, private bool) EncoderOption {
 	t := optionType(opt)
+	flags := uint32(opt.flags)
 	o := EncoderOption{
-		Name:      goStr(opt.name),
-		Help:      goStr(opt.help),
-		Type:      OptionType(t),
-		Unit:      goStr(opt.unit),
-		Min:       float64(opt.min),
-		Max:       float64(opt.max),
-		IsPrivate: private,
+		Name:             goStr(opt.name),
+		Help:             goStr(opt.help),
+		Type:             OptionType(t),
+		Unit:             goStr(opt.unit),
+		Min:              float64(opt.min),
+		Max:              float64(opt.max),
+		IsPrivate:        private,
+		Flags:            flags,
+		IsEncodingParam:  flags&C.AV_OPT_FLAG_ENCODING_PARAM != 0,
+		IsDecodingParam:  flags&C.AV_OPT_FLAG_DECODING_PARAM != 0,
+		IsAudioParam:     flags&C.AV_OPT_FLAG_AUDIO_PARAM != 0,
+		IsVideoParam:     flags&C.AV_OPT_FLAG_VIDEO_PARAM != 0,
+		IsSubtitleParam:  flags&C.AV_OPT_FLAG_SUBTITLE_PARAM != 0,
+		IsExport:         flags&C.AV_OPT_FLAG_EXPORT != 0,
+		IsReadOnly:       flags&C.AV_OPT_FLAG_READONLY != 0,
+		IsBSFParam:       flags&C.AV_OPT_FLAG_BSF_PARAM != 0,
+		IsRuntimeParam:   flags&C.AV_OPT_FLAG_RUNTIME_PARAM != 0,
+		IsFilteringParam: flags&C.AV_OPT_FLAG_FILTERING_PARAM != 0,
+		IsDeprecated:     flags&C.AV_OPT_FLAG_DEPRECATED != 0,
+		IsChildConsts:    flags&C.AV_OPT_FLAG_CHILD_CONSTS != 0,
 	}
 	o.Default = optionDefault(opt, t)
 	return o
