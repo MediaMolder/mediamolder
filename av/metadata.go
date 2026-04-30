@@ -251,3 +251,49 @@ func setDictFromMap(dp **C.AVDictionary, kv map[string]string) error {
 	}
 	return nil
 }
+
+// Metadata returns the per-frame AVFrame->metadata as a flat key/value
+// map. Returns nil when the frame has no metadata. libavfilter
+// propagates AVFrame->metadata across `metadata`/`ametadata` filter
+// nodes natively, so callers can inspect keys produced by upstream
+// metadata filters or by Go-side processors.
+func (f *Frame) Metadata() map[string]string {
+	if f == nil || f.p == nil {
+		return nil
+	}
+	return dictToMap(f.p.metadata)
+}
+
+// GetMetadata returns the value of a single AVFrame metadata key, or
+// the empty string when the key is absent.
+func (f *Frame) GetMetadata(key string) string {
+	if f == nil || f.p == nil || f.p.metadata == nil || key == "" {
+		return ""
+	}
+	cKey := C.CString(key)
+	defer C.free(unsafe.Pointer(cKey))
+	entry := C.av_dict_get(f.p.metadata, cKey, nil, 0)
+	if entry == nil {
+		return ""
+	}
+	return C.GoString(entry.value)
+}
+
+// SetMetadata inserts or replaces a single AVFrame metadata entry.
+// The change rides on the frame's AVDictionary and survives
+// av_frame_clone / filter graph propagation, allowing Go processors to
+// publish keys that downstream `metadata=mode=print` (or drawtext
+// `%{metadata\:key}`) nodes can consume.
+func (f *Frame) SetMetadata(key, value string) error {
+	if f == nil || f.p == nil || key == "" {
+		return nil
+	}
+	cKey := C.CString(key)
+	cVal := C.CString(value)
+	defer C.free(unsafe.Pointer(cKey))
+	defer C.free(unsafe.Pointer(cVal))
+	if rc := C.dict_set(&f.p.metadata, cKey, cVal); rc < 0 {
+		return newErr(rc)
+	}
+	return nil
+}

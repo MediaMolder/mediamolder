@@ -121,7 +121,7 @@ Legend: ✅ supported · ⚠️ partial · ❌ missing
 | `-filter_complex_threads`                                   | ✅    | Per-graph thread cap (Wave 7 #38) |
 | `-filter_threads`                                           | ⚠️    | Set globally only |
 | Filter quoting (`,`, `;`, `'` in values)                    | ✅    | Fixed in commit `04f1a0c7` (`pipeline/engine.go` `buildFilterSpec`) |
-| Sidedata / per-frame metadata propagation                   | ⚠️    | Frames carry `AVFrame->metadata` but there is no JSON-side `metadata` filter wiring |
+| Sidedata / per-frame metadata propagation                   | ✅    | `AVFrame->metadata` propagates through libavfilter natively; `metadata`/`ametadata` filters wired as regular `filter` nodes; av-layer `Frame.Metadata()`/`GetMetadata`/`SetMetadata` exposed for Go processors (Wave 7 #39). Fixture `51_metadata_filter.json`. |
 | Hardware filter auto-mapping (sw `scale` → `scale_cuda` etc.) | ❌  | User must spell the hardware filter name today |
 | `hwupload`, `hwdownload`, `hwmap` filters                   | ⚠️    | Available via filter name, no first-class palette |
 | **Filter expression engine** (`t`, `n`, `frame`, `tw`, `th`, `text_w`, `text_h`, `w`, `h`, `enable=between(t,2,8)`, arithmetic) | ✅ | Strings reach libavfilter intact; `GET /api/filters/{name}/eval-expression` validator (§5#7); `expression: true` AVOption flag bit + curated per-filter variable registry (Wave 4 #19); syntax-highlighted `ExpressionInput` GUI control with cookbook + live validation (Wave 4 #20). |
@@ -1006,11 +1006,19 @@ Close remaining ⚠️/❌ items in §2.3 that are not hardware-related.
     `AVFilterGraph.nb_threads` via the `__filter_threads` Params
     sentinel; ffcli `-filter_complex_threads N`; schema fields on
     both v1.0 and v1.1.
-39. **Sidedata / per-frame metadata propagation** (§2.3) — Wire
-    `AVFrame->metadata` through the typed-edges model so
-    `metadata=mode=add` filter chains can be authored as graph
-    nodes. New `KindMetadataFilter` reusing the side-data plumbing
-    from Wave 2 #11.
+39. **Sidedata / per-frame metadata propagation** (§2.3) ✅ Wave 7 —
+    `AVFrame->metadata` already propagates through libavfilter's
+    `buffersrc`→filter→`buffersink` plumbing; the `metadata` and
+    `ametadata` filters (vf_metadata.c / af_metadata.c) work as
+    regular `KindFilter` nodes today, so no new node kind was
+    required. The remaining gap was Go-side access for processors
+    that want to read/write per-frame keys: added
+    `Frame.Metadata()` / `Frame.GetMetadata(key)` /
+    `Frame.SetMetadata(key, value)` cgo helpers (av/metadata.go);
+    the values survive `av_frame_clone` / `av_frame_ref`, which is
+    the same path libavfilter uses to hand frames between nodes.
+    Fixture `51_metadata_filter.json` exercises an
+    `add`→`print`→encode chain.
 40. **Mixed labelled / unlabelled `-filter_complex` outputs**
     (§2.3, §1.1) — Round-trip test for the
     `avfilter_graph_parse_ptr` pad-binding quirk: `-filter_complex

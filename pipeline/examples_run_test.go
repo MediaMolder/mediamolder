@@ -155,7 +155,7 @@ func runExample(t *testing.T, jsonPath, name, inputAbs, subsrtAbs, subassAbs str
 	raw = strings.ReplaceAll(raw, `"subs.ass"`, `"`+subassRel+`"`)
 
 	// Metadata output files → redirect to tmpDir so tests don't litter cwd
-	for _, meta := range []string{"frame_info.jsonl", "scene_changes.jsonl", "detections.jsonl"} {
+	for _, meta := range []string{"frame_info.jsonl", "scene_changes.jsonl", "detections.jsonl", "frame_metadata.txt"} {
 		dest := filepath.ToSlash(filepath.Join(tmpDir, meta))
 		raw = strings.ReplaceAll(raw, `"`+meta+`"`, `"`+dest+`"`)
 	}
