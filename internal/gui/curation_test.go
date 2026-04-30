@@ -54,8 +54,8 @@ func TestCuratedNodesResolveToRealEntries(t *testing.T) {
 		"h264_amf": {}, "hevc_amf": {},
 		"h264_vaapi": {}, "hevc_vaapi": {},
 		"subtitles": {}, "ass": {}, // require --enable-libass
-		"tonemap":   {}, // requires libavfilter built with HDR support
-		"drawtext":  {}, // requires --enable-libfreetype
+		"tonemap":       {}, // requires libavfilter built with HDR support
+		"drawtext":      {}, // requires --enable-libfreetype
 		"frame_counter": {}, "frame_info": {}, "scene_change": {},
 	}
 
