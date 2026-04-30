@@ -249,7 +249,16 @@
         "type": { "type": "string", "enum": ["v", "a", "s", "d"], "description": "Media type letter: v=video, a=audio, s=subtitle, d=data." },
         "index": { "type": "integer", "minimum": 0, "description": "0-based index within the media type, matching FFmpeg's `s:<type>:<idx>` resolution rule." },
         "metadata": { "type": "object", "additionalProperties": { "type": "string" }, "description": "Per-stream key/value metadata (e.g. `language=eng`, `title=Director Commentary`). Mirrors `-metadata:s:<type>:<idx>`." },
-        "disposition": { "type": "string", "description": "`+`-separated list of AV_DISPOSITION_* flag names (e.g. `default`, `default+forced`, `hearing_impaired`). Mirrors `-disposition:s:<type>:<idx>`. Empty string leaves the disposition untouched." }
+        "disposition": { "type": "string", "description": "`+`-separated list of AV_DISPOSITION_* flag names (e.g. `default`, `default+forced`, `hearing_impaired`). Mirrors `-disposition:s:<type>:<idx>`. Empty string leaves the disposition untouched." },
+        "encoder": { "$ref": "#/$defs/encoder_override", "description": "Per-stream encoder override applied on top of Output.codec_video/audio/subtitle and Output.encoder_params_*. Mirrors FFmpeg's `-<key>:<type>:<idx>` per-stream encoder option specifier (e.g. `-b:v:0 5M -b:v:1 2.5M`)." }
+      }
+    },
+    "encoder_override": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "codec": { "type": "string", "description": "Encoder name. Empty leaves Output.codec_* in place." },
+        "options": { "type": "object", "description": "Sparse AVOption map overlaid on Output.encoder_params_*. Same value shapes as encoder_params_video." }
       }
     },
     "global_options": {

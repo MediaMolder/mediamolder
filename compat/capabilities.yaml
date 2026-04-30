@@ -246,9 +246,9 @@ sections:
         schema: pipeline.Output.ForceKeyFrames
         notes: expr:EXPR (libavutil per-frame expression), source (copy from input), or comma-separated time list
       - flag: "per-stream encoder options (-b:v:0 ≠ -b:v:1)"
-        status: missing
-        schema: n/a
-        notes: ABR ladder per-stream override
+        status: covered
+        schema: pipeline.Output.Streams[].Encoder
+        notes: EncoderOverride{Codec, Options} overlays synthetic encoder node by media-type+index; ffcli round-trips -<key>:<type>:<idx>
       - flag: "color metadata (-color_range/-color_primaries/-color_trc/-colorspace)"
         status: covered
         schema: pipeline.Output.Color

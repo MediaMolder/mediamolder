@@ -146,7 +146,7 @@ Legend: ✅ supported · ⚠️ partial · ❌ missing
 | `-fps_mode` (`cfr`/`vfr`/`passthrough`/`drop`) (formerly `-vsync`) | ✅    | `Output.FPSMode`; per-frame renumber/drop/duplicate logic in `pipeline/fps_mode.go` consumed by `handleEncoder` for video streams. `compat/ffcli` rewrites the legacy `-vsync` numeric/auto aliases. |
 | `-async N` (audio resync via resampler)                            | ✅    | `Output.AudioSync`; `pipeline.spliceAudioSyncForOutputs` injects an `aresample=async=N[:first_pts=0 when N==1]` filter node in front of every audio encoder feeding the output. `compat/ffcli` accepts the legacy flag. |
 | `-force_key_frames "expr:gte(t,n_forced*2)"` and chapter-driven IDR placement | ✅ | `Output.ForceKeyFrames` covers `expr:`, `source`, and time-list grammars (per-frame `pict_type = AV_PICTURE_TYPE_I` stamp via `av.Frame.SetPictType`). Chapter-driven IDR (`chapters[+offset]`) deferred. |
-| Per-stream encoder options (`-b:v:0` ≠ `-b:v:1` in ABR ladders)   | ⚠️    | Per-stream metadata + disposition done (Wave 1 #3); per-stream codec/bitrate modelled via explicit encoder graph nodes (`testdata/examples/35_abr_ladder.json`). Direct `-b:v:0` shorthand still missing. |
+| Per-stream encoder options (`-b:v:0` ≠ `-b:v:1` in ABR ladders)   | ✅    | `Output.Streams[].Encoder *EncoderOverride` (`Codec`, `Options`); ffcli round-trips `-b:v:0`/`-crf:v:1`/`-preset:v:0`/`-c:v:1` etc.; Wave 6 #30. |
 | Color metadata on encoder (`-color_range`, `-color_primaries`, `-color_trc`, `-colorspace`, `-chroma_sample_location`) | ✅ | `Output.Color` first-class + validated; Wave 3 #14. |
 | HDR10 mastering display + content light level metadata            | ✅    | `Output.HDR` (SMPTE ST 2086 + CTA-861.3); validated against codec/container; Wave 3 #14. |
 | Dolby Vision RPU passthrough                                      | ❌    | Required for premium HDR pipelines |
@@ -841,13 +841,12 @@ and not deprecated.
     timestamp-policy cluster started by `Config.CopyTS` in
     Wave 1 #2.
 30. **Per-stream encoder option overrides** (`-b:v:0`, `-crf:v:1`,
-    `-preset:v:0`) (§2.4) — Promote `Output.Streams[].Encoder
-    *EncoderOverride` carrying a sparse AVOptions map that
-    overlays `Output.EncoderParamsVideo` for that stream's
-    matching encoder graph node. Required for ABR ladders that
-    are spelled inline (no graph node) and for the `compat/ffcli`
-    importer to round-trip the canonical `-b:v:0 5M -b:v:1 2.5M`
-    grammar.
+    `-preset:v:0`) (§2.4) ✅ Wave 6 (`Output.Streams[].Encoder
+    *EncoderOverride { Codec, Options }` overlays the matching
+    synthetic encoder node by media-type + index; expandImplicitEncoders
+    counts edges per type in declaration order. ffcli parses
+    `-<key>:<type>:<idx>` for the canonical encoder option key set
+    plus `-c:<type>:<idx>` for codec).
 31. **Attachments + cover art** (§2.5) — `Output.Attachments
     []Attachment` (`{path, mimetype?, filename?}`) writes
     `AVCodecID_TTF`/`AV_CODEC_ID_OTF`/`AV_CODEC_ID_PNG` streams

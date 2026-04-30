@@ -1039,6 +1039,26 @@ type StreamSpec struct {
 	// (fftools/ffmpeg_mux_init.c::set_dispositions). Empty
 	// string leaves the muxer's default disposition unchanged.
 	Disposition string `json:"disposition,omitempty"`
+	// Encoder, when non-nil, overlays per-stream encoder choices on
+	// the matching synthetic encoder graph node produced by
+	// expandImplicitEncoders. Lets callers spell ABR ladders inline
+	// (one Output, multiple video edges, distinct -b:v / -crf per
+	// stream) without authoring explicit encoder nodes. Mirrors
+	// FFmpeg's per-stream encoder option specifier
+	// `-<key>:<type>:<idx>` (e.g. `-b:v:0 5M -b:v:1 2.5M`,
+	// fftools/ffmpeg_opt.c). Wave 6 #30.
+	Encoder *EncoderOverride `json:"encoder,omitempty"`
+}
+
+// EncoderOverride is a sparse per-stream override applied on top of
+// Output.CodecVideo/Audio/Subtitle and Output.EncoderParamsVideo/
+// Audio/Subtitle. Empty Codec leaves the output-level codec choice
+// in place; non-empty Codec replaces it for the matching stream.
+// Options keys overwrite same-named entries in the output-level
+// EncoderParams map for the matching stream only. Wave 6 #30.
+type EncoderOverride struct {
+	Codec   string         `json:"codec,omitempty"`
+	Options map[string]any `json:"options,omitempty"`
 }
 
 // Options holds global pipeline options.

@@ -367,6 +367,10 @@ func expandImplicitEncoders(cfg *Config, def *graph.Def) {
 	}
 
 	var added []graph.EdgeDef
+	// Per-output, per-media-type counter so we can resolve
+	// per-stream encoder overrides (Wave 6 #30) by their muxer-add
+	// index (which mirrors edge declaration order on the sink).
+	typeIdx := make(map[string]int) // key = output-id + ":" + edge-type
 	for i := range def.Edges {
 		e := &def.Edges[i]
 		fromID := head(e.From)
@@ -403,6 +407,29 @@ func expandImplicitEncoders(cfg *Config, def *graph.Def) {
 			}
 			extraParams = out.EncoderParamsSubtitle
 		}
+		// Per-stream encoder override (Wave 6 #30). Counts edges of
+		// this media type in declaration order, matching how the
+		// muxer adds streams in openSink. The override's Codec (if
+		// non-empty) replaces the output-level codec, and Options
+		// overlay extraParams for this synthetic encoder only.
+		var streamOverride *EncoderOverride
+		switch e.Type {
+		case "video", "audio", "subtitle":
+			letter := map[string]string{"video": "v", "audio": "a", "subtitle": "s"}[e.Type]
+			key := toID + ":" + e.Type
+			idx := typeIdx[key]
+			typeIdx[key] = idx + 1
+			for si := range out.Streams {
+				ss := &out.Streams[si]
+				if ss.Type == letter && ss.Index == idx && ss.Encoder != nil {
+					streamOverride = ss.Encoder
+					if ss.Encoder.Codec != "" {
+						codec = ss.Encoder.Codec
+					}
+					break
+				}
+			}
+		}
 		if codec == "" {
 			continue
 		}
@@ -414,6 +441,17 @@ func expandImplicitEncoders(cfg *Config, def *graph.Def) {
 				continue
 			}
 			nodeParams[k] = v
+		}
+		// Overlay per-stream encoder Options on top of extraParams
+		// so a per-stream `-b:v:1 2.5M` wins over the output-level
+		// `-b:v 5M`. Wave 6 #30.
+		if streamOverride != nil {
+			for k, v := range streamOverride.Options {
+				if k == "codec" {
+					continue
+				}
+				nodeParams[k] = v
+			}
 		}
 		// Stash FPSMode on the synthetic encoder node for video edges so
 		// handleEncoder's per-frame renumberer can consume it. The double-
@@ -2553,11 +2591,11 @@ var encoderReservedParams = map[string]bool{
 	// codec-specific stats AVOption (libx264 / libvvenc / libx265)
 	// or wires AVCodecContext.stats_in / opens a log file for
 	// stats_out (generic codecs).
-	"__pass":        true,
-	"__passlogfile": true,
-	"__pass_index":  true,
-	"__sar":         true,
-	"__dar":         true,
+	"__pass":          true,
+	"__passlogfile":   true,
+	"__pass_index":    true,
+	"__sar":           true,
+	"__dar":           true,
 	"__enc_time_base": true,
 	"__field_order":   true,
 	"__interlaced":    true,

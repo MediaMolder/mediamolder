@@ -80,13 +80,13 @@ type parser struct {
 	pendingDAR string
 	// Wave 6 #33: per-output encoder colour/timing edges
 	// (-enc_time_base, -field_order, -flags +ildct+ilme alias).
-	pendingEncTimeBase  string
-	pendingFieldOrder   string
-	pendingInterlaced   bool
-	hwAccel    string
-	hwDevice   string
-	hwOutFmt   string
-	globalOpts map[string]string
+	pendingEncTimeBase string
+	pendingFieldOrder  string
+	pendingInterlaced  bool
+	hwAccel            string
+	hwDevice           string
+	hwOutFmt           string
+	globalOpts         map[string]string
 	// Container-level metadata collected from `-metadata key=value`
 	// (no specifier). Latched onto the next output.
 	containerMeta map[string]string
@@ -976,6 +976,44 @@ func (p *parser) parse() (*pipeline.Config, error) {
 				p.pendingFileOpts = make(map[string]any)
 			}
 			p.pendingFileOpts[strings.TrimPrefix(arg, "-")] = p.next()
+		case parsePerStreamEncoderFlag(arg) != nil:
+			// Wave 6 #30: per-stream encoder option overrides like
+			// `-b:v:0 5M`, `-crf:v:1 22`, `-preset:v:0 fast`. Land
+			// on Output.Streams[].Encoder.Options so
+			// expandImplicitEncoders can overlay them on the
+			// matching synthetic encoder node.
+			spec := parsePerStreamEncoderFlag(arg)
+			if !p.hasMore() {
+				return nil, fmt.Errorf("%s requires an argument", arg)
+			}
+			val := p.next()
+			ss := p.streamSpecFor(spec.typ, spec.idx)
+			if ss.Encoder == nil {
+				ss.Encoder = &pipeline.EncoderOverride{}
+			}
+			if ss.Encoder.Options == nil {
+				ss.Encoder.Options = make(map[string]any)
+			}
+			ss.Encoder.Options[spec.key] = val
+		case strings.HasPrefix(arg, "-c:") && strings.Count(arg, ":") == 2:
+			// `-c:v:0 libx264` per-stream codec override. Same
+			// dispatch as -<key>:<type>:<idx> but the key is
+			// expressed as `c` and lands on Encoder.Codec rather
+			// than Encoder.Options.
+			rest := strings.TrimPrefix(arg, "-c:")
+			typ, idx, err := parseStreamSpec(rest)
+			if err != nil {
+				return nil, fmt.Errorf("%s: %w", arg, err)
+			}
+			if !p.hasMore() {
+				return nil, fmt.Errorf("%s requires an argument", arg)
+			}
+			val := p.next()
+			ss := p.streamSpecFor(typ, idx)
+			if ss.Encoder == nil {
+				ss.Encoder = &pipeline.EncoderOverride{}
+			}
+			ss.Encoder.Codec = val
 		case strings.HasPrefix(arg, "-"):
 			if p.hasMore() && !strings.HasPrefix(p.peek(), "-") {
 				p.globalOpts[strings.TrimPrefix(arg, "-")] = p.next()

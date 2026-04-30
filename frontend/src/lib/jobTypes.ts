@@ -452,6 +452,13 @@ export interface StreamSpec {
   /** `+`-separated AV_DISPOSITION_* flag names (e.g.
    *  `default+forced`). Empty leaves the disposition untouched. */
   disposition?: string;
+  /** Per-stream encoder override (Wave 6 #30). */
+  encoder?: EncoderOverride;
+}
+
+export interface EncoderOverride {
+  codec?: string;
+  options?: Record<string, unknown>;
 }
 
 export interface Chapter {

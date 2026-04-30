@@ -240,7 +240,16 @@
         "type": { "type": "string", "enum": ["v", "a", "s", "d"] },
         "index": { "type": "integer", "minimum": 0 },
         "metadata": { "type": "object", "additionalProperties": { "type": "string" } },
-        "disposition": { "type": "string" }
+        "disposition": { "type": "string" },
+        "encoder": { "$ref": "#/$defs/encoder_override" }
+      }
+    },
+    "encoder_override": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "codec": { "type": "string" },
+        "options": { "type": "object" }
       }
     },
     "global_options": {
