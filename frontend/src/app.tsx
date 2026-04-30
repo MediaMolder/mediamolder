@@ -106,6 +106,24 @@ function Editor() {
   useEffect(() => {
     localStorage.setItem('mm.labelMode', labelMode);
   }, [labelMode]);
+
+  /* Panel visibility — each is a persisted boolean (default true) so the
+   * user gets the full layout on first load but a deliberate hide sticks
+   * across reloads. Storage keys are namespaced under mm.view.* so they
+   * don't collide with palette / labelMode keys. */
+  const useStoredBool = (key: string, def: boolean) => {
+    const [v, setV] = useState<boolean>(() => {
+      const s = localStorage.getItem(key);
+      return s == null ? def : s === '1';
+    });
+    useEffect(() => {
+      localStorage.setItem(key, v ? '1' : '0');
+    }, [key, v]);
+    return [v, setV] as const;
+  };
+  const [showPalette, setShowPalette] = useStoredBool('mm.view.palette', true);
+  const [showInspector, setShowInspector] = useStoredBool('mm.view.inspector', true);
+  const [showMinimap, setShowMinimap] = useStoredBool('mm.view.minimap', true);
   const canvasRef = useRef<HTMLDivElement>(null);
   const rf = useReactFlow();
 
@@ -571,7 +589,11 @@ function Editor() {
   );
 
   return (
-    <div className="app-shell">
+    <div
+      className="app-shell"
+      data-palette={showPalette ? 'shown' : 'hidden'}
+      data-inspector={showInspector ? 'shown' : 'hidden'}
+    >
       <div className="toolbar">
         <span className="title">MediaMolder</span>
         <span style={{ color: 'var(--text-dim)' }}>{stats}</span>
@@ -610,6 +632,41 @@ function Editor() {
         </select>
 
         <button onClick={onAutoLayout} disabled={!nodes.length}>Auto layout</button>
+        <div
+          className="segmented"
+          role="group"
+          aria-label="Panel visibility"
+          title="Show or hide editor panels."
+        >
+          <span className="segmented-label">View:</span>
+          <button
+            type="button"
+            aria-pressed={showPalette}
+            className={showPalette ? 'segmented-on' : ''}
+            onClick={() => setShowPalette((v) => !v)}
+            title="Toggle the node palette (left sidebar)"
+          >
+            Palette
+          </button>
+          <button
+            type="button"
+            aria-pressed={showInspector}
+            className={showInspector ? 'segmented-on' : ''}
+            onClick={() => setShowInspector((v) => !v)}
+            title="Toggle the inspector (right sidebar)"
+          >
+            Inspector
+          </button>
+          <button
+            type="button"
+            aria-pressed={showMinimap}
+            className={showMinimap ? 'segmented-on' : ''}
+            onClick={() => setShowMinimap((v) => !v)}
+            title="Toggle the canvas minimap"
+          >
+            Minimap
+          </button>
+        </div>
         <div
           className="segmented"
           role="radiogroup"
@@ -662,7 +719,7 @@ function Editor() {
         <button onClick={() => setHelpOpen(true)} title="Open help (or press ?)">Help</button>
       </div>
 
-      <Palette />
+      {showPalette && <Palette />}
 
       <div
         className="canvas"
@@ -686,6 +743,7 @@ function Editor() {
           proOptions={{ hideAttribution: true }}
         >
           <Background gap={16} size={1} color="#2a303a" />
+          {showMinimap && (
           <MiniMap
             pannable
             zoomable
@@ -711,6 +769,7 @@ function Editor() {
             maskColor="rgba(15,17,21,0.65)"
             className="mm-minimap"
           />
+          )}
           <Controls showInteractive={false} className="mm-controls" />
         </ReactFlow>
         {nodes.length === 0 && (
@@ -729,7 +788,9 @@ function Editor() {
         <Legend />
       </div>
 
+      {showInspector && (
       <Inspector node={selectedNode} nodes={nodes} edges={edges} onChange={onNodeUpdate} onDelete={onNodeDelete} />
+      )}
       <RunDock visible={showRunPanel}>
         <RunPanel run={run} nodeKinds={nodeKinds} onClose={() => setShowRunPanel(false)} />
       </RunDock>

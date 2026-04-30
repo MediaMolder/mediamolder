@@ -51,6 +51,19 @@ button.danger:hover { background: rgba(185, 74, 74, 0.15); }
     "dock     dock       dock";
   height: 100vh;
 }
+/* Panel visibility \u2014 collapse the matching grid column to 0 when the
+ * user toggles the panel off. The Palette / Inspector components are
+ * not rendered in that case (see app.tsx), but collapsing the column
+ * also reclaims the space for the canvas. */
+.app-shell[data-palette="hidden"] {
+  grid-template-columns: 0 1fr 320px;
+}
+.app-shell[data-inspector="hidden"] {
+  grid-template-columns: 220px 1fr 0;
+}
+.app-shell[data-palette="hidden"][data-inspector="hidden"] {
+  grid-template-columns: 0 1fr 0;
+}
 .toolbar {
   grid-area: toolbar;
   display: flex;
