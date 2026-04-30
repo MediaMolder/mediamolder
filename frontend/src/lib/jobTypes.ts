@@ -62,6 +62,7 @@ export interface Input {
   protocol_whitelist?: string[];
   /** Image-sequence matcher used by image2 demuxer. */
   pattern_type?: '' | 'none' | 'sequence' | 'glob' | 'glob_sequence';
+  subtitle_charenc?: string;
   /** Copy this input's container metadata onto outputs that don't set
    *  their own `metadata` (mirrors ffmpeg `-map_metadata IDX`).
    *  Multiple inputs merge in declaration order; last writer wins. */

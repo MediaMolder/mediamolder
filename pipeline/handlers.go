@@ -2115,7 +2115,9 @@ func (r *graphRunner) openSource(cfg Input, srcNode *graph.Node, decOpts av.Deco
 		case copyOnly[typ]:
 			// Stream-copy only: don't open a decoder.
 		case typ == "subtitle":
-			subDec, err := av.OpenSubtitleDecoder(input, si.Index)
+			subDec, err := av.OpenSubtitleDecoderWithOptions(input, si.Index, av.SubtitleDecoderOptions{
+				Charenc: cfg.SubtitleCharenc,
+			})
 			if err != nil {
 				for _, d := range decoders {
 					d.Close()

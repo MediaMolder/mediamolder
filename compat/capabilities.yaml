@@ -372,8 +372,8 @@ sections:
         status: partial
         schema: pipeline.Output.CodecSubtitle
       - flag: "-sub_charenc"
-        status: missing
-        schema: n/a
+        status: covered
+        schema: pipeline.Input.SubtitleCharenc
       - flag: "forced / hearing-impaired flags"
         status: missing
         schema: n/a

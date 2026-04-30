@@ -6,6 +6,7 @@ package av
 // #include "libavcodec/avcodec.h"
 // #include "libavformat/avformat.h"
 // #include "libavutil/mem.h"
+// #include <stdlib.h>
 //
 // static AVCodecParameters *sub_get_codecpar(AVFormatContext *ctx, int stream_index) {
 //     return ctx->streams[stream_index]->codecpar;
@@ -61,6 +62,31 @@ package av
 // static int sub_codec_format(AVCodecContext *ctx) {
 //     return ctx->codec->type == AVMEDIA_TYPE_SUBTITLE ?
 //         (ctx->codec_descriptor ? ctx->codec_descriptor->props : 0) : 0;
+// }
+//
+// // Probe the codec descriptor properties for a subtitle stream so the
+// // caller can distinguish text-subtitle codecs (srt, ass, mov_text, ...)
+// // from bitmap-subtitle codecs (dvbsub, dvdsub, hdmv_pgs_subtitle, ...).
+// // Returns AV_CODEC_PROP_TEXT_SUB / AV_CODEC_PROP_BITMAP_SUB OR'd in;
+// // 0 if no descriptor found or the stream is not a subtitle stream.
+// static unsigned sub_stream_props(AVFormatContext *ctx, int stream_index) {
+//     AVCodecParameters *cp = ctx->streams[stream_index]->codecpar;
+//     if (cp->codec_type != AVMEDIA_TYPE_SUBTITLE) return 0;
+//     const AVCodecDescriptor *d = avcodec_descriptor_get(cp->codec_id);
+//     return d ? d->props : 0;
+// }
+//
+// // Same as above but probes by AVCodecID directly (used to validate the
+// // output encoder before it's been constructed).
+// static unsigned sub_codec_id_props(int codec_id) {
+//     const AVCodecDescriptor *d = avcodec_descriptor_get(codec_id);
+//     return d ? d->props : 0;
+// }
+//
+// // Look up an encoder by name and return its codec_id (0 = not found).
+// static int sub_encoder_id_by_name(const char *name) {
+//     const AVCodec *c = avcodec_find_encoder_by_name(name);
+//     return c ? c->id : 0;
 // }
 import "C"
 
@@ -140,6 +166,25 @@ type SubtitleDecoderContext struct {
 
 // OpenSubtitleDecoder creates a subtitle decoder for the given stream index.
 func OpenSubtitleDecoder(input *InputFormatContext, streamIndex int) (*SubtitleDecoderContext, error) {
+	return OpenSubtitleDecoderWithOptions(input, streamIndex, SubtitleDecoderOptions{})
+}
+
+// SubtitleDecoderOptions configures optional subtitle-decoder parameters.
+type SubtitleDecoderOptions struct {
+	// Charenc is the source character encoding for text-subtitle decoders
+	// (mirrors AVCodecContext.sub_charenc / FFmpeg `-sub_charenc`). When
+	// non-empty, libavcodec routes packets through iconv from Charenc to
+	// UTF-8 before handing them to the decoder (see libavcodec/decode.c
+	// L2014). Rejected here when applied to a bitmap-subtitle stream
+	// because the conversion is meaningless on graphics frames (mirrors
+	// the runtime branch at libavcodec/decode.c L2023 that forces
+	// sub_charenc_mode=DO_NOTHING for non-text codecs).
+	Charenc string
+}
+
+// OpenSubtitleDecoderWithOptions creates a subtitle decoder with a typed
+// options struct. The empty-options form is equivalent to OpenSubtitleDecoder.
+func OpenSubtitleDecoderWithOptions(input *InputFormatContext, streamIndex int, opts SubtitleDecoderOptions) (*SubtitleDecoderContext, error) {
 	if streamIndex < 0 || streamIndex >= input.NumStreams() {
 		return nil, fmt.Errorf("stream index %d out of range", streamIndex)
 	}
@@ -147,6 +192,14 @@ func OpenSubtitleDecoder(input *InputFormatContext, streamIndex int) (*SubtitleD
 	cp := C.sub_get_codecpar(input.raw(), C.int(streamIndex))
 	if cp.codec_type != C.AVMEDIA_TYPE_SUBTITLE {
 		return nil, fmt.Errorf("stream %d is not subtitle (type=%d)", streamIndex, cp.codec_type)
+	}
+
+	if opts.Charenc != "" {
+		props := uint32(C.sub_codec_id_props(C.int(cp.codec_id)))
+		if props&C.AV_CODEC_PROP_TEXT_SUB == 0 {
+			return nil, fmt.Errorf("stream %d: sub_charenc=%q only valid for text-subtitle codecs (codec_id=%d is bitmap or unknown)",
+				streamIndex, opts.Charenc, cp.codec_id)
+		}
 	}
 
 	codec := C.avcodec_find_decoder(cp.codec_id)
@@ -166,6 +219,14 @@ func OpenSubtitleDecoder(input *InputFormatContext, streamIndex int) (*SubtitleD
 
 	ctx.pkt_timebase = C.sub_get_stream_time_base(input.raw(), C.int(streamIndex))
 
+	if opts.Charenc != "" {
+		// libavcodec frees sub_charenc via av_free; allocate with av_strdup
+		// so the AVCodecContext owns the buffer.
+		cstr := C.CString(opts.Charenc)
+		ctx.sub_charenc = C.av_strdup(cstr)
+		C.free(unsafe.Pointer(cstr))
+	}
+
 	if ret := C.avcodec_open2(ctx, codec, nil); ret < 0 {
 		C.avcodec_free_context(&ctx)
 		return nil, fmt.Errorf("avcodec_open2 (subtitle): %w", newErr(ret))
@@ -173,6 +234,42 @@ func OpenSubtitleDecoder(input *InputFormatContext, streamIndex int) (*SubtitleD
 
 	leakTrack(unsafe.Pointer(ctx), "AVCodecContext(subtitle_decoder)")
 	return &SubtitleDecoderContext{p: ctx, streamIndex: streamIndex}, nil
+}
+
+// SubtitleStreamProps returns the codec descriptor properties bitmask for
+// the subtitle stream at streamIndex. Use IsBitmapSubtitleProps /
+// IsTextSubtitleProps to decode. Returns 0 if streamIndex is out of range
+// or the stream is not a subtitle stream.
+func SubtitleStreamProps(input *InputFormatContext, streamIndex int) uint32 {
+	if streamIndex < 0 || streamIndex >= input.NumStreams() {
+		return 0
+	}
+	return uint32(C.sub_stream_props(input.raw(), C.int(streamIndex)))
+}
+
+// IsTextSubtitleProps reports whether the codec descriptor properties bitmask
+// indicates a text-subtitle codec (AV_CODEC_PROP_TEXT_SUB).
+func IsTextSubtitleProps(props uint32) bool { return props&uint32(C.AV_CODEC_PROP_TEXT_SUB) != 0 }
+
+// IsBitmapSubtitleProps reports whether the codec descriptor properties
+// bitmask indicates a bitmap-subtitle codec (AV_CODEC_PROP_BITMAP_SUB).
+func IsBitmapSubtitleProps(props uint32) bool {
+	return props&uint32(C.AV_CODEC_PROP_BITMAP_SUB) != 0
+}
+
+// SubtitleEncoderProps looks up the encoder by name and returns its codec
+// descriptor properties bitmask. Returns 0 when the encoder is unknown.
+func SubtitleEncoderProps(name string) uint32 {
+	if name == "" {
+		return 0
+	}
+	cname := C.CString(name)
+	defer C.free(unsafe.Pointer(cname))
+	id := C.sub_encoder_id_by_name(cname)
+	if id == 0 {
+		return 0
+	}
+	return uint32(C.sub_codec_id_props(id))
 }
 
 // Close frees the subtitle decoder context.

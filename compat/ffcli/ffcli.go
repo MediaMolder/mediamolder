@@ -123,6 +123,8 @@ type parser struct {
 	pendingReadBurstSet   bool
 	pendingReadCatchup    float64
 	pendingReadCatchupSet bool
+	pendingSubCharenc     string
+	pendingSubCharencSet  bool
 
 	// `-map` selectors collected in CLI order; drained over inputs
 	// just before buildGraph runs so the implicit per-input
@@ -210,6 +212,10 @@ func (p *parser) parse() (*pipeline.Config, error) {
 			if p.pendingReadCatchupSet {
 				in.ReadRateCatchup = p.pendingReadCatchup
 				p.pendingReadCatchup, p.pendingReadCatchupSet = 0, false
+			}
+			if p.pendingSubCharencSet {
+				in.SubtitleCharenc = p.pendingSubCharenc
+				p.pendingSubCharenc, p.pendingSubCharencSet = "", false
 			}
 			p.inputs = append(p.inputs, in)
 		case arg == "-c:v" || arg == "-vcodec":
@@ -723,6 +729,16 @@ func (p *parser) parse() (*pipeline.Config, error) {
 				return nil, fmt.Errorf("-itsoffset: invalid value %q (want seconds, e.g. -0.030)", v)
 			}
 			p.pendingITSOffset, p.pendingITSOffsetSet = f, true
+		case arg == "-sub_charenc":
+			// FFmpeg per-decoder AVOption (sub_charenc) on the
+			// subtitle decoder. Latched here as a per-input flag
+			// because the CLI grammar `-sub_charenc CODE -i FOO`
+			// applies CODE to FOO only (the option is consumed
+			// when the next file is opened).
+			if !p.hasMore() {
+				return nil, fmt.Errorf("-sub_charenc requires an argument")
+			}
+			p.pendingSubCharenc, p.pendingSubCharencSet = p.next(), true
 		case arg == "-re":
 			// FFmpeg shorthand for `-readrate 1`. Per-input bool.
 			// FFmpeg warns when both -re and -readrate are set

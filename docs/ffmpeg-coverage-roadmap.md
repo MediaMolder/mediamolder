@@ -187,7 +187,7 @@ Legend: ✅ supported · ⚠️ partial · ❌ missing
 | Passthrough (text and bitmap)                                     | ✅    | Demonstrated by `18_subtitle_add` |
 | Burn-in via `subtitles=` filter                                   | ✅    | (works once libass is available in the build) |
 | Codec conversion (`mov_text` ↔ `srt` ↔ `ass` ↔ `webvtt`)          | ⚠️    | Works through encoder selection but not validated for incompatible pairs |
-| Subtitle charset (`-sub_charenc`)                                 | ❌    | Required for non-UTF-8 SRT files |
+| Subtitle charset (`-sub_charenc`)                                 | ✅    | `Input.SubtitleCharenc` (Wave 6 #34) |
 | Forced / hearing-impaired flags                                   | ❌    | Per-stream metadata gap |
 | Karaoke ASS effects, fontconfig integration                       | ⚠️    | Filter passes through; no GUI affordance |
 
@@ -875,11 +875,12 @@ and not deprecated.
     for broadcast workflows. AVDict-passthrough today; promotion
     + validation table.
 34. **Subtitle: `-sub_charenc`, forced / hearing-impaired flags,
-    codec-pair validation** (§2.6) — `Input.SubtitleCharenc string`
-    (rejected unless input is text-subtitle). Forced/HI surfaced
-    via the existing per-stream `Disposition` (Wave 1 #3) plus a
-    schema-level validator that rejects `mov_text` ↔ bitmap
-    subtitle pairs at config-load.
+    codec-pair validation** (§2.6) ✅ Wave 6 (`Input.SubtitleCharenc`
+    threaded into `av.OpenSubtitleDecoderWithOptions`; bitmap-subtitle
+    streams reject the option at decoder-open time via the codec
+    descriptor `AV_CODEC_PROP_TEXT_SUB` check; forced/HI continue
+    to ride on the per-stream `Disposition` from Wave 1 #3; ffcli
+    `-sub_charenc CODE` latches onto the next `-i` only).
 35. **Dolby Vision RPU passthrough** (§2.4) — `Output.HDR.DoVi
     *DoVi` (`{rpu_path, profile, level}`). RPU side-data muxed
     via `AV_PKT_DATA_DOVI_CONF`; validator restricts to hevc/av1

@@ -141,3 +141,23 @@ func TestParseDemuxerFlagsLatchToNextInput(t *testing.T) {
 		t.Errorf("Inputs[1].ITSOffset = %g, want 2 (latched to main.mp4 only)", cfg.Inputs[1].ITSOffset)
 	}
 }
+
+// TestParseSubCharenc covers Wave 6 #34: per-input `-sub_charenc CODE`
+// latches onto the next `-i` only (mirrors fftools/ffmpeg_opt.c
+// OPT_INPUT semantics; the option is consumed when the next file
+// is opened).
+func TestParseSubCharenc(t *testing.T) {
+	cfg, err := Parse("ffmpeg -sub_charenc WINDOWS-1251 -i ru.srt -i en.srt -c copy out.mkv")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Inputs) != 2 {
+		t.Fatalf("Inputs = %d, want 2", len(cfg.Inputs))
+	}
+	if got := cfg.Inputs[0].SubtitleCharenc; got != "WINDOWS-1251" {
+		t.Errorf("Inputs[0].SubtitleCharenc = %q, want %q", got, "WINDOWS-1251")
+	}
+	if got := cfg.Inputs[1].SubtitleCharenc; got != "" {
+		t.Errorf("Inputs[1].SubtitleCharenc = %q, want \"\" (latched to first -i only)", got)
+	}
+}

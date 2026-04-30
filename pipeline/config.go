@@ -164,6 +164,18 @@ type Input struct {
 	// Pushed to the demuxer as `pattern_type`. Ignored when the
 	// demuxer is not image2.
 	PatternType string `json:"pattern_type,omitempty"`
+	// SubtitleCharenc forces the source character encoding when decoding
+	// text-subtitle streams from this input. Mirrors FFmpeg's per-input
+	// `-sub_charenc CODE` flag (parsed in fftools/ffmpeg_opt.c, stored
+	// on the per-decoder AVOption AVCodecContext.sub_charenc and used
+	// by libavcodec/decode.c L860 to drive iconv from CODE to UTF-8
+	// before the text-subtitle decoder sees the packet). Setting this
+	// on an input whose subtitle stream is bitmap (PGS, DVB, DVD,
+	// ...) is rejected at decoder-open time because the conversion
+	// is meaningless on graphics frames (mirrors libavcodec/decode.c
+	// L2014-2023 forcing sub_charenc_mode=DO_NOTHING for non-text
+	// codecs). Common values: "WINDOWS-1251", "ISO-8859-2", "GBK".
+	SubtitleCharenc string `json:"subtitle_charenc,omitempty"`
 	// MapMetadata, when true, copies the container-level metadata of
 	// this input onto every Output that does not set its own
 	// `Output.Metadata`. Mirrors FFmpeg's `-map_metadata IDX` when IDX
