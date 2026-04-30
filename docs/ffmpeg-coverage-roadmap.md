@@ -130,7 +130,7 @@ Legend: ✅ supported · ⚠️ partial · ❌ missing
 | `arnndn` (RNNoise) and other model-file filters             | ⚠️    | Filter runs if model path is correct; no fixture story for filter-side data files |
 | `zscale` + `tonemap` (HDR)                                  | ✅    | Validator (`pipeline.validateFilterAvailability`) rejects unknown / unbuilt filters with an actionable hint (`zscale` → `--enable-libzimg`, `tonemap_opencl` → `--enable-opencl`, …) instead of waiting for a runtime "filter not found". Palette (`/api/nodes`) only lists filters reported by `av.ListFilters()`, so unbuilt entries are absent automatically. (Wave 7 #42) |
 | `minterpolate` (motion-compensated interpolation)           | ✅    | Frame-rate / time-base plumbing done in §5 #1; the AVOption miner (§4 #19) exposes `mi_mode` / `mc_mode` / `me_mode` / `me` (and `vsbmc`) as typed `int` options carrying their named constants — the GUI Inspector renders them as enum dropdowns. (Wave 7 #43) |
-| Audio channel manipulation: `pan`, `channelsplit`, `channelmap`, `join`, `amerge`, `amix=weights` | ⚠️ | Available as filters; GUI has no per-channel routing UI |
+| Audio channel manipulation: `pan`, `channelsplit`, `channelmap`, `join`, `amerge`, `amix=weights` | ✅ | Backend works (Wave 7 #41 fixtures: `pan`, `channelmap`, `amix=weights`); GUI matrix view deferred to Wave 8 |
 
 ### 2.4 Encoders
 
@@ -924,9 +924,19 @@ Close remaining ⚠️/❌ items in §2.3 that are not hardware-related.
     where the trailing pad is unlabelled. Importer normalises;
     exporter emits the canonical labelled form.
 41. **Audio channel manipulation** (`pan`, `channelsplit`,
-    `channelmap`, `join`, `amerge`, `amix=weights`) (§2.3, §1.1) —
-    Backend wiring + a fixture per filter; GUI matrix view lands
-    in Wave 8.
+    `channelmap`, `join`, `amerge`, `amix=weights`) (§2.3, §1.1) — ✅ Wave 7
+    Backend already supports these filters; landed three end-to-end
+    fixtures that exercise the full path through the runtime:
+    [testdata/examples/46_audio_pan.json](../testdata/examples/46_audio_pan.json)
+    (downmix matrix), [testdata/examples/47_audio_channelmap.json](../testdata/examples/47_audio_channelmap.json)
+    (channel-label swap), [testdata/examples/48_audio_amix_weights.json](../testdata/examples/48_audio_amix_weights.json)
+    (asplit → amix with weights). `amerge` and `channelsplit`/`join`
+    require distinct upstream channel layouts / per-output-pad
+    routing that the typed-edges runtime cannot express today
+    (libavfilter rejects two stereo → amerge with overlapping
+    layouts; channelsplit emits N pads but graph edges currently
+    bind to default port). GUI matrix view tracked separately in
+    §3 #9.
 42. **HDR `zscale` + `tonemap`** (§2.3, §1.1) ✅ — New
     `pipeline.validateFilterAvailability` walks every filter
     node and rejects unknown filters at config-load time. The
