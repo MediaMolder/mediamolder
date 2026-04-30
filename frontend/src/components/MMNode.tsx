@@ -1,5 +1,6 @@
 import { Handle, Position, type NodeProps } from '@xyflow/react';
 import type { FlowNodeData } from '../lib/jsonAdapter';
+import { displayName, lookupFriendlyName, useNamingMode } from '../lib/friendlyNames';
 
 const STREAM_HANDLES = ['video', 'audio', 'subtitle', 'data'] as const;
 type StreamHandle = (typeof STREAM_HANDLES)[number];
@@ -12,6 +13,9 @@ export interface MMNodeRunData {
 }
 
 export function MMNode({ data, selected }: NodeProps & { data: FlowNodeData & { run?: MMNodeRunData } }) {
+  const naming = useNamingMode();
+  const friendly = data.friendlyName ?? lookupFriendlyName(data.label);
+  const heading = displayName({ name: data.label, friendly_name: friendly }, naming);
   const isInput = data.kind === 'input' || data.kind === 'filter_source';
   const isOutput = data.kind === 'output' || data.kind === 'filter_sink';
   const run = data.run;
@@ -61,7 +65,7 @@ export function MMNode({ data, selected }: NodeProps & { data: FlowNodeData & { 
         ))}
 
       <div className="mm-node-type">{describeKind(data.kind, supported)}</div>
-      <div className="mm-node-title">{data.label}</div>
+      <div className="mm-node-title">{heading}</div>
       {data.sublabel && <div className="mm-node-sub">{data.sublabel}</div>}
       {run && (run.frames !== undefined || run.errors !== undefined) && (
         <div className="mm-node-run">

@@ -196,6 +196,45 @@ libavcodec encoder, demuxer/muxer, and registered Go processor available in
 the binary you are running. Drag any entry onto the canvas to spawn a
 configured node.
 
+Two segmented controls sit above the search box and tailor the palette to
+your audience:
+
+* **View — Common · All.** *Common* (the default) shows only a curated
+  shortlist of the encoders, filters, and processors most users reach for
+  (≈80 entries spanning the popular software + hardware video encoders,
+  the AAC / Opus / MP3 / FLAC / PCM audio encoders, the everyday geometry
+  / colour / text / audio filters, and every virtual source). *All* shows
+  every entry the binary knows about (~360 filters, ~150 encoders, every
+  registered processor) — useful for power users searching for an
+  exotic codec or filter. Free-text search always queries the full set
+  regardless of the toggle, so you never get stuck behind it. Each
+  subcategory in Common view also exposes a `Show all in this section…`
+  link that locally promotes one section to the full list without
+  affecting the others. The choice is persisted in `localStorage`
+  (`mm.palette.scope`).
+* **Names — Friendly · Library.** *Friendly* (the default) shows the
+  curated display label (`x264` instead of `libx264`, `Resize` instead of
+  `scale`, `Loudness normalise (EBU R128)` instead of `loudnorm`) on
+  every palette item, every graph node heading, and every Inspector
+  title. The canonical libavcodec / libavfilter name appears on the
+  muted second line so you can always identify what the runtime will
+  actually call. *Library* shows the canonical name everywhere — the
+  classic FFmpeg-native UI. The Inspector additionally renders the
+  canonical name in monospace beneath the heading whenever it differs
+  from the friendly label. The choice is persisted in `localStorage`
+  (`mm.palette.naming`) and dispatched as a `mm.palette.naming.changed`
+  custom event so every visible component re-renders in place.
+
+Search now matches the friendly label and any curated *aliases* in
+addition to the canonical name and description. For example, typing
+`h264` in either view jumps straight to `libx264`; typing `loudness`
+finds `loudnorm`; typing `webm` surfaces both `libvpx-vp9` and `libopus`.
+
+The curation table lives in
+[internal/gui/curation.go](../internal/gui/curation.go) and is locked
+against FFmpeg drift by `internal/gui/curation_test.go`
+(`TestCuratedNodesResolveToRealEntries`).
+
 ### Canvas
 
 * Each node exposes one source and one target handle per stream type

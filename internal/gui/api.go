@@ -24,6 +24,16 @@ type NodeCatalogEntry struct {
 	Streams     []string `json:"streams,omitempty"` // ["video"], ["audio"], etc.
 	NumInputs   int      `json:"num_inputs,omitempty"`
 	NumOutputs  int      `json:"num_outputs,omitempty"`
+
+	// Curation metadata (Wave 8 #54a / ui_improvements §A–B). Populated
+	// from internal/gui/curation.go::curatedNodes when this entry's
+	// Name matches a curated key. Common surfaces in the default
+	// palette view; FriendlyName drives the "Friendly names" toggle;
+	// Aliases extend the search index with synonyms ("h264" → libx264,
+	// "loudness" → loudnorm).
+	Common       bool     `json:"common,omitempty"`
+	FriendlyName string   `json:"friendly_name,omitempty"`
+	Aliases      []string `json:"aliases,omitempty"`
 }
 
 // handleListNodes returns the node palette catalogue assembled from the live
@@ -187,6 +197,20 @@ func handleListNodes(w http.ResponseWriter, _ *http.Request) {
 			Label:       prettyProcessorName(name),
 			Description: processorDescription(name),
 		})
+	}
+
+	// Attach curation metadata (Common / FriendlyName / Aliases) from
+	// internal/gui/curation.go::curatedNodes. Built-in synthetic entries
+	// (input / output / copy_*) are also flagged Common so they appear
+	// in the default palette view; their friendly labels are already
+	// set inline above.
+	for i := range out {
+		applyCuration(&out[i])
+		switch out[i].Type {
+		case "input", "output", "copy", "filter_source", "filter_sink", "lavfi_input":
+			// These are synthetic palette built-ins — always Common.
+			out[i].Common = true
+		}
 	}
 
 	sort.SliceStable(out, func(i, j int) bool {

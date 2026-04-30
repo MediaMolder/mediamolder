@@ -15,6 +15,13 @@ export interface PaletteEntry {
   streams?: string[];
   num_inputs?: number;
   num_outputs?: number;
+  /**
+   * Curation metadata mirrored from internal/gui/curation.go. Populated
+   * by `GET /api/nodes` when the entry is in the curated registry.
+   */
+  common?: boolean;
+  friendly_name?: string;
+  aliases?: string[];
 }
 
 export interface SpawnResult {
@@ -126,6 +133,7 @@ export function spawnNodeFrom(
         sublabel: id,
         ref: { kind: 'node', def },
         streams: entry.streams,
+        friendlyName: entry.friendly_name,
       },
     },
   };

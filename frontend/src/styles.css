@@ -128,6 +128,71 @@ button.danger:hover { background: rgba(185, 74, 74, 0.15); }
   font-size: 12px;
   margin-bottom: 8px;
 }
+.palette-toggles {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.segmented {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+}
+.segmented-label {
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  margin-right: 4px;
+  min-width: 42px;
+}
+.segmented-opt {
+  flex: 1;
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 3px 6px;
+  cursor: pointer;
+  font-size: 11px;
+}
+.segmented-opt.active {
+  background: var(--accent);
+  color: var(--bg);
+  border-color: var(--accent);
+}
+.palette-footer-hint {
+  position: sticky;
+  bottom: -12px;
+  margin: 12px -12px -12px;
+  padding: 8px 12px;
+  background: var(--panel-2);
+  border-top: 1px solid var(--border);
+  font-size: 11px;
+  color: var(--text-dim);
+  line-height: 1.4;
+}
+.palette-footer-hint .link {
+  background: none;
+  border: none;
+  color: var(--accent);
+  cursor: pointer;
+  font: inherit;
+  padding: 0;
+  text-decoration: underline;
+}
+.inspector-canonical {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin: -4px 0 8px;
+}
+.inspector-canonical code {
+  font-family: ui-monospace, monospace;
+  background: var(--panel-2);
+  padding: 1px 4px;
+  border-radius: 3px;
+}
 .palette h3 {
   font-size: 11px;
   text-transform: uppercase;
