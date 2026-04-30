@@ -1183,7 +1183,20 @@ func validate(cfg *Config) error {
 		return fmt.Errorf("unsupported schema_version %q; expected \"1.0\", \"1.1\" or \"1.2\"", cfg.SchemaVersion)
 	}
 	if len(cfg.Inputs) == 0 {
-		return fmt.Errorf("config must have at least one input")
+		// Wave 7 #36a: a graph may stand entirely on filter_source
+		// nodes (e.g. testsrc → encoder → file) with no top-level
+		// demuxer inputs. Permit that, but require at least one
+		// filter_source node to make the intent explicit.
+		hasFilterSource := false
+		for _, n := range cfg.Graph.Nodes {
+			if n.Type == "filter_source" {
+				hasFilterSource = true
+				break
+			}
+		}
+		if !hasFilterSource {
+			return fmt.Errorf("config must have at least one input")
+		}
 	}
 	if len(cfg.Outputs) == 0 {
 		return fmt.Errorf("config must have at least one output")

@@ -895,11 +895,101 @@ Close remaining ⚠️/❌ items in §2.3 that are not hardware-related.
 36. **Source-filter and sink-filter graph node kinds** (§2.3) —
     New `KindFilterSource` (zero inputs, e.g. `color`, `testsrc`,
     `sine`, `smptebars`, `movie`) and `KindFilterSink` (zero
-    outputs, e.g. `nullsink`, `nullaudiosink`). Today these only
+    outputs, e.g. `nullsink`, `anullsink`). Today these only
     work via `Input.Kind="lavfi"` (the whole input) or trailing
     null sinks the engine inserts implicitly; first-class node
     kinds let filters appear *inside* a graph as zero-input
     intermediates (canonical use: `[0:v][color=...]overlay`).
+    Broken into five sub-items, smallest to largest, each
+    independently shippable. Dependencies: 36a → {36b, 36c, 36d}
+    in parallel → 36e.
+
+    **36a — enum + schema + validator (types only).** ✅ Wave 7.
+    New `NodeKind` values `KindFilterSource` / `KindFilterSink`
+    in `graph/graph.go` (plus `parseNodeKind` and `String()`
+    arms); new `node.type` enum entries `filter_source` /
+    `filter_sink` in `schema/v1.0.json` + `schema/v1.1.json`
+    and the `NodeDef.type` union in
+    `frontend/src/lib/jobTypes.ts`. `graph.Build` rejects
+    inbound edges into `filter_source` and outbound edges from
+    `filter_sink`, and classifies them into `g.Sources` /
+    `g.Sinks`. New curated allow-lists
+    `pipeline.knownFilterSources` (`color`, `testsrc`,
+    `testsrc2`, `smptebars`, `smptehdbars`, `mandelbrot`,
+    `life`, `yuvtestsrc`, `rgbtestsrc`, `sine`, `anullsrc`,
+    `aevalsrc`, `movie`, `amovie`) and
+    `pipeline.knownFilterSinks` (`nullsink`, `anullsink`)
+    checked at config-load time alongside Wave 7 #42's
+    `validateFilterAvailability`. Validator + round-trip tests
+    only — no runtime execution path yet, so the new node
+    kinds parse and validate but jobs that include them fail
+    at runner-construction time with an explicit
+    `not yet implemented` error. Unblocks Wave 8 #44 palette
+    typing.
+
+    **36b — av-layer source-only / sink-only filter graph
+    constructors (cgo).** New
+    `av.NewSourceFilterGraph(spec string, outputs
+    []FilterOutputConfig, threads int)` builds
+    `<spec> [out0]…; …; buffersink` with no buffersrc; the
+    spec contains the source filter directly (e.g.
+    `color=c=black:s=1920x1080:r=24:d=10[out0]`). New
+    `av.NewSinkFilterGraph(inputs []FilterPadConfig, spec
+    string, threads int)` builds `[in0]buffersrc; …; <spec>`
+    with no buffersink. Both reuse the `Threads` plumbing
+    from #38 and the AVFilterInOut linked-list builders from
+    `NewComplexFilterGraph` with the empty side passed as
+    `nil` to `avfilter_graph_parse_ptr`. Cgo-level tests in
+    `av/filter_source_sink_test.go` exercise `color`,
+    `testsrc2`, `sine`, `anullsrc` → frame; `buffersrc →
+    anullsink`. Pure av-layer change — no runtime / pipeline
+    wiring.
+
+    **36c — `KindFilterSource` runtime handler.** New
+    `handleFilterSource` worker in
+    [pipeline/handlers.go](../pipeline/handlers.go) — owns
+    an `av.FilterGraph` built via `NewSourceFilterGraph`,
+    pumps frames from buffersink into N outbound channels
+    until EOF or `ctx.Done()`. Optional `Params["duration"]`
+    and `Params["nb_frames"]` caps so finite jobs don't run
+    forever (canonical for `testsrc`/`color`); validator
+    requires at least one of the two for non-`anullsrc`
+    sources, otherwise the job is rejected as unbounded.
+    `createFilter`/`buildFilter` dispatches on
+    `node.Kind == KindFilterSource` to construct the
+    source-only graph instead of the standard
+    buffersrc-fronted one. Two corpus fixtures:
+    [testdata/examples/51_filter_source_color_overlay.json](../testdata/examples/51_filter_source_color_overlay.json)
+    (`color=black:s=1920x1080:d=10` overlaid by `[0:v]` —
+    real overlay use-case) and
+    [testdata/examples/52_filter_source_testsrc_only.json](../testdata/examples/52_filter_source_testsrc_only.json)
+    (`testsrc2=d=5` → libx264 → mp4 with no top-level `-i`).
+
+    **36d — `KindFilterSink` runtime handler.** New
+    `handleFilterSink` worker — drains the inbound channel
+    into a `NewSinkFilterGraph`-built graph, discards
+    consumed frames, honours `ctx.Done()`. Validator: at
+    least one `KindSink` *or* `KindFilterSink` per pipeline
+    (so a pure-analyser job is legal). Fixture
+    [testdata/examples/53_filter_sink_analyser.json](../testdata/examples/53_filter_sink_analyser.json)
+    — `[0:a]asplit → ebur128 → ametadata=mode=print:file=…
+    → anullsink` runs an analyser branch in parallel with
+    the real encode and the analyser branch terminates
+    cleanly without a muxer.
+
+    **36e — `movie` / `amovie` second-asset support +
+    ffcli round-trip.** `movie=filename=…` and `amovie=…`
+    work as `KindFilterSource` but reference an external
+    file → security review (path traversal rejected; honour
+    `Config.ProtocolWhitelist`) + asset-manager hook for
+    Wave 8 #51. ffcli importer detects `movie=` / `amovie=`
+    inside `-filter_complex` (deferred to Wave 7 #40's
+    parser if not yet built; otherwise inline mini-parser).
+    Fixture
+    [testdata/examples/54_movie_logo_overlay.json](../testdata/examples/54_movie_logo_overlay.json)
+    — `[0:v][movie=logo.png]overlay=W-w-10:10`. Wave 8 #44
+    cross-references this for the asset picker.
+
 37. **Cross-media-type filter contract** (§2.3, §3.1.4) — Add
     `output_media_type` to filter node definitions so the engine
     knows `showwavespic` returns video despite consuming audio
@@ -965,7 +1055,8 @@ wave delivers every §2.8 / §3.5 GUI item that the schema can now back.
 44. **Virtual-source palette** (§2.8, §3.5.1) — Drag-and-drop
     nodes for `color`, `testsrc`, `sine`, `anullsrc`, `smptebars`,
     `movie`, `amovie`, plus `Input.Kind="lavfi"` shorthand. Backed
-    by Wave 7 #36.
+    by Wave 7 #36a (typing) + #36c (runtime) + #36e (`movie`/
+    `amovie` asset references).
 45. **Multi-output inspector with per-stream encoder tabs** (§2.8,
     §3.5.2) — Replace the single-output form with a tabbed view
     showing every `Output` entry; per-output sub-tabs for each

@@ -22,36 +22,36 @@ import (
 //   - libavfilter/Makefile (`OBJS-$(CONFIG_FOO_FILTER) += vf_foo.o`)
 //   - configure (`enabled libfoo` gates).
 var optionalFilterLibs = map[string]string{
-	"zscale":             "--enable-libzimg",
-	"libplacebo":         "--enable-libplacebo",
-	"sab":                "--enable-libgsm (or libavfilter built without --disable-filter=sab)",
-	"frei0r":             "--enable-frei0r",
-	"frei0r_src":         "--enable-frei0r",
-	"ocr":                "--enable-libtesseract",
-	"ladspa":             "--enable-ladspa",
-	"lv2":                "--enable-lv2",
-	"arnndn":             "--enable-librnnoise (built into libavfilter when present)",
-	"sofalizer":          "--enable-libmysofa",
-	"vmafmotion":         "--enable-libvmaf",
-	"libvmaf":            "--enable-libvmaf",
-	"libvmaf_cuda":       "--enable-libvmaf --enable-cuda-nvcc",
-	"signature":          "--enable-libavfilter (filter is gated by CONFIG_SIGNATURE_FILTER; usually present)",
-	"subtitles":          "--enable-libass",
-	"ass":                "--enable-libass",
-	"smbprotect":         "--enable-libsmbclient",
-	"chromaber_vulkan":   "--enable-vulkan",
-	"chromakey_cuda":     "--enable-cuda-nvcc",
-	"colorspace_cuda":    "--enable-cuda-nvcc",
-	"hwupload_cuda":      "--enable-cuda-nvcc",
-	"scale_cuda":         "--enable-cuda-nvcc",
-	"thumbnail_cuda":     "--enable-cuda-nvcc",
-	"yadif_cuda":         "--enable-cuda-nvcc",
-	"deinterlace_vaapi":  "--enable-vaapi",
-	"scale_vaapi":        "--enable-vaapi",
-	"scale_npp":          "--enable-libnpp --enable-cuda-nvcc",
-	"hwupload_vaapi":     "--enable-vaapi",
-	"tonemap_opencl":     "--enable-opencl",
-	"tonemap_vaapi":      "--enable-vaapi",
+	"zscale":               "--enable-libzimg",
+	"libplacebo":           "--enable-libplacebo",
+	"sab":                  "--enable-libgsm (or libavfilter built without --disable-filter=sab)",
+	"frei0r":               "--enable-frei0r",
+	"frei0r_src":           "--enable-frei0r",
+	"ocr":                  "--enable-libtesseract",
+	"ladspa":               "--enable-ladspa",
+	"lv2":                  "--enable-lv2",
+	"arnndn":               "--enable-librnnoise (built into libavfilter when present)",
+	"sofalizer":            "--enable-libmysofa",
+	"vmafmotion":           "--enable-libvmaf",
+	"libvmaf":              "--enable-libvmaf",
+	"libvmaf_cuda":         "--enable-libvmaf --enable-cuda-nvcc",
+	"signature":            "--enable-libavfilter (filter is gated by CONFIG_SIGNATURE_FILTER; usually present)",
+	"subtitles":            "--enable-libass",
+	"ass":                  "--enable-libass",
+	"smbprotect":           "--enable-libsmbclient",
+	"chromaber_vulkan":     "--enable-vulkan",
+	"chromakey_cuda":       "--enable-cuda-nvcc",
+	"colorspace_cuda":      "--enable-cuda-nvcc",
+	"hwupload_cuda":        "--enable-cuda-nvcc",
+	"scale_cuda":           "--enable-cuda-nvcc",
+	"thumbnail_cuda":       "--enable-cuda-nvcc",
+	"yadif_cuda":           "--enable-cuda-nvcc",
+	"deinterlace_vaapi":    "--enable-vaapi",
+	"scale_vaapi":          "--enable-vaapi",
+	"scale_npp":            "--enable-libnpp --enable-cuda-nvcc",
+	"hwupload_vaapi":       "--enable-vaapi",
+	"tonemap_opencl":       "--enable-opencl",
+	"tonemap_vaapi":        "--enable-vaapi",
 	"tonemap_videotoolbox": "--enable-videotoolbox",
 }
 
@@ -75,7 +75,9 @@ func filterAvailabilityError(name string) error {
 // runtime opens the graph.
 func validateFilterAvailability(cfg *Config) error {
 	for i, node := range cfg.Graph.Nodes {
-		if node.Type != "filter" {
+		switch node.Type {
+		case "filter", "filter_source", "filter_sink":
+		default:
 			continue
 		}
 		if node.Filter == "" {
@@ -84,6 +86,45 @@ func validateFilterAvailability(cfg *Config) error {
 		if err := filterAvailabilityError(node.Filter); err != nil {
 			return fmt.Errorf("node[%d] %q: %w", i, node.ID, err)
 		}
+		if node.Type == "filter_source" {
+			if _, ok := knownFilterSources[node.Filter]; !ok {
+				return fmt.Errorf("node[%d] %q: filter %q is not a recognised source filter (Wave 7 #36a allow-list)", i, node.ID, node.Filter)
+			}
+		}
+		if node.Type == "filter_sink" {
+			if _, ok := knownFilterSinks[node.Filter]; !ok {
+				return fmt.Errorf("node[%d] %q: filter %q is not a recognised sink filter (Wave 7 #36a allow-list)", i, node.ID, node.Filter)
+			}
+		}
 	}
 	return nil
+}
+
+// knownFilterSources is the curated allow-list of libavfilter source
+// filters (zero inputs) that may appear as graph nodes with
+// type="filter_source". Mirrors fftools/ffmpeg_filter.c source-filter
+// detection. Wave 7 #36a.
+var knownFilterSources = map[string]struct{}{
+	"color":       {},
+	"testsrc":     {},
+	"testsrc2":    {},
+	"smptebars":   {},
+	"smptehdbars": {},
+	"mandelbrot":  {},
+	"life":        {},
+	"yuvtestsrc":  {},
+	"rgbtestsrc":  {},
+	"sine":        {},
+	"anullsrc":    {},
+	"aevalsrc":    {},
+	"movie":       {},
+	"amovie":      {},
+}
+
+// knownFilterSinks is the curated allow-list of libavfilter sink
+// filters (zero outputs) that may appear as graph nodes with
+// type="filter_sink". Wave 7 #36a.
+var knownFilterSinks = map[string]struct{}{
+	"nullsink":  {},
+	"anullsink": {},
 }

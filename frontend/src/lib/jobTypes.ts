@@ -109,7 +109,7 @@ export interface ConcatEntry {
 
 export interface NodeDef {
   id: string;
-  type: string; // "filter" | "encoder" | "source" | "sink" | "go_processor" | "metadata_reader" | "metadata_writer"
+  type: string; // "filter" | "encoder" | "source" | "sink" | "go_processor" | "metadata_reader" | "metadata_writer" | "filter_source" | "filter_sink"
   filter?: string;
   processor?: string;
   params?: Record<string, unknown>;

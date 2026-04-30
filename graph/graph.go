@@ -32,6 +32,8 @@ const (
 	KindCopy                           // stream copy: forward demuxer packets to muxer
 	KindMetadataReader                 // read container/stream metadata or chapters from a source (Wave 2 #11)
 	KindMetadataWriter                 // write container/stream metadata or chapters into a sink (Wave 2 #11)
+	KindFilterSource                   // libavfilter source filter (color, testsrc, sine — 0 inbound) (Wave 7 #36)
+	KindFilterSink                     // libavfilter sink filter (nullsink, anullsink — 0 outbound) (Wave 7 #36)
 )
 
 func (k NodeKind) String() string {
@@ -52,6 +54,10 @@ func (k NodeKind) String() string {
 		return "metadata_reader"
 	case KindMetadataWriter:
 		return "metadata_writer"
+	case KindFilterSource:
+		return "filter_source"
+	case KindFilterSink:
+		return "filter_sink"
 	default:
 		return fmt.Sprintf("NodeKind(%d)", int(k))
 	}
@@ -179,9 +185,9 @@ func Build(def *Def) (*Graph, error) {
 	// 5. Classify sources and sinks from node kinds.
 	for _, n := range g.Nodes {
 		switch n.Kind {
-		case KindSource:
+		case KindSource, KindFilterSource:
 			g.Sources = append(g.Sources, n)
-		case KindSink:
+		case KindSink, KindFilterSink:
 			g.Sinks = append(g.Sinks, n)
 		}
 	}
@@ -268,6 +274,13 @@ func (g *Graph) addEdge(index int, ed EdgeDef) error {
 		return fmt.Errorf("edge[%d]: self-loop on node %q", index, fromID)
 	}
 
+	if fromNode.Kind == KindFilterSink {
+		return fmt.Errorf("edge[%d]: filter_sink node %q cannot have outbound edges", index, fromID)
+	}
+	if toNode.Kind == KindFilterSource {
+		return fmt.Errorf("edge[%d]: filter_source node %q cannot have inbound edges", index, toID)
+	}
+
 	pt := PortType(ed.Type)
 
 	edge := &Edge{
@@ -331,6 +344,10 @@ func parseNodeKind(s string) (NodeKind, error) {
 		return KindMetadataReader, nil
 	case "metadata_writer":
 		return KindMetadataWriter, nil
+	case "filter_source":
+		return KindFilterSource, nil
+	case "filter_sink":
+		return KindFilterSink, nil
 	default:
 		return 0, fmt.Errorf("unknown node type %q", s)
 	}

@@ -124,7 +124,7 @@
         "id": { "type": "string", "minLength": 1 },
         "type": {
           "type": "string",
-          "enum": ["filter", "encoder", "source", "sink", "metadata_reader", "metadata_writer"]
+          "enum": ["filter", "encoder", "source", "sink", "metadata_reader", "metadata_writer", "filter_source", "filter_sink"]
         },
         "filter": { "type": "string" },
         "processor": { "type": "string" },

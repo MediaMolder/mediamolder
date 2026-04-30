@@ -795,6 +795,13 @@ func (r *graphRunner) handle(ctx context.Context, node *graph.Node, ins []<-chan
 		return r.handleGoProcessor(ctx, node, ins, outs)
 	case graph.KindCopy:
 		return r.handleCopy(ctx, node, ins, outs)
+	case graph.KindFilterSource, graph.KindFilterSink:
+		// Wave 7 #36a: enum + schema + validator landed; runtime
+		// handlers (#36c / #36d) and av-layer constructors (#36b)
+		// are pending. Surface an explicit, actionable error so
+		// jobs that include these node kinds fail at runner-
+		// construction time rather than producing garbled output.
+		return fmt.Errorf("node %q: kind %v not yet implemented (Wave 7 #36b/c/d pending)", node.ID, node.Kind)
 	default:
 		return fmt.Errorf("unknown node kind %v for node %q", node.Kind, node.ID)
 	}
