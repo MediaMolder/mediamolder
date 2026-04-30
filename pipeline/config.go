@@ -583,7 +583,16 @@ type Output struct {
 	// table is written instead. The container must support chapters
 	// (matroska, mp4, ogg, ffmetadata, …) for them to surface.
 	Chapters []Chapter      `json:"chapters,omitempty"`
-	Options  map[string]any `json:"options,omitempty"`
+	// Attachments lists files muxed into the container as
+	// `AVMEDIA_TYPE_ATTACHMENT` streams (matroska / mkv / webm only).
+	// Mirrors the FFmpeg `-attach FILE` CLI: each entry's content
+	// is loaded once and copied into the stream's
+	// `codecpar->extradata`; `filename` (the basename, by default)
+	// and `mimetype` are written as stream-metadata entries. Use for
+	// embedding fonts (TrueType / OpenType for soft subtitles),
+	// cover art, or chapter sidecars. Wave 6 #31.
+	Attachments []Attachment   `json:"attachments,omitempty"`
+	Options     map[string]any `json:"options,omitempty"`
 	// Kind selects the output discriminator. `""` (default) and
 	// `"file"` open a single muxer at `URL` (the historical
 	// behaviour). `"tee"` switches the runtime to libavformat's
@@ -1038,6 +1047,27 @@ type Chapter struct {
 	Metadata map[string]string `json:"metadata,omitempty"`
 }
 
+// Attachment is one file muxed into the output container as an
+// `AVMEDIA_TYPE_ATTACHMENT` stream (Wave 6 #31). Mirrors FFmpeg's
+// `-attach FILE` plus the optional `-metadata:s:t mimetype=…`
+// pairing. Container support is matroska / mkv / webm only — other
+// muxers reject attachment streams at WriteHeader time.
+type Attachment struct {
+	// Path is the local filesystem path of the file to embed.
+	// Required. The file is read once at openSink time.
+	Path string `json:"path"`
+	// Filename is the value written to the stream's `filename`
+	// metadata key (and, for matroska, the FileName element).
+	// When empty the basename of `Path` is used.
+	Filename string `json:"filename,omitempty"`
+	// MimeType is the value written to the stream's `mimetype`
+	// metadata key (matroska FileMimeType). Optional but strongly
+	// recommended for fonts (`application/x-truetype-font`,
+	// `application/vnd.ms-opentype`) and cover art (`image/png`,
+	// `image/jpeg`).
+	MimeType string `json:"mimetype,omitempty"`
+}
+
 // StreamSpec attaches per-output-stream attributes to a single stream
 // of an `Output`, addressed in the FFmpeg-style `<media-type>:<index>`
 // form. Mirrors FFmpeg's `-metadata:s:<type>:<idx>` and
@@ -1345,6 +1375,9 @@ func validate(cfg *Config) error {
 			return err
 		}
 		if err := validateEncoderTiming(out); err != nil {
+			return err
+		}
+		if err := validateAttachments(out); err != nil {
 			return err
 		}
 	}

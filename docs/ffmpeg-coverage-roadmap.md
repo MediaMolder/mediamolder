@@ -170,7 +170,7 @@ Legend: ✅ supported · ⚠️ partial · ❌ missing
 | `-disposition:s:v:0 default+forced`                               | ✅    | `Output.Streams[*].Disposition`; forwards a `+`-separated AV_DISPOSITION_* flag list to `av_opt_set` on the AVStream's AVClass — same code path `fftools/ffmpeg_mux_init.c::set_dispositions` uses. |
 | `-map_metadata`, `-map_chapters`                                  | ✅    | `metadata_reader` / `metadata_writer` graph nodes connected by a `metadata` edge route container metadata or chapters from any input into any output (Wave 2 #11); `Input.MapMetadata` / `Input.MapChapters` shorthand still works for single-input cases. `compat/ffcli` parses both flags into the node pair. |
 | Chapter writing API                                               | ✅    | `Output.Chapters []ChapterInfo`; `metadata_writer` with `section=chapters` routes `AVChapter` entries from any input. |
-| Attachments (fonts for ASS, cover art)                            | ❌    | |
+| Attachments (fonts for ASS, cover art)                            | ✅    | `Output.Attachments []Attachment` ({path, filename?, mimetype?}); muxed as `AVMEDIA_TYPE_ATTACHMENT` streams in matroska / mkv / webm. ffcli `-attach FILE`. (Wave 6 #31) |
 | Cover art / thumbnail embed in MP4/M4A                            | ❌    | Common end-user request |
 | Multiple outputs in one pipeline                                  | ✅    | Multiple `Output` entries |
 | **`tee` muxer / single-pass multi-format** (`mp4 + hls + dash`)   | ✅    | `Output.Kind="tee"` + typed `Output.Targets[]`; Wave 1 #5. |
@@ -847,14 +847,15 @@ and not deprecated.
     counts edges per type in declaration order. ffcli parses
     `-<key>:<type>:<idx>` for the canonical encoder option key set
     plus `-c:<type>:<idx>` for codec).
-31. **Attachments + cover art** (§2.5) — `Output.Attachments
-    []Attachment` (`{path, mimetype?, filename?}`) writes
-    `AVCodecID_TTF`/`AV_CODEC_ID_OTF`/`AV_CODEC_ID_PNG` streams
-    with `AV_DISPOSITION_ATTACHED_PIC` (cover art) or plain
-    attachments (fonts for ASS, sidecar files). Importer:
-    `-attach FILE -metadata:s:t:0 mimetype=...`. Per-input
-    `-map` of attachment streams (§2.2) falls out for free once
-    the attachment stream type is plumbed.
+31. **Attachments + cover art** (§2.5) ✅ — `Output.Attachments
+    []Attachment` (`{path, filename?, mimetype?}`) muxes file
+    attachments via `AVMEDIA_TYPE_ATTACHMENT` streams (matroska /
+    mkv / webm only). New `av.OutputFormatContext.AddAttachment`
+    cgo helper allocates an attachment stream, copies file content
+    into `codecpar->extradata`, and sets `filename` / `mimetype`
+    metadata; codec_id is guessed via `av_guess_codec` against the
+    muxer's attachment table (`.ttf` → `AV_CODEC_ID_TTF`, `.otf` →
+    `AV_CODEC_ID_OTF`, etc.). Importer: `-attach FILE`.
 32. **`-vn` / `-an` / `-sn` / `-dn` per output** (§2.2) — ✅
     Wave 6. `Output.DisableVideo` / `DisableAudio` /
     `DisableSubtitle` / `DisableData` drop every inbound edge of

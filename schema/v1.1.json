@@ -192,6 +192,7 @@
         "metadata": { "type": "object", "additionalProperties": { "type": "string" }, "description": "Container-level key/value metadata written into the output (`-metadata key=value`). Replaces any metadata mapped from inputs via `input.map_metadata`." },
         "streams": { "type": "array", "items": { "$ref": "#/$defs/stream_spec" }, "description": "Per-stream metadata + disposition overrides. Mirrors ffmpeg `-metadata:s:<type>:<idx> key=value` and `-disposition:s:<type>:<idx> flags`. Each entry addresses one output stream by media type and 0-based index within that type, counting in the order streams were added to the muxer (same convention as `check_stream_specifier` for `s:<type>:<idx>`). Per-stream codec/bitrate is intentionally not exposed here — model it with explicit encoder graph nodes (see testdata/examples/35_abr_ladder.json)." },
         "chapters": { "type": "array", "items": { "$ref": "#/$defs/chapter" }, "description": "Explicit chapter table. Replaces any chapters mapped from inputs via `input.map_chapters`. Container must support chapters (matroska, mp4, ogg, ffmetadata, ...)." },
+        "attachments": { "type": "array", "items": { "$ref": "#/$defs/attachment" }, "description": "Files muxed into the container as AVMEDIA_TYPE_ATTACHMENT streams (matroska / mkv / webm only). Mirrors FFmpeg `-attach FILE`." },
         "kind": { "type": "string", "enum": ["", "file", "tee"], "description": "Output discriminator. '' / 'file' open a single muxer at `url`; 'tee' uses libavformat's tee muxer to fan one encoded stream out to N targets. When 'tee', `targets` is required and `url` / `format` are ignored." },
         "targets": { "type": "array", "items": { "$ref": "#/$defs/tee_target" }, "description": "Slaves of a tee output (only valid when kind='tee'). Mirrors the FFmpeg `-f tee \"[opt=val]url|[opt=val]url\"` slaves grammar." },
         "pass": { "type": "integer", "minimum": 0, "maximum": 3, "description": "Two-pass video encoding bit-field. 0 = single-pass (default); 1 = analysis pass (-pass 1, AV_CODEC_FLAG_PASS1); 2 = final pass (-pass 2, AV_CODEC_FLAG_PASS2); 3 = both bits set. The job is run twice by the caller: once with pass=1, once with pass=2, against the same passlogfile prefix. Honoured only on video encoders." },
@@ -239,6 +240,16 @@
         "end": { "type": "number", "minimum": 0, "description": "Chapter end in seconds." },
         "title": { "type": "string" },
         "metadata": { "type": "object", "additionalProperties": { "type": "string" } }
+      }
+    },
+    "attachment": {
+      "type": "object",
+      "required": ["path"],
+      "additionalProperties": false,
+      "properties": {
+        "path": { "type": "string", "description": "Filesystem path of the file to embed." },
+        "filename": { "type": "string", "description": "Stream `filename` metadata. Defaults to basename of `path`." },
+        "mimetype": { "type": "string", "description": "Stream `mimetype` metadata, e.g. `application/x-truetype-font`, `image/png`." }
       }
     },
     "stream_spec": {

@@ -83,6 +83,9 @@ type parser struct {
 	pendingEncTimeBase string
 	pendingFieldOrder  string
 	pendingInterlaced  bool
+	// Wave 6 #31: queued `-attach FILE` entries draining onto the
+	// next output's `Attachments` slice.
+	pendingAttachments []pipeline.Attachment
 	hwAccel            string
 	hwDevice           string
 	hwOutFmt           string
@@ -495,6 +498,18 @@ func (p *parser) parse() (*pipeline.Config, error) {
 			if err := setDoViField(p.pendingHDR.DoVi, arg, val); err != nil {
 				return nil, fmt.Errorf("%s: %w", arg, err)
 			}
+		case arg == "-attach":
+			// Wave 6 #31: queue a file attachment that drains onto
+			// the next output's Attachments slice. Mirrors FFmpeg's
+			// `-attach FILE`; mimetype is plumbed via
+			// `-metadata:s:t:<idx> mimetype=…` upstream when the
+			// output is finalised. Container is validated downstream
+			// (matroska/mkv/webm only).
+			if !p.hasMore() {
+				return nil, fmt.Errorf("-attach requires a FILE argument")
+			}
+			p.pendingAttachments = append(p.pendingAttachments,
+				pipeline.Attachment{Path: p.next()})
 		case arg == "-async":
 			// Legacy FFmpeg audio-sync flag. The FFmpeg 8.0 CLI removed
 			// it in favour of `-af aresample=async=N`; we accept it for
@@ -1156,6 +1171,10 @@ func (p *parser) parse() (*pipeline.Config, error) {
 			if p.pendingInterlaced {
 				out.InterlacedEncode = true
 				p.pendingInterlaced = false
+			}
+			if len(p.pendingAttachments) > 0 {
+				out.Attachments = append(out.Attachments, p.pendingAttachments...)
+				p.pendingAttachments = nil
 			}
 			if len(p.containerMeta) > 0 {
 				out.Metadata = p.containerMeta

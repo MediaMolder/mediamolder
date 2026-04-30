@@ -247,6 +247,9 @@ export interface Output {
    *  via `input.map_chapters`. The container must support chapters
    *  (matroska, mp4, ogg, ffmetadata, ...). */
   chapters?: Chapter[];
+  /** Files muxed into the container as `AVMEDIA_TYPE_ATTACHMENT`
+   *  streams (matroska / mkv / webm only). Mirrors FFmpeg `-attach`. */
+  attachments?: Attachment[];
   /** Output discriminator. `""` / `"file"` open a single muxer at
    *  `url`; `"tee"` switches to libavformat's built-in tee muxer to
    *  fan one encoded stream out to N targets (`url` / `format` are
@@ -488,6 +491,15 @@ export interface Chapter {
   end: number;
   title?: string;
   metadata?: Record<string, string>;
+}
+
+export interface Attachment {
+  /** Filesystem path of the file to embed. */
+  path: string;
+  /** Stream `filename` metadata. Defaults to basename of `path`. */
+  filename?: string;
+  /** Stream `mimetype` metadata, e.g. `application/x-truetype-font`. */
+  mimetype?: string;
 }
 
 export interface Options {

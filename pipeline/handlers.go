@@ -9,6 +9,7 @@ import (
 	"log"
 	"math"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -2948,6 +2949,36 @@ func (r *graphRunner) openSink(_ *graph.Graph, node *graph.Node) (*sinkResources
 					}
 				}
 			}
+		}
+	}
+
+	// Wave 6 #31: muxed file attachments (matroska / mkv / webm only).
+	// Files are read once and copied into the new stream's
+	// codecpar->extradata. Mirrors fftools/ffmpeg_mux_init.c
+	// of_add_attachments.
+	for ai, att := range out.Attachments {
+		data, err := os.ReadFile(att.Path)
+		if err != nil {
+			muxer.Abort()
+			for _, b := range streamBSF {
+				if b != nil {
+					_ = b.Close()
+				}
+			}
+			return nil, fmt.Errorf("sink %q attachments[%d]: read %s: %w", node.ID, ai, att.Path, err)
+		}
+		filename := att.Filename
+		if filename == "" {
+			filename = filepath.Base(att.Path)
+		}
+		if _, err := muxer.AddAttachment(data, filename, att.MimeType); err != nil {
+			muxer.Abort()
+			for _, b := range streamBSF {
+				if b != nil {
+					_ = b.Close()
+				}
+			}
+			return nil, fmt.Errorf("sink %q attachments[%d]: %w", node.ID, ai, err)
 		}
 	}
 
