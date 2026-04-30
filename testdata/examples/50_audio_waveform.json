@@ -1,0 +1,43 @@
+{
+  "schema_version": "1.1",
+  "description": "BBB_10sec.mp4 audio track → showwavespic (audio-in, video-out cross-media-type filter, Wave 7 #37) → libx264 → mp4. The pipeline auto-fills output_media_type=video from the cross-media filter registry; the validator enforces the outbound edge type matches; the runtime routes the node through the complex-filter-graph code path so the buffersink media type is video while the buffersrc remains audio.",
+  "inputs": [
+    {
+      "id": "in0",
+      "url": "{{input}}",
+      "streams": [
+        { "input_index": 0, "type": "audio", "track": 0 }
+      ]
+    }
+  ],
+  "graph": {
+    "nodes": [
+      {
+        "id": "wave",
+        "type": "filter",
+        "filter": "showwavespic",
+        "params": { "s": "640x120" }
+      },
+      {
+        "id": "yuv",
+        "type": "filter",
+        "filter": "format",
+        "params": { "pix_fmts": "yuv420p" }
+      }
+    ],
+    "edges": [
+      { "from": "in0:a:0", "to": "wave", "type": "audio" },
+      { "from": "wave", "to": "yuv", "type": "video" },
+      { "from": "yuv", "to": "out0:v", "type": "video" }
+    ]
+  },
+  "outputs": [
+    {
+      "id": "out0",
+      "url": "{{output}}",
+      "format": "mp4",
+      "codec_video": "libx264",
+      "encoder_params_video": { "preset": "ultrafast", "crf": "30" }
+    }
+  ]
+}

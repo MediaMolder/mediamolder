@@ -24,6 +24,7 @@ import (
 //	{{input2}}   – second video fixture (same file, for overlay/xfade tests)
 //	{{image}}    – still-image fixture  (testdata/sample.jpg); test skipped when absent
 //	{{audio}}    – audio-only fixture   (testdata/sample.aac); test skipped when absent
+//	{{raw_yuv}}  – raw 320x240 yuv420p fixture (testdata/sample.yuv); test skipped when absent
 //	{{output}}   – temporary output file created in t.TempDir()
 //
 // Subtitle path ("subs.srt") is rewritten to the relative path used by
@@ -50,6 +51,7 @@ func TestCommunityScriptsRun(t *testing.T) {
 	// --- Optional fixtures (absent → skip relevant subtests) ---
 	imageAbs, _ := filepath.Abs(filepath.Join("..", "testdata", "sample.jpg"))
 	audioAbs, _ := filepath.Abs(filepath.Join("..", "testdata", "sample.aac"))
+	rawYuvAbs, _ := filepath.Abs(filepath.Join("..", "testdata", "sample.yuv"))
 
 	const communityDir = "../testdata/community-scripts"
 	entries, err := os.ReadDir(communityDir)
@@ -64,12 +66,12 @@ func TestCommunityScriptsRun(t *testing.T) {
 		name := ent.Name()
 		jsonPath := filepath.Join(communityDir, name)
 		t.Run(name, func(t *testing.T) {
-			runCommunityScript(t, jsonPath, name, inputAbs, imageAbs, audioAbs)
+			runCommunityScript(t, jsonPath, name, inputAbs, imageAbs, audioAbs, rawYuvAbs)
 		})
 	}
 }
 
-func runCommunityScript(t *testing.T, jsonPath, name, inputAbs, imageAbs, audioAbs string) {
+func runCommunityScript(t *testing.T, jsonPath, name, inputAbs, imageAbs, audioAbs, rawYuvAbs string) {
 	t.Helper()
 
 	data, err := os.ReadFile(jsonPath)
@@ -87,6 +89,11 @@ func runCommunityScript(t *testing.T, jsonPath, name, inputAbs, imageAbs, audioA
 	if strings.Contains(raw, `"{{audio}}"`) {
 		if _, err := os.Stat(audioAbs); err != nil {
 			t.Skipf("testdata/sample.aac not found – generate with: ffmpeg -i testdata/BBB_10sec.mp4 -vn -c:a aac -t 10 testdata/sample.aac")
+		}
+	}
+	if strings.Contains(raw, `"{{raw_yuv}}"`) {
+		if _, err := os.Stat(rawYuvAbs); err != nil {
+			t.Skipf("testdata/sample.yuv not found – generate with: ffmpeg -i testdata/BBB_10sec.mp4 -t 1 -vf scale=320x240,format=yuv420p -f rawvideo testdata/sample.yuv")
 		}
 	}
 
@@ -117,6 +124,7 @@ func runCommunityScript(t *testing.T, jsonPath, name, inputAbs, imageAbs, audioA
 	raw = strings.ReplaceAll(raw, "{{input2}}", inputFwd) // same file for overlay/xfade tests
 	raw = strings.ReplaceAll(raw, "{{image}}", imageFwd)
 	raw = strings.ReplaceAll(raw, "{{audio}}", audioFwd)
+	raw = strings.ReplaceAll(raw, "{{raw_yuv}}", filepath.ToSlash(rawYuvAbs))
 
 	// Subtitle path: rewrite to relative path so FFmpeg's colon-parsing is safe.
 	subsrtRel := filepath.ToSlash(filepath.Join("..", "testdata", "subs.srt"))

@@ -2,12 +2,16 @@
 // Only fields used by the editor are typed; unknown JSON fields are preserved
 // via passthrough during round-trip in adapter.ts.
 
-export type StreamType = 'video' | 'audio' | 'subtitle' | 'data';
+export type StreamType = 'video' | 'audio' | 'subtitle' | 'data' | 'metadata';
 
 export interface StreamSelect {
   input_index: number;
   type: StreamType;
   track: number;
+  all?: boolean;
+  optional?: boolean;
+  negate?: boolean;
+  program?: number;
 }
 
 export interface Input {
@@ -17,8 +21,48 @@ export interface Input {
    *  libavformat. "lavfi" routes through the lavfi virtual demuxer
    *  (FFmpeg's `-f lavfi`); the `url` field is then a filtergraph spec
    *  such as `anullsrc=r=48000:cl=stereo` or
-   *  `color=black:s=1920x1080:r=30`. */
-  kind?: "file" | "lavfi";
+   *  `color=black:s=1920x1080:r=30`. "raw" forces a rawvideo / PCM
+   *  demuxer (requires `format` + geometry/audio params). "concat"
+   *  opens an inline `concat_list` (or an existing listfile pointed
+   *  to by `url`) via libavformat's concat demuxer. */
+  kind?: 'file' | 'lavfi' | 'raw' | 'concat';
+  /** Force libavformat demuxer name (mirrors ffmpeg `-f FMT`).
+   *  Required when `kind="raw"`. Common values: rawvideo, s16le,
+   *  image2, mpegts, concat. */
+  format?: string;
+  /** Frame rate for unframed/raw video and image2 sequences. Pushed
+   *  to the demuxer as `framerate`. Mirrors ffmpeg `-framerate`. */
+  framerate?: number;
+  /** Planar layout of unframed/raw video frames (mirrors `-pix_fmt`).
+   *  Required when `kind="raw"` and `format=rawvideo`. */
+  pixel_format?: string;
+  /** Frame size of unframed/raw video as WxH or a libavutil named
+   *  preset (hd720/vga/ntsc/...). Mirrors `-video_size`/`-s`. */
+  video_size?: string;
+  /** Sample rate (Hz) of unframed/raw PCM audio (mirrors `-ar`).
+   *  Required when `kind="raw"` + format names a PCM demuxer. */
+  sample_rate?: number;
+  /** Channel count of unframed/raw PCM audio (mirrors `-ac`).
+   *  Required when `kind="raw"` + format names a PCM demuxer. */
+  channels?: number;
+  /** Optional libavutil sample format for audio raw demuxers that
+   *  accept it (input-side `-sample_fmt`). */
+  sample_fmt?: string;
+  /** In-config concat playlist used when `kind="concat"`. */
+  concat_list?: ConcatEntry[];
+  /** Accurate (decode-and-discard until target PTS) vs fast
+   *  (snap-to-keyframe) seeking when `-ss` is set. Default true. */
+  accurate_seek?: boolean;
+  /** When true, interpret `-ss` as an absolute container timestamp
+   *  rather than an offset from start_time. */
+  seek_timestamp?: boolean;
+  /** Demuxer input packet queue depth in frames. */
+  thread_queue_size?: number;
+  /** Restrict which libavformat protocols this input may dereference. */
+  protocol_whitelist?: string[];
+  /** Image-sequence matcher used by image2 demuxer. */
+  pattern_type?: '' | 'none' | 'sequence' | 'glob' | 'glob_sequence';
+  subtitle_charenc?: string;
   /** Copy this input's container metadata onto outputs that don't set
    *  their own `metadata` (mirrors ffmpeg `-map_metadata IDX`).
    *  Multiple inputs merge in declaration order; last writer wins. */
@@ -27,17 +71,58 @@ export interface Input {
    *  own `chapters` (mirrors ffmpeg `-map_chapters IDX`). First input
    *  with map_chapters=true wins. */
   map_chapters?: boolean;
+  /** Number of additional times the demuxer rewinds and replays after
+   *  EOF. 0 = no loop, N>0 = play N+1 times total, -1 = infinite.
+   *  Mirrors ffmpeg `-stream_loop N`. On rewind the runtime captures
+   *  the previous iteration's `(max_pts - min_pts)` and adds it to
+   *  every subsequent packet so PTS stay monotone. */
+  stream_loop?: number;
+  /** Per-input timestamp offset in seconds (may be negative). Mirrors
+   *  ffmpeg `-itsoffset T`. Positive delays the input on the global
+   *  timeline; negative advances it. Composes additively with the
+   *  implicit `-ss` ts_offset. */
+  itsoffset?: number;
+  /** Pace packet reads to (read_rate × realtime). 0 = unpaced;
+   *  1.0 mirrors ffmpeg `-re`. Required for live-restream and any
+   *  HLS/DASH push that relies on segment walltime equalling
+   *  media time. */
+  read_rate?: number;
+  /** Seconds of media time read unpaced at the start of the input.
+   *  Mirrors ffmpeg `-readrate_initial_burst SECS`; defaults to 0.5
+   *  when read_rate is non-zero. */
+  read_rate_initial_burst?: number;
+  /** Multiplier used to recover from a pacing lag (mirrors ffmpeg
+   *  `-readrate_catchup`); must be >= read_rate when set. Defaults
+   *  to read_rate × 1.05 when unset and read_rate is non-zero. */
+  read_rate_catchup?: number;
   streams: StreamSelect[];
   options?: Record<string, unknown>;
 }
 
+export interface ConcatEntry {
+  file: string;
+  duration?: number;
+  inpoint?: number;
+  outpoint?: number;
+  metadata?: Record<string, string>;
+}
+
 export interface NodeDef {
   id: string;
-  type: string; // "filter" | "encoder" | "source" | "sink" | "go_processor"
+  type: string; // "filter" | "encoder" | "source" | "sink" | "go_processor" | "metadata_reader" | "metadata_writer" | "filter_source" | "filter_sink"
   filter?: string;
   processor?: string;
   params?: Record<string, unknown>;
   error_policy?: ErrorPolicy;
+  /** Per-graph thread cap (Wave 7 #38). Filter nodes only.
+   *  Mirrors ffmpeg's per-filter `-filter_threads`; written to
+   *  `AVFilterGraph.nb_threads`. Wins over `Config.filter_complex_threads`. */
+  threads?: number;
+  /** Declared output media type for cross-media-type filters (Wave 7 #37).
+   *  Required when the filter's output type differs from its input type
+   *  (e.g. `showwavespic`: audio in, video out). Auto-filled by the engine
+   *  from a curated registry when omitted. */
+  output_media_type?: StreamType;
 }
 
 export interface EdgeDef {
@@ -70,6 +155,7 @@ export interface Output {
   codec_subtitle?: string;
   bsf_video?: string;
   bsf_audio?: string;
+  bsf_subtitle?: string;
   /** FourCC overrides for the muxer's per-stream codec_tag. Equivalent to
    *  ffmpeg's -tag:v / -tag:a / -tag:s. Must be exactly 4 ASCII chars when
    *  set. Most commonly used to force HEVC in MP4 to "hvc1" for
@@ -128,6 +214,31 @@ export interface Output {
    *  (writing a clean trailer) once the limit is reached. 0 =
    *  unlimited. */
   max_file_size?: number;
+  /** Maximum demux-decode delay the muxer is allowed to buffer
+   *  ahead, in seconds. Mirrors ffmpeg `-muxdelay` (per-output
+   *  float; `fftools/ffmpeg_mux_init.c` L3447 — written as
+   *  `oc->max_delay = muxdelay * AV_TIME_BASE`). FFmpeg default is
+   *  0.7s; 0 leaves the muxer default unchanged. */
+  muxdelay?: number;
+  /** Initial demux-decode delay (pre-roll), in seconds. Mirrors
+   *  ffmpeg `-muxpreload` (per-output float; emitted into the
+   *  muxer AVDict as `preload = muxpreload * AV_TIME_BASE`). Most
+   *  muxers ignore this; the historic consumer is `mpegenc.c`. */
+  muxpreload?: number;
+  /** Libavformat's automatic timestamp-shift policy at the muxer
+   *  (`AVFormatContext.avoid_negative_ts`). Mirrors ffmpeg
+   *  `-avoid_negative_ts`. Required for clean MP4/MOV writes when
+   *  input PTS are negative (typical with `-ss` + `-copyts`). */
+  avoid_negative_ts?: '' | 'auto' | 'disabled' | 'make_non_negative' | 'make_zero';
+  /** Drop every video stream from this output's muxer. Mirrors ffmpeg
+   *  `-vn` (OPT_OUTPUT). Filtered before implicit-encoder expansion. */
+  vn?: boolean;
+  /** Drop every audio stream from this output's muxer. Mirrors ffmpeg `-an`. */
+  an?: boolean;
+  /** Drop every subtitle stream from this output's muxer. Mirrors ffmpeg `-sn`. */
+  sn?: boolean;
+  /** Drop every data stream from this output's muxer. Mirrors ffmpeg `-dn`. */
+  dn?: boolean;
   /** Container-level metadata key/value pairs (`-metadata key=value`).
    *  Replaces any metadata mapped from inputs via `input.map_metadata`. */
   metadata?: Record<string, string>;
@@ -145,6 +256,220 @@ export interface Output {
    *  via `input.map_chapters`. The container must support chapters
    *  (matroska, mp4, ogg, ffmetadata, ...). */
   chapters?: Chapter[];
+  /** Files muxed into the container as `AVMEDIA_TYPE_ATTACHMENT`
+   *  streams (matroska / mkv / webm only). Mirrors FFmpeg `-attach`. */
+  attachments?: Attachment[];
+  /** Output discriminator. `""` / `"file"` open a single muxer at
+   *  `url`; `"tee"` switches to libavformat's built-in tee muxer to
+   *  fan one encoded stream out to N targets (`url` / `format` are
+   *  ignored when `kind === "tee"`). */
+  kind?: '' | 'file' | 'tee';
+  /** Slaves for a `kind === "tee"` output. Required in that case;
+   *  must be empty otherwise. */
+  targets?: TeeTarget[];
+  /** Two-pass video encoding bit-field. 0 = single-pass; 1 = analysis
+   *  pass (AV_CODEC_FLAG_PASS1); 2 = final pass (AV_CODEC_FLAG_PASS2);
+   *  3 = both. Run the job twice (pass=1 then pass=2) against the same
+   *  passlogfile prefix. Mirrors FFmpeg `-pass N`. */
+  pass?: 0 | 1 | 2 | 3;
+  /** Per-stream statistics file prefix for two-pass video encoding.
+   *  Rendered as `<prefix>-<stream-idx>.log`. Empty defaults to
+   *  `ffmpeg2pass`. Honoured only when `pass !== 0`. Mirrors FFmpeg
+   *  `-passlogfile`. */
+  passlogfile?: string;
+  /** Two-pass EBU R128 loudnorm shuttle. 0 = single-pass; 1 = analysis
+   *  (libavfilter writes input_i / input_tp / input_lra / input_thresh
+   *  / target_offset to a JSON stats file); 2 = apply (the runtime
+   *  reads pass-1 stats and injects measured_I / measured_TP /
+   *  measured_LRA / measured_thresh / offset into the same loudnorm
+   *  node). Run the job twice (loudnorm_pass=1 then 2) against the
+   *  same loudnorm_statsfile prefix. FFmpeg has no flag for this. */
+  loudnorm_pass?: 0 | 1 | 2;
+  /** Prefix for the per-loudnorm-node JSON stats file rendered as
+   *  `<prefix>-<idx>.json`. Empty defaults to `mm-loudnorm`. Honoured
+   *  only when `loudnorm_pass !== 0`. */
+  loudnorm_statsfile?: string;
+  /** FFmpeg `-force_key_frames` spec. Three grammars:
+   *  - `expr:EXPR` (libavutil expression per video frame; vars n,
+   *    n_forced, prev_forced_n, prev_forced_t, t — canonical idiom
+   *    `expr:gte(t,n_forced*2)` for a 2 s GOP),
+   *  - `source` (copy keyframes from source),
+   *  - comma-separated time list (`3.0,7.5,10.25`).
+   *  Required for HLS / DASH segmenters. Honoured on video encoders. */
+  force_key_frames?: string;
+  /** Typed HLS muxer options (only valid when `format === 'hls'`).
+   *  Promoted from the generic `options` AVDict bag; on key
+   *  collision the typed field wins. Mirrors libavformat/hlsenc.c. */
+  hls?: HLSOptions;
+  /** Typed DASH muxer options (only valid when `format === 'dash'`).
+   *  Promoted from the generic `options` AVDict bag; on key
+   *  collision the typed field wins. Mirrors libavformat/dashenc.c. */
+  dash?: DASHOptions;
+  /** Per-stream color metadata (range, primaries, transfer, matrix,
+   *  chroma_location). Names are libavutil canonical
+   *  (`av_color_*_name`). Empty fields are left unchanged on the
+   *  output stream. Mirrors ffmpeg `-color_range` / `-color_primaries`
+   *  / `-color_trc` / `-colorspace` / `-chroma_sample_location`. */
+  color?: ColorMetadata;
+  /** SMPTE ST 2086 mastering-display + CTA-861.3 content-light-level
+   *  (HDR10) metadata attached to every video stream's
+   *  codecpar.coded_side_data before WriteHeader. Requires an
+   *  HDR-capable codec (hevc/av1/vp9 or copy) and container
+   *  (mp4/mov/matroska/webm/mpegts). Mirrors ffmpeg
+   *  `-mastering_display_metadata` / `-content_light_level`. */
+  hdr?: HDRMetadata;
+  /** Output sample aspect ratio (`setsar` shorthand / FFmpeg per-encoder
+   *  SAR). Forms: `A:B`, `A/B`, or decimal. Mutually exclusive with
+   *  `dar`. */
+  sar?: string;
+  /** Output display aspect ratio (`setdar` shorthand / FFmpeg `-aspect`).
+   *  Forms: `A:B`, `A/B`, or decimal. Resolved to SAR using the
+   *  encoder's width/height: SAR = (DAR_num*H)/(DAR_den*W). Mutually
+   *  exclusive with `sar`. */
+  dar?: string;
+  encoder_time_base?: string;
+  field_order?: '' | 'progressive' | 'tt' | 'bb' | 'tb' | 'bt';
+  interlaced_encode?: boolean;
+  options?: Record<string, unknown>;
+}
+
+export interface ColorMetadata {
+  range?: string;
+  primaries?: string;
+  transfer?: string;
+  space?: string;
+  chroma_location?: string;
+}
+
+export interface HDRMetadata {
+  mastering_display?: MasteringDisplayMetadata;
+  content_light_level?: ContentLightLevelMetadata;
+  /** Stream-level Dolby Vision configuration record
+   *  (`AVDOVIDecoderConfigurationRecord`) muxed via
+   *  `AV_PKT_DATA_DOVI_CONF`. Wave 6 #35. */
+  dovi?: DoViMetadata;
+}
+
+export interface DoViMetadata {
+  /** Dolby Vision profile: 4, 5, 7, 8, 9, or 10. Required. */
+  profile: 4 | 5 | 7 | 8 | 9 | 10;
+  /** Dolby Vision bitstream level (0-13). */
+  level?: number;
+  /** RPU NAL units present in bitstream (default true). */
+  rpu_present?: boolean;
+  /** Enhancement-layer present (profiles 4 and 7). */
+  el_present?: boolean;
+  /** Base-layer present (default true). */
+  bl_present?: boolean;
+  /** Cross-compatibility hint: 0=none, 1=HDR10, 2=SDR/BT.709, 4=HLG. */
+  bl_compatibility_id?: 0 | 1 | 2 | 4;
+}
+
+export interface MasteringDisplayMetadata {
+  /** Chromaticity coords in 1/50000 units (HEVC/AV1 SEI encoding). */
+  display_primaries_rx?: number;
+  display_primaries_ry?: number;
+  display_primaries_gx?: number;
+  display_primaries_gy?: number;
+  display_primaries_bx?: number;
+  display_primaries_by?: number;
+  white_point_x?: number;
+  white_point_y?: number;
+  /** Luminance in 1/10000 cd/m^2 (i.e. nits * 10000). */
+  min_luminance?: number;
+  max_luminance?: number;
+}
+
+export interface ContentLightLevelMetadata {
+  /** Per-frame peak luminance over the whole stream (cd/m^2). */
+  max_cll?: number;
+  /** Per-frame frame-average maximum luminance (cd/m^2). */
+  max_fall?: number;
+}
+
+export interface HLSOptions {
+  /** Target segment duration, seconds (`hls_time`). */
+  time?: number;
+  /** Init segment duration, seconds (`hls_init_time`). */
+  init_time?: number;
+  /** Maximum entries kept in the playlist (`hls_list_size`); 0 = all. */
+  list_size?: number;
+  /** `hls_playlist_type`. `vod` writes EXT-X-ENDLIST on close. */
+  playlist_type?: '' | 'event' | 'vod';
+  /** `hls_segment_type`. `fmp4` selects CMAF-style fragmented MP4. */
+  segment_type?: '' | 'mpegts' | 'fmp4';
+  /** Printf-style template for segment files (`hls_segment_filename`). */
+  segment_filename?: string;
+  /** Init segment file name when `segment_type === 'fmp4'`
+   *  (`hls_fmp4_init_filename`). */
+  fmp4_init_filename?: string;
+  /** First sequence number in the playlist (`start_number`). */
+  start_number?: number;
+  /** Master playlist filename (`master_pl_name`); required for ABR. */
+  master_pl_name?: string;
+  /** Variant-stream mapping (`var_stream_map`),
+   *  e.g. `'v:0,a:0 v:1,a:0'`. Requires `master_pl_name`. */
+  var_stream_map?: string;
+  /** `hls_flags` token names; joined with `+` before being passed
+   *  to libavformat. */
+  flags?: string[];
+}
+
+export interface DASHOptions {
+  /** Target segment duration, seconds (`seg_duration`). */
+  seg_duration?: number;
+  /** Target fragment duration, seconds (`frag_duration`). */
+  frag_duration?: number;
+  /** Maximum segments kept in the manifest (`window_size`); 0 = all. */
+  window_size?: number;
+  /** Extra segments retained on disk past `window_size`
+   *  (`extra_window_size`). */
+  extra_window_size?: number;
+  /** Init segment file-name template (`init_seg_name`). */
+  init_seg_name?: string;
+  /** Media segment file-name template (`media_seg_name`). */
+  media_seg_name?: string;
+  /** SegmentBase single-file output (`single_file`). */
+  single_file?: boolean;
+  /** Emit `<SegmentTemplate>` (`use_template`); unset = libavformat
+   *  default (true). */
+  use_template?: boolean;
+  /** Emit `<SegmentTimeline>` (`use_timeline`); unset = libavformat
+   *  default (true). */
+  use_timeline?: boolean;
+  /** Low-latency progressive fragment writes (`streaming`). */
+  streaming?: boolean;
+  /** Manual adaptation-set spec (`adaptation_sets`),
+   *  e.g. `'id=0,streams=v id=1,streams=a'`. */
+  adaptation_sets?: string;
+  /** Also emit HLS .m3u8 playlists alongside the DASH manifest
+   *  (`hls_playlist`); the CMAF dual-pack mode. */
+  hls_playlist?: boolean;
+  /** Enable low-latency DASH (`ldash`). */
+  ldash?: boolean;
+  /** `dash_flags` token names; joined with `+` before being passed
+   *  to libavformat. */
+  flags?: string[];
+}
+
+export interface TeeTarget {
+  /** Slave URL (file path or scheme). */
+  url: string;
+  /** Force the slave's container (`f=`). */
+  format?: string;
+  /** Comma-separated FFmpeg stream specifiers (`v`, `a:0`, ...). */
+  select?: string;
+  /** Per-slave bitstream-filter chain. */
+  bsfs?: string;
+  /** Slave-failure policy. */
+  onfail?: '' | 'abort' | 'ignore';
+  /** Wrap slave in libavformat's `fifo` muxer (extra buffering thread). */
+  use_fifo?: boolean;
+  /** `;`-separated `key=value` forwarded to the fifo muxer when
+   *  `use_fifo` is set. */
+  fifo_options?: string;
+  /** Free-form additional `[opt=val]` pairs for obscure tee-slave
+   *  AVOptions. */
   options?: Record<string, unknown>;
 }
 
@@ -158,6 +483,13 @@ export interface StreamSpec {
   /** `+`-separated AV_DISPOSITION_* flag names (e.g.
    *  `default+forced`). Empty leaves the disposition untouched. */
   disposition?: string;
+  /** Per-stream encoder override (Wave 6 #30). */
+  encoder?: EncoderOverride;
+}
+
+export interface EncoderOverride {
+  codec?: string;
+  options?: Record<string, unknown>;
 }
 
 export interface Chapter {
@@ -168,6 +500,15 @@ export interface Chapter {
   end: number;
   title?: string;
   metadata?: Record<string, string>;
+}
+
+export interface Attachment {
+  /** Filesystem path of the file to embed. */
+  path: string;
+  /** Stream `filename` metadata. Defaults to basename of `path`. */
+  filename?: string;
+  /** Stream `mimetype` metadata, e.g. `application/x-truetype-font`. */
+  mimetype?: string;
 }
 
 export interface Options {
@@ -199,6 +540,17 @@ export interface JobConfig {
    *  timeline values rather than offsets from the input's start.
    *  Required for accurate broadcast / HLS PTS handling. */
   copy_ts?: boolean;
+  /** Modulates `copy_ts`. When true, re-enables the demuxer-side
+   *  ts_offset shift even under `copy_ts` so the first kept packet
+   *  still anchors at PTS 0 while later timing is preserved.
+   *  Mirrors ffmpeg's global `-start_at_zero`
+   *  (`fftools/ffmpeg_demux.c` L486). Requires `copy_ts=true`. */
+  start_at_zero?: boolean;
+  /** Pipeline-wide cap on threads per filter graph (Wave 7 #38).
+   *  Mirrors ffmpeg's global `-filter_complex_threads`; written to
+   *  `AVFilterGraph.nb_threads`. 0 leaves libavfilter's default in place.
+   *  Per-node `threads` overrides this. */
+  filter_complex_threads?: number;
 }
 
 /**

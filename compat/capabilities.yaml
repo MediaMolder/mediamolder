@@ -45,16 +45,17 @@ sections:
         schema: pipeline.Input.Options.to
         notes: converted to recording_time = to - max(ss,0)
       - flag: "-itsoffset"
-        status: missing
-        schema: n/a
-        notes: per-input PTS offset; required for A/V re-sync
+        status: covered
+        schema: pipeline.Input.ITSOffset
+        notes: per-input PTS offset in seconds; openSource composes additively with the implicit -ss ts_offset (matches FFmpeg's `f->ts_offset = o->input_ts_offset - timestamp` in fftools/ffmpeg_demux.c). Applied via Packet.ShiftTS in handleSource for every demuxed packet.
       - flag: "-stream_loop"
-        status: missing
-        schema: n/a
+        status: covered
+        schema: pipeline.Input.StreamLoop
+        notes: per-input integer (-1 = infinite). handleSource tracks per-iteration min/max PTS in AV_TIME_BASE us; on EOF, if loops remain, calls SeekFile(StartTime), accumulates `(max - min)` into loopOffsetUS, and shifts subsequent packets so PTS stay monotone. Mirrors fftools/ffmpeg_demux.c::seek_to_start + ts_fixup `pkt->pts += duration` arithmetic.
       - flag: "-readrate / -re"
-        status: missing
-        schema: n/a
-        notes: live-stream restreaming
+        status: covered
+        schema: pipeline.Input.ReadRate / ReadRateInitialBurst / ReadRateCatchup
+        notes: per-input pacing. -re is shorthand for -readrate 1. Implemented by pipeline.readRatePacer (pipeline/read_rate.go) — faithful port of fftools/ffmpeg_demux.c::readrate_sleep including the 0.3 s lag-detection threshold and catchup multiplier. Sleeps via a context-aware time.Timer so cancellation aborts pacing immediately. Required for live-restream / RTMP / SRT egress and any HLS/DASH push that relies on segment walltime equalling media time.
       - flag: "-framerate / -r (input)"
         status: partial
         schema: pipeline.Input.Options
@@ -102,23 +103,25 @@ sections:
         status: covered
         schema: pipeline.Input.Streams
       - flag: "-map 0:v:0 / -map 1:a:0"
-        status: partial
-        schema: pipeline.Input.Streams[].Track
-      - flag: "-map -0:s / -map 0:?"
-        status: missing
-        schema: n/a
-        notes: optional / negative selector
+        status: covered
+        schema: pipeline.Input.Streams[].{InputIndex,Type,Track}
+        notes: ffcli `-map` parser; All=true selects every stream of type
+      - flag: "-map -0:s / -map 0:s?"
+        status: covered
+        schema: pipeline.Input.Streams[].{Negate,Optional}
+        notes: Wave 2 #9; Negate removes from selection, Optional silences missing matches
       - flag: "-map p:N (program selection)"
-        status: missing
-        schema: n/a
-        notes: MPEG-TS multi-program inputs
+        status: covered
+        schema: pipeline.Input.Streams[].Program
+        notes: Wave 2 #10; matches AVProgram.id (NOT array index) for MPEG-TS / multi-program inputs
       - flag: "-map_metadata / -map_chapters"
-        status: missing
-        schema: n/a
-        notes: see §2.5
+        status: covered
+        schema: pipeline.NodeDef{Type:"metadata_reader"|"metadata_writer"} + pipeline.EdgeDef{Type:"metadata"}
+        notes: Wave 2 #11; reader.params.source/section + writer.params.target/section pair routes container metadata or chapters per-output; Input.MapMetadata/MapChapters shorthand still works for single-input cases
       - flag: "-vn / -an / -sn / -dn (per output)"
-        status: partial
-        schema: graph edges
+        status: covered
+        schema: pipeline.Output.DisableVideo / DisableAudio / DisableSubtitle / DisableData
+        notes: Edges of the disabled media type are filtered before expandImplicitEncoders runs, so no implicit encoder is synthesised and no copy stream is registered (mirrors fftools/ffmpeg_opt.c L1977/2078/2115/2187 — OPT_OUTPUT half of the dual-purpose disable bools). Validator rejects all-four-set.
       - flag: "split / asplit reuse of one decoded stream"
         status: covered
         schema: pipeline.GraphDef.Edges
@@ -173,8 +176,9 @@ sections:
         schema: n/a
         notes: strings reach libavfilter intact; no GUI authoring/validation
       - flag: "setsar / setdar"
-        status: partial
-        schema: n/a
+        status: covered
+        schema: pipeline.Output.SAR / pipeline.Output.DAR
+        notes: shorthand on Output; runtime stamps encoder.sample_aspect_ratio (DAR resolved against encoder W/H)
       - flag: "arnndn (model-file filter)"
         status: partial
         schema: n/a
@@ -219,11 +223,11 @@ sections:
         status: covered
         schema: av/hwencode.go
       - flag: "-pass 1/2 -passlogfile (two-pass video)"
-        status: missing
-        schema: n/a
+        status: covered
+        schema: pipeline.Output.Pass / pipeline.Output.PassLogFile
       - flag: "two-pass loudnorm shuttle"
-        status: missing
-        schema: n/a
+        status: covered
+        schema: pipeline.Output.LoudnormPass / pipeline.Output.LoudnormStatsFile
         notes: distinct from generic two-pass; pass-1 JSON → pass-2 AVOpts
       - flag: "lossless intermediates (FFV1/ProRes/DNxHD/HuffYUV)"
         status: partial
@@ -238,30 +242,36 @@ sections:
         schema: pipeline.Output.AudioSync
         notes: legacy flag (removed from FFmpeg 8.0 CLI); compat/ffcli accepts it and the runtime injects an aresample filter (async=N, plus first_pts=0 when N==1) in front of the audio encoder
       - flag: "-force_key_frames"
-        status: missing
-        schema: n/a
+        status: covered
+        schema: pipeline.Output.ForceKeyFrames
+        notes: expr:EXPR (libavutil per-frame expression), source (copy from input), or comma-separated time list
       - flag: "per-stream encoder options (-b:v:0 ≠ -b:v:1)"
-        status: missing
-        schema: n/a
-        notes: ABR ladder per-stream override
+        status: covered
+        schema: pipeline.Output.Streams[].Encoder
+        notes: EncoderOverride{Codec, Options} overlays synthetic encoder node by media-type+index; ffcli round-trips -<key>:<type>:<idx>
       - flag: "color metadata (-color_range/-color_primaries/-color_trc/-colorspace)"
-        status: partial
-        schema: pipeline.Output.EncoderParamsVideo
+        status: covered
+        schema: pipeline.Output.Color
+        notes: per-stream color tagging via av_opt_set on AVStream codecpar before WriteHeader
       - flag: "HDR10 mastering display + CLL metadata"
-        status: missing
-        schema: n/a
+        status: covered
+        schema: pipeline.Output.HDR
+        notes: SMPTE ST 2086 + CTA-861.3 attached as AV_PKT_DATA_MASTERING_DISPLAY_METADATA / AV_PKT_DATA_CONTENT_LIGHT_LEVEL on stream codecpar.coded_side_data; codec/container compat enforced at validate time
       - flag: "Dolby Vision RPU passthrough"
         status: missing
         schema: n/a
       - flag: "-aspect"
-        status: missing
-        schema: n/a
+        status: covered
+        schema: pipeline.Output.DAR
+        notes: importer rewrites legacy `-aspect A:B` to Output.DAR
       - flag: "-enc_time_base"
-        status: missing
-        schema: n/a
+        status: covered
+        schema: pipeline.Output.EncoderTimeBase
+        notes: accepts demux/filter sentinels or N/D rational
       - flag: "-field_order (interlaced encode)"
-        status: missing
-        schema: n/a
+        status: covered
+        schema: pipeline.Output.FieldOrder
+        notes: also Output.InterlacedEncode for AV_CODEC_FLAG_INTERLACED_DCT|ME (-flags +ildct+ilme)
       - flag: "-fpre / -vpre (encoder presets from disk)"
         status: missing
         schema: n/a
@@ -303,11 +313,13 @@ sections:
         schema: pipeline.Output.Streams[*].Disposition
         notes: compat/ffcli parses `-disposition:s:<type>:<idx> default+forced`; handleSink calls av_opt_set on the AVStream's AVClass, which is the same code path fftools/ffmpeg_mux_init.c::set_dispositions uses to parse the `+`-separated AV_DISPOSITION_* flag list.
       - flag: "-map_metadata / -map_chapters"
-        status: missing
-        schema: n/a
+        status: covered
+        schema: pipeline.NodeDef{Type:"metadata_reader"|"metadata_writer"} + pipeline.EdgeDef{Type:"metadata"}
+        notes: Wave 2 #11; reader.params.source/section + writer.params.target/section pair routes container metadata or chapters per-output; compat/ffcli emits the node pair on `-map_metadata IDX` / `-map_chapters IDX`.
       - flag: "chapter writing"
-        status: missing
-        schema: n/a
+        status: covered
+        schema: pipeline.Output.Chapters
+        notes: explicit chapter list always works; metadata_writer with section=chapters routes input chapters into the output (Wave 2 #11).
       - flag: "attachments (fonts for ASS/cover art)"
         status: missing
         schema: n/a
@@ -318,31 +330,35 @@ sections:
         status: covered
         schema: pipeline.Config.Outputs
       - flag: "tee muxer (single-pass multi-format)"
-        status: missing
-        schema: n/a
-        notes: largest single missing output feature
+        status: covered
+        schema: pipeline.Output.Kind/Targets
+        notes: Output.Kind="tee" + Output.Targets[]; encoded once, fanned out to N libavformat slaves via the built-in tee muxer (-f tee "[opt=val]url|[opt=val]url"). Per-target metadata/disposition is not directly supported by libavformat (slaves clone parent metadata).
       - flag: "HLS muxer (hls_time/hls_playlist_type/EXT-X-MAP/byte-range)"
-        status: partial
-        schema: pipeline.Output.Options
+        status: covered
+        schema: pipeline.Output.HLS
+        notes: Wave 3 #12 — typed HLSOptions promotes hls_time, hls_init_time, hls_list_size, hls_playlist_type, hls_segment_type (mpegts|fmp4 / CMAF), hls_segment_filename, hls_fmp4_init_filename, start_number, master_pl_name + var_stream_map (ABR), and hls_flags off the generic Options bag. Output.Options remains the escape hatch for niche options; typed fields win on key collision.
       - flag: "DASH muxer"
-        status: partial
-        schema: pipeline.Output.Options
+        status: covered
+        schema: pipeline.Output.DASH
+        notes: Wave 3 #12 — typed DASHOptions promotes seg_duration, frag_duration, window_size, extra_window_size, init_seg_name, media_seg_name, single_file, use_template, use_timeline, streaming, adaptation_sets, hls_playlist (CMAF dual-pack), ldash, dash_flags. Same escape-hatch model as HLS.
       - flag: "segment muxer / fragmented MP4 (CMAF)"
-        status: partial
-        schema: pipeline.Output.Options
+        status: covered
+        schema: pipeline.Output.HLS / pipeline.Output.DASH
+        notes: CMAF delivered via HLS.SegmentType="fmp4" (HLS-side fMP4) or DASH.HLSPlaylist=true alongside DASH (dual-pack manifest). The standalone segment muxer (-f segment) remains a partial-coverage gap; tee + HLS/DASH cover the same fan-out scenarios.
       - flag: "movflags=+faststart"
         status: covered
         schema: pipeline.Output.Options.movflags
       - flag: "-muxdelay / -muxpreload / -copyts / -start_at_zero / -avoid_negative_ts"
-        status: partial
-        schema: pipeline.Config.CopyTS
-        notes: -copyts covered (Config.CopyTS suppresses demuxer ts_offset shift and switches output-side -ss/-to to absolute timeline interpretation); -muxdelay/-muxpreload/-start_at_zero/-avoid_negative_ts still missing
-      - flag: "-bsf:v / -bsf:a (single)"
         status: covered
-        schema: pipeline.Output.BSFVideo / BSFAudio
+        schema: pipeline.Config.CopyTS / pipeline.Config.StartAtZero / pipeline.Output.MuxDelay / pipeline.Output.MuxPreload / pipeline.Output.AvoidNegativeTS
+        notes: All five covered. CopyTS+StartAtZero are global (StartAtZero modulates CopyTS — mirrors fftools/ffmpeg_demux.c L486). MuxDelay/MuxPreload (float seconds) render into the muxer AVDict as max_delay/preload in AV_TIME_BASE microseconds (mirrors fftools/ffmpeg_mux_init.c L3444/L3447). AvoidNegativeTS ∈ {auto, disabled, make_non_negative, make_zero} passes through to libavformat's avoid_negative_ts AVOption.
+      - flag: "-bsf:v / -bsf:a / -bsf:s (single)"
+        status: covered
+        schema: pipeline.Output.BSFVideo / BSFAudio / BSFSubtitle
       - flag: "BSF chains (-bsf:v 'h264_mp4toannexb,h264_redundant_pps')"
-        status: partial
-        schema: pipeline.Output.BSFVideo
+        status: covered
+        schema: pipeline.Output.BSFVideo / BSFAudio / BSFSubtitle
+        notes: parsed by libavcodec av_bsf_list_parse_str; chain spec `f1[=k=v[:k=v]][,f2]`
 
   - id: subtitles
     title: Subtitles (roadmap §2.6)
@@ -358,8 +374,8 @@ sections:
         status: partial
         schema: pipeline.Output.CodecSubtitle
       - flag: "-sub_charenc"
-        status: missing
-        schema: n/a
+        status: covered
+        schema: pipeline.Input.SubtitleCharenc
       - flag: "forced / hearing-impaired flags"
         status: missing
         schema: n/a

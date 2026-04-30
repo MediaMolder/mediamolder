@@ -102,9 +102,11 @@ for _, f := range filters {
 |-----------|------------------|
 | `-bsf:v h264_mp4toannexb` | `"bsf_video": "h264_mp4toannexb"` |
 | `-bsf:a aac_adtstoasc` | `"bsf_audio": "aac_adtstoasc"` |
+| `-bsf:s text2movsub` | `"bsf_subtitle": "text2movsub"` |
 | `-bsf:v h264_metadata=level=4.1` | `"bsf_video": "h264_metadata=level=4.1"` |
+| `-bsf:v "h264_mp4toannexb,h264_redundant_pps"` | `"bsf_video": "h264_mp4toannexb,h264_redundant_pps"` (chain syntax `f1[=k=v[:k=v]][,f2]`, parsed by `av_bsf_list_parse_str`) |
 
-The `ffcli` compatibility layer maps `-bsf:v` and `-bsf:a` flags directly to the output's `bsf_video` and `bsf_audio` fields.
+The `ffcli` compatibility layer maps `-bsf:v`, `-bsf:a`, and `-bsf:s` flags directly to the output's `bsf_video`, `bsf_audio`, and `bsf_subtitle` fields. The values accept the full FFmpeg BSF chain grammar (comma-separated filters, each with optional `=k=v[:k=v]` parameters); the runtime parses them via libavcodec's `av_bsf_list_parse_str` and applies the chain between rescale and `WritePacket`.
 
 ## Typical Workflows
 

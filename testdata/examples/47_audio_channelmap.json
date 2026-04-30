@@ -1,0 +1,47 @@
+{
+  "schema_version": "1.0",
+  "description": "Wave 7 #41: channelmap filter — relabel stereo channels (swap L/R).",
+  "inputs": [
+    {
+      "id": "in0",
+      "url": "{{input}}",
+      "streams": [
+        { "input_index": 0, "type": "video", "track": 0 },
+        { "input_index": 0, "type": "audio", "track": 0 }
+      ]
+    }
+  ],
+  "graph": {
+    "nodes": [
+      {
+        "id": "channelmap0",
+        "type": "filter",
+        "filter": "channelmap",
+        "params": {
+          "map": "FR-FL|FL-FR",
+          "channel_layout": "stereo"
+        }
+      },
+      {
+        "id": "chunk0",
+        "type": "filter",
+        "filter": "asetnsamples",
+        "params": { "n": "1024", "p": "0" }
+      }
+    ],
+    "edges": [
+      { "from": "in0:v:0", "to": "out0:v", "type": "video" },
+      { "from": "in0:a:0", "to": "channelmap0", "type": "audio" },
+      { "from": "channelmap0", "to": "chunk0", "type": "audio" },
+      { "from": "chunk0", "to": "out0:a", "type": "audio" }
+    ]
+  },
+  "outputs": [
+    {
+      "id": "out0",
+      "url": "{{output}}",
+      "codec_video": "copy",
+      "codec_audio": "aac"
+    }
+  ]
+}

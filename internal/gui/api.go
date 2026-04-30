@@ -24,6 +24,16 @@ type NodeCatalogEntry struct {
 	Streams     []string `json:"streams,omitempty"` // ["video"], ["audio"], etc.
 	NumInputs   int      `json:"num_inputs,omitempty"`
 	NumOutputs  int      `json:"num_outputs,omitempty"`
+
+	// Curation metadata (Wave 8 #54a / ui_improvements §A–B). Populated
+	// from internal/gui/curation.go::curatedNodes when this entry's
+	// Name matches a curated key. Common surfaces in the default
+	// palette view; FriendlyName drives the "Friendly names" toggle;
+	// Aliases extend the search index with synonyms ("h264" → libx264,
+	// "loudness" → loudnorm).
+	Common       bool     `json:"common,omitempty"`
+	FriendlyName string   `json:"friendly_name,omitempty"`
+	Aliases      []string `json:"aliases,omitempty"`
 }
 
 // handleListNodes returns the node palette catalogue assembled from the live
@@ -91,6 +101,65 @@ func handleListNodes(w http.ResponseWriter, _ *http.Request) {
 		})
 	}
 
+	// Virtual source / sink filters (Wave 8 #44). These libavfilter
+	// nodes have zero inputs (source) or zero outputs (sink) and would
+	// otherwise be filtered out by the 1→1 rule above. They land under
+	// the "Sources" / "Sinks" top-level categories so users find them
+	// alongside file inputs / outputs. Only the curated allow-lists
+	// from pipeline/filter_availability.go (knownFilterSources /
+	// knownFilterSinks) are exposed; the ones not built into the
+	// running libavfilter are skipped automatically because
+	// av.ListFilters() only reports linked filters.
+	for _, f := range av.ListFilters() {
+		if f.NumInputs == 0 && f.NumOutputs >= 1 {
+			if _, ok := virtualSourceFilters[f.Name]; !ok {
+				continue
+			}
+			out = append(out, NodeCatalogEntry{
+				Category:    "Sources",
+				Subcategory: "Virtual sources",
+				Type:        "filter_source",
+				Name:        f.Name,
+				Label:       virtualFilterLabel(f.Name),
+				Description: virtualSourceDescription(f.Name, f.Description),
+				Streams:     filterStreams(f),
+				NumInputs:   0,
+				NumOutputs:  f.NumOutputs,
+			})
+			continue
+		}
+		if f.NumInputs >= 1 && f.NumOutputs == 0 {
+			if _, ok := virtualSinkFilters[f.Name]; !ok {
+				continue
+			}
+			out = append(out, NodeCatalogEntry{
+				Category:    "Sinks",
+				Subcategory: "Virtual sinks",
+				Type:        "filter_sink",
+				Name:        f.Name,
+				Label:       virtualFilterLabel(f.Name),
+				Description: virtualSinkDescription(f.Name, f.Description),
+				Streams:     filterStreams(f),
+				NumInputs:   f.NumInputs,
+				NumOutputs:  0,
+			})
+		}
+	}
+
+	// `Input.Kind="lavfi"` shorthand: a single Input that opens a
+	// libavfilter graph spec via the lavfi virtual demuxer. Distinct
+	// from the per-node KindFilterSource entries above — this one
+	// produces an Input + URL pair instead of a graph node, so the
+	// existing "Input file" inspector form can edit the spec string.
+	out = append(out, NodeCatalogEntry{
+		Category:    "Sources",
+		Subcategory: "Virtual sources",
+		Type:        "lavfi_input",
+		Name:        "Lavfi input",
+		Label:       "Lavfi virtual input",
+		Description: "Input.Kind=\"lavfi\" — opens a libavfilter graph spec (e.g. anullsrc=r=48000:cl=stereo, color=black:s=1920x1080:r=30) as a top-level input via FFmpeg's lavfi virtual demuxer.",
+	})
+
 	// Encoders from libavcodec.
 	for _, c := range av.ListCodecs() {
 		if !c.IsEncoder {
@@ -128,6 +197,20 @@ func handleListNodes(w http.ResponseWriter, _ *http.Request) {
 			Label:       prettyProcessorName(name),
 			Description: processorDescription(name),
 		})
+	}
+
+	// Attach curation metadata (Common / FriendlyName / Aliases) from
+	// internal/gui/curation.go::curatedNodes. Built-in synthetic entries
+	// (input / output / copy_*) are also flagged Common so they appear
+	// in the default palette view; their friendly labels are already
+	// set inline above.
+	for i := range out {
+		applyCuration(&out[i])
+		switch out[i].Type {
+		case "input", "output", "copy", "filter_source", "filter_sink", "lavfi_input":
+			// These are synthetic palette built-ins — always Common.
+			out[i].Common = true
+		}
 	}
 
 	sort.SliceStable(out, func(i, j int) bool {
@@ -333,4 +416,91 @@ func processorDescription(name string) string {
 		return "YOLOv8 object detection (requires the with_onnx build tag)."
 	}
 	return ""
+}
+
+// virtualSourceFilters is the GUI-visible subset of
+// pipeline.knownFilterSources (Wave 7 #36a). Kept in sync manually —
+// `pipeline` is not imported here to avoid a cgo dependency cycle.
+// Wave 8 #44.
+var virtualSourceFilters = map[string]struct{}{
+	"color":       {},
+	"testsrc":     {},
+	"testsrc2":    {},
+	"smptebars":   {},
+	"smptehdbars": {},
+	"mandelbrot":  {},
+	"life":        {},
+	"yuvtestsrc":  {},
+	"rgbtestsrc":  {},
+	"sine":        {},
+	"anullsrc":    {},
+	"aevalsrc":    {},
+	"movie":       {},
+	"amovie":      {},
+}
+
+// virtualSinkFilters mirrors pipeline.knownFilterSinks. Wave 8 #44.
+var virtualSinkFilters = map[string]struct{}{
+	"nullsink":  {},
+	"anullsink": {},
+}
+
+func virtualFilterLabel(name string) string {
+	switch name {
+	case "color":
+		return "Color (solid colour video)"
+	case "testsrc":
+		return "Testsrc (test pattern)"
+	case "testsrc2":
+		return "Testsrc2 (test pattern v2)"
+	case "smptebars":
+		return "SMPTE bars (SD)"
+	case "smptehdbars":
+		return "SMPTE bars (HD)"
+	case "mandelbrot":
+		return "Mandelbrot (animated fractal)"
+	case "life":
+		return "Life (Conway's Game of Life)"
+	case "yuvtestsrc":
+		return "YUV test pattern"
+	case "rgbtestsrc":
+		return "RGB test pattern"
+	case "sine":
+		return "Sine (audio test tone)"
+	case "anullsrc":
+		return "Anullsrc (silent audio)"
+	case "aevalsrc":
+		return "Aevalsrc (audio expression)"
+	case "movie":
+		return "Movie (file as video source)"
+	case "amovie":
+		return "Amovie (file as audio source)"
+	case "nullsink":
+		return "Nullsink (discard video)"
+	case "anullsink":
+		return "Anullsink (discard audio)"
+	}
+	return name
+}
+
+func virtualSourceDescription(name, desc string) string {
+	hint := "Append `duration=N` (seconds) or `nb_frames=N` to bound the source."
+	switch name {
+	case "movie", "amovie":
+		hint = "Set `filename` to the asset path. Honour Config.ProtocolWhitelist for non-local paths."
+	case "anullsrc":
+		hint = "Silent audio. No duration cap required (consumed lazily by downstream)."
+	}
+	if desc == "" {
+		return hint
+	}
+	return desc + " — " + hint
+}
+
+func virtualSinkDescription(name, desc string) string {
+	hint := "Discards every frame. Lets an analyser branch (e.g. ebur128, signalstats) terminate without a muxer output."
+	if desc == "" {
+		return hint
+	}
+	return desc + " — " + hint
 }

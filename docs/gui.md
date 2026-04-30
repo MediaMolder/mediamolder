@@ -4,6 +4,7 @@ The `mediamolder gui` subcommand serves a browser-based visual editor for
 building, validating, and running MediaMolder JSON pipelines. It is bundled
 into the same single binary as the CLI — no separate install or web server is
 required.
+![MediaMolder GUI](images/ABR_x264.png)
 
 ## Quick start
 
@@ -22,10 +23,14 @@ Useful flags:
 | `--host`     | `127.0.0.1` | Interface to bind. Use `0.0.0.0` to expose on the LAN. |
 | `--port`     | `8080`      | TCP port. |
 | `--no-open`  | `false`     | Do not auto-open a browser tab. |
-| `--examples` | `testdata/examples` | Directory whose `*.json` files are listed in the **Example** dropdown. Set to `""` to disable. |
+| `--examples` | `testdata/examples` | Directory whose `*.json` files are listed in the **Graph:** dropdown. Set to `""` to disable. |
 | `--dev`      | `false`     | Skip the embedded frontend; expects you to run `npm run dev` separately. |
 
 ## Your first pipeline (5-minute walkthrough)
+
+For an explanation of nodes, pads, edges, sources and sinks — and the rules
+that govern when two nodes can be wired directly versus when a transform
+filter has to sit between them — see [Graph Basics](graph-basics.md).
 
 If you have never used the editor before, the canvas opens with an
 **onboarding card** that summarises the steps below. Click the
@@ -33,13 +38,32 @@ If you have never used the editor before, the canvas opens with an
 in-app help dialog.
 
 1. **Pick a starting point.**
-   * The fastest path is the **Example ▾** dropdown in the toolbar — choose
-     any entry to load a working pipeline you can edit.
-   * Otherwise click **New** to start from a blank canvas.
+   * The fastest path is the **Graph:** dropdown in the toolbar — choose
+     any entry to load a built-in example you can edit.
+   * Click **New** to start from a blank canvas, or **Open…** to load an
+     existing job JSON from disk.
 2. **Add a Source.** From the **Sources** category in the left palette, drag
-   *Input file* onto the canvas. Click the new node, then in the Inspector
-   on the right click **Browse…** next to **URL** to pick a media file from
-   your local filesystem.
+   *Input file* onto the canvas. Click the new node (or its pencil glyph),
+   then in the Inspector on the right click **Browse…** next to **URL** to
+   pick a media file from your local filesystem.
+
+   The **Sources › Virtual sources** subcategory carries drag-and-drop
+   nodes for libavfilter source filters that synthesise frames without
+   opening a file: `color`, `testsrc` / `testsrc2`, `smptebars` /
+   `smptehdbars`, `mandelbrot`, `life`, `yuvtestsrc` / `rgbtestsrc`,
+   `sine`, `anullsrc`, `aevalsrc`, plus `movie` / `amovie` (which open a
+   second asset file from inside libavfilter — handy for logo overlays).
+   Newly-spawned virtual sources default to `duration=5` seconds so the
+   job actually terminates; edit the field in the Inspector to bound by
+   `nb_frames` instead, or remove the cap for `anullsrc` / `aevalsrc`
+   which are always lazy. The **Lavfi virtual input** entry materialises
+   as a top-level `Input` with `kind="lavfi"` so the URL field carries a
+   full filtergraph spec (e.g. `anullsrc=r=48000:cl=stereo`) instead of
+   a file path.
+
+   The mirror **Sinks › Virtual sinks** subcategory ships `nullsink` and
+   `anullsink` for terminating analyser branches (e.g. `ebur128` →
+   `ametadata=mode=print` → `anullsink`) without a real muxer output.
 3. **Add processing nodes.** From the palette categories:
    * **Filters** — libavfilter operations (scaling, colour, denoise, audio
      dynamics, …) grouped by intent. Hover any entry for a tooltip with the
@@ -62,25 +86,39 @@ in-app help dialog.
 6. **Run.** Click **Run** in the toolbar. The Run panel opens; node badges
    show live `Frames` / `FPS`, and a node that errors is outlined in red.
    Click **Stop** to cancel.
-7. **Save / Export.** **Export** downloads the current graph as a
-   MediaMolder JSON job. **Import** loads any job JSON (including the
-   bundled examples and files written by the CLI). **Import FFmpeg
-   command** opens a dialog where you can paste a full `ffmpeg ...`
-   command line; MediaMolder parses it (via the same `compat/ffcli`
-   package the `mediamolder convert-cmd` CLI uses) and replaces the
-   current canvas with the resulting graph. Encoder options like
-   `-crf`, `-preset`, `-tune`, `-profile:v`, `-level`, `-g`, `-bf`,
-   `-maxrate`, `-minrate`, `-bufsize`, `-pix_fmt`, `-b:v`, `-b:a`,
-   `-q:a`, `-x264-params` and `-x265-params` are attached to the
-   synthesised encoder node so the Inspector shows the same rate
-   control / quality settings you'd get from running the original
-   command. `-c:v copy` / `-c:a copy` produce a stream-copy node
-   instead of an encoder.
+7. **Save / Open.** **Save** writes the current graph back to its on-disk
+   file (silent overwrite when the browser supports the File System Access
+   API). **Save As…** prompts for a new path. **Open…** loads any job JSON
+   from disk (including files written by the CLI). The **Graph:** slot in
+   the toolbar shows the current document state — `(empty)`, the example
+   name, the filename, or `<not saved>` — with a `•` marker when there
+   are unsaved edits. **Import FFmpeg…** opens a dialog where you can
+   paste a full `ffmpeg ...` command line; MediaMolder parses it (via
+   the same `compat/ffcli` package the `mediamolder convert-cmd` CLI
+   uses) and replaces the current canvas with the resulting graph.
+   Encoder options like `-crf`, `-preset`, `-tune`, `-profile:v`,
+   `-level`, `-g`, `-bf`, `-maxrate`, `-minrate`, `-bufsize`,
+   `-pix_fmt`, `-b:v`, `-b:a`, `-q:a`, `-x264-params` and `-x265-params`
+   are attached to the synthesised encoder node so the Inspector shows
+   the same rate control / quality settings you'd get from running the
+   original command. `-c:v copy` / `-c:a copy` produce a stream-copy
+   node instead of an encoder.
 
 ### Tips
 
 * **Auto layout** rearranges the nodes using a left-to-right Dagre layout
   whenever the graph gets messy.
+* The **View:** segmented control toggles the Palette, Inspector, and
+  Minimap on or off independently. Each choice persists in `localStorage`
+  (`mm.view.palette`, `mm.view.inspector`, `mm.view.minimap`).
+* The **Labels:** segmented control switches node labels between
+  *Verbose* (heading + sublabel) and *Compact* (heading only) so dense
+  graphs stay readable.
+* Every non-implicit node has a small pencil (✎) button in its header
+  (visible on hover or when selected). Clicking it selects that node and
+  force-opens the Inspector even if you had it hidden.
+* The node and edge tally lives in a small overlay at the **bottom-right
+  of the canvas** rather than in the toolbar.
 * `Backspace` / `Delete` removes the selected node or connection. The
   shortcut is ignored
   while you are typing in a form.
@@ -100,7 +138,10 @@ in-app help dialog.
 
 The Browse… buttons next to **Input → URL** and **Output → URL** open a
 modal file picker. It does *not* upload files anywhere — it just helps you
-type a correct local path.
+type a correct local path. (The toolbar's **Open…** / **Save** / **Save
+As…** buttons use the browser-native File System Access API where
+available, falling back to a `<input type=file>` / anchor download in
+Firefox and Safari.)
 
 * The left sidebar lists shortcuts for your home directory, the directory
   the binary was launched from, and the filesystem root.
@@ -146,9 +187,11 @@ expand the relevant subcategories automatically.
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│ Toolbar  [Example ▾] [Auto layout] [New] [Import]            │
-│          [Import FFmpeg command] [Export]                    │
-│          [Run] / [Stop] [Show log]                           │
+│ Toolbar  [New] [Open…] [Import FFmpeg…] [Graph: ▾]           │
+│          [Save] [Save As…] … [Auto layout]                   │
+│          [View: Palette·Inspector·Minimap]                   │
+│          [Labels: Verbose·Compact]                           │
+│          [Run] / [Stop] [Show log] [Help]                    │
 ├────────────┬─────────────────────────────────────┬───────────┤
 │            │                                     │           │
 │  Palette   │            Canvas                   │ Inspector │
@@ -156,7 +199,7 @@ expand the relevant subcategories automatically.
 │   filters, │    handles + edges)                 │   for the │
 │   codecs,  │                                     │  selected │
 │   processors)                                    │   node)   │
-│            │                                     │           │
+│            │                       [n nodes · m] │           │
 └────────────┴─────────────────────────────────────┴───────────┘
                                        ┌──────────────┐
                                        │  Run panel   │
@@ -167,6 +210,11 @@ expand the relevant subcategories automatically.
                                        └──────────────┘
 ```
 
+The **Palette** and **Inspector** columns can each be hidden via the
+toolbar's **View:** segmented control — the canvas expands to fill the
+freed space. The node/edge tally is rendered as a small overlay in the
+bottom-right of the canvas itself (not in the toolbar).
+
 ### Palette
 
 Populated at runtime from `GET /api/nodes`, which lists every libavfilter,
@@ -174,11 +222,54 @@ libavcodec encoder, demuxer/muxer, and registered Go processor available in
 the binary you are running. Drag any entry onto the canvas to spawn a
 configured node.
 
+Two segmented controls sit above the search box and tailor the palette to
+your audience:
+
+* **View — Common · All.** *Common* (the default) shows only a curated
+  shortlist of the encoders, filters, and processors most users reach for
+  (≈80 entries spanning the popular software + hardware video encoders,
+  the AAC / Opus / MP3 / FLAC / PCM audio encoders, the everyday geometry
+  / colour / text / audio filters, and every virtual source). *All* shows
+  every entry the binary knows about (~360 filters, ~150 encoders, every
+  registered processor) — useful for power users searching for an
+  exotic codec or filter. Free-text search always queries the full set
+  regardless of the toggle, so you never get stuck behind it. Each
+  subcategory in Common view also exposes a `Show all in this section…`
+  link that locally promotes one section to the full list without
+  affecting the others. The choice is persisted in `localStorage`
+  (`mm.palette.scope`).
+* **Names — Friendly · Library.** *Friendly* (the default) shows the
+  curated display label (`x264` instead of `libx264`, `Resize` instead of
+  `scale`, `Loudness normalise (EBU R128)` instead of `loudnorm`) on
+  every palette item, every graph node heading, and every Inspector
+  title. The canonical libavcodec / libavfilter name appears on the
+  muted second line so you can always identify what the runtime will
+  actually call. *Library* shows the canonical name everywhere — the
+  classic FFmpeg-native UI. The Inspector additionally renders the
+  canonical name in monospace beneath the heading whenever it differs
+  from the friendly label. The choice is persisted in `localStorage`
+  (`mm.palette.naming`) and dispatched as a `mm.palette.naming.changed`
+  custom event so every visible component re-renders in place.
+
+Search now matches the friendly label and any curated *aliases* in
+addition to the canonical name and description. For example, typing
+`h264` in either view jumps straight to `libx264`; typing `loudness`
+finds `loudnorm`; typing `webm` surfaces both `libvpx-vp9` and `libopus`.
+
+The curation table lives in
+[internal/gui/curation.go](../internal/gui/curation.go) and is locked
+against FFmpeg drift by `internal/gui/curation_test.go`
+(`TestCuratedNodesResolveToRealEntries`).
+
 ### Canvas
 
 * Each node exposes one source and one target handle per stream type
   (video / audio / subtitle / data). Handles only accept connections of the
   same type — incompatible drags are rejected.
+* Every non-implicit node has a small pencil (✎) button in its header
+  that selects the node and force-opens the Inspector — useful when the
+  Inspector panel has been hidden via the **View:** toggle. The button
+  fades in on hover or when the node is already selected.
 * Edges are colour-coded by stream type.
 * Hover or click any edge to open a popover with every technical property
   the editor can infer for the stream (see [Edge attributes](#edge-attributes)).
@@ -364,6 +455,7 @@ Start=5, Duration=30 already populated on the input node.
 
 ### Run panel
 
+![MediaMolder GUI Running](images/ABR_running.png)
 Click **Run** to execute the current graph. The frontend POSTs the job to
 `/api/run`, then opens an `EventSource` against `/api/events/{jobId}` to
 receive a stream of typed events:
@@ -393,7 +485,7 @@ explicitly to `127.0.0.1` (the default) if untrusted users share the host.
 | `GET`  | `/api/examples`               | List of bundled example job JSONs.                    |
 | `GET`  | `/examples/{file}`            | Static serve of the examples directory.               |
 | `POST` | `/api/validate`               | Parse + structurally validate a posted JobConfig.     |
-| `POST` | `/api/convert-cmd`            | Parse an FFmpeg command line into a JobConfig. Body `{command: string}`; response `{config: JobConfig}` on success or `422 {error: string}` on parse failure. Backed by `compat/ffcli.Parse`. Used by the toolbar's **Import FFmpeg command** dialog. |
+| `POST` | `/api/convert-cmd`            | Parse an FFmpeg command line into a JobConfig. Body `{command: string}`; response `{config: JobConfig}` on success or `422 {error: string}` on parse failure. Backed by `compat/ffcli.Parse`. Used by the toolbar's **Import FFmpeg…** dialog. |
 | `POST` | `/api/run`                    | Start a run; returns `{job_id}`.                      |
 | `POST` | `/api/cancel/{jobId}`         | Cancel an in-flight run.                              |
 | `GET`  | `/api/events/{jobId}`         | Server-Sent Events stream for the run.                |

@@ -1,0 +1,31 @@
+{
+  "schema_version": "1.0",
+  "description": "BSF chain on output (Wave 3 #13). Stream-copies BBB_10sec.mp4 -> MPEG-TS, applying the canonical h264_mp4toannexb,h264_redundant_pps chain that every MP4-to-MPEG-TS pipeline needs to convert AVCC NAL prefixes to Annex-B start codes and inject redundant PPS for transport-stream resilience. Spec is parsed by libavcodec av_bsf_list_parse_str.",
+  "inputs": [
+    {
+      "id": "in0",
+      "url": "{{input}}",
+      "streams": [
+        { "input_index": 0, "type": "video", "track": 0 },
+        { "input_index": 0, "type": "audio", "track": 0 }
+      ]
+    }
+  ],
+  "graph": {
+    "nodes": [],
+    "edges": [
+      { "from": "in0:v:0", "to": "out0:v", "type": "video" },
+      { "from": "in0:a:0", "to": "out0:a", "type": "audio" }
+    ]
+  },
+  "outputs": [
+    {
+      "id": "out0",
+      "url": "{{output}}",
+      "format": "mpegts",
+      "codec_video": "copy",
+      "codec_audio": "copy",
+      "bsf_video": "h264_mp4toannexb,h264_redundant_pps"
+    }
+  ]
+}

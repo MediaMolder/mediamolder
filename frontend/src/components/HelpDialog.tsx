@@ -40,16 +40,17 @@ export function HelpDialog({ open, onClose }: Props) {
             </li>
           </ol>
 
-          <h4>2. Load examples or import existing JSON</h4>
+          <h4>2. Load examples or open existing JSON</h4>
           <ul>
             <li>
-              Pick a sample from the <strong>Example</strong> dropdown to learn from
+              Pick a sample from the <strong>Graph</strong> dropdown to learn from
               working pipelines.
             </li>
             <li>
-              Use <strong>Import</strong> to load a job JSON file from disk. Use{' '}
-              <strong>Export</strong> to save the current graph as JSON (compatible with
-              <code>mediamolder run job.json</code>).
+              Use <strong>Open…</strong> to load a job JSON file from disk. Use{' '}
+              <strong>Save</strong> to write the current graph back to the same file
+              (or <strong>Save As…</strong> to choose a new path). The exported JSON
+              is compatible with <code>mediamolder run job.json</code>.
             </li>
             <li>
               <strong>Auto layout</strong> rearranges nodes left-to-right using dagre.

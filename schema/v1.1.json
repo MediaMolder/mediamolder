@@ -28,7 +28,9 @@
       "items": { "$ref": "#/$defs/output" }
     },
     "global_options": { "$ref": "#/$defs/global_options" },
-    "copy_ts": { "type": "boolean", "description": "Preserve the original demuxer timestamps end-to-end instead of rebasing every input to PTS 0. Mirrors ffmpeg's global -copyts: suppresses the demuxer-side ts_offset shift that normally accompanies -ss, and changes the meaning of any output-side -ss / -to (in output.options) to absolute timeline values rather than offsets from the input's start. Required for accurate broadcast / HLS PTS handling." }
+    "copy_ts": { "type": "boolean", "description": "Preserve the original demuxer timestamps end-to-end instead of rebasing every input to PTS 0. Mirrors ffmpeg's global -copyts: suppresses the demuxer-side ts_offset shift that normally accompanies -ss, and changes the meaning of any output-side -ss / -to (in output.options) to absolute timeline values rather than offsets from the input's start. Required for accurate broadcast / HLS PTS handling." },
+    "start_at_zero": { "type": "boolean", "description": "Modulates copy_ts. When true, re-enables the demuxer-side ts_offset shift even under copy_ts so the first kept packet still anchors at PTS 0 while later timing is preserved. Mirrors ffmpeg's global -start_at_zero (fftools/ffmpeg_demux.c L486). Requires copy_ts=true." },
+    "filter_complex_threads": { "type": "integer", "minimum": 0, "description": "Pipeline-wide cap on threads per filter graph. Mirrors ffmpeg's global -filter_complex_threads. Written to AVFilterGraph.nb_threads. 0 leaves libavfilter's default in place. Per-node `threads` overrides this." }
   },
   "$defs": {
     "input": {
@@ -38,9 +40,28 @@
       "properties": {
         "id": { "type": "string", "minLength": 1 },
         "url": { "type": "string", "minLength": 1 },
-        "kind": { "type": "string", "enum": ["file", "lavfi"], "description": "How to open the input. \"file\" (default) probes the URL with libavformat. \"lavfi\" routes through the lavfi virtual demuxer (FFmpeg's -f lavfi); the URL is then a filtergraph spec such as 'anullsrc=r=48000:cl=stereo' or 'color=black:s=1920x1080:r=30'." },
+        "kind": { "type": "string", "enum": ["file", "lavfi", "raw", "concat"], "description": "How to open the input. \"file\" (default) probes the URL with libavformat. \"lavfi\" routes through the lavfi virtual demuxer. \"raw\" forces a rawvideo / PCM demuxer (requires format + geometry/audio params). \"concat\" opens an inline concat_list (or an existing listfile pointed to by url) via libavformat's concat demuxer." },
+        "format": { "type": "string", "description": "Force libavformat demuxer name (mirrors ffmpeg `-f FMT`). Required when kind=\"raw\". Common values: rawvideo, s16le, image2, mpegts, concat." },
+        "framerate": { "type": "number", "minimum": 0, "description": "Frame rate for unframed/raw video and image2 sequences (mirrors `-framerate`). Pushed to the demuxer as `framerate`." },
+        "pixel_format": { "type": "string", "description": "Planar layout of unframed/raw video frames (mirrors `-pix_fmt`). Required when kind=\"raw\" + format=rawvideo." },
+        "video_size": { "type": "string", "description": "Frame size of unframed/raw video as WxH or a libavutil named preset (hd720/vga/ntsc/...). Mirrors `-video_size` / `-s`." },
+        "sample_rate": { "type": "integer", "minimum": 0, "description": "Sample rate (Hz) of unframed/raw PCM audio (mirrors `-ar`). Required when kind=\"raw\" + format names a PCM demuxer." },
+        "channels": { "type": "integer", "minimum": 0, "description": "Channel count of unframed/raw PCM audio (mirrors `-ac`). Required when kind=\"raw\" + format names a PCM demuxer." },
+        "sample_fmt": { "type": "string", "description": "Optional libavutil sample format for audio raw demuxers that accept it (mirrors input-side `-sample_fmt`)." },
+        "concat_list": { "type": "array", "items": { "$ref": "#/$defs/concat_entry" }, "description": "In-config concat playlist used when kind=\"concat\". Each entry is one row of libavformat's concat-demuxer listfile grammar; the runtime serialises into a temp file at open time." },
+        "accurate_seek": { "type": "boolean", "description": "Toggle accurate (decode-and-discard until target PTS) vs fast (snap-to-keyframe) seeking when -ss is set. Mirrors `-accurate_seek` / `-noaccurate_seek`. Default true." },
+        "seek_timestamp": { "type": "boolean", "description": "When true, interpret `-ss` as an absolute container timestamp rather than an offset from start_time (mirrors `-seek_timestamp 1`)." },
+        "thread_queue_size": { "type": "integer", "minimum": 0, "description": "Demuxer input packet queue depth in frames (mirrors `-thread_queue_size`)." },
+        "protocol_whitelist": { "type": "array", "items": { "type": "string", "minLength": 1 }, "description": "Restrict which libavformat protocols this input may dereference (mirrors `-protocol_whitelist`). Joined with commas before being pushed to the demuxer." },
+        "pattern_type": { "type": "string", "enum": ["", "none", "sequence", "glob", "glob_sequence"], "description": "Image-sequence matcher used by the image2 demuxer (mirrors `-pattern_type`). Empty = libavformat default (\"glob_sequence\" autodetect)." },
+        "subtitle_charenc": { "type": "string", "description": "Source character encoding for text-subtitle decoders (mirrors per-input `-sub_charenc`). Rejected at decoder-open when applied to a bitmap-subtitle stream." },
         "map_metadata": { "type": "boolean", "description": "When true, copy this input's container-level metadata onto every output that does not set its own `metadata`. Mirrors ffmpeg `-map_metadata IDX`. Multiple inputs merge in declaration order; last writer wins per key." },
         "map_chapters": { "type": "boolean", "description": "When true, copy this input's chapter table onto every output that does not set its own `chapters`. Mirrors ffmpeg `-map_chapters IDX`. First input with map_chapters=true wins (single-source semantics)." },
+        "stream_loop": { "type": "integer", "minimum": -1, "description": "Number of additional times the demuxer rewinds to the start and re-emits packets after EOF. 0 = no loop, N>0 = play N+1 times total, -1 = infinite. Mirrors ffmpeg per-input `-stream_loop N` (fftools/ffmpeg_demux.c::seek_to_start). On rewind, the runtime captures `(max_pts - min_pts)` of the previous iteration and adds it to every subsequent packet's PTS/DTS so timestamps remain monotone. Canonical use case: a 5s logo PNG looped indefinitely against a finite main video with `-shortest` ending the output." },
+        "itsoffset": { "type": "number", "description": "Per-input timestamp offset in seconds (may be negative). Added to every packet's PTS/DTS at demux time. Mirrors ffmpeg per-input `-itsoffset T` (stored on InputFile.input_ts_offset; applied via `pkt->pts += av_rescale_q(ts_offset, AV_TIME_BASE_Q, pkt->time_base)` in ts_fixup). Positive values delay the input on the global timeline; negative values advance it. Composes additively with the implicit `-ss` ts_offset (matches FFmpeg's `f->ts_offset = o->input_ts_offset - timestamp`). Sub-millisecond resolution preserved via AV_TIME_BASE microseconds." },
+        "read_rate": { "type": "number", "minimum": 0, "description": "Pace packet reads to (read_rate × realtime). 0 = unpaced (default); 1.0 mirrors ffmpeg `-re` (read at native frame rate, the canonical live-restream throttle); 2.0 reads at 2× realtime. Implementation mirrors fftools/ffmpeg_demux.c::readrate_sleep: per packet, the runtime sleeps for `pts - (stream_ts_offset + initial_burst + wallclock_elapsed × read_rate)` microseconds when positive. Required for live-restream / RTMP / SRT egress and for any HLS/DASH push that relies on segment walltime equalling media time." },
+        "read_rate_initial_burst": { "type": "number", "minimum": 0, "description": "Seconds of media time read unpaced at the start of the input. Mirrors ffmpeg `-readrate_initial_burst SECS`; defaults to 0.5s when read_rate is non-zero and this field is unset; ignored when read_rate is zero. Useful for filling a downstream segmenter's lookahead before the throttle engages." },
+        "read_rate_catchup": { "type": "number", "minimum": 0, "description": "Multiplier used to recover from a pacing lag. Mirrors ffmpeg `-readrate_catchup`; must be >= read_rate when both are set. When the demuxer falls behind by more than 0.3s of media time the runtime switches to pacing at this higher rate until the lag is gone. Defaults to read_rate × 1.05 when unset and read_rate is non-zero; ignored when read_rate is zero." },
         "streams": {
           "type": "array",
           "items": { "$ref": "#/$defs/stream_select" }
@@ -61,7 +82,23 @@
           "type": "string",
           "enum": ["video", "audio", "subtitle", "data"]
         },
-        "track": { "type": "integer", "minimum": 0 }
+        "track": { "type": "integer", "minimum": 0 },
+        "all": { "type": "boolean", "default": false },
+        "optional": { "type": "boolean", "default": false },
+        "negate": { "type": "boolean", "default": false },
+        "program": { "type": "integer", "minimum": 0, "default": 0 }
+      }
+    },
+    "concat_entry": {
+      "type": "object",
+      "required": ["file"],
+      "additionalProperties": false,
+      "properties": {
+        "file": { "type": "string", "minLength": 1, "description": "Path or URL of the segment. Quoted with single quotes in the serialised concat listfile; embedded apostrophes are rejected at validate time." },
+        "duration": { "type": "number", "minimum": 0, "description": "Optional segment duration in seconds (mirrors concat-demuxer `duration` directive)." },
+        "inpoint": { "type": "number", "minimum": 0, "description": "Optional segment in-point in seconds." },
+        "outpoint": { "type": "number", "minimum": 0, "description": "Optional segment out-point in seconds. Must be > inpoint when both are set." },
+        "metadata": { "type": "object", "additionalProperties": { "type": "string" }, "description": "Optional key=value pairs attached to every packet emitted from this segment via AV_PKT_DATA_STRINGS_METADATA." }
       }
     },
     "graph": {
@@ -87,7 +124,7 @@
         "id": { "type": "string", "minLength": 1 },
         "type": {
           "type": "string",
-          "enum": ["filter", "encoder", "source", "sink", "go_processor"]
+          "enum": ["filter", "encoder", "source", "sink", "go_processor", "metadata_reader", "metadata_writer", "filter_source", "filter_sink"]
         },
         "filter": { "type": "string" },
         "processor": {
@@ -97,6 +134,12 @@
         "params": {
           "type": "object",
           "additionalProperties": true
+        },
+        "threads": { "type": "integer", "minimum": 0 },
+        "output_media_type": {
+          "type": "string",
+          "enum": ["video", "audio", "subtitle", "data"],
+          "description": "Declared output media type. Required for cross-media-type filters (showwavespic, showspectrumpic, showvolume, ...) where the output type cannot be inferred from the inbound edge type. Auto-filled from a curated registry when omitted."
         },
         "error_policy": { "$ref": "#/$defs/error_policy" }
       },
@@ -116,7 +159,7 @@
         "to": { "type": "string", "minLength": 1 },
         "type": {
           "type": "string",
-          "enum": ["video", "audio", "subtitle", "data"]
+          "enum": ["video", "audio", "subtitle", "data", "metadata"]
         }
       }
     },
@@ -139,19 +182,59 @@
         "encoder_params_subtitle": { "type": "object", "additionalProperties": true },
         "bsf_video": { "type": "string" },
         "bsf_audio": { "type": "string" },
+        "bsf_subtitle": { "type": "string" },
         "max_frames_video": { "type": "integer", "minimum": 0, "description": "Stop muxing after N video packets. 0 = unlimited. Mirrors ffmpeg -frames:v / -vframes; required for extract-frame, tile-thumbnails, scene-image patterns." },
         "max_frames_audio": { "type": "integer", "minimum": 0, "description": "Stop muxing after N audio packets. 0 = unlimited. Mirrors ffmpeg -frames:a / -aframes." },
         "fps_mode": { "type": "string", "enum": ["", "passthrough", "vfr", "cfr", "drop"], "description": "Per-output video frame-rate enforcement. Mirrors ffmpeg -fps_mode (and the legacy -vsync alias rewritten by compat/ffcli). passthrough/empty = no change; vfr = drop non-monotonic frames; cfr = renumber to constant 1/framerate intervals, duplicating frames into gaps and dropping frames that arrive too soon; drop = like vfr but also drops near-duplicates within half a frame duration of the previous emission." },
         "audio_sync": { "type": "integer", "minimum": 0, "description": "Per-output audio resync compensation. Mirrors the legacy ffmpeg -async N flag (removed from the FFmpeg 8.0 CLI in favour of -af aresample=async=N). 0 = off; 1 = pad/trim the start so the first sample lands at PTS 0 (rendered as aresample=async=1:first_pts=0); N>1 = continuous soft compensation up to N samples/sec (rendered as aresample=async=N). Injected as an aresample filter node in front of the audio encoder." },
         "shortest": { "type": "boolean", "description": "Stop muxing as soon as the shortest input stream feeding this output ends. Mirrors ffmpeg -shortest (per-output scope, see fftools/ffmpeg_mux_init.c sync-queue setup). The runtime captures the PTS at which the first stream closes and stops emitting on every other stream of the same output." },
         "max_file_size": { "type": "integer", "minimum": 0, "description": "Cap the encoded output at this many bytes. Mirrors ffmpeg -fs SIZE: before each WritePacket the runtime queries avio_tell on the muxer's IO context and stops with EOF (writing a clean trailer) once the limit is reached. 0 = unlimited." },
+        "muxdelay": { "type": "number", "minimum": 0, "description": "Maximum demux-decode delay the muxer is allowed to buffer ahead, in seconds. Mirrors ffmpeg -muxdelay (per-output float, fftools/ffmpeg_mux_init.c L3447 — written as oc->max_delay = muxdelay * AV_TIME_BASE). FFmpeg default is 0.7s; 0 leaves the muxer default unchanged." },
+        "muxpreload": { "type": "number", "minimum": 0, "description": "Initial demux-decode delay (pre-roll), in seconds. Mirrors ffmpeg -muxpreload (per-output float, fftools/ffmpeg_mux_init.c L3444 — emitted into the muxer AVDict as preload = muxpreload * AV_TIME_BASE). Most muxers ignore this; the historic consumer is libavformat/mpegenc.c. 0 leaves the default unchanged." },
+        "avoid_negative_ts": { "type": "string", "enum": ["", "auto", "disabled", "make_non_negative", "make_zero"], "description": "Libavformat's automatic timestamp shift policy at the muxer (AVFormatContext.avoid_negative_ts; libavformat/options_table.h L95-99). Mirrors ffmpeg -avoid_negative_ts. auto = shift only when the muxer requires it (FFmpeg default); disabled = pass through; make_non_negative = shift just enough to keep ts >= 0; make_zero = shift so the first ts is exactly 0. Required for clean MP4/MOV writes when input PTS are negative (typical with -ss + -copyts)." },
+        "vn": { "type": "boolean", "description": "Drop every video stream from this output's muxer. Mirrors ffmpeg -vn (OPT_OUTPUT half of fftools/ffmpeg_opt.c L1977). Filtered before expandImplicitEncoders so no implicit video encoder is created." },
+        "an": { "type": "boolean", "description": "Drop every audio stream from this output's muxer. Mirrors ffmpeg -an (fftools/ffmpeg_opt.c L2078)." },
+        "sn": { "type": "boolean", "description": "Drop every subtitle stream from this output's muxer. Mirrors ffmpeg -sn (fftools/ffmpeg_opt.c L2115)." },
+        "dn": { "type": "boolean", "description": "Drop every data stream from this output's muxer. Mirrors ffmpeg -dn (fftools/ffmpeg_opt.c L2187)." },
         "metadata": { "type": "object", "additionalProperties": { "type": "string" }, "description": "Container-level key/value metadata written into the output (`-metadata key=value`). Replaces any metadata mapped from inputs via `input.map_metadata`." },
         "streams": { "type": "array", "items": { "$ref": "#/$defs/stream_spec" }, "description": "Per-stream metadata + disposition overrides. Mirrors ffmpeg `-metadata:s:<type>:<idx> key=value` and `-disposition:s:<type>:<idx> flags`. Each entry addresses one output stream by media type and 0-based index within that type, counting in the order streams were added to the muxer (same convention as `check_stream_specifier` for `s:<type>:<idx>`). Per-stream codec/bitrate is intentionally not exposed here — model it with explicit encoder graph nodes (see testdata/examples/35_abr_ladder.json)." },
         "chapters": { "type": "array", "items": { "$ref": "#/$defs/chapter" }, "description": "Explicit chapter table. Replaces any chapters mapped from inputs via `input.map_chapters`. Container must support chapters (matroska, mp4, ogg, ffmetadata, ...)." },
+        "attachments": { "type": "array", "items": { "$ref": "#/$defs/attachment" }, "description": "Files muxed into the container as AVMEDIA_TYPE_ATTACHMENT streams (matroska / mkv / webm only). Mirrors FFmpeg `-attach FILE`." },
+        "kind": { "type": "string", "enum": ["", "file", "tee"], "description": "Output discriminator. '' / 'file' open a single muxer at `url`; 'tee' uses libavformat's tee muxer to fan one encoded stream out to N targets. When 'tee', `targets` is required and `url` / `format` are ignored." },
+        "targets": { "type": "array", "items": { "$ref": "#/$defs/tee_target" }, "description": "Slaves of a tee output (only valid when kind='tee'). Mirrors the FFmpeg `-f tee \"[opt=val]url|[opt=val]url\"` slaves grammar." },
+        "pass": { "type": "integer", "minimum": 0, "maximum": 3, "description": "Two-pass video encoding bit-field. 0 = single-pass (default); 1 = analysis pass (-pass 1, AV_CODEC_FLAG_PASS1); 2 = final pass (-pass 2, AV_CODEC_FLAG_PASS2); 3 = both bits set. The job is run twice by the caller: once with pass=1, once with pass=2, against the same passlogfile prefix. Honoured only on video encoders." },
+        "passlogfile": { "type": "string", "description": "Per-stream statistics file prefix for two-pass video encoding. Rendered as `<prefix>-<stream-idx>.log`. Empty defaults to `ffmpeg2pass`. Honoured only when `pass != 0`. Mirrors FFmpeg `-passlogfile`." },
+        "loudnorm_pass": { "type": "integer", "minimum": 0, "maximum": 2, "description": "Two-pass EBU R128 loudnorm shuttle. 0 = single-pass (default); 1 = analysis (libavfilter/af_loudnorm.c writes input_i / input_tp / input_lra / input_thresh / target_offset to a JSON stats file via print_format=json + stats_file); 2 = apply (the runtime reads pass-1 stats and injects measured_I / measured_TP / measured_LRA / measured_thresh / offset into the same loudnorm node). The job is run twice by the caller against the same loudnorm_statsfile prefix. FFmpeg has no flag for this — every documented two-pass loudnorm recipe wires it by hand via stderr-scraping." },
+        "loudnorm_statsfile": { "type": "string", "description": "Prefix for the per-loudnorm-node JSON stats file rendered as `<prefix>-<idx>.json` where `<idx>` is the per-run loudnorm-node ordinal. Empty defaults to `mm-loudnorm`. Honoured only when `loudnorm_pass != 0`." },
+        "force_key_frames": { "type": "string", "description": "FFmpeg `-force_key_frames` spec. Three grammars: `expr:EXPR` (libavutil expression evaluated per video frame; vars n / n_forced / prev_forced_n / prev_forced_t / t — canonical idiom `expr:gte(t,n_forced*2)` for a 2 s GOP); `source` (copy keyframes from source); or comma-separated time list (`3.0,7.5,10.25`, float seconds). Required for HLS / DASH segmenters. Honoured only on video encoders." },
+        "hls": { "$ref": "#/$defs/hls_options", "description": "Typed HLS muxer options. Only valid when `format=\"hls\"`. Promoted from the generic `options` AVDict bag; on key collision the typed field wins. Mirrors `libavformat/hlsenc.c`." },
+        "dash": { "$ref": "#/$defs/dash_options", "description": "Typed DASH muxer options. Only valid when `format=\"dash\"`. Promoted from the generic `options` AVDict bag; on key collision the typed field wins. Mirrors `libavformat/dashenc.c`." },
+        "color": { "$ref": "#/$defs/color_metadata", "description": "Per-stream color metadata (range, primaries, transfer, matrix, chroma_location). Names are the canonical libavutil av_color_*_name values; unknown names are rejected at validate time. Mirrors ffmpeg -color_range / -color_primaries / -color_trc / -colorspace / -chroma_sample_location." },
+        "hdr": { "$ref": "#/$defs/hdr_metadata", "description": "SMPTE ST 2086 mastering display + CTA-861.3 content light level metadata. Requires an HDR-capable codec (hevc/av1/vp9 or copy) and container (mp4/mov/matroska/webm/mpegts), and color.transfer ∈ {smpte2084, arib-std-b67} when color is also set." },
+        "sar": { "type": "string", "description": "Output sample aspect ratio (`setsar` shorthand / FFmpeg per-encoder SAR). Forms: `A:B`, `A/B`, or decimal. Mutually exclusive with `dar`. Empty leaves the encoder default unchanged." },
+        "dar": { "type": "string", "description": "Output display aspect ratio (`setdar` shorthand / FFmpeg `-aspect`). Forms: `A:B`, `A/B`, or decimal. Resolved to SAR using the encoder's width/height: SAR = (DAR_num*H)/(DAR_den*W). Mutually exclusive with `sar`." },
+        "encoder_time_base": { "type": "string", "description": "Encoder AVCodecContext.time_base override (mirrors per-stream `-enc_time_base`). Accepts `\"demux\"`, `\"filter\"`, or `\"N/D\"` rational. Subtitle outputs reject the field at validate time." },
+        "field_order": { "type": "string", "enum": ["", "progressive", "tt", "bb", "tb", "bt"], "description": "Encoder AVCodecContext.field_order (libavcodec/defs.h::AVFieldOrder). Empty leaves AV_FIELD_UNKNOWN. Mirrors `-field_order`." },
+        "interlaced_encode": { "type": "boolean", "description": "Toggles AV_CODEC_FLAG_INTERLACED_DCT|INTERLACED_ME on the encoder context (avcodec.h L310/L331). Required for broadcast 1080i workflows. Incompatible with `field_order=progressive`." },
         "options": {
           "type": "object",
           "additionalProperties": true
         }
+      }
+    },
+    "tee_target": {
+      "type": "object",
+      "required": ["url"],
+      "additionalProperties": false,
+      "properties": {
+        "url": { "type": "string", "minLength": 1 },
+        "format": { "type": "string", "description": "Force the slave's container (`f=`)." },
+        "select": { "type": "string", "description": "Comma-separated FFmpeg stream specifiers (`v`, `a:0`, ...). Empty = all streams." },
+        "bsfs": { "type": "string", "description": "Per-slave bitstream-filter chain." },
+        "onfail": { "type": "string", "enum": ["", "abort", "ignore"], "description": "Slave-failure policy." },
+        "use_fifo": { "type": "boolean", "description": "Wrap slave in libavformat's fifo muxer for buffered async writes." },
+        "fifo_options": { "type": "string", "description": "`;`-separated key=value forwarded to the fifo muxer when use_fifo is set." },
+        "options": { "type": "object", "additionalProperties": true, "description": "Free-form additional `[opt=val]` pairs for obscure tee-slave AVOptions." }
       }
     },
     "chapter": {
@@ -166,6 +249,16 @@
         "metadata": { "type": "object", "additionalProperties": { "type": "string" } }
       }
     },
+    "attachment": {
+      "type": "object",
+      "required": ["path"],
+      "additionalProperties": false,
+      "properties": {
+        "path": { "type": "string", "description": "Filesystem path of the file to embed." },
+        "filename": { "type": "string", "description": "Stream `filename` metadata. Defaults to basename of `path`." },
+        "mimetype": { "type": "string", "description": "Stream `mimetype` metadata, e.g. `application/x-truetype-font`, `image/png`." }
+      }
+    },
     "stream_spec": {
       "type": "object",
       "required": ["type", "index"],
@@ -174,7 +267,16 @@
         "type": { "type": "string", "enum": ["v", "a", "s", "d"], "description": "Media type letter: v=video, a=audio, s=subtitle, d=data." },
         "index": { "type": "integer", "minimum": 0, "description": "0-based index within the media type, matching FFmpeg's `s:<type>:<idx>` resolution rule." },
         "metadata": { "type": "object", "additionalProperties": { "type": "string" }, "description": "Per-stream key/value metadata (e.g. `language=eng`, `title=Director Commentary`). Mirrors `-metadata:s:<type>:<idx>`." },
-        "disposition": { "type": "string", "description": "`+`-separated list of AV_DISPOSITION_* flag names (e.g. `default`, `default+forced`, `hearing_impaired`). Mirrors `-disposition:s:<type>:<idx>`. Empty string leaves the disposition untouched." }
+        "disposition": { "type": "string", "description": "`+`-separated list of AV_DISPOSITION_* flag names (e.g. `default`, `default+forced`, `hearing_impaired`). Mirrors `-disposition:s:<type>:<idx>`. Empty string leaves the disposition untouched." },
+        "encoder": { "$ref": "#/$defs/encoder_override", "description": "Per-stream encoder override applied on top of Output.codec_video/audio/subtitle and Output.encoder_params_*. Mirrors FFmpeg's `-<key>:<type>:<idx>` per-stream encoder option specifier (e.g. `-b:v:0 5M -b:v:1 2.5M`)." }
+      }
+    },
+    "encoder_override": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "codec": { "type": "string", "description": "Encoder name. Empty leaves Output.codec_* in place." },
+        "options": { "type": "object", "description": "Sparse AVOption map overlaid on Output.encoder_params_*. Same value shapes as encoder_params_video." }
       }
     },
     "global_options": {
@@ -199,6 +301,97 @@
         },
         "max_retries": { "type": "integer", "minimum": 0 },
         "fallback_node": { "type": "string" }
+      }
+    },
+    "color_metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "range": { "type": "string", "enum": ["", "tv", "mpeg", "limited", "pc", "jpeg", "full"] },
+        "primaries": { "type": "string" },
+        "transfer": { "type": "string" },
+        "space": { "type": "string" },
+        "chroma_location": { "type": "string" }
+      }
+    },
+    "hdr_metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mastering_display": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "display_primaries_rx": { "type": "integer", "minimum": 0, "maximum": 50000 },
+            "display_primaries_ry": { "type": "integer", "minimum": 0, "maximum": 50000 },
+            "display_primaries_gx": { "type": "integer", "minimum": 0, "maximum": 50000 },
+            "display_primaries_gy": { "type": "integer", "minimum": 0, "maximum": 50000 },
+            "display_primaries_bx": { "type": "integer", "minimum": 0, "maximum": 50000 },
+            "display_primaries_by": { "type": "integer", "minimum": 0, "maximum": 50000 },
+            "white_point_x": { "type": "integer", "minimum": 0, "maximum": 50000 },
+            "white_point_y": { "type": "integer", "minimum": 0, "maximum": 50000 },
+            "min_luminance": { "type": "integer", "minimum": 0, "description": "cd/m^2 * 10000." },
+            "max_luminance": { "type": "integer", "minimum": 0, "description": "cd/m^2 * 10000." }
+          }
+        },
+        "content_light_level": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "max_cll": { "type": "integer", "minimum": 0, "description": "Per-frame peak luminance over the whole stream (cd/m^2)." },
+            "max_fall": { "type": "integer", "minimum": 0, "description": "Per-frame frame-average maximum luminance over the whole stream (cd/m^2)." }
+          }
+        },
+        "dovi": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["profile"],
+          "properties": {
+            "profile": { "type": "integer", "enum": [4, 5, 7, 8, 9, 10], "description": "Dolby Vision profile (libavutil/dovi_meta.h)." },
+            "level": { "type": "integer", "minimum": 0, "maximum": 13 },
+            "rpu_present": { "type": "boolean", "description": "RPU NAL units present in bitstream (default true)." },
+            "el_present": { "type": "boolean", "description": "Enhancement-layer present (profiles 4 and 7)." },
+            "bl_present": { "type": "boolean", "description": "Base-layer present (default true)." },
+            "bl_compatibility_id": { "type": "integer", "enum": [0, 1, 2, 4], "description": "Cross-compatibility hint: 0=none, 1=HDR10, 2=SDR/BT.709, 4=HLG." }
+          }
+        }
+      }
+    },
+    "hls_options": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "time": { "type": "number", "minimum": 0, "description": "Target segment duration in seconds (`hls_time`)." },
+        "init_time": { "type": "number", "minimum": 0, "description": "Init segment duration in seconds (`hls_init_time`)." },
+        "list_size": { "type": "integer", "minimum": 0, "description": "Maximum entries kept in the playlist (`hls_list_size`); 0 keeps all." },
+        "playlist_type": { "type": "string", "enum": ["", "event", "vod"], "description": "`hls_playlist_type`. `vod` writes EXT-X-ENDLIST on close." },
+        "segment_type": { "type": "string", "enum": ["", "mpegts", "fmp4"], "description": "`hls_segment_type`. `fmp4` switches to CMAF-style fragmented MP4 segments." },
+        "segment_filename": { "type": "string", "description": "Printf-style template for segment files (`hls_segment_filename`)." },
+        "fmp4_init_filename": { "type": "string", "description": "Init segment file name when `segment_type=\"fmp4\"` (`hls_fmp4_init_filename`)." },
+        "start_number": { "type": "integer", "minimum": 0, "description": "First sequence number in the playlist (`start_number`)." },
+        "master_pl_name": { "type": "string", "description": "Master playlist filename (`master_pl_name`); required for ABR ladders." },
+        "var_stream_map": { "type": "string", "description": "Variant-stream mapping (`var_stream_map`), e.g. `\"v:0,a:0 v:1,a:0\"`. Requires master_pl_name." },
+        "flags": { "type": "array", "items": { "type": "string" }, "description": "List of `hls_flags` token names; joined with `+` before being passed to libavformat." }
+      }
+    },
+    "dash_options": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "seg_duration": { "type": "number", "minimum": 0, "description": "Target segment duration in seconds (`seg_duration`)." },
+        "frag_duration": { "type": "number", "minimum": 0, "description": "Target fragment duration in seconds (`frag_duration`)." },
+        "window_size": { "type": "integer", "minimum": 0, "description": "Maximum segments kept in the manifest (`window_size`); 0 keeps all." },
+        "extra_window_size": { "type": "integer", "minimum": 0, "description": "Extra segments retained on disk past `window_size` (`extra_window_size`)." },
+        "init_seg_name": { "type": "string", "description": "Init segment file-name template (`init_seg_name`)." },
+        "media_seg_name": { "type": "string", "description": "Media segment file-name template (`media_seg_name`)." },
+        "single_file": { "type": "boolean", "description": "Use SegmentBase single-file output (`single_file`)." },
+        "use_template": { "type": "boolean", "description": "Emit `<SegmentTemplate>` (`use_template`); unset = libavformat default (true)." },
+        "use_timeline": { "type": "boolean", "description": "Emit `<SegmentTimeline>` (`use_timeline`); unset = libavformat default (true)." },
+        "streaming": { "type": "boolean", "description": "Low-latency progressive fragment writes (`streaming`)." },
+        "adaptation_sets": { "type": "string", "description": "Manual adaptation-set spec (`adaptation_sets`), e.g. `\"id=0,streams=v id=1,streams=a\"`." },
+        "hls_playlist": { "type": "boolean", "description": "Also emit HLS .m3u8 playlists alongside the DASH manifest (`hls_playlist`); the CMAF dual-pack mode." },
+        "ldash": { "type": "boolean", "description": "Enable low-latency DASH (`ldash`)." },
+        "flags": { "type": "array", "items": { "type": "string" }, "description": "List of `dash_flags` token names; joined with `+` before being passed to libavformat." }
       }
     }
   }

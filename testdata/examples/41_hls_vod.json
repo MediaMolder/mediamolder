@@ -1,0 +1,31 @@
+{
+  "schema_version": "1.0",
+  "description": "Single-rendition HLS VOD output exercising typed Output.HLS fields (Wave 3 #12). 1 s segments, fmp4/CMAF segment type, deletion of stale segments, EXT-X-ENDLIST on close (playlist_type=vod).",
+  "inputs": [
+    {
+      "id": "in0",
+      "url": "{{input}}",
+      "streams": [
+        { "input_index": 0, "type": "video", "track": 0 },
+        { "input_index": 0, "type": "audio", "track": 0 }
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "id": "out0",
+      "url": "{{output}}",
+      "format": "hls",
+      "codec_video": "libx264",
+      "codec_audio": "aac",
+      "force_key_frames": "expr:gte(t,n_forced*1)",
+      "hls": {
+        "time": 1,
+        "playlist_type": "vod",
+        "segment_type": "fmp4",
+        "fmp4_init_filename": "init.mp4",
+        "flags": ["independent_segments"]
+      }
+    }
+  ]
+}

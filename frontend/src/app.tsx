@@ -18,7 +18,7 @@ import '@xyflow/react/dist/style.css';
 
 import { Palette } from './components/Palette';
 import { Inspector } from './components/Inspector';
-import { MMNode, type MMNodeRunData } from './components/MMNode';
+import { MMNode, type MMNodeRunData, INSPECTOR_OPEN_EVENT } from './components/MMNode';
 import { MMEdge } from './components/MMEdge';
 import { RunPanel } from './components/RunPanel';
 import { RunDock } from './components/RunDock';
@@ -47,6 +47,30 @@ interface ExampleEntry {
   url: string;
 }
 
+/* Identity of the graph currently being edited. Drives the "Graph: …"
+ * toolbar slot and the Save/Save As… behaviour.
+ *  - empty:   the blank starter graph (just opened the GUI, or chose New)
+ *  - example: loaded from /examples — read-only origin, edits flip to 'unsaved'
+ *  - file:    opened from disk or successfully Saved/Save-As’d to disk;
+ *             carries an optional FileSystemFileHandle so subsequent Save
+ *             writes back to the same path silently
+ *  - unsaved: user edits to an example, or a fresh New graph that has had
+ *             nodes added — there is no on-disk anchor yet */
+type GraphIdentity =
+  | { kind: 'empty' }
+  | { kind: 'example'; url: string; name: string }
+  | { kind: 'file'; name: string; handle?: FileSystemFileHandle }
+  | { kind: 'unsaved' };
+
+/* File System Access API — feature-detected at call time. The TS lib does
+ * not yet include these globals across all targets, so we cast through
+ * Window. Fallbacks (anchor download, <input type=file>) cover Firefox /
+ * Safari / older Edge. */
+interface FsaWindow extends Window {
+  showOpenFilePicker?: (opts?: unknown) => Promise<FileSystemFileHandle[]>;
+  showSaveFilePicker?: (opts?: unknown) => Promise<FileSystemFileHandle>;
+}
+
 const EMPTY_JOB: JobConfig = {
   schema_version: '1.2',
   inputs: [],
@@ -64,7 +88,8 @@ export default function App() {
 
 function Editor() {
   const [examples, setExamples] = useState<ExampleEntry[]>([]);
-  const [selectedExample, setSelectedExample] = useState<string>('');
+  const [identity, setIdentity] = useState<GraphIdentity>({ kind: 'empty' });
+  const [dirty, setDirty] = useState(false);
   const [job, setJob] = useState<JobConfig>(EMPTY_JOB);
   const [nodes, setNodes] = useState<FlowNode[]>([]);
   const [edges, setEdges] = useState<FlowEdge[]>([]);
@@ -81,6 +106,24 @@ function Editor() {
   useEffect(() => {
     localStorage.setItem('mm.labelMode', labelMode);
   }, [labelMode]);
+
+  /* Panel visibility — each is a persisted boolean (default true) so the
+   * user gets the full layout on first load but a deliberate hide sticks
+   * across reloads. Storage keys are namespaced under mm.view.* so they
+   * don't collide with palette / labelMode keys. */
+  const useStoredBool = (key: string, def: boolean) => {
+    const [v, setV] = useState<boolean>(() => {
+      const s = localStorage.getItem(key);
+      return s == null ? def : s === '1';
+    });
+    useEffect(() => {
+      localStorage.setItem(key, v ? '1' : '0');
+    }, [key, v]);
+    return [v, setV] as const;
+  };
+  const [showPalette, setShowPalette] = useStoredBool('mm.view.palette', true);
+  const [showInspector, setShowInspector] = useStoredBool('mm.view.inspector', true);
+  const [showMinimap, setShowMinimap] = useStoredBool('mm.view.minimap', true);
   const canvasRef = useRef<HTMLDivElement>(null);
   const rf = useReactFlow();
 
@@ -90,22 +133,26 @@ function Editor() {
       .then((r) => (r.ok ? r.json() : []))
       .then((list: ExampleEntry[]) => {
         setExamples(list);
-        if (list.length && !selectedExample) setSelectedExample(list[0].url);
+        // On first paint, auto-load the first example so the canvas isn't
+        // blank for new users. Only do this if we're still on the empty
+        // starter graph — never clobber a graph the user has touched.
+        if (list.length && identity.kind === 'empty') {
+          loadExample(list[0]);
+        }
       })
       .catch(() => setExamples([]));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  useEffect(() => {
-    if (!selectedExample) return;
-    fetch(selectedExample)
+  const loadExample = useCallback((ex: ExampleEntry) => {
+    fetch(ex.url)
       .then((r) => r.json())
-      .then((cfg: JobConfig) => loadJob(cfg))
+      .then((cfg: JobConfig) => loadJob(cfg, { kind: 'example', url: ex.url, name: ex.name }))
       .catch((err) => console.error('failed to load example', err));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedExample]);
+  }, []);
 
-  const loadJob = useCallback((cfg: JobConfig) => {
+  const loadJob = useCallback((cfg: JobConfig, nextIdentity: GraphIdentity = { kind: 'unsaved' }) => {
     // Promote implicit encoders (direct source→sink edges) into real
     // editable graph.nodes[] entries so the user can configure
     // libx264/aac like any other encoder. Mirrors the runtime fallback
@@ -116,6 +163,8 @@ function Editor() {
     setNodes(n);
     setEdges(e);
     setSelectedId(null);
+    setIdentity(nextIdentity);
+    setDirty(false);
     // Resolve handle media types for filter / encoder / processor nodes
     // from the live /api/nodes catalog (the JobConfig itself doesn't
     // carry pin metadata). Done asynchronously so loadJob stays
@@ -146,20 +195,37 @@ function Editor() {
       });
   }, []);
 
+  /* Mark the graph as having unsaved edits. Loaded examples promote to
+   * 'unsaved' so the toolbar stops claiming the user is still on a named
+   * example; opened/saved files keep their identity but flip dirty=true so
+   * the Graph: slot grows a • marker and Save knows there's something to
+   * write back. */
+  const markDirty = useCallback(() => {
+    setDirty(true);
+    setIdentity((cur) => (cur.kind === 'example' || cur.kind === 'empty' ? { kind: 'unsaved' } : cur));
+  }, []);
+
   /* ---------- React Flow change handlers ----------
    * Ghost nodes/edges live only in the derived `expandedNodes`/
    * `expandedEdges` arrays — never in `nodes`/`edges` state — so
    * applyNodeChanges/applyEdgeChanges naturally ignore changes
-   * targeting ghost ids (the underlying node simply isn't there). */
+   * targeting ghost ids (the underlying node simply isn't there).
+   * Position-only changes (drag, select) are not user-meaningful edits
+   * for dirty tracking, but layout is part of the saved JSON, so we do
+   * mark dirty for any change other than pure selection. */
   const onNodesChange = useCallback(
-    (changes: NodeChange[]) =>
-      setNodes((ns) => applyNodeChanges(changes, ns) as FlowNode[]),
-    [],
+    (changes: NodeChange[]) => {
+      setNodes((ns) => applyNodeChanges(changes, ns) as FlowNode[]);
+      if (changes.some((c) => c.type !== 'select' && c.type !== 'dimensions')) markDirty();
+    },
+    [markDirty],
   );
   const onEdgesChange = useCallback(
-    (changes: EdgeChange[]) =>
-      setEdges((es) => applyEdgeChanges(changes, es) as FlowEdge[]),
-    [],
+    (changes: EdgeChange[]) => {
+      setEdges((es) => applyEdgeChanges(changes, es) as FlowEdge[]);
+      if (changes.some((c) => c.type !== 'select')) markDirty();
+    },
+    [markDirty],
   );
 
   /* ---------- Connection (with stream-type validation) ---------- */
@@ -175,6 +241,7 @@ function Editor() {
       // unanchored.
       if (c.source?.startsWith('__ghost__') || c.target?.startsWith('__ghost__')) return;
       const stream = (c.sourceHandle as StreamType) || 'video';
+      markDirty();
       setEdges((es) => {
         const newEdge: FlowEdge = {
           id: `e-${Date.now()}-${es.length}`,
@@ -198,6 +265,24 @@ function Editor() {
     setSelectedEdgeIds(params.edges.map((e) => e.id));
   }, []);
 
+  /* ---------- Open Inspector from node button ----------
+   * MMNode dispatches mm.inspector.open with the node id when the user
+   * clicks the small pencil glyph in its header. We mark just that node
+   * as React-Flow-selected (which also drives the Inspector via
+   * onSelectionChange) and force-show the Inspector panel if hidden so
+   * the click never appears to do nothing. */
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const id = (e as CustomEvent<{ id: string }>).detail?.id;
+      if (!id) return;
+      setNodes((ns) => ns.map((n) => (n.selected === (n.id === id) ? n : { ...n, selected: n.id === id })));
+      setSelectedId(id);
+      setShowInspector(true);
+    };
+    window.addEventListener(INSPECTOR_OPEN_EVENT, handler);
+    return () => window.removeEventListener(INSPECTOR_OPEN_EVENT, handler);
+  }, [setShowInspector]);
+
   const selectedNode = useMemo(
     () => nodes.find((n) => n.id === selectedId) ?? null,
     [nodes, selectedId],
@@ -206,13 +291,17 @@ function Editor() {
   /* ---------- Inspector edits ---------- */
   const onNodeUpdate = useCallback((next: FlowNode) => {
     setNodes((ns) => ns.map((n) => (n.id === next.id ? next : n)));
+    markDirty();
+    // markDirty is stable (no deps), so leaving it out of deps is fine
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const onNodeDelete = useCallback((id: string) => {
     setNodes((ns) => ns.filter((n) => n.id !== id));
     setEdges((es) => es.filter((e) => e.source !== id && e.target !== id));
     if (selectedId === id) setSelectedId(null);
-  }, [selectedId]);
+    markDirty();
+  }, [selectedId, markDirty]);
 
   /* ---------- Drop palette items ---------- */
   const onDragOver = useCallback((e: React.DragEvent) => {
@@ -237,8 +326,9 @@ function Editor() {
         const { flowNode } = spawnNodeFrom(entry, position, ns);
         return [...ns, flowNode];
       });
+      markDirty();
     },
-    [rf],
+    [rf, markDirty],
   );
 
   /* ---------- Toolbar actions ---------- */
@@ -247,7 +337,9 @@ function Editor() {
     setTimeout(() => rf.fitView({ duration: 200 }), 0);
   }, [edges, rf]);
 
-  const onExport = useCallback(() => {
+  /* Serialise the current graph to JSON text. Pure function over the
+   * editor state; used by both Save and Save As… paths. */
+  const serialiseJob = useCallback((): string => {
     const out = flowToConfig(
       job.schema_version || '1.2',
       nodes,
@@ -255,16 +347,103 @@ function Editor() {
       job.description,
       job.global_options,
     );
-    const blob = new Blob([JSON.stringify(out, null, 2)], { type: 'application/json' });
+    return JSON.stringify(out, null, 2);
+  }, [job, nodes, edges]);
+
+  /* Default filename suggestion for Save As… / download fallback. Derived
+   * from the current identity so a Save-As of an opened file pre-fills
+   * the same name, and a Save-As of an example pre-fills the example's
+   * basename. */
+  const suggestedFilename = useCallback((): string => {
+    if (identity.kind === 'file') return identity.name;
+    if (identity.kind === 'example') return identity.name + '.json';
+    return 'job.json';
+  }, [identity]);
+
+  /* Browser-level fallback when the File System Access API is unavailable
+   * (Firefox, Safari): trigger a download. We can't learn where it ended
+   * up, so identity stays as 'unsaved' — calling this "saved" would lie. */
+  const downloadJob = useCallback((text: string, filename: string) => {
+    const blob = new Blob([text], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = 'job.json';
+    a.download = filename;
     a.click();
     URL.revokeObjectURL(url);
-  }, [job, nodes, edges]);
+  }, []);
 
-  const onImportClick = useCallback(() => {
+  /* Save As… — always prompts for a destination. On success the chosen
+   * handle becomes the graph's identity, so subsequent Save calls
+   * overwrite silently. */
+  const onSaveAs = useCallback(async () => {
+    const text = serialiseJob();
+    const w = window as FsaWindow;
+    if (typeof w.showSaveFilePicker === 'function') {
+      try {
+        const handle = await w.showSaveFilePicker({
+          suggestedName: suggestedFilename(),
+          types: [{ description: 'MediaMolder job', accept: { 'application/json': ['.json'] } }],
+        });
+        const writable = await (handle as FileSystemFileHandle & { createWritable: () => Promise<FileSystemWritableFileStream> }).createWritable();
+        await writable.write(text);
+        await writable.close();
+        setIdentity({ kind: 'file', name: handle.name, handle });
+        setDirty(false);
+        return;
+      } catch (err) {
+        // AbortError = user cancelled the picker; treat as a no-op.
+        if ((err as DOMException)?.name === 'AbortError') return;
+        console.error('Save As failed', err);
+        // fall through to download fallback
+      }
+    }
+    downloadJob(text, suggestedFilename());
+  }, [serialiseJob, suggestedFilename, downloadJob]);
+
+  /* Save — if we have a remembered file handle, overwrite it silently;
+   * otherwise behave like Save As…. */
+  const onSave = useCallback(async () => {
+    if (identity.kind === 'file' && identity.handle) {
+      try {
+        const text = serialiseJob();
+        const writable = await (identity.handle as FileSystemFileHandle & { createWritable: () => Promise<FileSystemWritableFileStream> }).createWritable();
+        await writable.write(text);
+        await writable.close();
+        setDirty(false);
+        return;
+      } catch (err) {
+        console.error('Save failed', err);
+        // fall through to Save As so the user can pick a new path
+      }
+    }
+    await onSaveAs();
+  }, [identity, serialiseJob, onSaveAs]);
+
+  /* Open — prefers File System Access API so we capture a handle the
+   * user can later Save into; falls back to <input type=file> on
+   * browsers without FSA. */
+  const onOpen = useCallback(async () => {
+    const w = window as FsaWindow;
+    if (typeof w.showOpenFilePicker === 'function') {
+      try {
+        const [handle] = await w.showOpenFilePicker({
+          types: [{ description: 'MediaMolder job', accept: { 'application/json': ['.json'] } }],
+          multiple: false,
+        });
+        const file = await (handle as FileSystemFileHandle & { getFile: () => Promise<File> }).getFile();
+        const text = await file.text();
+        loadJob(JSON.parse(text) as JobConfig, { kind: 'file', name: handle.name, handle });
+        return;
+      } catch (err) {
+        if ((err as DOMException)?.name === 'AbortError') return;
+        if (err instanceof SyntaxError) {
+          alert('Invalid JSON: ' + err.message);
+          return;
+        }
+        console.error('Open failed, falling back', err);
+      }
+    }
     const inp = document.createElement('input');
     inp.type = 'file';
     inp.accept = 'application/json,.json';
@@ -273,7 +452,7 @@ function Editor() {
       if (!file) return;
       const text = await file.text();
       try {
-        loadJob(JSON.parse(text) as JobConfig);
+        loadJob(JSON.parse(text) as JobConfig, { kind: 'file', name: file.name });
       } catch (err) {
         alert('Invalid JSON: ' + (err as Error).message);
       }
@@ -282,9 +461,9 @@ function Editor() {
   }, [loadJob]);
 
   const onClear = useCallback(() => {
-    if (!confirm('Discard the current graph?')) return;
-    loadJob(EMPTY_JOB);
-  }, [loadJob]);
+    if (dirty && !confirm('Discard the current graph?')) return;
+    loadJob(EMPTY_JOB, { kind: 'empty' });
+  }, [loadJob, dirty]);
 
   /* ---------- Keyboard delete ---------- */
   useEffect(() => {
@@ -428,19 +607,43 @@ function Editor() {
   );
 
   return (
-    <div className="app-shell">
+    <div
+      className="app-shell"
+      data-palette={showPalette ? 'shown' : 'hidden'}
+      data-inspector={showInspector ? 'shown' : 'hidden'}
+    >
       <div className="toolbar">
         <span className="title">MediaMolder</span>
-        <span style={{ color: 'var(--text-dim)' }}>{stats}</span>
 
-        <div className="spacer" />
+        <button onClick={onClear}>New</button>
+        <button onClick={onOpen}>Open…</button>
+        <button onClick={() => setImportFFmpegOpen(true)} title="Paste an FFmpeg command line and convert it to a graph">
+          Import FFmpeg…
+        </button>
 
-        <label style={{ color: 'var(--text-dim)', fontSize: 12 }}>Example:</label>
+        <label style={{ color: 'var(--text-dim)', fontSize: 12 }}>Graph:</label>
         <select
-          value={selectedExample}
-          onChange={(e) => setSelectedExample(e.target.value)}
+          value={identity.kind === 'example' ? identity.url : '__current__'}
+          onChange={(e) => {
+            const v = e.target.value;
+            if (v === '__current__') return;
+            const ex = examples.find((x) => x.url === v);
+            if (!ex) return;
+            if (dirty && !confirm('Discard the current graph?')) return;
+            loadExample(ex);
+          }}
           disabled={!examples.length}
+          title="Switch to a built-in example. Discards unsaved changes."
         >
+          {identity.kind !== 'example' && (
+            <option value="__current__" disabled>
+              {identity.kind === 'file'
+                ? identity.name + (dirty ? ' \u2022' : '')
+                : identity.kind === 'empty'
+                  ? '(empty)'
+                  : '<not saved>'}
+            </option>
+          )}
           {!examples.length && <option value="">(none available)</option>}
           {examples.map((ex) => (
             <option key={ex.url} value={ex.url}>
@@ -449,7 +652,55 @@ function Editor() {
           ))}
         </select>
 
+        <button
+          onClick={onSave}
+          disabled={!nodes.length || (identity.kind === 'file' && !dirty)}
+          title={identity.kind === 'file' ? `Save to ${identity.name}` : 'Save to disk…'}
+        >
+          Save
+        </button>
+        <button onClick={onSaveAs} disabled={!nodes.length} title="Save to a new file…">
+          Save As…
+        </button>
+
+        <div className="spacer" />
+
         <button onClick={onAutoLayout} disabled={!nodes.length}>Auto layout</button>
+        <div
+          className="segmented"
+          role="group"
+          aria-label="Panel visibility"
+          title="Show or hide editor panels."
+        >
+          <span className="segmented-label">View:</span>
+          <button
+            type="button"
+            aria-pressed={showPalette}
+            className={showPalette ? 'segmented-on' : ''}
+            onClick={() => setShowPalette((v) => !v)}
+            title="Toggle the node palette (left sidebar)"
+          >
+            Palette
+          </button>
+          <button
+            type="button"
+            aria-pressed={showInspector}
+            className={showInspector ? 'segmented-on' : ''}
+            onClick={() => setShowInspector((v) => !v)}
+            title="Toggle the inspector (right sidebar)"
+          >
+            Inspector
+          </button>
+          <button
+            type="button"
+            aria-pressed={showMinimap}
+            className={showMinimap ? 'segmented-on' : ''}
+            onClick={() => setShowMinimap((v) => !v)}
+            title="Toggle the canvas minimap"
+          >
+            Minimap
+          </button>
+        </div>
         <div
           className="segmented"
           role="radiogroup"
@@ -476,12 +727,6 @@ function Editor() {
             Compact
           </button>
         </div>
-        <button onClick={onClear}>New</button>
-        <button onClick={onImportClick}>Import</button>
-        <button onClick={() => setImportFFmpegOpen(true)} title="Paste an FFmpeg command line and convert it to a graph">
-          Import FFmpeg command
-        </button>
-        <button onClick={onExport} disabled={!nodes.length}>Export</button>
         {isRunning ? (
           <button className="danger" onClick={onStop}>Stop</button>
         ) : (
@@ -493,7 +738,7 @@ function Editor() {
         <button onClick={() => setHelpOpen(true)} title="Open help (or press ?)">Help</button>
       </div>
 
-      <Palette />
+      {showPalette && <Palette />}
 
       <div
         className="canvas"
@@ -517,6 +762,7 @@ function Editor() {
           proOptions={{ hideAttribution: true }}
         >
           <Background gap={16} size={1} color="#2a303a" />
+          {showMinimap && (
           <MiniMap
             pannable
             zoomable
@@ -542,6 +788,7 @@ function Editor() {
             maskColor="rgba(15,17,21,0.65)"
             className="mm-minimap"
           />
+          )}
           <Controls showInteractive={false} className="mm-controls" />
         </ReactFlow>
         {nodes.length === 0 && (
@@ -558,9 +805,12 @@ function Editor() {
           </div>
         )}
         <Legend />
+        <div className="canvas-stats" title="Nodes · edges in the current graph">{stats}</div>
       </div>
 
+      {showInspector && (
       <Inspector node={selectedNode} nodes={nodes} edges={edges} onChange={onNodeUpdate} onDelete={onNodeDelete} />
+      )}
       <RunDock visible={showRunPanel}>
         <RunPanel run={run} nodeKinds={nodeKinds} onClose={() => setShowRunPanel(false)} />
       </RunDock>

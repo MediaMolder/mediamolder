@@ -1,7 +1,11 @@
 # Graph Compilation
 
 This document explains the **graph compilation** phase — the analysis step that
-sits between building a validated graph and actually running it. 
+sits between building a validated graph and actually running it.
+
+For the rules that govern when two nodes can be connected with a single
+edge versus when a transform filter must sit between them, see
+[Graph Basics](graph-basics.md).
 
 ---
 

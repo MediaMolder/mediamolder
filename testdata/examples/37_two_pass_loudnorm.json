@@ -1,0 +1,50 @@
+{
+  "schema_version": "1.0",
+  "description": "Two-pass EBU R128 loudnorm shuttle (analysis pass). Mirrors `ffmpeg -y -i in.mp4 -af loudnorm=I=-16:TP=-1.5:LRA=11:print_format=json:stats_file=mm-loudnorm-0.json -f null /dev/null` for the canonical first pass that writes JSON measurements; the caller would then re-run the same job with loudnorm_pass: 2 against the same loudnorm_statsfile prefix, and the runtime would inject measured_I / measured_TP / measured_LRA / measured_thresh / offset into the loudnorm filter for a deterministic, linearly-scaled second pass.",
+  "inputs": [
+    {
+      "id": "in0",
+      "url": "{{input}}",
+      "streams": [
+        { "input_index": 0, "type": "audio", "track": 0 }
+      ]
+    }
+  ],
+  "graph": {
+    "nodes": [
+      {
+        "id": "loudnorm0",
+        "type": "filter",
+        "filter": "loudnorm",
+        "params": { "I": -16, "TP": -1.5, "LRA": 11 }
+      },
+      {
+        "id": "resample0",
+        "type": "filter",
+        "filter": "aformat",
+        "params": { "sample_rates": "48000", "sample_fmts": "fltp" }
+      },
+      {
+        "id": "chunkaudio0",
+        "type": "filter",
+        "filter": "asetnsamples",
+        "params": { "n": "1024", "p": "0" }
+      }
+    ],
+    "edges": [
+      { "from": "in0:a:0", "to": "loudnorm0", "type": "audio" },
+      { "from": "loudnorm0", "to": "resample0", "type": "audio" },
+      { "from": "resample0", "to": "chunkaudio0", "type": "audio" },
+      { "from": "chunkaudio0", "to": "out0:a", "type": "audio" }
+    ]
+  },
+  "outputs": [
+    {
+      "id": "out0",
+      "url": "{{output}}",
+      "codec_audio": "aac",
+      "loudnorm_pass": 1,
+      "loudnorm_statsfile": "{{loudnorm_stats}}"
+    }
+  ]
+}

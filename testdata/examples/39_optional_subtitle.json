@@ -1,0 +1,51 @@
+{
+  "schema_version": "1.1",
+  "description": "Optional subtitle map: include subtitles if the source has any, otherwise pass through silently. Mirrors `ffmpeg -i in.mp4 -map 0:v -map 0:a -map 0:s? -c copy out.mkv` (Wave 2 #9).",
+  "inputs": [
+    {
+      "id": "in0",
+      "url": "{{input}}",
+      "streams": [
+        {
+          "input_index": 0,
+          "type": "video",
+          "track": 0
+        },
+        {
+          "input_index": 0,
+          "type": "audio",
+          "track": 0
+        },
+        {
+          "input_index": 0,
+          "type": "subtitle",
+          "all": true,
+          "optional": true
+        }
+      ]
+    }
+  ],
+  "graph": {
+    "nodes": [],
+    "edges": [
+      {
+        "from": "in0:v:0",
+        "to": "out0:v",
+        "type": "video"
+      },
+      {
+        "from": "in0:a:0",
+        "to": "out0:a",
+        "type": "audio"
+      }
+    ]
+  },
+  "outputs": [
+    {
+      "id": "out0",
+      "url": "{{output}}",
+      "codec_video": "libx264",
+      "codec_audio": "aac"
+    }
+  ]
+}

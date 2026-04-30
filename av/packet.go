@@ -65,6 +65,10 @@ func (pkt *Packet) PTS() int64 { return int64(pkt.p.pts) }
 // DTS returns the packet decode timestamp.
 func (pkt *Packet) DTS() int64 { return int64(pkt.p.dts) }
 
+// Duration returns the packet duration in the packet's stream
+// time_base units. Mirrors AVPacket.duration; 0 means unknown.
+func (pkt *Packet) Duration() int64 { return int64(pkt.p.duration) }
+
 // SetStreamIndex sets the packet's stream index.
 func (pkt *Packet) SetStreamIndex(i int) { pkt.p.stream_index = C.int(i) }
 

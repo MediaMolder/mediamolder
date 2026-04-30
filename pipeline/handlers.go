@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -28,18 +30,98 @@ func configToGraphDef(cfg *Config) *graph.Def {
 		def.Inputs = append(def.Inputs, graph.InputDef{ID: inp.ID})
 	}
 	for _, node := range cfg.Graph.Nodes {
+		// metadata_reader / metadata_writer nodes (Wave 2 #11) do
+		// not move media frames; they are resolved by the runtime
+		// at WriteHeader time via r.cfg.Graph directly. Skip them
+		// here so the DAG compiler does not require media edges
+		// for them.
+		if node.Type == "metadata_reader" || node.Type == "metadata_writer" {
+			continue
+		}
+		params := node.Params
+		// Wave 7 #38: propagate per-node thread cap (or pipeline-wide
+		// default) into the runtime's filter graph allocator via the
+		// Params bag. Per-node `Threads` wins over the pipeline-wide
+		// `Config.FilterComplexThreads`. Both are applied only to
+		// filter nodes — encoders have their own `threads` AVOption.
+		if node.Type == "filter" {
+			eff := node.Threads
+			if eff == 0 {
+				eff = cfg.FilterComplexThreads
+			}
+			if eff > 0 {
+				if params == nil {
+					params = make(map[string]any, 1)
+				} else {
+					cp := make(map[string]any, len(params)+1)
+					for k, v := range params {
+						cp[k] = v
+					}
+					params = cp
+				}
+				params["__filter_threads"] = eff
+			}
+		}
+		// Wave 7 #37: auto-fill OutputMediaType from the cross-media-type
+		// registry when the user did not declare one, so the runtime can
+		// route showwavespic / showspectrum / showvolume / ... through the
+		// complex-filter-graph path without the user having to spell it out
+		// in the JSON.
+		omt := graph.PortType(node.OutputMediaType)
+		if omt == "" && node.Type == "filter" {
+			if pt, ok := crossMediaTypeFilters[node.Filter]; ok {
+				omt = pt
+			}
+		}
 		def.Nodes = append(def.Nodes, graph.NodeDef{
-			ID:        node.ID,
-			Type:      node.Type,
-			Filter:    node.Filter,
-			Processor: node.Processor,
-			Params:    node.Params,
+			ID:              node.ID,
+			Type:            node.Type,
+			Filter:          node.Filter,
+			Processor:       node.Processor,
+			Params:          params,
+			OutputMediaType: omt,
 		})
 	}
 	for _, out := range cfg.Outputs {
 		def.Outputs = append(def.Outputs, graph.OutputDef{ID: out.ID})
 	}
+	// Index outputs by ID for the disable-by-media-type filter below.
+	outByID := make(map[string]*Output, len(cfg.Outputs))
+	for i := range cfg.Outputs {
+		outByID[cfg.Outputs[i].ID] = &cfg.Outputs[i]
+	}
 	for _, e := range cfg.Graph.Edges {
+		// Skip metadata-routing edges; they are runtime-only.
+		if e.Type == "metadata" {
+			continue
+		}
+		// Drop edges feeding a sink whose Output has the corresponding
+		// `-vn`/`-an`/`-sn`/`-dn` flag set. Filtering here, before
+		// expandImplicitEncoders, prevents the implicit-encoder pass
+		// from synthesising an encoder for the disabled type and
+		// keeps the stream-copy path from registering a copy stream
+		// at the sink. Mirrors fftools/ffmpeg_opt.c L1977/2078/2115/2187
+		// (the OPT_OUTPUT half of the dual-purpose disable flags).
+		if out := outByID[e.To]; out != nil {
+			switch e.Type {
+			case "video":
+				if out.DisableVideo {
+					continue
+				}
+			case "audio":
+				if out.DisableAudio {
+					continue
+				}
+			case "subtitle":
+				if out.DisableSubtitle {
+					continue
+				}
+			case "data":
+				if out.DisableData {
+					continue
+				}
+			}
+		}
 		def.Edges = append(def.Edges, graph.EdgeDef{
 			From: e.From,
 			To:   e.To,
@@ -49,6 +131,17 @@ func configToGraphDef(cfg *Config) *graph.Def {
 	expandImplicitEncoders(cfg, def)
 	spliceAudioAdaptersForEncoders(def)
 	spliceAudioSyncForOutputs(cfg, def)
+	// Loudnorm two-pass shuttle: walk loudnorm filter nodes and stamp
+	// pass / stats-file markers + (pass 1) print_format/stats_file
+	// AVOptions. Pass-2 measurement read deferred to createFilter so
+	// the file-not-found error flows through normal graph-init paths.
+	// Errors here only fire on cross-output validation (e.g.
+	// conflicting LoudnormPass values); those would have been caught
+	// by Config.Validate already, so we panic on the impossible case
+	// to keep the BuildDef signature stable.
+	if err := applyLoudnormShuttle(cfg, def); err != nil {
+		panic(err)
+	}
 	return def
 }
 
@@ -311,6 +404,10 @@ func expandImplicitEncoders(cfg *Config, def *graph.Def) {
 	}
 
 	var added []graph.EdgeDef
+	// Per-output, per-media-type counter so we can resolve
+	// per-stream encoder overrides (Wave 6 #30) by their muxer-add
+	// index (which mirrors edge declaration order on the sink).
+	typeIdx := make(map[string]int) // key = output-id + ":" + edge-type
 	for i := range def.Edges {
 		e := &def.Edges[i]
 		fromID := head(e.From)
@@ -347,6 +444,29 @@ func expandImplicitEncoders(cfg *Config, def *graph.Def) {
 			}
 			extraParams = out.EncoderParamsSubtitle
 		}
+		// Per-stream encoder override (Wave 6 #30). Counts edges of
+		// this media type in declaration order, matching how the
+		// muxer adds streams in openSink. The override's Codec (if
+		// non-empty) replaces the output-level codec, and Options
+		// overlay extraParams for this synthetic encoder only.
+		var streamOverride *EncoderOverride
+		switch e.Type {
+		case "video", "audio", "subtitle":
+			letter := map[string]string{"video": "v", "audio": "a", "subtitle": "s"}[e.Type]
+			key := toID + ":" + e.Type
+			idx := typeIdx[key]
+			typeIdx[key] = idx + 1
+			for si := range out.Streams {
+				ss := &out.Streams[si]
+				if ss.Type == letter && ss.Index == idx && ss.Encoder != nil {
+					streamOverride = ss.Encoder
+					if ss.Encoder.Codec != "" {
+						codec = ss.Encoder.Codec
+					}
+					break
+				}
+			}
+		}
 		if codec == "" {
 			continue
 		}
@@ -359,12 +479,62 @@ func expandImplicitEncoders(cfg *Config, def *graph.Def) {
 			}
 			nodeParams[k] = v
 		}
+		// Overlay per-stream encoder Options on top of extraParams
+		// so a per-stream `-b:v:1 2.5M` wins over the output-level
+		// `-b:v 5M`. Wave 6 #30.
+		if streamOverride != nil {
+			for k, v := range streamOverride.Options {
+				if k == "codec" {
+					continue
+				}
+				nodeParams[k] = v
+			}
+		}
 		// Stash FPSMode on the synthetic encoder node for video edges so
 		// handleEncoder's per-frame renumberer can consume it. The double-
 		// underscore prefix matches the `__enc__` convention and keeps the
 		// key out of the AVDictionary path via encoderReservedParams.
 		if e.Type == "video" && out.FPSMode != "" {
 			nodeParams["__fps_mode"] = out.FPSMode
+		}
+		// Two-pass video encoding (FFmpeg `-pass N -passlogfile P`).
+		// Honoured only on video edges; the global stream index is
+		// computed below after all synthetic encoders are added so it
+		// matches the `<prefix>-<idx>.log` numbering FFmpeg uses
+		// (one entry per video encoder in declaration order).
+		if e.Type == "video" && out.Pass != 0 {
+			nodeParams["__pass"] = out.Pass
+			if out.PassLogFile != "" {
+				nodeParams["__passlogfile"] = out.PassLogFile
+			}
+		}
+		// Force-keyframe spec (FFmpeg `-force_key_frames`). Honoured
+		// only on video edges; the encoder handler builds a
+		// forceKeyFramesMatcher and stamps frame.pict_type =
+		// AV_PICTURE_TYPE_I on each matching frame before SendFrame.
+		if e.Type == "video" && out.ForceKeyFrames != "" {
+			nodeParams["__force_key_frames"] = out.ForceKeyFrames
+		}
+		// SAR / DAR shorthand (FFmpeg `-aspect` / `setsar` / `setdar`).
+		// Resolved to a numeric SAR in createEncoder once the encoder's
+		// width/height are known. Honoured only on video edges.
+		if e.Type == "video" && out.SAR != "" {
+			nodeParams["__sar"] = out.SAR
+		}
+		if e.Type == "video" && out.DAR != "" {
+			nodeParams["__dar"] = out.DAR
+		}
+		// EncoderTimeBase / FieldOrder / InterlacedEncode (Wave 6 #33).
+		// Honoured only on video edges; subtitle outputs reject
+		// EncoderTimeBase at validate time.
+		if e.Type == "video" && out.EncoderTimeBase != "" {
+			nodeParams["__enc_time_base"] = out.EncoderTimeBase
+		}
+		if e.Type == "video" && out.FieldOrder != "" {
+			nodeParams["__field_order"] = out.FieldOrder
+		}
+		if e.Type == "video" && out.InterlacedEncode {
+			nodeParams["__interlaced"] = "1"
 		}
 		if codec == "copy" {
 			nodeType = "copy"
@@ -381,6 +551,25 @@ func expandImplicitEncoders(cfg *Config, def *graph.Def) {
 		e.To = encID
 	}
 	def.Edges = append(def.Edges, added...)
+
+	// Assign sequential `__pass_index` to each video encoder that
+	// requested two-pass mode, in node-declaration order. The index
+	// drives the `<prefix>-<idx>.log` naming so multiple two-pass
+	// video streams in one run (e.g. ABR ladder) get unique stats
+	// files \u2014 mirrors FFmpeg's `ost_idx` computation in
+	// fftools/ffmpeg_mux_init.c.
+	passIdx := 0
+	for i := range def.Nodes {
+		n := &def.Nodes[i]
+		if n.Type != "encoder" || n.Params == nil {
+			continue
+		}
+		if _, ok := n.Params["__pass"]; !ok {
+			continue
+		}
+		n.Params["__pass_index"] = passIdx
+		passIdx++
+	}
 }
 
 // ---------- Pre-opened resource containers ----------
@@ -418,6 +607,31 @@ type sourceResources struct {
 	// 10s of packets but tag them with PTS in the [450s, 460s] range,
 	// causing the muxer to report a 460s-long file.
 	tsOffsetUS int64
+
+	// streamLoopRemaining counts how many additional EOF→rewind
+	// cycles the demux loop should still perform. -1 = infinite.
+	// Decremented by handleSource each time the runtime seeks back
+	// to start. Mirrors `Demuxer.loop` in
+	// fftools/ffmpeg_demux.c::seek_to_start.
+	streamLoopRemaining int
+	// loopOffsetUS is the cumulative media duration of completed
+	// loop iterations, in AV_TIME_BASE units. Added to every
+	// post-rewind packet's PTS/DTS so timestamps remain monotone
+	// across iterations. Mirrors `Demuxer.duration.ts` rescaled to
+	// AV_TIME_BASE_Q in fftools/ffmpeg_demux.c::ts_fixup. Updated
+	// after each successful seek by adding the current iteration's
+	// `(maxPTSus - minPTSus)`.
+	loopOffsetUS int64
+	// pacer enforces FFmpeg's `-readrate` / `-re` /
+	// `-readrate_initial_burst` / `-readrate_catchup` semantics on
+	// the demux loop. Nil when no pacing is configured. See
+	// readRatePacer for the algorithm details.
+	pacer *readRatePacer
+	// concatCleanup removes the temp listfile materialised from
+	// Input.ConcatList when Kind="concat". Nil for every other
+	// input kind. Invoked from Close() after the demuxer has
+	// shut down so libavformat is no longer reading the file.
+	concatCleanup func()
 }
 
 func (s *sourceResources) Close() {
@@ -429,6 +643,10 @@ func (s *sourceResources) Close() {
 	}
 	if s.input != nil {
 		s.input.Close()
+	}
+	if s.concatCleanup != nil {
+		s.concatCleanup()
+		s.concatCleanup = nil
 	}
 }
 
@@ -445,6 +663,13 @@ type sinkResources struct {
 	// so the encoder's PTS values would otherwise be interpreted in
 	// the wrong units and play back at the wrong rate.
 	streamRescale []*sinkRescale
+
+	// streamBSF[i] is the per-channel bitstream-filter chain (parsed
+	// via av_bsf_list_parse_str from the FFmpeg `-bsf` chain syntax
+	// `f1[=k=v[:k=v]][,f2]`) applied between rescale and WritePacket.
+	// nil when no BSF is configured for that channel's media type.
+	// Mirrors fftools/ffmpeg_mux.c::bsf_init.
+	streamBSF []*av.BitstreamFilter
 
 	// timing holds the resolved output-side -ss/-t/-to window
 	// (mirrors fftools/ffmpeg_mux_init.c's per-OutputFile
@@ -493,6 +718,13 @@ type graphRunner struct {
 	encoders     map[string]*av.EncoderContext
 	sinks        map[string]*sinkResources
 	goProcessors map[string]processors.Processor
+	// passLogFiles holds open pass-1 statistics files for video
+	// encoders that consume `Output.Pass` / `Output.PassLogFile`
+	// via the generic AVCodecContext.stats_out path (i.e. not
+	// libx264 / libx265 / libvvenc, which manage their own stats
+	// files via the codec's `stats` AVOption). Keyed by encoder
+	// node ID. Populated by createEncoder and closed in close().
+	passLogFiles map[string]*os.File
 }
 
 func newGraphRunner(cfg *Config, pipe *Pipeline) *graphRunner {
@@ -504,6 +736,7 @@ func newGraphRunner(cfg *Config, pipe *Pipeline) *graphRunner {
 		encoders:     make(map[string]*av.EncoderContext),
 		sinks:        make(map[string]*sinkResources),
 		goProcessors: make(map[string]processors.Processor),
+		passLogFiles: make(map[string]*os.File),
 	}
 }
 
@@ -545,6 +778,16 @@ func (r *graphRunner) close() {
 	for _, p := range r.goProcessors {
 		p.Close()
 	}
+	for _, f := range r.passLogFiles {
+		_ = f.Close()
+	}
+	for _, s := range r.sinks {
+		for _, b := range s.streamBSF {
+			if b != nil {
+				_ = b.Close()
+			}
+		}
+	}
 	// Sinks are finalized by the caller (muxer.Close for atomic rename).
 }
 
@@ -564,6 +807,10 @@ func (r *graphRunner) handle(ctx context.Context, node *graph.Node, ins []<-chan
 		return r.handleGoProcessor(ctx, node, ins, outs)
 	case graph.KindCopy:
 		return r.handleCopy(ctx, node, ins, outs)
+	case graph.KindFilterSource:
+		return r.handleFilterSource(ctx, node, outs)
+	case graph.KindFilterSink:
+		return r.handleFilterSink(ctx, node, ins)
 	default:
 		return fmt.Errorf("unknown node kind %v for node %q", node.Kind, node.ID)
 	}
@@ -693,6 +940,14 @@ func (r *graphRunner) handleSource(ctx context.Context, node *graph.Node, outs [
 	}
 	defer pkt.Close()
 
+	// Per-loop-iteration min/max packet PTS (in AV_TIME_BASE
+	// microseconds) — used by the `-stream_loop` rewind path to
+	// compute the cycle's media duration so post-rewind packets can
+	// be PTS-shifted by the right amount. Mirrors `Demuxer.min_pts`
+	// / `Demuxer.max_pts` in fftools/ffmpeg_demux.c::ts_fixup.
+	// Reset at every successful seek_to_start.
+	var iterMinPTSus, iterMaxPTSus int64 = math.MaxInt64, math.MinInt64
+
 	for {
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -701,6 +956,35 @@ func (r *graphRunner) handleSource(ctx context.Context, node *graph.Node, outs [
 		frameStart := time.Now()
 		if err := src.input.ReadPacket(pkt); err != nil {
 			if av.IsEOF(err) {
+				// `-stream_loop` semantics. Mirrors
+				// fftools/ffmpeg_demux.c::seek_to_start:
+				// rewind, accumulate the cycle's media
+				// duration into loopOffsetUS, decrement the
+				// remaining-loops counter (unless it is -1,
+				// which means infinite), and continue
+				// reading. On seek failure we fall through
+				// to the normal EOF break (matches FFmpeg's
+				// behaviour: any failure inside seek_to_start
+				// terminates the input).
+				if src.streamLoopRemaining != 0 && iterMaxPTSus > math.MinInt64 {
+					seekTo := src.input.StartTime()
+					if seekTo == av.NoPTSValue {
+						seekTo = 0
+					}
+					if serr := src.input.SeekFile(seekTo); serr == nil {
+						minPTSus := iterMinPTSus
+						if minPTSus == math.MaxInt64 {
+							minPTSus = 0
+						}
+						src.loopOffsetUS += iterMaxPTSus - minPTSus
+						iterMinPTSus = math.MaxInt64
+						iterMaxPTSus = math.MinInt64
+						if src.streamLoopRemaining > 0 {
+							src.streamLoopRemaining--
+						}
+						continue
+					}
+				}
 				break
 			}
 			return err
@@ -742,6 +1026,56 @@ func (r *graphRunner) handleSource(ctx context.Context, node *graph.Node, outs [
 			offsetTB := src.tsOffsetUS * int64(si.TimeBase[1]) /
 				(1_000_000 * int64(si.TimeBase[0]))
 			pkt.ShiftTS(offsetTB)
+		}
+
+		// Apply the per-iteration loop offset for `-stream_loop`.
+		// loopOffsetUS is the cumulative duration (in AV_TIME_BASE
+		// microseconds) of all completed iterations; adding it
+		// keeps post-rewind PTS monotone. Mirrors `pkt->pts +=
+		// duration` in fftools/ffmpeg_demux.c::ts_fixup. Tracked
+		// separately from tsOffsetUS so the cycle-duration
+		// arithmetic doesn't entangle with the `-ss` /
+		// `-itsoffset` shift.
+		if src.loopOffsetUS != 0 && si.TimeBase[1] > 0 {
+			loopTB := src.loopOffsetUS * int64(si.TimeBase[1]) /
+				(1_000_000 * int64(si.TimeBase[0]))
+			pkt.ShiftTS(loopTB)
+		}
+
+		// Track per-iteration min/max packet PTS in AV_TIME_BASE
+		// microseconds so the loop rewind path (above) can compute
+		// `max - min` as the cycle's media duration. Done in
+		// post-shift coordinates, exactly as
+		// fftools/ffmpeg_demux.c::ts_fixup updates `Demuxer.min_pts`
+		// / `Demuxer.max_pts` after the offset additions.
+		if src.streamLoopRemaining != 0 {
+			if pts := pkt.PTS(); pts != math.MinInt64 && si.TimeBase[1] > 0 {
+				ptsUSshifted := pts * 1_000_000 * int64(si.TimeBase[0]) / int64(si.TimeBase[1])
+				if ptsUSshifted < iterMinPTSus {
+					iterMinPTSus = ptsUSshifted
+				}
+				dur := pkt.Duration()
+				endUS := ptsUSshifted
+				if dur > 0 {
+					endUS += dur * 1_000_000 * int64(si.TimeBase[0]) / int64(si.TimeBase[1])
+				}
+				if endUS > iterMaxPTSus {
+					iterMaxPTSus = endUS
+				}
+			}
+		}
+
+		// Pace the demux loop when the user requested
+		// `-readrate` / `-re`. Done after PTS shifts so the
+		// pacer compares wallclock-elapsed against the
+		// post-offset packet PTS — matches
+		// fftools/ffmpeg_demux.c::readrate_sleep, which uses
+		// `ds->dts` *after* `ts_fixup` has finished.
+		if src.pacer != nil {
+			if pts := pkt.PTS(); pts != math.MinInt64 && si.TimeBase[1] > 0 {
+				ptsUS := pts * 1_000_000 * int64(si.TimeBase[0]) / int64(si.TimeBase[1])
+				src.pacer.maybeSleep(ctx, ptsUS)
+			}
 		}
 
 		// Publish media-time progress so the GUI can compute
@@ -1092,6 +1426,171 @@ func (r *graphRunner) handleSimpleFilter(ctx context.Context, node *graph.Node, 
 	return pull()
 }
 
+// ---------- FilterSource handler (Wave 7 #36c) ----------
+
+// handleFilterSource pumps frames from a source-only filter graph (built by
+// createFilterSource via av.NewSourceFilterGraph) into one outbound channel
+// per buffer sink. The source filter inside the graph (color, testsrc, sine,
+// anullsrc, …) generates frames synchronously inside libavfilter — this
+// handler just drains each sink in round-robin until every sink reports EOF.
+//
+// Bounded sources (testsrc2=duration=N, color=d=N, sine=duration=N, …)
+// terminate naturally. Unbounded sources (no duration / nb_frames) only
+// stop when the context is cancelled by the runtime, typically because the
+// downstream encoder/sink has finished and closed its output channel.
+func (r *graphRunner) handleFilterSource(ctx context.Context, node *graph.Node, outs []chan<- any) error {
+	fg := r.filters[node.ID]
+	if fg == nil {
+		return fmt.Errorf("filter_source handler: no filter graph for node %q", node.ID)
+	}
+	if len(outs) != fg.NumOutputs() {
+		return fmt.Errorf("filter_source %q: outs=%d but graph has %d sinks", node.ID, len(outs), fg.NumOutputs())
+	}
+	if fg.NumInputs() != 0 {
+		return fmt.Errorf("filter_source %q: graph has %d buffer sources, expected 0", node.ID, fg.NumInputs())
+	}
+
+	done := make([]bool, len(outs))
+	remaining := len(outs)
+
+	for remaining > 0 {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		anyProgress := false
+		for oi := range outs {
+			if done[oi] {
+				continue
+			}
+			f, err := av.AllocFrame()
+			if err != nil {
+				return err
+			}
+			if err := fg.PullFrameAt(oi, f); err != nil {
+				f.Close()
+				if av.IsEOF(err) {
+					done[oi] = true
+					remaining--
+					continue
+				}
+				if av.IsEAgain(err) {
+					// Source filters never legitimately return EAGAIN —
+					// they generate frames synchronously. Treat as EOF
+					// to avoid spinning.
+					done[oi] = true
+					remaining--
+					continue
+				}
+				return err
+			}
+			anyProgress = true
+			select {
+			case outs[oi] <- f:
+			case <-ctx.Done():
+				f.Close()
+				return ctx.Err()
+			}
+		}
+		if !anyProgress {
+			// Defensive: shouldn't happen given the EAGAIN→done coercion
+			// above, but guards against a libavfilter bug producing an
+			// infinite no-progress loop.
+			break
+		}
+	}
+	return nil
+}
+
+// ---------- FilterSink handler (Wave 7 #36d) ----------
+
+// handleFilterSink pushes frames from N inbound channels into the buffer
+// sources of a sink-only filter graph (built by createFilterSink via
+// av.NewSinkFilterGraph). The graph terminates every input pad in a
+// libavfilter sink (nullsink, anullsink, or a chain ending in one such
+// as `ebur128,anullsink` or `ametadata=mode=print:file=…,anullsink`),
+// so there are no buffer sinks to drain. Frames are consumed for their
+// side effects and discarded.
+func (r *graphRunner) handleFilterSink(ctx context.Context, node *graph.Node, ins []<-chan any) error {
+	fg := r.filters[node.ID]
+	if fg == nil {
+		return fmt.Errorf("filter_sink handler: no filter graph for node %q", node.ID)
+	}
+	if len(ins) != fg.NumInputs() {
+		return fmt.Errorf("filter_sink %q: ins=%d but graph has %d sources", node.ID, len(ins), fg.NumInputs())
+	}
+	if fg.NumOutputs() != 0 {
+		return fmt.Errorf("filter_sink %q: graph has %d buffer sinks, expected 0", node.ID, fg.NumOutputs())
+	}
+
+	// Single-input fast path.
+	if len(ins) == 1 {
+		for v := range ins[0] {
+			f := v.(*av.Frame)
+			if err := fg.PushFrame(f); err != nil {
+				f.Close()
+				if av.IsEOF(err) || av.IsEAgain(err) {
+					continue
+				}
+				return err
+			}
+			f.Close()
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+		}
+		if err := fg.Flush(); err != nil && !av.IsEOF(err) {
+			return err
+		}
+		return nil
+	}
+
+	// Multi-input: serialise all filter-graph operations through a
+	// single goroutine (mirrors handleFilter).
+	type filterMsg struct {
+		padIdx int
+		frame  *av.Frame // nil = this input is exhausted
+	}
+	msgCh := make(chan filterMsg, 8*len(ins))
+
+	var wg sync.WaitGroup
+	for i, in := range ins {
+		i, in := i, in
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for v := range in {
+				msgCh <- filterMsg{padIdx: i, frame: v.(*av.Frame)}
+			}
+			msgCh <- filterMsg{padIdx: i, frame: nil}
+		}()
+	}
+	go func() {
+		wg.Wait()
+		close(msgCh)
+	}()
+
+	for msg := range msgCh {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if msg.frame == nil {
+			if err := fg.FlushAt(msg.padIdx); err != nil && !av.IsEOF(err) {
+				return err
+			}
+			continue
+		}
+		if err := fg.PushFrameAt(msg.padIdx, msg.frame); err != nil {
+			msg.frame.Close()
+			if !av.IsEOF(err) && !av.IsEAgain(err) {
+				return err
+			}
+		} else {
+			msg.frame.Close()
+		}
+	}
+	return nil
+}
+
 // ---------- Encoder handler ----------
 
 func (r *graphRunner) handleEncoder(ctx context.Context, node *graph.Node, ins []<-chan any, outs []chan<- any) error {
@@ -1114,6 +1613,30 @@ func (r *graphRunner) handleEncoder(ctx context.Context, node *graph.Node, ins [
 		mode := paramString(node.Params, "__fps_mode")
 		if mode != "" && mode != "passthrough" {
 			fpsRW = newFPSRewriter(mode, computeFrameDurationTB(enc.FrameRate(), enc.TimeBase()))
+		}
+	}
+
+	// Per-output forced-keyframe spec (Output.ForceKeyFrames →
+	// __force_key_frames on the synthetic encoder node). Only video
+	// frames are eligible; audio/subtitle encoders see no marker.
+	// The matcher is consulted exactly once per frame (after any
+	// fpsRewriter rewrite resolves the final PTS) so its `n` /
+	// `n_forced` / `prev_forced_*` counters mirror the post-rewrite
+	// PTS stream the encoder actually sees.
+	var forceKF *forceKeyFramesMatcher
+	if enc.MediaType() == av.MediaTypeVideo {
+		if specStr := paramString(node.Params, "__force_key_frames"); specStr != "" {
+			spec, err := parseForceKeyFrames(specStr)
+			if err != nil {
+				return fmt.Errorf("encoder %q: %w", node.ID, err)
+			}
+			tb := enc.TimeBase()
+			m, err := newForceKeyFramesMatcher(spec, tb[0], tb[1])
+			if err != nil {
+				return fmt.Errorf("encoder %q: %w", node.ID, err)
+			}
+			forceKF = m
+			defer forceKF.Close()
 		}
 	}
 
@@ -1145,6 +1668,13 @@ func (r *graphRunner) handleEncoder(ctx context.Context, node *graph.Node, ins [
 		return nil
 	}
 
+	// Pass-1 stats sink for the generic codec path (mpeg2video,
+	// mpeg4, libxvid, ...). libx264 / libvvenc / libx265 manage
+	// their own stats file via the codec's `stats` AVOption and
+	// leave AVCodecContext.stats_out empty, so the writer below
+	// stays a no-op for them.
+	passLog := r.passLogFiles[node.ID]
+
 	drainEncoder := func() error {
 		for {
 			p, err := av.AllocPacket()
@@ -1158,6 +1688,14 @@ func (r *graphRunner) handleEncoder(ctx context.Context, node *graph.Node, ins [
 				}
 				return err
 			}
+			if passLog != nil {
+				if s := enc.StatsOut(); s != "" {
+					if _, werr := passLog.WriteString(s); werr != nil {
+						p.Close()
+						return fmt.Errorf("encoder %q: write pass-1 stats: %w", node.ID, werr)
+					}
+				}
+			}
 			if err := sendPacket(p); err != nil {
 				return err
 			}
@@ -1168,6 +1706,16 @@ func (r *graphRunner) handleEncoder(ctx context.Context, node *graph.Node, ins [
 	// resulting packets. Used by both the passthrough path and the CFR
 	// duplication loop.
 	sendOne := func(f *av.Frame) error {
+		// Forced-keyframe stamp: must happen on the exact frame
+		// instance handed to libavcodec (cloned duplicates from the
+		// CFR fill path each get their own check, mirroring FFmpeg's
+		// per-frame `forced_kf_apply` invocation in
+		// fftools/ffmpeg_enc.c::frame_encode line 798).
+		if forceKF != nil {
+			if forceKF.shouldForce(f.PTS(), f.PictType()) {
+				f.SetPictType(av.PictureTypeI)
+			}
+		}
 		if err := enc.SendFrame(f); err != nil {
 			return err
 		}
@@ -1225,14 +1773,11 @@ func (r *graphRunner) handleEncoder(ctx context.Context, node *graph.Node, ins [
 			continue
 		}
 
-		if err := enc.SendFrame(f); err != nil {
+		if err := sendOne(f); err != nil {
 			f.Close()
 			return err
 		}
 		f.Close()
-		if err := drainEncoder(); err != nil {
-			return err
-		}
 		r.pipe.Metrics().Node(node.ID).RecordLatency(time.Since(frameStart))
 	}
 
@@ -1382,43 +1927,107 @@ func (r *graphRunner) handleSink(ctx context.Context, node *graph.Node, ins []<-
 		// PTS 0 (suppressed under -copyts).
 		shiftPTSus(pkt, shiftDownUS, dstTB)
 
-		frameStart := time.Now()
-		var wErr error
-		if mu != nil {
-			mu.Lock()
-		}
-		// `-fs` (max_file_size): query avio_tell before WritePacket
-		// and refuse to write when the limit has been reached.
-		// Mirrors fftools/ffmpeg_mux.c's
-		// `if (fs >= mux->limit_filesize) ret = AVERROR_EOF`.
-		stopAllNow := false
-		if sink.maxFileSize > 0 {
-			if cur := sink.muxer.BytesWritten(); cur >= 0 && cur >= sink.maxFileSize {
-				stopAllNow = true
+		// writeOne handles a single muxer-bound packet: max_file_size
+		// check, WritePacket, and per-channel bookkeeping. Returns
+		// (wrote, stopAll, err).
+		writeOne := func(p *av.Packet) (bool, bool, error) {
+			frameStart := time.Now()
+			var wErr error
+			if mu != nil {
+				mu.Lock()
 			}
+			stopAllNow := false
+			if sink.maxFileSize > 0 {
+				if cur := sink.muxer.BytesWritten(); cur >= 0 && cur >= sink.maxFileSize {
+					stopAllNow = true
+				}
+			}
+			if !stopAllNow {
+				wErr = sink.muxer.WritePacket(p)
+			}
+			if mu != nil {
+				mu.Unlock()
+			}
+			if stopAllNow {
+				return false, true, nil
+			}
+			if wErr != nil {
+				return false, false, wErr
+			}
+			st.written++
+			if pPTS, hasP := ptsToMicros(p.PTS(), dstTB); hasP {
+				st.lastPTSus = pPTS
+				st.lastPTSok = true
+				ptsNs := time.Duration(p.PTS()) * time.Second *
+					time.Duration(dstTB[0]) / time.Duration(dstTB[1])
+				r.pipe.Metrics().Node(node.ID).AdvanceOutputPTS(ptsNs)
+			}
+			r.pipe.Metrics().Node(node.ID).RecordLatency(time.Since(frameStart))
+			return true, false, nil
 		}
-		if !stopAllNow {
-			wErr = sink.muxer.WritePacket(pkt)
+
+		// BSF chain (if any): drive the input packet through
+		// av_bsf_send_packet / av_bsf_receive_packet and call
+		// writeOne for each output packet. Mirrors
+		// fftools/ffmpeg_mux.c::write_packet's BSF loop.
+		var bsf *av.BitstreamFilter
+		if i < len(sink.streamBSF) {
+			bsf = sink.streamBSF[i]
 		}
-		if mu != nil {
-			mu.Unlock()
+		if bsf != nil {
+			outs, err := bsf.FilterPacket(pkt)
+			if err != nil {
+				return false, false, fmt.Errorf("bsf filter: %w", err)
+			}
+			var wroteAny bool
+			for _, op := range outs {
+				op.SetStreamIndex(i)
+				wrote, stopAll, werr := writeOne(op)
+				op.Close()
+				wroteAny = wroteAny || wrote
+				if stopAll || werr != nil {
+					return wroteAny, stopAll, werr
+				}
+			}
+			return wroteAny, false, nil
 		}
-		if stopAllNow {
-			return false, true, nil
+
+		return writeOne(pkt)
+	}
+
+	// flushBSF drains any residual packets buffered inside the BSF
+	// chain at end-of-stream by sending a null packet (EOF signal),
+	// then writing the drained output packets through the same
+	// per-channel write path. Mirrors fftools/ffmpeg_mux.c::mux_thread
+	// flushing the BSF before WriteTrailer.
+	flushBSF := func(i int, dstTB [2]int, st *chanState, mu *sync.Mutex) error {
+		var bsf *av.BitstreamFilter
+		if i < len(sink.streamBSF) {
+			bsf = sink.streamBSF[i]
 		}
-		if wErr != nil {
-			return false, false, wErr
+		if bsf == nil {
+			return nil
 		}
-		st.written++
-		if hasPTS {
-			st.lastPTSus = ptsUS
-			st.lastPTSok = true
-			ptsNs := time.Duration(pkt.PTS()) * time.Second *
-				time.Duration(dstTB[0]) / time.Duration(dstTB[1])
-			r.pipe.Metrics().Node(node.ID).AdvanceOutputPTS(ptsNs)
+		outs, err := bsf.Flush()
+		if err != nil {
+			return fmt.Errorf("bsf flush: %w", err)
 		}
-		r.pipe.Metrics().Node(node.ID).RecordLatency(time.Since(frameStart))
-		return true, false, nil
+		for _, op := range outs {
+			op.SetStreamIndex(i)
+			if mu != nil {
+				mu.Lock()
+			}
+			werr := sink.muxer.WritePacket(op)
+			if mu != nil {
+				mu.Unlock()
+			}
+			op.Close()
+			if werr != nil {
+				return werr
+			}
+			st.written++
+		}
+		return nil
 	}
 
 	if len(ins) == 1 {
@@ -1426,7 +2035,14 @@ func (r *graphRunner) handleSink(ctx context.Context, node *graph.Node, ins []<-
 		if len(sink.streamRescale) > 0 {
 			rs = sink.streamRescale[0]
 		}
+		// Use rs.dstTB (which equals the muxer's pre-WriteHeader
+		// stream TB for BSF streams, post-header otherwise) so PTS
+		// comparisons stay in the same units packets arrive in
+		// after rescale.
 		dstTB := sink.muxer.StreamTimeBase(0)
+		if rs != nil {
+			dstTB = rs.dstTB
+		}
 		st := &chanState{}
 		for v := range ins[0] {
 			pkt := v.(*av.Packet)
@@ -1444,6 +2060,9 @@ func (r *graphRunner) handleSink(ctx context.Context, node *graph.Node, ins []<-
 			}
 		}
 		recordShortest(st.lastPTSus, st.lastPTSok)
+		if err := flushBSF(0, dstTB, st, nil); err != nil {
+			return err
+		}
 		return sink.muxer.WriteTrailer()
 	}
 
@@ -1458,6 +2077,9 @@ func (r *graphRunner) handleSink(ctx context.Context, node *graph.Node, ins []<-
 			rs = sink.streamRescale[i]
 		}
 		dstTB := sink.muxer.StreamTimeBase(i)
+		if rs != nil {
+			dstTB = rs.dstTB
+		}
 		st := &chanState{}
 		eg.Go(func() error {
 			defer recordShortest(st.lastPTSus, st.lastPTSok)
@@ -1476,7 +2098,7 @@ func (r *graphRunner) handleSink(ctx context.Context, node *graph.Node, ins []<-
 					return err
 				}
 			}
-			return nil
+			return flushBSF(i, dstTB, st, &mu)
 		})
 	}
 
@@ -1593,14 +2215,90 @@ func (r *graphRunner) openSource(cfg Input, srcNode *graph.Node, decOpts av.Deco
 	var formatName string
 	switch cfg.Kind {
 	case "", "file":
-		// default file probing
+		// default file probing; honour explicit Format override
+		formatName = cfg.Format
 	case "lavfi":
 		formatName = "lavfi"
+	case "raw":
+		// kind="raw" requires Format to name the rawvideo / PCM
+		// demuxer (validated upstream by validateInputDemuxerFields).
+		formatName = cfg.Format
+	case "concat":
+		// kind="concat" pins the demuxer; if ConcatList was supplied
+		// the runtime serialises it to a temp listfile (handled
+		// below); otherwise URL points at an existing listfile.
+		formatName = "concat"
 	default:
-		return nil, fmt.Errorf("input %q: unsupported kind %q (want \"file\" or \"lavfi\")", cfg.ID, cfg.Kind)
+		return nil, fmt.Errorf("input %q: unsupported kind %q (want \"file\", \"lavfi\", \"raw\" or \"concat\")", cfg.ID, cfg.Kind)
 	}
 
-	input, err := av.OpenInputWithFormat(cfg.URL, formatName, inputOpts)
+	// Promote the typed demuxer fields (Wave 5 #23-#28) into the
+	// AVDictionary the demuxer actually consumes. Each field maps to
+	// the canonical AVOption name documented on the libavformat
+	// demuxer that recognises it; collisions with cfg.Options leave
+	// the typed field as the winner so the schema layer is the
+	// source of truth.
+	openURL := cfg.URL
+	var concatCleanup func()
+	defer func() {
+		if concatCleanup != nil {
+			// On failure between materialisation and successful return.
+			concatCleanup()
+		}
+	}()
+	if cfg.Kind == "concat" && len(cfg.ConcatList) > 0 {
+		path, cleanup, err := materialiseConcatList(cfg.ConcatList)
+		if err != nil {
+			return nil, fmt.Errorf("input %q: materialise concat list: %w", cfg.ID, err)
+		}
+		openURL = path
+		concatCleanup = cleanup
+	}
+	if inputOpts == nil {
+		inputOpts = map[string]string{}
+	}
+	if cfg.FrameRate > 0 {
+		inputOpts["framerate"] = strconv.FormatFloat(cfg.FrameRate, 'f', -1, 64)
+	}
+	if cfg.PixelFormat != "" {
+		inputOpts["pixel_format"] = cfg.PixelFormat
+	}
+	if cfg.VideoSize != "" {
+		inputOpts["video_size"] = cfg.VideoSize
+	}
+	if cfg.SampleRate > 0 {
+		inputOpts["sample_rate"] = strconv.Itoa(cfg.SampleRate)
+	}
+	if cfg.Channels > 0 {
+		inputOpts["channels"] = strconv.Itoa(cfg.Channels)
+	}
+	if cfg.SampleFormat != "" {
+		inputOpts["sample_fmt"] = cfg.SampleFormat
+	}
+	if cfg.ThreadQueueSize > 0 {
+		inputOpts["thread_queue_size"] = strconv.Itoa(cfg.ThreadQueueSize)
+	}
+	if len(cfg.ProtocolWhitelist) > 0 {
+		inputOpts["protocol_whitelist"] = strings.Join(cfg.ProtocolWhitelist, ",")
+	}
+	if cfg.PatternType != "" {
+		inputOpts["pattern_type"] = cfg.PatternType
+	}
+	if cfg.SeekTimestamp {
+		inputOpts["seek_timestamp"] = "1"
+	}
+	// AccurateSeek: only emit when explicitly false (FFmpeg default
+	// is true). Mapped to "noaccurate_seek" in the runtime via
+	// dropping the +start_time addition below; we still pass
+	// through so any future libavformat consumer sees it.
+	if cfg.AccurateSeek != nil && !*cfg.AccurateSeek {
+		inputOpts["accurate_seek"] = "0"
+	}
+	if len(inputOpts) == 0 {
+		inputOpts = nil
+	}
+
+	input, err := av.OpenInputWithFormat(openURL, formatName, inputOpts)
 	if err != nil {
 		return nil, fmt.Errorf("open input %q: %w", cfg.URL, err)
 	}
@@ -1651,51 +2349,57 @@ func (r *graphRunner) openSource(cfg Input, srcNode *graph.Node, decOpts av.Deco
 	subDecoders := make(map[int]*av.SubtitleDecoderContext)
 	streams := make(map[int]av.StreamInfo)
 
-	for _, sel := range cfg.Streams {
-		count := 0
-		for _, si := range allStreams {
-			if si.Type.String() == sel.Type {
-				if count == sel.Track {
-					switch {
-					case copyOnly[sel.Type]:
-						// Stream-copy only: don't open a decoder.
-						// Data streams always land here (no decoder
-						// available). For subtitle/video/audio, the
-						// muxer will be wired with the input
-						// codecpar via AddStreamFromInput.
-					case sel.Type == "subtitle":
-						subDec, err := av.OpenSubtitleDecoder(input, si.Index)
-						if err != nil {
-							for _, d := range decoders {
-								d.Close()
-							}
-							for _, d := range subDecoders {
-								d.Close()
-							}
-							input.Close()
-							return nil, fmt.Errorf("open subtitle decoder for track %d: %w", sel.Track, err)
-						}
-						subDecoders[si.Index] = subDec
-					default:
-						dec, err := av.OpenDecoderWithOptions(input, si.Index, decOpts)
-						if err != nil {
-							for _, d := range decoders {
-								d.Close()
-							}
-							for _, d := range subDecoders {
-								d.Close()
-							}
-							input.Close()
-							return nil, fmt.Errorf("open decoder for %s track %d: %w", sel.Type, sel.Track, err)
-						}
-						decoders[si.Index] = dec
-					}
-					streams[si.Index] = si
-					break
+	// Resolve the selector list (handles All / Optional / Negate /
+	// Program — Wave 2 #9 + #10) into the concrete set of input
+	// stream indices to demux. Selectors are walked in declaration
+	// order; Negate selectors subtract from the running set; missing
+	// non-Optional matches fail fast (the previous silent-skip
+	// behaviour produced confusing downstream graph errors).
+	selectedIdx, err := resolveStreamSelection(cfg.Streams, allStreams, input.Programs())
+	if err != nil {
+		input.Close()
+		return nil, fmt.Errorf("input %q: %w", cfg.URL, err)
+	}
+	streamByIdx := make(map[int]av.StreamInfo, len(allStreams))
+	for _, si := range allStreams {
+		streamByIdx[si.Index] = si
+	}
+	for _, idx := range selectedIdx {
+		si := streamByIdx[idx]
+		typ := si.Type.String()
+		switch {
+		case copyOnly[typ]:
+			// Stream-copy only: don't open a decoder.
+		case typ == "subtitle":
+			subDec, err := av.OpenSubtitleDecoderWithOptions(input, si.Index, av.SubtitleDecoderOptions{
+				Charenc: cfg.SubtitleCharenc,
+			})
+			if err != nil {
+				for _, d := range decoders {
+					d.Close()
 				}
-				count++
+				for _, d := range subDecoders {
+					d.Close()
+				}
+				input.Close()
+				return nil, fmt.Errorf("open subtitle decoder for stream %d: %w", si.Index, err)
 			}
+			subDecoders[si.Index] = subDec
+		default:
+			dec, err := av.OpenDecoderWithOptions(input, si.Index, decOpts)
+			if err != nil {
+				for _, d := range decoders {
+					d.Close()
+				}
+				for _, d := range subDecoders {
+					d.Close()
+				}
+				input.Close()
+				return nil, fmt.Errorf("open decoder for %s stream %d: %w", typ, si.Index, err)
+			}
+			decoders[si.Index] = dec
 		}
+		streams[si.Index] = si
 	}
 
 	// Compute longest selected stream duration for progress reporting.
@@ -1727,31 +2431,101 @@ func (r *graphRunner) openSource(cfg Input, srcNode *graph.Node, decOpts av.Deco
 	// FFmpeg's global `-copyts` flag, which sets `ifile->ts_offset`
 	// to 0 (or to `input_ts_offset`, which we don't model) instead
 	// of `-timestamp` in fftools/ffmpeg_demux.c.
+	//
+	// `Config.StartAtZero` re-enables the shift even under CopyTS so
+	// the first kept packet still anchors at PTS 0 (mirrors the
+	// `start_at_zero ? 0 : f->start_time_effective` branch at
+	// fftools/ffmpeg_demux.c L486 — `-start_at_zero` overrides the
+	// `-copyts` suppression).
 	var tsOffsetUS int64
-	if timing.haveStart && !(r.cfg != nil && r.cfg.CopyTS) {
+	if timing.haveStart && (!(r.cfg != nil && r.cfg.CopyTS) || (r.cfg != nil && r.cfg.StartAtZero)) {
 		tsOffsetUS = -timing.seekTimestampUS(input.StartTime())
 	}
 
-	return &sourceResources{
-		input:         input,
-		decoders:      decoders,
-		subDecoders:   subDecoders,
-		streams:       streams,
-		cfg:           cfg,
-		mediaDuration: mediaDuration,
-		stopPTSus:     timing.stopTimestampUS(input.StartTime()),
-		tsOffsetUS:    tsOffsetUS,
-	}, nil
+	// Compose `-itsoffset` additively with the seek compensation.
+	// FFmpeg's fftools/ffmpeg_demux.c does the same:
+	//   `f->ts_offset = o->input_ts_offset - timestamp;`
+	// (where `timestamp` is the value passed to avformat_seek_file).
+	// `Input.ITSOffset` is in seconds; convert to AV_TIME_BASE
+	// microseconds before adding.
+	if cfg.ITSOffset != 0 {
+		tsOffsetUS += int64(cfg.ITSOffset * 1_000_000)
+	}
+
+	// Build the read-rate pacer when the user enabled pacing.
+	// Mirrors fftools/ffmpeg_demux.c's `Demuxer.readrate` /
+	// `readrate_initial_burst` / `readrate_catchup` defaults: when
+	// burst is unset it falls back to 0.5s, and catchup falls back
+	// to readrate × 1.05.
+	var pacer *readRatePacer
+	if cfg.ReadRate > 0 {
+		burst := cfg.ReadRateInitialBurst
+		if burst == 0 {
+			burst = 0.5
+		}
+		catchup := cfg.ReadRateCatchup
+		if catchup == 0 {
+			catchup = cfg.ReadRate * 1.05
+		}
+		pacer = newReadRatePacer(cfg.ReadRate, burst, catchup)
+	}
+
+	res := &sourceResources{
+		input:               input,
+		decoders:            decoders,
+		subDecoders:         subDecoders,
+		streams:             streams,
+		cfg:                 cfg,
+		mediaDuration:       mediaDuration,
+		stopPTSus:           timing.stopTimestampUS(input.StartTime()),
+		tsOffsetUS:          tsOffsetUS,
+		streamLoopRemaining: cfg.StreamLoop,
+		pacer:               pacer,
+		concatCleanup:       concatCleanup,
+	}
+	concatCleanup = nil // ownership transferred to res.Close()
+	return res, nil
 }
 
 func (r *graphRunner) createFilter(dag *graph.Graph, node *graph.Node) (*av.FilterGraph, error) {
+	params := node.Params
+	// Loudnorm pass-2 shuttle: read the JSON stats file written by
+	// pass 1 and inject measured_I / measured_TP / measured_LRA /
+	// measured_thresh / offset into the loudnorm node's params before
+	// the filter graph is instantiated. See pipeline/loudnorm.go.
+	if node.Filter == "loudnorm" && params != nil {
+		if pv, ok := params["__loudnorm_pass"]; ok {
+			pi, _ := pv.(int)
+			if pi == 2 {
+				statsPath, _ := params["__loudnorm_stats"].(string)
+				measured, err := loadLoudnormMeasurements(statsPath)
+				if err != nil {
+					return nil, fmt.Errorf("filter %q: %w", node.ID, err)
+				}
+				merged := make(map[string]any, len(params)+len(measured))
+				for k, v := range params {
+					merged[k] = v
+				}
+				for k, v := range measured {
+					merged[k] = v
+				}
+				params = merged
+			}
+		}
+	}
 	filterSpec := buildFilterSpec(NodeDef{
 		Filter: node.Filter,
-		Params: node.Params,
+		Params: params,
 	})
+	threads := paramInt(params, "__filter_threads")
 
-	// Simple 1→1 filter.
-	if len(node.Inbound) == 1 && len(node.Outbound) == 1 {
+	// Simple 1→1 filter — fast path, but only when input and output
+	// media types match. Cross-media-type filters (showwavespic,
+	// showspectrumpic, showvolume, ...) need the complex graph because
+	// NewVideoFilterGraph / NewAudioFilterGraph hard-wire the buffersink
+	// type to match the buffersrc type. (Wave 7 #37)
+	crossMedia := node.OutputMediaType != "" && len(node.Inbound) > 0 && node.OutputMediaType != node.Inbound[0].Type
+	if len(node.Inbound) == 1 && len(node.Outbound) == 1 && !crossMedia {
 		si, err := r.resolveStreamInfo(dag, node)
 		if err != nil {
 			return nil, fmt.Errorf("filter %q: %w", node.ID, err)
@@ -1768,6 +2542,7 @@ func (r *graphRunner) createFilter(dag *graph.Graph, node *graph.Node) (*av.Filt
 				FRNum:      si.FrameRate[0],
 				FRDen:      si.FrameRate[1],
 				FilterSpec: filterSpec,
+				Threads:    threads,
 			})
 		}
 		return av.NewAudioFilterGraph(av.AudioFilterGraphConfig{
@@ -1775,6 +2550,7 @@ func (r *graphRunner) createFilter(dag *graph.Graph, node *graph.Node) (*av.Filt
 			SampleRate: si.SampleRate,
 			Channels:   si.Channels,
 			FilterSpec: filterSpec,
+			Threads:    threads,
 		})
 	}
 
@@ -1817,7 +2593,106 @@ func (r *graphRunner) createFilter(dag *graph.Graph, node *graph.Node) (*av.Filt
 		Inputs:     inputs,
 		Outputs:    outputs,
 		FilterSpec: spec,
+		Threads:    threads,
 	})
+}
+
+// createFilterSource builds a source-only filter graph for a KindFilterSource
+// node. The node's Filter + Params describe a libavfilter source filter
+// (color, testsrc, sine, anullsrc, …) and the resulting graph has zero
+// buffer sources and one buffer sink per outbound edge. Wave 7 #36c.
+func (r *graphRunner) createFilterSource(node *graph.Node) (*av.FilterGraph, error) {
+	if len(node.Outbound) == 0 {
+		return nil, fmt.Errorf("filter_source %q has no outbound edges", node.ID)
+	}
+	// Wave 7 #36e: rewrite per-node `protocol_whitelist` shortcut as a
+	// libavformat `format_opts` entry on `movie` / `amovie` so the
+	// underlying demuxer actually honours the policy.
+	params := movieFilterParamsForSpec(node.Filter, node.Params)
+	base := buildFilterSpec(NodeDef{Filter: node.Filter, Params: params})
+	spec := buildSourceFilterSpec(base, len(node.Outbound))
+
+	outputs := make([]av.FilterOutputConfig, len(node.Outbound))
+	for i, e := range node.Outbound {
+		outputs[i] = av.FilterOutputConfig{
+			Label:     fmt.Sprintf("out%d", i),
+			MediaType: portTypeToAVMediaType(e.Type),
+		}
+	}
+
+	return av.NewSourceFilterGraph(av.SourceFilterGraphConfig{
+		Outputs:    outputs,
+		FilterSpec: spec,
+		Threads:    paramInt(node.Params, "__filter_threads"),
+	})
+}
+
+// buildSourceFilterSpec wraps a source filter chain with output pad labels.
+// For a single-output source: "color=c=red:s=320x240:d=1[out0]".
+// For an N-output source (e.g. testsrc + split): the base spec already
+// produces N pads and we append [out0][out1]… to label them.
+func buildSourceFilterSpec(base string, numOut int) string {
+	var sb strings.Builder
+	sb.WriteString(base)
+	for i := 0; i < numOut; i++ {
+		fmt.Fprintf(&sb, "[out%d]", i)
+	}
+	return sb.String()
+}
+
+// createFilterSink builds a sink-only filter graph for a KindFilterSink
+// node. The node's Filter + Params describe a libavfilter sink chain
+// terminating in nullsink/anullsink (e.g. "nullsink" or
+// "ebur128=peak=true,anullsink"); the resulting graph has one buffer
+// source per inbound edge and zero buffer sinks. Wave 7 #36d.
+func (r *graphRunner) createFilterSink(dag *graph.Graph, node *graph.Node) (*av.FilterGraph, error) {
+	if len(node.Inbound) == 0 {
+		return nil, fmt.Errorf("filter_sink %q has no inbound edges", node.ID)
+	}
+	base := buildFilterSpec(NodeDef{Filter: node.Filter, Params: node.Params})
+	spec := buildSinkFilterSpec(base, len(node.Inbound))
+
+	inputs := make([]av.FilterPadConfig, len(node.Inbound))
+	for i, e := range node.Inbound {
+		si, err := r.resolveEdgeStreamInfo(dag, e)
+		if err != nil {
+			return nil, fmt.Errorf("filter_sink %q input %d: %w", node.ID, i, err)
+		}
+		inputs[i] = av.FilterPadConfig{
+			Label:      fmt.Sprintf("in%d", i),
+			MediaType:  portTypeToAVMediaType(e.Type),
+			Width:      si.Width,
+			Height:     si.Height,
+			PixFmt:     si.PixFmt,
+			TBNum:      si.TimeBase[0],
+			TBDen:      si.TimeBase[1],
+			SARNum:     1,
+			SARDen:     1,
+			FRNum:      si.FrameRate[0],
+			FRDen:      si.FrameRate[1],
+			SampleFmt:  si.SampleFmt,
+			SampleRate: si.SampleRate,
+			Channels:   si.Channels,
+		}
+	}
+
+	return av.NewSinkFilterGraph(av.SinkFilterGraphConfig{
+		Inputs:     inputs,
+		FilterSpec: spec,
+		Threads:    paramInt(node.Params, "__filter_threads"),
+	})
+}
+
+// buildSinkFilterSpec wraps a sink filter chain with input pad labels.
+// For a single-input sink: "[in0]nullsink".
+// For an N-input sink (e.g. concat + nullsink): "[in0][in1]concat=…,nullsink".
+func buildSinkFilterSpec(base string, numIn int) string {
+	var sb strings.Builder
+	for i := 0; i < numIn; i++ {
+		fmt.Fprintf(&sb, "[in%d]", i)
+	}
+	sb.WriteString(base)
+	return sb.String()
 }
 
 func (r *graphRunner) createEncoder(dag *graph.Graph, node *graph.Node) (*av.EncoderContext, error) {
@@ -1909,10 +2784,101 @@ func (r *graphRunner) createEncoder(dag *graph.Graph, node *graph.Node) (*av.Enc
 		opts.GOPSize = v
 	}
 
+	// SAR / DAR shorthand (FFmpeg `-aspect` / `setsar` / `setdar`).
+	// Resolve against the encoder's just-decided Width/Height so DAR
+	// can be converted into a SAR fraction.
+	if sar := paramString(node.Params, "__sar"); sar != "" {
+		n, d, err := resolveSAR(sar, "", opts.Width, opts.Height)
+		if err != nil {
+			return nil, fmt.Errorf("encoder node %q: %w", node.ID, err)
+		}
+		opts.SampleAspectRatio = [2]int{n, d}
+	} else if dar := paramString(node.Params, "__dar"); dar != "" {
+		n, d, err := resolveSAR("", dar, opts.Width, opts.Height)
+		if err != nil {
+			return nil, fmt.Errorf("encoder node %q: %w", node.ID, err)
+		}
+		opts.SampleAspectRatio = [2]int{n, d}
+	}
+
+	// FieldOrder / InterlacedEncode (Wave 6 #33). Honour the
+	// encoder-side broadcast knobs after time_base / SAR but before
+	// avcodec_open2 (run via av.OpenEncoder below).
+	if fo := paramString(node.Params, "__field_order"); fo != "" {
+		v, ok := fieldOrderEnumValue(fo)
+		if !ok {
+			return nil, fmt.Errorf("encoder node %q: invalid field_order %q", node.ID, fo)
+		}
+		opts.FieldOrder = v
+	}
+	if paramString(node.Params, "__interlaced") == "1" {
+		opts.InterlacedEncode = true
+	}
+	// EncoderTimeBase rational form ("N/D" or "N:D"). Sentinels
+	// "demux" / "filter" are resolved after the upstream TB is known
+	// (filter sentinel inherits the buffersink TB; demux sentinel
+	// inherits the source TB) — the existing TimeBase wiring below
+	// already prefers buffersink TB over framerate, so the "filter"
+	// sentinel is a no-op once that path runs. The "demux" sentinel
+	// requires explicit threading from the source side; we accept
+	// the marker here and let the existing buffersink default cover
+	// the common case (the validator caught misuse upstream).
+	if etb := paramString(node.Params, "__enc_time_base"); etb != "" {
+		n, d, sentinel, err := parseEncoderTimeBase(etb)
+		if err != nil {
+			return nil, fmt.Errorf("encoder node %q: %w", node.ID, err)
+		}
+		if !sentinel {
+			opts.TimeBase = [2]int{n, d}
+		}
+	}
+
 	// Pass every remaining param through as an AVDictionary entry so codec-
 	// specific options written by the GUI (preset, crf, maxrate, bufsize,
 	// x264-params, ...) actually reach the encoder.
 	opts.ExtraOpts = collectEncoderExtraOpts(node.Params)
+
+	// Two-pass video encoding. Mirrors fftools/ffmpeg_mux_init.c:705 et seq.
+	if pass := paramInt(node.Params, "__pass"); pass != 0 {
+		opts.Pass = pass
+		prefix := paramString(node.Params, "__passlogfile")
+		if prefix == "" {
+			prefix = "ffmpeg2pass"
+		}
+		idx := paramInt(node.Params, "__pass_index")
+		logfile := fmt.Sprintf("%s-%d.log", prefix, idx)
+		switch codecName {
+		case "libx264", "libvvenc":
+			if opts.ExtraOpts == nil {
+				opts.ExtraOpts = make(map[string]string)
+			}
+			if _, set := opts.ExtraOpts["stats"]; !set {
+				opts.ExtraOpts["stats"] = logfile
+			}
+		case "libx265":
+			if opts.ExtraOpts == nil {
+				opts.ExtraOpts = make(map[string]string)
+			}
+			if _, set := opts.ExtraOpts["x265-stats"]; !set {
+				opts.ExtraOpts["x265-stats"] = logfile
+			}
+		default:
+			if pass&2 != 0 {
+				buf, ferr := os.ReadFile(logfile)
+				if ferr != nil {
+					return nil, fmt.Errorf("encoder node %q: read pass-2 stats %q: %w", node.ID, logfile, ferr)
+				}
+				opts.StatsIn = buf
+			}
+			if pass&1 != 0 {
+				f, ferr := os.Create(logfile)
+				if ferr != nil {
+					return nil, fmt.Errorf("encoder node %q: open pass-1 stats %q: %w", node.ID, logfile, ferr)
+				}
+				r.passLogFiles[node.ID] = f
+			}
+		}
+	}
 
 	return av.OpenEncoder(opts)
 }
@@ -1932,6 +2898,20 @@ var encoderReservedParams = map[string]bool{
 	// not by libavcodec. Keep it out of the AVDictionary forwarded to
 	// avcodec_open2 so the encoder doesn't reject the unknown option.
 	"__fps_mode": true,
+	// `__pass`, `__passlogfile`, `__pass_index` are consumed by
+	// createEncoder to drive two-pass video encoding. They never
+	// reach avcodec_open2 directly \u2014 createEncoder either sets the
+	// codec-specific stats AVOption (libx264 / libvvenc / libx265)
+	// or wires AVCodecContext.stats_in / opens a log file for
+	// stats_out (generic codecs).
+	"__pass":          true,
+	"__passlogfile":   true,
+	"__pass_index":    true,
+	"__sar":           true,
+	"__dar":           true,
+	"__enc_time_base": true,
+	"__field_order":   true,
+	"__interlaced":    true,
 }
 
 // collectEncoderExtraOpts returns a map of AVDictionary options to forward to
@@ -1978,9 +2958,24 @@ func (r *graphRunner) openSink(_ *graph.Graph, node *graph.Node) (*sinkResources
 		return nil, fmt.Errorf("output %q timing: %w", out.URL, err)
 	}
 
-	muxer, err := av.OpenOutputWithFormat(out.URL, out.Format)
-	if err != nil {
-		return nil, fmt.Errorf("open output %q: %w", out.URL, err)
+	var muxer *av.OutputFormatContext
+	switch out.Kind {
+	case "tee":
+		slavesURL, terr := buildTeeSlavesURL(out.Targets)
+		if terr != nil {
+			return nil, fmt.Errorf("output %q: %w", out.ID, terr)
+		}
+		m, oerr := av.OpenTeeOutput(slavesURL)
+		if oerr != nil {
+			return nil, fmt.Errorf("open tee output %q: %w", out.ID, oerr)
+		}
+		muxer = m
+	default:
+		m, oerr := av.OpenOutputWithFormat(out.URL, out.Format)
+		if oerr != nil {
+			return nil, fmt.Errorf("open output %q: %w", out.URL, oerr)
+		}
+		muxer = m
 	}
 
 	rescales := make([]*sinkRescale, len(node.Inbound))
@@ -2110,6 +3105,44 @@ func (r *graphRunner) openSink(_ *graph.Graph, node *graph.Node) (*sinkResources
 		}
 	}
 
+	// Per-stream bitstream-filter chains (Output.BSFVideo /
+	// BSFAudio / BSFSubtitle, FFmpeg `-bsf:v` / `-bsf:a` / `-bsf:s`).
+	// Each value is the FFmpeg chain spec `f1[=k=v[:k=v]][,f2]` parsed
+	// by libavcodec's av_bsf_list_parse_str. Attached after stream
+	// creation and before WriteHeader so the chain's par_out replaces
+	// the muxer's stream codecpar — exactly the order
+	// fftools/ffmpeg_mux.c::bsf_init follows. Stored per inbound
+	// channel for processOne to drive packets through.
+	bsfSpecFor := func(t graph.PortType) string {
+		switch t {
+		case graph.PortVideo:
+			return out.BSFVideo
+		case graph.PortAudio:
+			return out.BSFAudio
+		case graph.PortSubtitle:
+			return out.BSFSubtitle
+		}
+		return ""
+	}
+	streamBSF := make([]*av.BitstreamFilter, len(node.Inbound))
+	for i, e := range node.Inbound {
+		spec := bsfSpecFor(e.Type)
+		if spec == "" {
+			continue
+		}
+		bsf, err := muxer.AttachStreamBSF(i, spec)
+		if err != nil {
+			for _, b := range streamBSF {
+				if b != nil {
+					_ = b.Close()
+				}
+			}
+			muxer.Abort()
+			return nil, fmt.Errorf("sink %q attach %s bsf chain %q: %w", node.ID, e.Type, spec, err)
+		}
+		streamBSF[i] = bsf
+	}
+
 	// Container metadata + chapters. Resolution rules:
 	//   - Output.Metadata, when non-nil, fully replaces any
 	//     metadata mapped from inputs (mirrors FFmpeg's behaviour
@@ -2131,16 +3164,152 @@ func (r *graphRunner) openSink(_ *graph.Graph, node *graph.Node) (*sinkResources
 		return nil, fmt.Errorf("sink %q apply chapters: %w", node.ID, err)
 	}
 
-	if err := muxer.WriteHeader(); err != nil {
+	// Per-stream color metadata + HDR10 (Output.Color / Output.HDR,
+	// FFmpeg `-color_*` / `-mastering_display_metadata` /
+	// `-content_light_level`). Applied to every inbound video edge's
+	// stream codecpar (and codecpar.coded_side_data for HDR side
+	// data) before WriteHeader so the muxer writes the corresponding
+	// container boxes / SEI passthrough. Audio + subtitle edges are
+	// skipped — color metadata is meaningless for them.
+	if out.Color != nil || out.HDR != nil {
+		for i, e := range node.Inbound {
+			if e.Type != graph.PortVideo {
+				continue
+			}
+			if out.Color != nil {
+				if err := muxer.SetStreamColor(i, av.ColorParams{
+					Range:          out.Color.Range,
+					Primaries:      out.Color.Primaries,
+					Transfer:       out.Color.Transfer,
+					Space:          out.Color.Space,
+					ChromaLocation: out.Color.ChromaLocation,
+				}); err != nil {
+					for _, b := range streamBSF {
+						if b != nil {
+							_ = b.Close()
+						}
+					}
+					muxer.Abort()
+					return nil, fmt.Errorf("sink %q set color: %w", node.ID, err)
+				}
+			}
+			if out.HDR != nil {
+				if md := out.HDR.MasteringDisplay; md != nil {
+					hasPrim := md.DisplayPrimariesRX != 0 || md.WhitePointX != 0
+					hasLum := md.MaxLuminance != 0
+					if hasPrim || hasLum {
+						if err := muxer.SetStreamMasteringDisplay(i, av.MasteringDisplay{
+							HasPrimaries: hasPrim,
+							DisplayPrim: [6]int{
+								md.DisplayPrimariesRX, md.DisplayPrimariesRY,
+								md.DisplayPrimariesGX, md.DisplayPrimariesGY,
+								md.DisplayPrimariesBX, md.DisplayPrimariesBY,
+							},
+							WhitePoint:   [2]int{md.WhitePointX, md.WhitePointY},
+							HasLuminance: hasLum,
+							MinLuminance: md.MinLuminance,
+							MaxLuminance: md.MaxLuminance,
+						}); err != nil {
+							for _, b := range streamBSF {
+								if b != nil {
+									_ = b.Close()
+								}
+							}
+							muxer.Abort()
+							return nil, fmt.Errorf("sink %q set mastering display: %w", node.ID, err)
+						}
+					}
+				}
+				if cll := out.HDR.ContentLightLevel; cll != nil && (cll.MaxCLL != 0 || cll.MaxFALL != 0) {
+					if err := muxer.SetStreamContentLightLevel(i, av.ContentLightLevel{
+						MaxCLL:  cll.MaxCLL,
+						MaxFALL: cll.MaxFALL,
+					}); err != nil {
+						for _, b := range streamBSF {
+							if b != nil {
+								_ = b.Close()
+							}
+						}
+						muxer.Abort()
+						return nil, fmt.Errorf("sink %q set content light level: %w", node.ID, err)
+					}
+				}
+				if dv := out.HDR.DoVi; dv != nil && dv.Profile != 0 {
+					rpu := true
+					if dv.RPUPresent != nil {
+						rpu = *dv.RPUPresent
+					}
+					bl := true
+					if dv.BLPresent != nil {
+						bl = *dv.BLPresent
+					}
+					if err := muxer.SetStreamDoViConfig(i, av.DoViConfig{
+						Profile:           dv.Profile,
+						Level:             dv.Level,
+						RPUPresent:        rpu,
+						ELPresent:         dv.ELPresent,
+						BLPresent:         bl,
+						BLCompatibilityID: dv.BLCompatibilityID,
+					}); err != nil {
+						for _, b := range streamBSF {
+							if b != nil {
+								_ = b.Close()
+							}
+						}
+						muxer.Abort()
+						return nil, fmt.Errorf("sink %q set dovi config: %w", node.ID, err)
+					}
+				}
+			}
+		}
+	}
+
+	// Wave 6 #31: muxed file attachments (matroska / mkv / webm only).
+	// Files are read once and copied into the new stream's
+	// codecpar->extradata. Mirrors fftools/ffmpeg_mux_init.c
+	// of_add_attachments.
+	for ai, att := range out.Attachments {
+		data, err := os.ReadFile(att.Path)
+		if err != nil {
+			muxer.Abort()
+			for _, b := range streamBSF {
+				if b != nil {
+					_ = b.Close()
+				}
+			}
+			return nil, fmt.Errorf("sink %q attachments[%d]: read %s: %w", node.ID, ai, att.Path, err)
+		}
+		filename := att.Filename
+		if filename == "" {
+			filename = filepath.Base(att.Path)
+		}
+		if _, err := muxer.AddAttachment(data, filename, att.MimeType); err != nil {
+			muxer.Abort()
+			for _, b := range streamBSF {
+				if b != nil {
+					_ = b.Close()
+				}
+			}
+			return nil, fmt.Errorf("sink %q attachments[%d]: %w", node.ID, ai, err)
+		}
+	}
+
+	if err := muxer.WriteHeaderWithOptions(buildMuxerOptions(out)); err != nil {
 		muxer.Abort()
 		return nil, fmt.Errorf("sink %q write header: %w", node.ID, err)
 	}
 
 	// Some muxers adjust stream time_base in WriteHeader; refresh the
 	// post-header value so per-packet rescaling targets the actual
-	// container timebase.
+	// container timebase. BSF-attached streams keep the pre-header
+	// rescale target (= bsf.time_base_in), since the BSF chain was
+	// initialised against that TB and av_interleaved_write_frame
+	// rescales the BSF's output PTS to the post-header stream TB.
 	for i, rs := range rescales {
 		if rs == nil {
+			continue
+		}
+		if i < len(streamBSF) && streamBSF[i] != nil {
 			continue
 		}
 		rs.dstTB = muxer.StreamTimeBase(i)
@@ -2150,6 +3319,7 @@ func (r *graphRunner) openSink(_ *graph.Graph, node *graph.Node) (*sinkResources
 		muxer:         muxer,
 		cfg:           *out,
 		streamRescale: rescales,
+		streamBSF:     streamBSF,
 		timing:        outTiming,
 		copyTS:        r.cfg != nil && r.cfg.CopyTS,
 		maxFileSize:   out.MaxFileSize,
@@ -2275,6 +3445,49 @@ func (r *graphRunner) resolveEdgeStreamInfo(dag *graph.Graph, e *graph.Edge) (av
 			return si, nil
 		}
 		return r.resolveStreamInfo(dag, from)
+	case graph.KindFilterSource:
+		// Wave 7 #36c: a filter_source has no inbound edges, so the
+		// only authoritative source for downstream geometry/format
+		// metadata is the buffer sink the source filter feeds.
+		fg := r.filters[from.ID]
+		if fg == nil {
+			return av.StreamInfo{}, fmt.Errorf("no filter graph for filter_source %q", from.ID)
+		}
+		padIdx := 0
+		if e.FromPort != "default" {
+			if n, err := strconv.Atoi(e.FromPort); err == nil {
+				padIdx = n
+			}
+		}
+		si := av.StreamInfo{Type: portTypeToAVMediaType(e.Type)}
+		switch e.Type {
+		case graph.PortVideo:
+			si.Width = fg.OutputWidth(padIdx)
+			si.Height = fg.OutputHeight(padIdx)
+			if pf := fg.OutputPixFmt(padIdx); pf >= 0 {
+				si.PixFmt = pf
+			}
+			if frn, frd := fg.OutputFrameRate(padIdx); frn > 0 && frd > 0 {
+				si.FrameRate = [2]int{frn, frd}
+			}
+			if tbn, tbd := fg.OutputTimeBase(padIdx); tbn > 0 && tbd > 0 {
+				si.TimeBase = [2]int{tbn, tbd}
+			}
+		case graph.PortAudio:
+			if sr := fg.OutputSampleRate(padIdx); sr > 0 {
+				si.SampleRate = sr
+			}
+			if ch := fg.OutputChannels(padIdx); ch > 0 {
+				si.Channels = ch
+			}
+			if sf := fg.OutputSampleFmt(padIdx); sf >= 0 {
+				si.SampleFmt = sf
+			}
+			if tbn, tbd := fg.OutputTimeBase(padIdx); tbn > 0 && tbd > 0 {
+				si.TimeBase = [2]int{tbn, tbd}
+			}
+		}
+		return si, nil
 	case graph.KindGoProcessor:
 		// Pass through to the node's upstream source.
 		return r.resolveStreamInfo(dag, from)
@@ -2363,11 +3576,18 @@ func paramInt64(m map[string]any, key string) int64 {
 
 // applyOutputMetadata writes container-level metadata onto muxer
 // according to the precedence rules documented at the call site:
-// Output.Metadata wins outright; otherwise every input with
-// Input.MapMetadata=true contributes in declaration order.
+// Output.Metadata wins outright; otherwise an explicit
+// metadata_writer/reader graph-node pair wins (Wave 2 #11);
+// otherwise every input with Input.MapMetadata=true contributes in
+// declaration order.
 func (r *graphRunner) applyOutputMetadata(muxer *av.OutputFormatContext, out *Output) error {
 	if out.Metadata != nil {
 		return muxer.SetMetadata(out.Metadata)
+	}
+	// Wave 2 #11: metadata_writer node targeting this output wins
+	// over the input-wide MapMetadata fallback.
+	if md, ok := r.routedContainerMetadata(out.ID); ok {
+		return muxer.SetMetadata(md)
 	}
 	var merged map[string]string
 	for _, in := range r.cfg.Inputs {
@@ -2404,6 +3624,16 @@ func (r *graphRunner) applyOutputChapters(muxer *av.OutputFormatContext, out *Ou
 		}
 		return nil
 	}
+	// Wave 2 #11: metadata_writer node with section=chapters
+	// targeting this output wins.
+	if chs, ok := r.routedChapters(out.ID); ok {
+		for _, ch := range chs {
+			if err := muxer.AddChapter(ch.ID, ch.Start, ch.End, ch.Title, ch.Metadata); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
 	for _, in := range r.cfg.Inputs {
 		if !in.MapChapters {
 			continue
@@ -2420,4 +3650,102 @@ func (r *graphRunner) applyOutputChapters(muxer *av.OutputFormatContext, out *Ou
 		return nil
 	}
 	return nil
+}
+
+// routedContainerMetadata resolves a metadata_writer node targeting
+// outputID with section!=chapters and walks back along its inbound
+// metadata edges to find a metadata_reader node, returning the source
+// input's container metadata. Returns ok=false when no such routing
+// exists.
+func (r *graphRunner) routedContainerMetadata(outputID string) (map[string]string, bool) {
+	reader := r.findMetadataReaderFor(outputID, false)
+	if reader == nil {
+		return nil, false
+	}
+	src := paramString(reader.Params, "source")
+	in := r.sources[src]
+	if in == nil || in.input == nil {
+		return nil, false
+	}
+	md := in.input.Metadata()
+	if md == nil {
+		md = map[string]string{}
+	}
+	return md, true
+}
+
+// routedChapters mirrors routedContainerMetadata for the chapter
+// section.
+func (r *graphRunner) routedChapters(outputID string) ([]av.ChapterInfo, bool) {
+	reader := r.findMetadataReaderFor(outputID, true)
+	if reader == nil {
+		return nil, false
+	}
+	src := paramString(reader.Params, "source")
+	in := r.sources[src]
+	if in == nil || in.input == nil {
+		return nil, false
+	}
+	return in.input.Chapters(), true
+}
+
+// findMetadataReaderFor locates the metadata_reader connected by a
+// metadata edge to a metadata_writer targeting outputID. When
+// wantChapters is true the writer/reader pair must opt into
+// section=chapters; otherwise both must be the default (global)
+// section.
+func (r *graphRunner) findMetadataReaderFor(outputID string, wantChapters bool) *NodeDef {
+	wantSection := "global"
+	if wantChapters {
+		wantSection = "chapters"
+	}
+	nodesByID := make(map[string]*NodeDef, len(r.cfg.Graph.Nodes))
+	for i := range r.cfg.Graph.Nodes {
+		n := &r.cfg.Graph.Nodes[i]
+		nodesByID[n.ID] = n
+	}
+	for i := range r.cfg.Graph.Nodes {
+		w := &r.cfg.Graph.Nodes[i]
+		if w.Type != "metadata_writer" {
+			continue
+		}
+		if paramString(w.Params, "target") != outputID {
+			continue
+		}
+		section := paramString(w.Params, "section")
+		if section == "" {
+			section = "global"
+		}
+		if section != wantSection {
+			continue
+		}
+		// Find metadata edge feeding this writer.
+		for _, e := range r.cfg.Graph.Edges {
+			if e.Type != "metadata" || edgeNodeID(e.To) != w.ID {
+				continue
+			}
+			reader := nodesByID[edgeNodeID(e.From)]
+			if reader == nil || reader.Type != "metadata_reader" {
+				continue
+			}
+			rsec := paramString(reader.Params, "section")
+			if rsec == "" {
+				rsec = "global"
+			}
+			if rsec != wantSection {
+				continue
+			}
+			return reader
+		}
+	}
+	return nil
+}
+
+// edgeNodeID strips the optional ":port" / ":type:track" suffix from
+// an edge endpoint reference.
+func edgeNodeID(ref string) string {
+	if i := strings.IndexByte(ref, ':'); i >= 0 {
+		return ref[:i]
+	}
+	return ref
 }
