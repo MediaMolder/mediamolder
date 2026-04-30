@@ -202,5 +202,71 @@ func validateColorHDR(out Output) error {
 			return fmt.Errorf("output %q: hdr.content_light_level.max_fall (%d) must be <= max_cll (%d)", out.ID, cll.MaxFALL, cll.MaxCLL)
 		}
 	}
+	if dv := out.HDR.DoVi; dv != nil {
+		if err := validateDoVi(out, dv); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// doviCapableCodecs is the closed set of video codecs that can carry
+// a Dolby Vision RPU through to the bitstream. AVC support (profile 9)
+// is included for completeness even though it requires the
+// `h264_redundant_pps` BSF in practice. Wave 6 #35.
+var doviCapableCodecs = map[string]bool{
+	"hevc":      true,
+	"libx265":   true,
+	"av1":       true,
+	"libsvtav1": true,
+	"h264":      true,
+	"libx264":   true,
+}
+
+// doviCapableContainers is the muxer set that writes the
+// AVDOVIDecoderConfigurationRecord through (mp4/mov: dvcC/dvvC box;
+// matroska: BlockAddIDExtraData entry). mpegts also accepts the
+// registration descriptor but the corpus has no jobs that need it
+// today, so we keep the validator strict. Wave 6 #35.
+var doviCapableContainers = map[string]bool{
+	"mp4":      true,
+	"mov":      true,
+	"matroska": true,
+	"mkv":      true,
+}
+
+// validDoViProfiles enumerates the canonical Dolby Vision profiles
+// (libavutil/dovi_meta.h + Dolby Vision Profile Specification v1.3.6).
+// Profile 6 is reserved (UHD Blu-ray); profile 0 means "unset" and is
+// rejected upstream.
+var validDoViProfiles = map[uint8]bool{
+	4: true, 5: true, 7: true, 8: true, 9: true, 10: true,
+}
+
+// validBLCompatibilityIDs enumerates the cross-compatibility hints
+// the muxer can carry: 0=none, 1=HDR10, 2=SDR/BT.709, 4=HLG. Other
+// values are reserved by the spec.
+var validBLCompatibilityIDs = map[uint8]bool{0: true, 1: true, 2: true, 4: true}
+
+func validateDoVi(out Output, dv *DoViMetadata) error {
+	if dv.Profile == 0 {
+		return fmt.Errorf("output %q: hdr.dovi.profile is required (4, 5, 7, 8, 9, or 10)", out.ID)
+	}
+	if !validDoViProfiles[dv.Profile] {
+		return fmt.Errorf("output %q: hdr.dovi.profile=%d is not a recognised Dolby Vision profile (want 4, 5, 7, 8, 9, or 10)", out.ID, dv.Profile)
+	}
+	if dv.Level > 13 {
+		return fmt.Errorf("output %q: hdr.dovi.level=%d exceeds the Dolby Vision spec max of 13", out.ID, dv.Level)
+	}
+	if !validBLCompatibilityIDs[dv.BLCompatibilityID] {
+		return fmt.Errorf("output %q: hdr.dovi.bl_compatibility_id=%d is reserved (want 0, 1, 2, or 4)", out.ID, dv.BLCompatibilityID)
+	}
+	codec := strings.ToLower(out.CodecVideo)
+	if codec != "copy" && !doviCapableCodecs[codec] {
+		return fmt.Errorf("output %q: hdr.dovi requires an HEVC / AV1 / H.264 video codec or stream-copy (have codec_video=%q)", out.ID, out.CodecVideo)
+	}
+	if out.Format != "" && !doviCapableContainers[strings.ToLower(out.Format)] {
+		return fmt.Errorf("output %q: hdr.dovi requires an mp4 / mov / matroska container (have format=%q)", out.ID, out.Format)
+	}
 	return nil
 }

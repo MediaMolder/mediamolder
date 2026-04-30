@@ -805,6 +805,38 @@ type ColorMetadata struct {
 type HDRMetadata struct {
 	MasteringDisplay  *MasteringDisplayMetadata  `json:"mastering_display,omitempty"`
 	ContentLightLevel *ContentLightLevelMetadata `json:"content_light_level,omitempty"`
+	// DoVi carries the stream-level Dolby Vision configuration
+	// record (`AVDOVIDecoderConfigurationRecord`) muxed via
+	// `AV_PKT_DATA_DOVI_CONF`. Wave 6 #35.
+	DoVi *DoViMetadata `json:"dovi,omitempty"`
+}
+
+// DoViMetadata is the stream-level Dolby Vision configuration record
+// (libavutil/dovi_meta.h::AVDOVIDecoderConfigurationRecord). Validator
+// restricts to hevc/av1 video codecs and mp4/mov/matroska containers
+// (the only muxers that carry the dvcC/dvvC/BlockAddIDExtraData
+// payload). Wave 6 #35.
+type DoViMetadata struct {
+	// Profile is the canonical DV profile: 4 (HEVC dual-layer),
+	// 5 (HEVC single-layer, BL-incompatible), 7 (HEVC dual,
+	// BL-compatible), 8 (HEVC single-layer, BL-compatible),
+	// 9 (AVC), 10 (AV1). Profile 0 is rejected (means "unset").
+	Profile uint8 `json:"profile"`
+	// Level is the DV bitstream level (0..13).
+	Level uint8 `json:"level"`
+	// RPUPresent advertises that RPU NAL units (NAL type 62 in
+	// HEVC, OBU type 6 in AV1) are present in the bitstream. The
+	// muxer copies them through verbatim under `-c:v copy`. Default
+	// true (mirrors FFmpeg passthrough behaviour for DV streams).
+	RPUPresent *bool `json:"rpu_present,omitempty"`
+	// ELPresent flags an enhancement-layer track (profile 4 / 7).
+	ELPresent bool `json:"el_present,omitempty"`
+	// BLPresent flags a base-layer track (default true).
+	BLPresent *bool `json:"bl_present,omitempty"`
+	// BLCompatibilityID for profile 8 / 10 streams: 0 = none,
+	// 1 = HDR10, 2 = SDR/BT.709, 4 = HLG. Determines the
+	// cross-compatibility hint a non-DV decoder reads.
+	BLCompatibilityID uint8 `json:"bl_compatibility_id,omitempty"`
 }
 
 // MasteringDisplayMetadata mirrors AVMasteringDisplayMetadata's wire

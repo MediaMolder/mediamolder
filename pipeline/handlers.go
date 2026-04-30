@@ -2921,6 +2921,32 @@ func (r *graphRunner) openSink(_ *graph.Graph, node *graph.Node) (*sinkResources
 						return nil, fmt.Errorf("sink %q set content light level: %w", node.ID, err)
 					}
 				}
+				if dv := out.HDR.DoVi; dv != nil && dv.Profile != 0 {
+					rpu := true
+					if dv.RPUPresent != nil {
+						rpu = *dv.RPUPresent
+					}
+					bl := true
+					if dv.BLPresent != nil {
+						bl = *dv.BLPresent
+					}
+					if err := muxer.SetStreamDoViConfig(i, av.DoViConfig{
+						Profile:           dv.Profile,
+						Level:             dv.Level,
+						RPUPresent:        rpu,
+						ELPresent:         dv.ELPresent,
+						BLPresent:         bl,
+						BLCompatibilityID: dv.BLCompatibilityID,
+					}); err != nil {
+						for _, b := range streamBSF {
+							if b != nil {
+								_ = b.Close()
+							}
+						}
+						muxer.Abort()
+						return nil, fmt.Errorf("sink %q set dovi config: %w", node.ID, err)
+					}
+				}
 			}
 		}
 	}

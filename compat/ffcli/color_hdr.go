@@ -122,3 +122,51 @@ func parseContentLightLevel(s string) (*pipeline.ContentLightLevelMetadata, erro
 		MaxFALL: uint32(maxFALL),
 	}, nil
 }
+
+// setDoViField applies a `-dovi_*` flag value to the pending Dolby
+// Vision metadata. Wave 6 #35.
+func setDoViField(dv *pipeline.DoViMetadata, flag, val string) error {
+	switch flag {
+	case "-dovi_profile":
+		n, err := strconv.ParseUint(val, 10, 8)
+		if err != nil {
+			return fmt.Errorf("profile: %w", err)
+		}
+		dv.Profile = uint8(n)
+	case "-dovi_level":
+		n, err := strconv.ParseUint(val, 10, 8)
+		if err != nil {
+			return fmt.Errorf("level: %w", err)
+		}
+		dv.Level = uint8(n)
+	case "-dovi_bl_compatibility_id":
+		n, err := strconv.ParseUint(val, 10, 8)
+		if err != nil {
+			return fmt.Errorf("bl_compatibility_id: %w", err)
+		}
+		dv.BLCompatibilityID = uint8(n)
+	case "-dovi_rpu_present":
+		b, err := parseBoolFlag(val)
+		if err != nil {
+			return fmt.Errorf("rpu_present: %w", err)
+		}
+		dv.RPUPresent = &b
+	case "-dovi_el_present":
+		b, err := parseBoolFlag(val)
+		if err != nil {
+			return fmt.Errorf("el_present: %w", err)
+		}
+		dv.ELPresent = b
+	case "-dovi_bl_present":
+		b, err := parseBoolFlag(val)
+		if err != nil {
+			return fmt.Errorf("bl_present: %w", err)
+		}
+		dv.BLPresent = &b
+	default:
+		return fmt.Errorf("unknown dovi flag")
+	}
+	return nil
+}
+
+// parseBoolFlag is defined in hls_dash.go.

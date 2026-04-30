@@ -332,6 +332,25 @@ export interface ColorMetadata {
 export interface HDRMetadata {
   mastering_display?: MasteringDisplayMetadata;
   content_light_level?: ContentLightLevelMetadata;
+  /** Stream-level Dolby Vision configuration record
+   *  (`AVDOVIDecoderConfigurationRecord`) muxed via
+   *  `AV_PKT_DATA_DOVI_CONF`. Wave 6 #35. */
+  dovi?: DoViMetadata;
+}
+
+export interface DoViMetadata {
+  /** Dolby Vision profile: 4, 5, 7, 8, 9, or 10. Required. */
+  profile: 4 | 5 | 7 | 8 | 9 | 10;
+  /** Dolby Vision bitstream level (0-13). */
+  level?: number;
+  /** RPU NAL units present in bitstream (default true). */
+  rpu_present?: boolean;
+  /** Enhancement-layer present (profiles 4 and 7). */
+  el_present?: boolean;
+  /** Base-layer present (default true). */
+  bl_present?: boolean;
+  /** Cross-compatibility hint: 0=none, 1=HDR10, 2=SDR/BT.709, 4=HLG. */
+  bl_compatibility_id?: 0 | 1 | 2 | 4;
 }
 
 export interface MasteringDisplayMetadata {

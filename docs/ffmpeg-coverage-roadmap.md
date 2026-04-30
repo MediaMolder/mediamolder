@@ -149,7 +149,7 @@ Legend: ✅ supported · ⚠️ partial · ❌ missing
 | Per-stream encoder options (`-b:v:0` ≠ `-b:v:1` in ABR ladders)   | ✅    | `Output.Streams[].Encoder *EncoderOverride` (`Codec`, `Options`); ffcli round-trips `-b:v:0`/`-crf:v:1`/`-preset:v:0`/`-c:v:1` etc.; Wave 6 #30. |
 | Color metadata on encoder (`-color_range`, `-color_primaries`, `-color_trc`, `-colorspace`, `-chroma_sample_location`) | ✅ | `Output.Color` first-class + validated; Wave 3 #14. |
 | HDR10 mastering display + content light level metadata            | ✅    | `Output.HDR` (SMPTE ST 2086 + CTA-861.3); validated against codec/container; Wave 3 #14. |
-| Dolby Vision RPU passthrough                                      | ❌    | Required for premium HDR pipelines |
+| Dolby Vision RPU passthrough                                      | ✅    | Stream-level `AVDOVIDecoderConfigurationRecord` muxed via `AV_PKT_DATA_DOVI_CONF` (mp4/mov/matroska). Per-frame RPU NAL injection out of scope — bitstream RPU NALs must already be present (`-c:v copy` or encoder-emitted). |
 | `-aspect`                                                         | ✅    | Subsumed by `Output.SAR` / `Output.DAR` (Wave 3 #15); importer rewrites legacy `-aspect`. |
 | `-enc_time_base`                                                  | ✅    | `Output.EncoderTimeBase` (`demux`/`filter` sentinels or `N/D` rational); Wave 6 #33. |
 | Field order (`-field_order`), interlaced encode                   | ✅    | `Output.FieldOrder` enum + `Output.InterlacedEncode` (`AV_CODEC_FLAG_INTERLACED_DCT\|ME`); Wave 6 #33. |
@@ -880,11 +880,12 @@ and not deprecated.
     descriptor `AV_CODEC_PROP_TEXT_SUB` check; forced/HI continue
     to ride on the per-stream `Disposition` from Wave 1 #3; ffcli
     `-sub_charenc CODE` latches onto the next `-i` only).
-35. **Dolby Vision RPU passthrough** (§2.4) — `Output.HDR.DoVi
-    *DoVi` (`{rpu_path, profile, level}`). RPU side-data muxed
-    via `AV_PKT_DATA_DOVI_CONF`; validator restricts to hevc/av1
-    + mp4/mov/matroska. Sequenced after #29 because the same
-    side-data plumbing is used for the timestamp policy.
+35. **Dolby Vision RPU passthrough** (§2.4) ✅ — `Output.HDR.DoVi
+    *DoViMetadata` (`{profile, level, rpu_present, el_present,
+    bl_present, bl_compatibility_id}`). Stream-level configuration
+    record muxed via `AV_PKT_DATA_DOVI_CONF` (mp4/mov/matroska);
+    validator restricts to hevc/av1/h264 + mp4/mov/matroska.
+    Per-frame RPU NAL injection (NAL 62 SEI) out of scope.
 
 ### 6.7 Wave 7 — "filtergraph completion" (Phase A/C burn-down)
 

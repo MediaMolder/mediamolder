@@ -474,6 +474,27 @@ func (p *parser) parse() (*pipeline.Config, error) {
 				p.pendingHDR = &pipeline.HDRMetadata{}
 			}
 			p.pendingHDR.ContentLightLevel = cll
+		case arg == "-dovi_profile" || arg == "-dovi_level" ||
+			arg == "-dovi_bl_compatibility_id" || arg == "-dovi_rpu_present" ||
+			arg == "-dovi_el_present" || arg == "-dovi_bl_present":
+			// Wave 6 #35: Dolby Vision RPU passthrough. Configures
+			// the AVDOVIDecoderConfigurationRecord side-data muxed
+			// at WriteHeader. Profile is required (other fields
+			// optional). Mirrors the side-data shape FFmpeg copies
+			// through under `-c:v copy` for DV streams.
+			if !p.hasMore() {
+				return nil, fmt.Errorf("%s requires an argument", arg)
+			}
+			val := p.next()
+			if p.pendingHDR == nil {
+				p.pendingHDR = &pipeline.HDRMetadata{}
+			}
+			if p.pendingHDR.DoVi == nil {
+				p.pendingHDR.DoVi = &pipeline.DoViMetadata{}
+			}
+			if err := setDoViField(p.pendingHDR.DoVi, arg, val); err != nil {
+				return nil, fmt.Errorf("%s: %w", arg, err)
+			}
 		case arg == "-async":
 			// Legacy FFmpeg audio-sync flag. The FFmpeg 8.0 CLI removed
 			// it in favour of `-af aresample=async=N`; we accept it for

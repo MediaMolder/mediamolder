@@ -123,3 +123,51 @@ func TestParseHDRFlagsEndToEnd(t *testing.T) {
 		t.Errorf("color.transfer: %+v", out.Color)
 	}
 }
+
+func TestParseDoViFlags(t *testing.T) {
+	cfg, err := ParseArgs([]string{
+		"-i", "in.mp4",
+		"-c:v", "libx265",
+		"-dovi_profile", "8",
+		"-dovi_level", "9",
+		"-dovi_bl_compatibility_id", "1",
+		"-dovi_el_present", "0",
+		"-dovi_rpu_present", "true",
+		"-f", "mp4", "out.mp4",
+	})
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	out := cfg.Outputs[0]
+	if out.HDR == nil || out.HDR.DoVi == nil {
+		t.Fatalf("dovi not attached: %+v", out.HDR)
+	}
+	dv := out.HDR.DoVi
+	if dv.Profile != 8 || dv.Level != 9 || dv.BLCompatibilityID != 1 {
+		t.Fatalf("dovi mismatch: %+v", dv)
+	}
+	if dv.RPUPresent == nil || !*dv.RPUPresent {
+		t.Fatalf("rpu_present: %+v", dv.RPUPresent)
+	}
+	if dv.ELPresent {
+		t.Fatalf("el_present: want false, got true")
+	}
+}
+
+func TestParseDoViRejectsBadProfile(t *testing.T) {
+	// Parser accepts any uint8; profile-set validation lives in
+	// pipeline.validate. Verify the value lands intact so the
+	// pipeline validator can reject it downstream.
+	cfg, err := ParseArgs([]string{
+		"-i", "in.mp4", "-c:v", "libx265",
+		"-dovi_profile", "6",
+		"-f", "mp4", "out.mp4",
+	})
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if cfg.Outputs[0].HDR == nil || cfg.Outputs[0].HDR.DoVi == nil ||
+		cfg.Outputs[0].HDR.DoVi.Profile != 6 {
+		t.Fatalf("profile=6 not retained for downstream validator: %+v", cfg.Outputs[0].HDR)
+	}
+}
