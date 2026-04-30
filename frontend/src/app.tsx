@@ -18,7 +18,7 @@ import '@xyflow/react/dist/style.css';
 
 import { Palette } from './components/Palette';
 import { Inspector } from './components/Inspector';
-import { MMNode, type MMNodeRunData } from './components/MMNode';
+import { MMNode, type MMNodeRunData, INSPECTOR_OPEN_EVENT } from './components/MMNode';
 import { MMEdge } from './components/MMEdge';
 import { RunPanel } from './components/RunPanel';
 import { RunDock } from './components/RunDock';
@@ -264,6 +264,24 @@ function Editor() {
     setSelectedId(params.nodes[0]?.id ?? null);
     setSelectedEdgeIds(params.edges.map((e) => e.id));
   }, []);
+
+  /* ---------- Open Inspector from node button ----------
+   * MMNode dispatches mm.inspector.open with the node id when the user
+   * clicks the small pencil glyph in its header. We mark just that node
+   * as React-Flow-selected (which also drives the Inspector via
+   * onSelectionChange) and force-show the Inspector panel if hidden so
+   * the click never appears to do nothing. */
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const id = (e as CustomEvent<{ id: string }>).detail?.id;
+      if (!id) return;
+      setNodes((ns) => ns.map((n) => (n.selected === (n.id === id) ? n : { ...n, selected: n.id === id })));
+      setSelectedId(id);
+      setShowInspector(true);
+    };
+    window.addEventListener(INSPECTOR_OPEN_EVENT, handler);
+    return () => window.removeEventListener(INSPECTOR_OPEN_EVENT, handler);
+  }, [setShowInspector]);
 
   const selectedNode = useMemo(
     () => nodes.find((n) => n.id === selectedId) ?? null,

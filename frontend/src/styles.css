@@ -304,10 +304,39 @@ button.danger:hover { background: rgba(185, 74, 74, 0.15); }
 }
 .mm-node.implicit .mm-node-title { font-weight: 500; color: var(--text-dim); }
 .mm-node .mm-node-type {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
   font-size: 10px;
   color: var(--text-dim);
   text-transform: uppercase;
   letter-spacing: 0.5px;
+}
+/* Pencil button on each node header — opens the Inspector for that node.
+ * Stop pointer events from bubbling into the node drag handler so the
+ * click is reliably interpreted as "open inspector" rather than the
+ * start of a drag-to-select gesture. */
+.mm-node .mm-node-edit {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-dim);
+  border-radius: 3px;
+  padding: 0 4px;
+  font-size: 11px;
+  line-height: 14px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.1s ease, background 0.1s ease, color 0.1s ease;
+}
+.mm-node:hover .mm-node-edit,
+.mm-node.selected .mm-node-edit {
+  opacity: 1;
+}
+.mm-node .mm-node-edit:hover {
+  background: var(--panel-2);
+  border-color: var(--border);
+  color: var(--text);
 }
 .mm-node .mm-node-title { font-weight: 600; }
 .mm-node .mm-node-sub { font-size: 11px; color: var(--text-dim); margin-top: 2px; }

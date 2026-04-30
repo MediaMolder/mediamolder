@@ -12,7 +12,9 @@ export interface MMNodeRunData {
   hasError?: boolean;
 }
 
-export function MMNode({ data, selected }: NodeProps & { data: FlowNodeData & { run?: MMNodeRunData } }) {
+export const INSPECTOR_OPEN_EVENT = 'mm.inspector.open';
+
+export function MMNode({ id, data, selected }: NodeProps & { data: FlowNodeData & { run?: MMNodeRunData } }) {
   const naming = useNamingMode();
   const friendly = data.friendlyName ?? lookupFriendlyName(data.label);
   const heading = displayName({ name: data.label, friendly_name: friendly }, naming);
@@ -64,7 +66,26 @@ export function MMNode({ data, selected }: NodeProps & { data: FlowNodeData & { 
           />
         ))}
 
-      <div className="mm-node-type">{describeKind(data.kind, supported)}</div>
+      <div className="mm-node-type">
+        <span>{describeKind(data.kind, supported)}</span>
+        {!data.implicit && (
+          <button
+            type="button"
+            className="mm-node-edit"
+            title="Open in Inspector"
+            aria-label="Open this node's properties in the Inspector"
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={(e) => {
+              e.stopPropagation();
+              window.dispatchEvent(
+                new CustomEvent(INSPECTOR_OPEN_EVENT, { detail: { id } }),
+              );
+            }}
+          >
+            ✎
+          </button>
+        )}
+      </div>
       <div className="mm-node-title">{heading}</div>
       {data.sublabel && <div className="mm-node-sub">{data.sublabel}</div>}
       {run && (run.frames !== undefined || run.errors !== undefined) && (
