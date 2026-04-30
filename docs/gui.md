@@ -5,6 +5,10 @@ building, validating, and running MediaMolder JSON pipelines. It is bundled
 into the same single binary as the CLI — no separate install or web server is
 required.
 
+For an explanation of nodes, pads, edges, sources and sinks — and the rules
+that govern when two nodes can be wired directly versus when a transform
+filter has to sit between them — see [Graph Basics](graph-basics.md).
+
 ## Quick start
 
 ```sh

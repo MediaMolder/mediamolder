@@ -90,6 +90,10 @@ For `"copy"` nodes, no `params` are required — the inbound edge type tells the
 - `"nodeID:overlay"` — named port (e.g., overlay filter's second input)
 - `"outputID:v"` — video input to output muxer
 
+For when two nodes can be wired with a single edge versus when a transform
+filter (`format`, `aformat`, `scale`, `aresample`, `hwupload`, …) must sit
+between them, see [Graph Basics](graph-basics.md).
+
 ## Output
 
 | Field         | Type   | Required | Description            |

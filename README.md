@@ -9,7 +9,7 @@ FFmpeg has two distinct layers:
 - a set of **media processing libraries** (libavcodec, libavformat, libavfilter, etc.) that do the actual media processing (container file parsing, analysis, demuxing, decoding, filtering, encoding, and muxing).
 
 ### 1. Project Overview
-MediaMolder is an independent, open-source media processing engine written in Go. It provides a new orchestration layer on top of the same battle-tested libraries that power FFmpeg; replacing the FFmpeg command-line interface with a clean, declarative JSON defining each job. Mediamolder includes a cross-platform graphical user interface that runs in your web browser, letting you create, edit and run media graphs.
+MediaMolder is an independent, open-source media processing engine written in Go. It provides a new interface/orchestration layer, built on top of the same battle-tested libraries that power FFmpeg; replacing the FFmpeg command-line interface with a clean, declarative JSON defining each job. Mediamolder includes a cross-platform graphical user interface that runs in your web browser, letting you create, edit and run media graphs.
 
 It is not a wrapper around the ffmpeg binary; it is a ground-up redesign of the high-level engine that retains full media conversion capability through direct libav* bindings.
 
@@ -150,7 +150,12 @@ See [docs/gui.md](docs/gui.md) for the full GUI guide.
 
 ## Quickstart
 
-Create a job JSON file. See [docs/json-config-reference.md](docs/json-config-reference.md)≠≠
+New to MediaMolder? Read [Graph Basics](docs/graph-basics.md) first —
+it defines nodes, edges, pads, sources, sinks, and the rules that govern
+when two nodes can be wired directly versus when a transform filter must
+sit between them. It also maps FFmpeg CLI argument order to the JSON graph.
+
+Create a job JSON file. See [docs/json-config-reference.md](docs/json-config-reference.md)
 Some examples are below, with additional example job JSONs in [testdata/examples](testdata/examples/)
 
 `transcode.json`:
@@ -319,10 +324,11 @@ See the [Go Processor Nodes](docs/go-processor-nodes.md) guide for the full API,
 
 ## Documentation
 
+- [Graph Basics — Nodes, Edges, Sources, Sinks, and the FFmpeg CLI mapping](docs/graph-basics.md)
+- [FFmpeg Migration Guide](docs/ffmpeg-migration-guide.md)
 - [JSON Config Reference](docs/json-config-reference.md)
 - [Visual Editor (GUI)](docs/gui.md)
 - [Go Processor Nodes](docs/go-processor-nodes.md)
-- [FFmpeg Migration Guide](docs/ffmpeg-migration-guide.md)
 - [Pipeline State Machine](docs/pipeline-state-machine.md)
 - [Clock & Sync](docs/clock-and-sync.md)
 - [Event Bus](docs/event-bus.md)
@@ -331,7 +337,6 @@ See the [Go Processor Nodes](docs/go-processor-nodes.md) guide for the full API,
 - [Observability](docs/observability.md)
 - [Graph Compilation](docs/graph-compilation.md)
 - [Pipeline Instrumentation Roadmap](docs/pipeline-instrumentation-roadmap.md)
-- [FFmpeg Coverage Roadmap](docs/ffmpeg-coverage-roadmap.md)
 - [Build & Packaging](docs/build_and_packaging.md)
 - [Contribution & Governance](docs/contribution_and_governance.md)
 - [Project Specification](docs/specification.md)
@@ -343,6 +348,7 @@ See the [Go Processor Nodes](docs/go-processor-nodes.md) guide for the full API,
 
 ### Processing Pipeline
 
+See [Architecture](docs/architecture/architecture.md)
 A pipeline flows through five phases:
 
 1. **Build** — Parse JSON config into a validated DAG (`graph.Build`). Catches structural errors (missing nodes, cycles).
