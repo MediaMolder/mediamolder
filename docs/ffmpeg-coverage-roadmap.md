@@ -177,7 +177,7 @@ Legend: ✅ supported · ⚠️ partial · ❌ missing
 | HLS muxer (`hls_time`, `hls_playlist_type`, EXT-X-MAP, byte-range, low-latency) | ✅ | `Output.HLS *HLSOptions` typed (full hlsenc table); Wave 3 #12. |
 | DASH muxer (representations, adaptation sets, init segment)       | ✅    | `Output.DASH *DASHOptions` typed (full dashenc table); Wave 3 #12. |
 | Segment muxer / fragmented MP4 (CMAF) / `movflags=+faststart`     | ✅    | CMAF via `HLS.SegmentType="fmp4"` or `DASH.HLSPlaylist=true`; `movflags` first-class; Wave 3 #12. |
-| `-muxdelay`, `-muxpreload`, `-copyts`, `-start_at_zero`, `-avoid_negative_ts` | ⚠️ | `Config.CopyTS` covers `-copyts` (suppresses demuxer ts_offset shift; switches output-side `-ss`/`-to` to absolute timeline). `-muxdelay`/`-muxpreload`/`-start_at_zero`/`-avoid_negative_ts` still missing. |
+| `-muxdelay`, `-muxpreload`, `-copyts`, `-start_at_zero`, `-avoid_negative_ts` | ✅ | All five covered. `Config.CopyTS` + `Config.StartAtZero` carry the global flags (StartAtZero modulates CopyTS — re-enables the demuxer ts_offset shift even under -copyts; mirrors fftools/ffmpeg_demux.c L486). `Output.MuxDelay`/`Output.MuxPreload` (float seconds) render into the muxer AVDict as `max_delay`/`preload` in AV_TIME_BASE microseconds (mirrors fftools/ffmpeg_mux_init.c L3444/L3447). `Output.AvoidNegativeTS` ∈ {auto, disabled, make_non_negative, make_zero} passes through to libavformat's avoid_negative_ts AVOption. |
 | Bitstream filter chains on output (`-bsf:v "h264_mp4toannexb,h264_redundant_pps"`) | ✅ | Chain syntax parsed by `av_bsf_list_parse_str`; per-stream-type via `BSFVideo`/`BSFAudio`/`BSFSubtitle` |
 
 ### 2.6 Subtitles
@@ -825,12 +825,21 @@ Close the remaining ⚠️/❌ items in §2.4 and §2.5 that are not hardware
 and not deprecated.
 
 29. **`-muxdelay` / `-muxpreload` / `-start_at_zero` /
-    `-avoid_negative_ts`** (§2.5) — `Output.MuxDelay`,
-    `Output.MuxPreload` (durations); `Output.StartAtZero` (bool);
-    `Output.AvoidNegativeTS ∈ {disabled, auto, make_non_negative,
-    make_zero}` (mirrors `enum AVFMT_AVOID_NEG_TS_*`). Completes
-    the timestamp-policy cluster started by `Config.CopyTS` in
-    Wave 1 #2. `compat/ffcli` round-trip test for each.
+    `-avoid_negative_ts`** (§2.5) — ✅ Wave 6. `Output.MuxDelay`
+    + `Output.MuxPreload` (float seconds; rendered into the
+    muxer AVDict as `max_delay`/`preload` in `AV_TIME_BASE`
+    microseconds — mirrors `fftools/ffmpeg_mux_init.c`
+    L3444/L3447), `Output.AvoidNegativeTS ∈ {auto, disabled,
+    make_non_negative, make_zero}` (passed through verbatim as
+    the `avoid_negative_ts` AVDict key — libavformat parses it
+    against the same enum that the AVOption table uses,
+    `libavformat/options_table.h` L95-99), and `Config.StartAtZero
+    bool` (global; modulates `Config.CopyTS` so the demuxer
+    `ts_offset` shift is re-enabled even under `-copyts` —
+    mirrors `fftools/ffmpeg_demux.c` L486). `StartAtZero`
+    requires `CopyTS=true` (validator). Completes the
+    timestamp-policy cluster started by `Config.CopyTS` in
+    Wave 1 #2.
 30. **Per-stream encoder option overrides** (`-b:v:0`, `-crf:v:1`,
     `-preset:v:0`) (§2.4) — Promote `Output.Streams[].Encoder
     *EncoderOverride` carrying a sparse AVOptions map that

@@ -204,6 +204,22 @@ export interface Output {
    *  (writing a clean trailer) once the limit is reached. 0 =
    *  unlimited. */
   max_file_size?: number;
+  /** Maximum demux-decode delay the muxer is allowed to buffer
+   *  ahead, in seconds. Mirrors ffmpeg `-muxdelay` (per-output
+   *  float; `fftools/ffmpeg_mux_init.c` L3447 — written as
+   *  `oc->max_delay = muxdelay * AV_TIME_BASE`). FFmpeg default is
+   *  0.7s; 0 leaves the muxer default unchanged. */
+  muxdelay?: number;
+  /** Initial demux-decode delay (pre-roll), in seconds. Mirrors
+   *  ffmpeg `-muxpreload` (per-output float; emitted into the
+   *  muxer AVDict as `preload = muxpreload * AV_TIME_BASE`). Most
+   *  muxers ignore this; the historic consumer is `mpegenc.c`. */
+  muxpreload?: number;
+  /** Libavformat's automatic timestamp-shift policy at the muxer
+   *  (`AVFormatContext.avoid_negative_ts`). Mirrors ffmpeg
+   *  `-avoid_negative_ts`. Required for clean MP4/MOV writes when
+   *  input PTS are negative (typical with `-ss` + `-copyts`). */
+  avoid_negative_ts?: '' | 'auto' | 'disabled' | 'make_non_negative' | 'make_zero';
   /** Container-level metadata key/value pairs (`-metadata key=value`).
    *  Replaces any metadata mapped from inputs via `input.map_metadata`. */
   metadata?: Record<string, string>;
@@ -464,6 +480,12 @@ export interface JobConfig {
    *  timeline values rather than offsets from the input's start.
    *  Required for accurate broadcast / HLS PTS handling. */
   copy_ts?: boolean;
+  /** Modulates `copy_ts`. When true, re-enables the demuxer-side
+   *  ts_offset shift even under `copy_ts` so the first kept packet
+   *  still anchors at PTS 0 while later timing is preserved.
+   *  Mirrors ffmpeg's global `-start_at_zero`
+   *  (`fftools/ffmpeg_demux.c` L486). Requires `copy_ts=true`. */
+  start_at_zero?: boolean;
 }
 
 /**

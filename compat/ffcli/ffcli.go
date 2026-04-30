@@ -46,6 +46,10 @@ type parser struct {
 	shortest       bool
 	maxFileSize    int64
 	copyTS         bool
+	startAtZero    bool
+	muxDelay       float64
+	muxPreload     float64
+	avoidNegTS     string
 	pass           int
 	passLogFile    string
 	forceKeyFrames string
@@ -482,6 +486,55 @@ func (p *parser) parse() (*pipeline.Config, error) {
 			// demuxer-side ts_offset shift and to interpret output-side
 			// -ss/-to as absolute timeline values.
 			p.copyTS = true
+		case arg == "-start_at_zero":
+			// FFmpeg `-start_at_zero` (global bool). Modulates `-copyts`:
+			// re-enables the demuxer-side ts_offset shift even when
+			// `-copyts` is set, so the first kept packet still anchors
+			// at PTS 0. See fftools/ffmpeg_demux.c L486.
+			p.startAtZero = true
+		case arg == "-muxdelay":
+			// FFmpeg `-muxdelay SECONDS` (per-output float OPT_OFFSET;
+			// fftools/ffmpeg_opt.c L2134). Latched onto the next output's
+			// MuxDelay; rendered into the muxer AVDict as
+			// `max_delay = muxdelay * AV_TIME_BASE` (microseconds).
+			if !p.hasMore() {
+				return nil, fmt.Errorf("-muxdelay requires an argument")
+			}
+			v := p.next()
+			f, err := strconv.ParseFloat(v, 64)
+			if err != nil || f < 0 {
+				return nil, fmt.Errorf("-muxdelay: invalid value %q (want non-negative seconds)", v)
+			}
+			p.muxDelay = f
+		case arg == "-muxpreload":
+			// FFmpeg `-muxpreload SECONDS` (per-output float OPT_OFFSET;
+			// fftools/ffmpeg_opt.c L2137). Latched onto Output.MuxPreload;
+			// rendered as `preload = muxpreload * AV_TIME_BASE` (most
+			// muxers ignore it; MPEG-PS is the historic consumer).
+			if !p.hasMore() {
+				return nil, fmt.Errorf("-muxpreload requires an argument")
+			}
+			v := p.next()
+			f, err := strconv.ParseFloat(v, 64)
+			if err != nil || f < 0 {
+				return nil, fmt.Errorf("-muxpreload: invalid value %q (want non-negative seconds)", v)
+			}
+			p.muxPreload = f
+		case arg == "-avoid_negative_ts":
+			// FFmpeg `-avoid_negative_ts MODE` (AVFormatContext AVOption;
+			// libavformat/options_table.h L95-99). Validated here so
+			// typos surface at parse time rather than only when the
+			// muxer rejects the AVDict entry.
+			if !p.hasMore() {
+				return nil, fmt.Errorf("-avoid_negative_ts requires an argument")
+			}
+			v := p.next()
+			switch v {
+			case "auto", "disabled", "make_non_negative", "make_zero":
+			default:
+				return nil, fmt.Errorf("-avoid_negative_ts: invalid value %q (want auto|disabled|make_non_negative|make_zero)", v)
+			}
+			p.avoidNegTS = v
 		case arg == "-pass":
 			// FFmpeg `-pass N` (per-stream OPT_VIDEO int). Bit-field:
 			// 1 = analysis pass (AV_CODEC_FLAG_PASS1), 2 = final pass
@@ -895,6 +948,18 @@ func (p *parser) parse() (*pipeline.Config, error) {
 			if p.maxFileSize > 0 {
 				out.MaxFileSize = p.maxFileSize
 			}
+			if p.muxDelay > 0 {
+				out.MuxDelay = p.muxDelay
+				p.muxDelay = 0
+			}
+			if p.muxPreload > 0 {
+				out.MuxPreload = p.muxPreload
+				p.muxPreload = 0
+			}
+			if p.avoidNegTS != "" {
+				out.AvoidNegativeTS = p.avoidNegTS
+				p.avoidNegTS = ""
+			}
 			if p.pass != 0 {
 				out.Pass = p.pass
 				p.pass = 0
@@ -1027,6 +1092,9 @@ func (p *parser) parse() (*pipeline.Config, error) {
 	}
 	if p.copyTS {
 		cfg.CopyTS = true
+	}
+	if p.startAtZero {
+		cfg.StartAtZero = true
 	}
 	if p.hwAccel != "" {
 		cfg.GlobalOptions.HardwareAccel = p.hwAccel

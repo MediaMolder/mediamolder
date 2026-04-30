@@ -2141,8 +2141,14 @@ func (r *graphRunner) openSource(cfg Input, srcNode *graph.Node, decOpts av.Deco
 	// FFmpeg's global `-copyts` flag, which sets `ifile->ts_offset`
 	// to 0 (or to `input_ts_offset`, which we don't model) instead
 	// of `-timestamp` in fftools/ffmpeg_demux.c.
+	//
+	// `Config.StartAtZero` re-enables the shift even under CopyTS so
+	// the first kept packet still anchors at PTS 0 (mirrors the
+	// `start_at_zero ? 0 : f->start_time_effective` branch at
+	// fftools/ffmpeg_demux.c L486 — `-start_at_zero` overrides the
+	// `-copyts` suppression).
 	var tsOffsetUS int64
-	if timing.haveStart && !(r.cfg != nil && r.cfg.CopyTS) {
+	if timing.haveStart && (!(r.cfg != nil && r.cfg.CopyTS) || (r.cfg != nil && r.cfg.StartAtZero)) {
 		tsOffsetUS = -timing.seekTimestampUS(input.StartTime())
 	}
 

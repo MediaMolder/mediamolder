@@ -36,6 +36,20 @@ func buildMuxerOptions(out *Output) map[string]string {
 		}
 		dict[k] = fmt.Sprintf("%v", v)
 	}
+	// Per-output timestamp / mux-buffer policy. AVFormatContext's
+	// `max_delay` and the muxer-private `preload` are integers in
+	// AV_TIME_BASE units (microseconds); FFmpeg's CLI takes float
+	// seconds and multiplies by AV_TIME_BASE before pushing to
+	// libavformat (see fftools/ffmpeg_mux_init.c L3444-L3447).
+	if out.MuxDelay > 0 {
+		dict["max_delay"] = strconv.FormatInt(int64(out.MuxDelay*1_000_000), 10)
+	}
+	if out.MuxPreload > 0 {
+		dict["preload"] = strconv.FormatInt(int64(out.MuxPreload*1_000_000), 10)
+	}
+	if out.AvoidNegativeTS != "" {
+		dict["avoid_negative_ts"] = out.AvoidNegativeTS
+	}
 	if h := out.HLS; h != nil {
 		if h.Time > 0 {
 			dict["hls_time"] = strconv.FormatFloat(h.Time, 'f', -1, 64)

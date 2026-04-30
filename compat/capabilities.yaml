@@ -346,9 +346,9 @@ sections:
         status: covered
         schema: pipeline.Output.Options.movflags
       - flag: "-muxdelay / -muxpreload / -copyts / -start_at_zero / -avoid_negative_ts"
-        status: partial
-        schema: pipeline.Config.CopyTS
-        notes: -copyts covered (Config.CopyTS suppresses demuxer ts_offset shift and switches output-side -ss/-to to absolute timeline interpretation); -muxdelay/-muxpreload/-start_at_zero/-avoid_negative_ts still missing
+        status: covered
+        schema: pipeline.Config.CopyTS / pipeline.Config.StartAtZero / pipeline.Output.MuxDelay / pipeline.Output.MuxPreload / pipeline.Output.AvoidNegativeTS
+        notes: All five covered. CopyTS+StartAtZero are global (StartAtZero modulates CopyTS — mirrors fftools/ffmpeg_demux.c L486). MuxDelay/MuxPreload (float seconds) render into the muxer AVDict as max_delay/preload in AV_TIME_BASE microseconds (mirrors fftools/ffmpeg_mux_init.c L3444/L3447). AvoidNegativeTS ∈ {auto, disabled, make_non_negative, make_zero} passes through to libavformat's avoid_negative_ts AVOption.
       - flag: "-bsf:v / -bsf:a / -bsf:s (single)"
         status: covered
         schema: pipeline.Output.BSFVideo / BSFAudio / BSFSubtitle

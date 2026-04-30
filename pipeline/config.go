@@ -37,6 +37,18 @@ type Config struct {
 	// loudness reports). See `fftools/ffmpeg_demux.c`'s
 	// `ts_offset` computation and `ffmpeg_mux.c::of_streamcopy`.
 	CopyTS bool `json:"copy_ts,omitempty"`
+	// StartAtZero modulates `CopyTS`. When `CopyTS` is true the
+	// runtime normally suppresses the demuxer-side ts_offset shift
+	// that would otherwise rebase the first input PTS to 0
+	// (preserving wall-clock timestamps for broadcast / HLS use).
+	// `StartAtZero=true` re-enables that shift even under `CopyTS`,
+	// so the first kept packet still lands at PTS 0 while later
+	// packet timing is left untouched. Mirrors FFmpeg's global
+	// `-start_at_zero` flag (see fftools/ffmpeg_demux.c L486 — the
+	// `start_at_zero ? 0 : f->start_time_effective` branch). Only
+	// meaningful when `CopyTS=true`; rejected by validate() when
+	// set without `CopyTS`.
+	StartAtZero bool `json:"start_at_zero,omitempty"`
 }
 
 // Input describes a single input source.
@@ -469,6 +481,44 @@ type Output struct {
 	// `fftools/ffmpeg_mux.c`. Negative values are rejected by
 	// validate().
 	MaxFileSize int64 `json:"max_file_size,omitempty"`
+	// MuxDelay caps how far the muxer is allowed to buffer ahead of
+	// the latest demux/decode timestamp before flushing, in seconds.
+	// Mirrors FFmpeg's `-muxdelay SECONDS` (per-output float; see
+	// fftools/ffmpeg_mux_init.c L3447 — `oc->max_delay = (int)(o->mux_max_delay
+	// * AV_TIME_BASE)` writes the value into AVFormatContext.max_delay
+	// in microseconds). FFmpeg's default is 0.7 s; 0 leaves the muxer
+	// default unchanged. Negative values are rejected by validate().
+	MuxDelay float64 `json:"muxdelay,omitempty"`
+	// MuxPreload pre-rolls the initial demux-decode delay window, in
+	// seconds. Mirrors FFmpeg's `-muxpreload SECONDS` (per-output
+	// float; see fftools/ffmpeg_mux_init.c L3444 —
+	// `av_dict_set_int(&mux->opts, "preload", o->mux_preload * AV_TIME_BASE, 0)`).
+	// Most muxers ignore this; the historically dominant consumer is
+	// the MPEG-PS muxer (`libavformat/mpegenc.c`'s `preload`
+	// AVOption). 0 leaves the muxer default unchanged. Negative
+	// values are rejected by validate().
+	MuxPreload float64 `json:"muxpreload,omitempty"`
+	// AvoidNegativeTS controls libavformat's automatic timestamp
+	// shift policy at the muxer boundary. Mirrors FFmpeg's
+	// `-avoid_negative_ts` (and the AVFormatContext AVOption of the
+	// same name; see libavformat/options_table.h L95-99). One of:
+	//   ""                  — leave libavformat's default
+	//                        (`auto`) unchanged.
+	//   "auto"              — shift only when the target muxer
+	//                        requires non-negative timestamps
+	//                        (`AVFMT_AVOID_NEG_TS_AUTO`, the
+	//                        FFmpeg default).
+	//   "disabled"          — do not shift; pass timestamps through
+	//                        as received (`AVFMT_AVOID_NEG_TS_DISABLED`).
+	//   "make_non_negative" — shift just enough to keep all
+	//                        timestamps >= 0
+	//                        (`AVFMT_AVOID_NEG_TS_MAKE_NON_NEGATIVE`).
+	//   "make_zero"         — shift so the first timestamp is exactly
+	//                        0 (`AVFMT_AVOID_NEG_TS_MAKE_ZERO`).
+	// Required for clean MP4/MOV writes when input PTS are negative
+	// (typical with `-ss` + `-copyts`). Validated against the enum
+	// at config-load.
+	AvoidNegativeTS string `json:"avoid_negative_ts,omitempty"`
 	// Metadata is the container-level metadata table written into the
 	// output (`-metadata key=value` in FFmpeg). When non-nil it
 	// completely replaces any metadata mapped from inputs via
@@ -975,6 +1025,9 @@ func validate(cfg *Config) error {
 	if len(cfg.Outputs) == 0 {
 		return fmt.Errorf("config must have at least one output")
 	}
+	if cfg.StartAtZero && !cfg.CopyTS {
+		return fmt.Errorf("start_at_zero requires copy_ts=true (it modulates -copyts behaviour; see fftools/ffmpeg_demux.c)")
+	}
 	// All input IDs must be unique.
 	seen := map[string]bool{}
 	for i, inp := range cfg.Inputs {
@@ -1054,6 +1107,17 @@ func validate(cfg *Config) error {
 		}
 		if out.MaxFileSize < 0 {
 			return fmt.Errorf("output %q: invalid max_file_size %d (must be >= 0)", out.ID, out.MaxFileSize)
+		}
+		if out.MuxDelay < 0 {
+			return fmt.Errorf("output %q: invalid muxdelay %g (must be >= 0)", out.ID, out.MuxDelay)
+		}
+		if out.MuxPreload < 0 {
+			return fmt.Errorf("output %q: invalid muxpreload %g (must be >= 0)", out.ID, out.MuxPreload)
+		}
+		switch out.AvoidNegativeTS {
+		case "", "auto", "disabled", "make_non_negative", "make_zero":
+		default:
+			return fmt.Errorf("output %q: invalid avoid_negative_ts %q (want auto|disabled|make_non_negative|make_zero)", out.ID, out.AvoidNegativeTS)
 		}
 		for j, ss := range out.Streams {
 			switch ss.Type {
