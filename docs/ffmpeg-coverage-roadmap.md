@@ -981,7 +981,8 @@ Close remaining ⚠️/❌ items in §2.3 that are not hardware-related.
     cleanly without a muxer.
 
     **36e — `movie` / `amovie` second-asset support +
-    ffcli round-trip.** `movie=filename=…` and `amovie=…`
+    ffcli round-trip.** ✅ Wave 7 (security validator + per-node
+    `protocol_whitelist` injection + corpus fixture). `movie=filename=…` and `amovie=…`
     work as `KindFilterSource` but reference an external
     file → security review (path traversal rejected; honour
     `Config.ProtocolWhitelist`) + asset-manager hook for
@@ -989,7 +990,7 @@ Close remaining ⚠️/❌ items in §2.3 that are not hardware-related.
     inside `-filter_complex` (deferred to Wave 7 #40's
     parser if not yet built; otherwise inline mini-parser).
     Fixture
-    [testdata/examples/54_movie_logo_overlay.json](../testdata/examples/54_movie_logo_overlay.json)
+    [testdata/examples/49_movie_logo_overlay.json](../testdata/examples/49_movie_logo_overlay.json)
     — `[0:v][movie=logo.png]overlay=W-w-10:10`. Wave 8 #44
     cross-references this for the asset picker.
 

@@ -1,0 +1,53 @@
+{
+  "schema_version": "1.1",
+  "description": "BBB_10sec.mp4 input video → overlay testdata/sample.jpg in top-right (Wave 7 #36e movie filter source) → libx264 → mp4. The movie filter opens an external file via libavformat; this fixture exercises the security-validated filter_source path.",
+  "inputs": [
+    {
+      "id": "in0",
+      "url": "{{input}}",
+      "streams": [
+        { "input_index": 0, "type": "video", "track": 0 }
+      ]
+    }
+  ],
+  "graph": {
+    "nodes": [
+      {
+        "id": "logo",
+        "type": "filter_source",
+        "filter": "movie",
+        "params": {
+          "filename": "../testdata/sample.jpg",
+          "loop": "1"
+        }
+      },
+      {
+        "id": "scaledlogo",
+        "type": "filter",
+        "filter": "scale",
+        "params": { "w": "200", "h": "-1" }
+      },
+      {
+        "id": "ov",
+        "type": "filter",
+        "filter": "overlay",
+        "params": { "x": "W-w-10", "y": "10" }
+      }
+    ],
+    "edges": [
+      { "from": "logo", "to": "scaledlogo", "type": "video" },
+      { "from": "in0:v:0", "to": "ov", "type": "video" },
+      { "from": "scaledlogo", "to": "ov", "type": "video" },
+      { "from": "ov", "to": "out0:v", "type": "video" }
+    ]
+  },
+  "outputs": [
+    {
+      "id": "out0",
+      "url": "{{output}}",
+      "format": "mp4",
+      "codec_video": "libx264",
+      "encoder_params_video": { "preset": "ultrafast", "crf": "30" }
+    }
+  ]
+}

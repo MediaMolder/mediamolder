@@ -1456,6 +1456,12 @@ func validate(cfg *Config) error {
 	if err := validateFilterAvailability(cfg); err != nil {
 		return err
 	}
+	// Wave 7 #36e: enforce security perimeter for `movie` / `amovie`
+	// filter_source nodes (filename required + sanitised; well-formed
+	// protocol_whitelist).
+	if err := validateMovieFilterParams(cfg); err != nil {
+		return err
+	}
 	// Validate metadata_reader / metadata_writer nodes (Wave 2 #11).
 	// Reader requires params.source = input id; writer requires
 	// params.target = output id. Optional params: section

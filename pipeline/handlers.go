@@ -2588,7 +2588,11 @@ func (r *graphRunner) createFilterSource(node *graph.Node) (*av.FilterGraph, err
 	if len(node.Outbound) == 0 {
 		return nil, fmt.Errorf("filter_source %q has no outbound edges", node.ID)
 	}
-	base := buildFilterSpec(NodeDef{Filter: node.Filter, Params: node.Params})
+	// Wave 7 #36e: rewrite per-node `protocol_whitelist` shortcut as a
+	// libavformat `format_opts` entry on `movie` / `amovie` so the
+	// underlying demuxer actually honours the policy.
+	params := movieFilterParamsForSpec(node.Filter, node.Params)
+	base := buildFilterSpec(NodeDef{Filter: node.Filter, Params: params})
 	spec := buildSourceFilterSpec(base, len(node.Outbound))
 
 	outputs := make([]av.FilterOutputConfig, len(node.Outbound))
