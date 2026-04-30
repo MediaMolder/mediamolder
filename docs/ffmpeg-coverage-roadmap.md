@@ -1020,11 +1020,24 @@ Close remaining ⚠️/❌ items in §2.3 that are not hardware-related.
     Fixture `51_metadata_filter.json` exercises an
     `add`→`print`→encode chain.
 40. **Mixed labelled / unlabelled `-filter_complex` outputs**
-    (§2.3, §1.1) — Round-trip test for the
-    `avfilter_graph_parse_ptr` pad-binding quirk: `-filter_complex
-    "[0:v]split=2[a][b]; [a]scale=720:-1; [b]scale=480:-1"`
-    where the trailing pad is unlabelled. Importer normalises;
-    exporter emits the canonical labelled form.
+    (§2.3, §1.1) ✅ Wave 7 — `compat/ffcli.NormalizeFilterComplex`
+    (compat/ffcli/filter_complex.go) rewrites a `-filter_complex`
+    spec into the canonical labelled form expected by
+    `avfilter_graph_parse_ptr` (libavfilter/graphparser.c
+    `parse_outputs`). Chains whose last filter has no trailing
+    pad label are tagged with synthetic `[mm_fc_out_N]` labels;
+    a missing leading label on the first chain becomes
+    `[mm_fc_in_0]`. Internal labels (produced and consumed
+    within the spec) are left untouched. The exporter half
+    (Wave 8 #53) emits the same canonical form, which makes the
+    round-trip idempotent. Locked in by
+    `TestNormalizeFilterComplex_RoadmapExample` plus four
+    edge-case tests (already-canonical, dangling input,
+    multi-filter chain, empty/separator-only). Hooking the flag
+    into the main `ffcli.Parse` to actually build filter nodes
+    is deferred — the normalisation primitive is the
+    pre-requisite that lets the parser, when added, treat every
+    chain identically.
 41. **Audio channel manipulation** (`pan`, `channelsplit`,
     `channelmap`, `join`, `amerge`, `amix=weights`) (§2.3, §1.1) — ✅ Wave 7
     Backend already supports these filters; landed three end-to-end
