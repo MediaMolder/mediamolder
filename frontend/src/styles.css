@@ -788,6 +788,24 @@ button.danger:hover { background: rgba(185, 74, 74, 0.15); }
   font-family: ui-monospace, monospace;
 }
 
+/* Bottom-right node/edge tally overlay on the canvas. Sits above the
+ * React-Flow attribution slot but below the minimap; pointer-events
+ * disabled so it never blocks panning or right-click on the canvas. */
+.canvas-stats {
+  position: absolute;
+  right: 8px;
+  bottom: 6px;
+  z-index: 5;
+  padding: 2px 8px;
+  font-size: 11px;
+  color: var(--text-dim);
+  background: rgba(15, 17, 21, 0.7);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  pointer-events: none;
+  user-select: none;
+}
+
 /* ---------- Improve React Flow controls contrast ---------- */
 .mm-controls .react-flow__controls-button,
 .react-flow__controls .react-flow__controls-button {

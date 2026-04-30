@@ -596,9 +596,12 @@ function Editor() {
     >
       <div className="toolbar">
         <span className="title">MediaMolder</span>
-        <span style={{ color: 'var(--text-dim)' }}>{stats}</span>
 
-        <div className="spacer" />
+        <button onClick={onClear}>New</button>
+        <button onClick={onOpen}>Open…</button>
+        <button onClick={() => setImportFFmpegOpen(true)} title="Paste an FFmpeg command line and convert it to a graph">
+          Import FFmpeg…
+        </button>
 
         <label style={{ color: 'var(--text-dim)', fontSize: 12 }}>Graph:</label>
         <select
@@ -630,6 +633,19 @@ function Editor() {
             </option>
           ))}
         </select>
+
+        <button
+          onClick={onSave}
+          disabled={!nodes.length || (identity.kind === 'file' && !dirty)}
+          title={identity.kind === 'file' ? `Save to ${identity.name}` : 'Save to disk…'}
+        >
+          Save
+        </button>
+        <button onClick={onSaveAs} disabled={!nodes.length} title="Save to a new file…">
+          Save As…
+        </button>
+
+        <div className="spacer" />
 
         <button onClick={onAutoLayout} disabled={!nodes.length}>Auto layout</button>
         <div
@@ -693,21 +709,6 @@ function Editor() {
             Compact
           </button>
         </div>
-        <button onClick={onClear}>New</button>
-        <button onClick={onOpen}>Open…</button>
-        <button onClick={() => setImportFFmpegOpen(true)} title="Paste an FFmpeg command line and convert it to a graph">
-          Import FFmpeg…
-        </button>
-        <button
-          onClick={onSave}
-          disabled={!nodes.length || (identity.kind === 'file' && !dirty)}
-          title={identity.kind === 'file' ? `Save to ${identity.name}` : 'Save to disk…'}
-        >
-          Save
-        </button>
-        <button onClick={onSaveAs} disabled={!nodes.length} title="Save to a new file…">
-          Save As…
-        </button>
         {isRunning ? (
           <button className="danger" onClick={onStop}>Stop</button>
         ) : (
@@ -786,6 +787,7 @@ function Editor() {
           </div>
         )}
         <Legend />
+        <div className="canvas-stats" title="Nodes · edges in the current graph">{stats}</div>
       </div>
 
       {showInspector && (
