@@ -70,6 +70,12 @@ func outputExt(name string) string {
 		return ".mkv"
 	case strings.HasPrefix(name, "27_"):
 		return ".ts"
+	case strings.HasPrefix(name, "41_"):
+		return ".m3u8"
+	case strings.HasPrefix(name, "42_"):
+		return ".mpd"
+	case strings.HasPrefix(name, "43_"):
+		return ".ts"
 	default:
 		return ".mp4"
 	}
@@ -149,7 +155,7 @@ func runExample(t *testing.T, jsonPath, name, inputAbs, subsrtAbs, subassAbs str
 	raw = strings.ReplaceAll(raw, `"subs.ass"`, `"`+subassRel+`"`)
 
 	// Metadata output files → redirect to tmpDir so tests don't litter cwd
-	for _, meta := range []string{"frame_info.jsonl", "scene_changes.jsonl", "detections.jsonl"} {
+	for _, meta := range []string{"frame_info.jsonl", "scene_changes.jsonl", "detections.jsonl", "frame_metadata.txt"} {
 		dest := filepath.ToSlash(filepath.Join(tmpDir, meta))
 		raw = strings.ReplaceAll(raw, `"`+meta+`"`, `"`+dest+`"`)
 	}
@@ -165,6 +171,15 @@ func runExample(t *testing.T, jsonPath, name, inputAbs, subsrtAbs, subassAbs str
 		outFwd := filepath.ToSlash(filepath.Join(tmpDir, "out"+ext))
 		raw = strings.ReplaceAll(raw, "{{output}}", outFwd)
 	}
+
+	// Two-pass stats file prefix → tmpDir so the `<prefix>-<idx>.log`
+	// file the encoder writes (libx264 `stats` AVOption / generic
+	// stats_out shuttle) does not pollute the package directory.
+	raw = strings.ReplaceAll(raw, "{{passlog}}", filepath.ToSlash(filepath.Join(tmpDir, "ffmpeg2pass")))
+
+	// Loudnorm shuttle stats prefix → tmpDir so pass-1 JSON does not
+	// pollute the package directory.
+	raw = strings.ReplaceAll(raw, "{{loudnorm_stats}}", filepath.ToSlash(filepath.Join(tmpDir, "mm-loudnorm")))
 
 	// --- Parse config ---
 	cfg, err := ParseConfig([]byte(raw))

@@ -51,6 +51,19 @@ button.danger:hover { background: rgba(185, 74, 74, 0.15); }
     "dock     dock       dock";
   height: 100vh;
 }
+/* Panel visibility \u2014 collapse the matching grid column to 0 when the
+ * user toggles the panel off. The Palette / Inspector components are
+ * not rendered in that case (see app.tsx), but collapsing the column
+ * also reclaims the space for the canvas. */
+.app-shell[data-palette="hidden"] {
+  grid-template-columns: 0 1fr 320px;
+}
+.app-shell[data-inspector="hidden"] {
+  grid-template-columns: 220px 1fr 0;
+}
+.app-shell[data-palette="hidden"][data-inspector="hidden"] {
+  grid-template-columns: 0 1fr 0;
+}
 .toolbar {
   grid-area: toolbar;
   display: flex;
@@ -127,6 +140,71 @@ button.danger:hover { background: rgba(185, 74, 74, 0.15); }
   padding: 6px 8px;
   font-size: 12px;
   margin-bottom: 8px;
+}
+.palette-toggles {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.segmented {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+}
+.segmented-label {
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  margin-right: 4px;
+  min-width: 42px;
+}
+.segmented-opt {
+  flex: 1;
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 3px 6px;
+  cursor: pointer;
+  font-size: 11px;
+}
+.segmented-opt.active {
+  background: var(--accent);
+  color: var(--bg);
+  border-color: var(--accent);
+}
+.palette-footer-hint {
+  position: sticky;
+  bottom: -12px;
+  margin: 12px -12px -12px;
+  padding: 8px 12px;
+  background: var(--panel-2);
+  border-top: 1px solid var(--border);
+  font-size: 11px;
+  color: var(--text-dim);
+  line-height: 1.4;
+}
+.palette-footer-hint .link {
+  background: none;
+  border: none;
+  color: var(--accent);
+  cursor: pointer;
+  font: inherit;
+  padding: 0;
+  text-decoration: underline;
+}
+.inspector-canonical {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin: -4px 0 8px;
+}
+.inspector-canonical code {
+  font-family: ui-monospace, monospace;
+  background: var(--panel-2);
+  padding: 1px 4px;
+  border-radius: 3px;
 }
 .palette h3 {
   font-size: 11px;
@@ -226,10 +304,39 @@ button.danger:hover { background: rgba(185, 74, 74, 0.15); }
 }
 .mm-node.implicit .mm-node-title { font-weight: 500; color: var(--text-dim); }
 .mm-node .mm-node-type {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
   font-size: 10px;
   color: var(--text-dim);
   text-transform: uppercase;
   letter-spacing: 0.5px;
+}
+/* Pencil button on each node header — opens the Inspector for that node.
+ * Stop pointer events from bubbling into the node drag handler so the
+ * click is reliably interpreted as "open inspector" rather than the
+ * start of a drag-to-select gesture. */
+.mm-node .mm-node-edit {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-dim);
+  border-radius: 3px;
+  padding: 0 4px;
+  font-size: 11px;
+  line-height: 14px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.1s ease, background 0.1s ease, color 0.1s ease;
+}
+.mm-node:hover .mm-node-edit,
+.mm-node.selected .mm-node-edit {
+  opacity: 1;
+}
+.mm-node .mm-node-edit:hover {
+  background: var(--panel-2);
+  border-color: var(--border);
+  color: var(--text);
 }
 .mm-node .mm-node-title { font-weight: 600; }
 .mm-node .mm-node-sub { font-size: 11px; color: var(--text-dim); margin-top: 2px; }
@@ -708,6 +815,24 @@ button.danger:hover { background: rgba(185, 74, 74, 0.15); }
   padding: 1px 5px;
   font-size: 11px;
   font-family: ui-monospace, monospace;
+}
+
+/* Bottom-right node/edge tally overlay on the canvas. Sits above the
+ * React-Flow attribution slot but below the minimap; pointer-events
+ * disabled so it never blocks panning or right-click on the canvas. */
+.canvas-stats {
+  position: absolute;
+  right: 8px;
+  bottom: 6px;
+  z-index: 5;
+  padding: 2px 8px;
+  font-size: 11px;
+  color: var(--text-dim);
+  background: rgba(15, 17, 21, 0.7);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  pointer-events: none;
+  user-select: none;
 }
 
 /* ---------- Improve React Flow controls contrast ---------- */

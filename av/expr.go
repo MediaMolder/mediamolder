@@ -31,6 +31,26 @@ package av
 //         NULL, NULL,
 //         NULL, 0, NULL);
 // }
+//
+// // parse_expr compiles an expression once for repeated evaluation,
+// // mirroring the cached AVExpr* fftools/ffmpeg_mux_init.c stores on
+// // each MuxStream for `-force_key_frames "expr:..."`. Returns 0 on
+// // success and writes the compiled expression to *out (caller must
+// // free with av_expr_free).
+// static int parse_expr(const char *expr,
+//                       const char **names,
+//                       AVExpr **out) {
+//     return av_expr_parse(out, expr, names, NULL, NULL, NULL, NULL, 0, NULL);
+// }
+//
+// // eval_compiled runs a previously-parsed expression with a fresh
+// // value vector. Faster than av_expr_parse_and_eval when the same
+// // expression is evaluated thousands of times (e.g. once per frame).
+// static double eval_compiled(AVExpr *e, const double *values) {
+//     return av_expr_eval(e, values, NULL);
+// }
+//
+// static void free_expr(AVExpr *e) { av_expr_free(e); }
 import "C"
 
 import (
@@ -90,4 +110,72 @@ func EvalExpression(expr string, vars map[string]float64) (float64, error) {
 		return 0, err
 	}
 	return float64(out), nil
+}
+
+// ParsedExpression wraps a compiled libavutil AVExpr for repeated
+// evaluation. Created by ParseExpression; freed by Close. The names
+// passed at parse time fix the variable order — Eval takes a values
+// slice in the same order.
+//
+// This mirrors the per-MuxStream cached AVExpr fftools/ffmpeg_mux_init.c
+// builds for `-force_key_frames "expr:..."` so the per-frame hot loop
+// only does av_expr_eval (no re-parse).
+type ParsedExpression struct {
+	p     *C.AVExpr
+	names []string
+}
+
+// ParseExpression compiles expr once. names enumerates the variable
+// constants the expression may reference (any other identifier causes
+// a parse-time error). Caller must Close the returned expression.
+func ParseExpression(expr string, names []string) (*ParsedExpression, error) {
+	cExpr := C.CString(expr)
+	defer C.free(unsafe.Pointer(cExpr))
+
+	cNames := C.malloc(C.size_t(len(names)+1) * C.size_t(unsafe.Sizeof(uintptr(0))))
+	defer C.free(cNames)
+	nameSlice := (*[1 << 16]*C.char)(cNames)[: len(names)+1 : len(names)+1]
+	for i, n := range names {
+		nameSlice[i] = C.CString(n)
+		defer C.free(unsafe.Pointer(nameSlice[i]))
+	}
+	nameSlice[len(names)] = nil
+
+	var out *C.AVExpr
+	ret := C.parse_expr(cExpr, (**C.char)(cNames), &out)
+	if err := newErr(ret); err != nil {
+		return nil, err
+	}
+	pe := &ParsedExpression{p: out, names: append([]string(nil), names...)}
+	leakTrack(unsafe.Pointer(out), "AVExpr")
+	return pe, nil
+}
+
+// Eval runs the parsed expression with values lined up against the
+// names passed to ParseExpression. Returns NaN if libavutil's evaluator
+// hits an internal fault (rare for well-formed expressions).
+func (e *ParsedExpression) Eval(values []float64) float64 {
+	if e == nil || e.p == nil {
+		return 0
+	}
+	if len(values) != len(e.names) {
+		return 0
+	}
+	cVals := C.malloc(C.size_t(len(values)) * C.size_t(unsafe.Sizeof(C.double(0))))
+	defer C.free(cVals)
+	vs := (*[1 << 16]C.double)(cVals)[:len(values):len(values)]
+	for i, v := range values {
+		vs[i] = C.double(v)
+	}
+	return float64(C.eval_compiled(e.p, (*C.double)(cVals)))
+}
+
+// Close releases the underlying AVExpr. Safe to call on a nil receiver.
+func (e *ParsedExpression) Close() {
+	if e == nil || e.p == nil {
+		return
+	}
+	leakUntrack(unsafe.Pointer(e.p))
+	C.free_expr(e.p)
+	e.p = nil
 }

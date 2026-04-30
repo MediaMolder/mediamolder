@@ -17,18 +17,23 @@ const (
 	PortAudio    PortType = "audio"
 	PortSubtitle PortType = "subtitle"
 	PortData     PortType = "data"
+	PortMetadata PortType = "metadata" // routes container/stream metadata or chapters (Wave 2 #11)
 )
 
 // NodeKind classifies a node in the processing graph.
 type NodeKind int
 
 const (
-	KindSource      NodeKind = iota // demux + decode
-	KindFilter                      // libavfilter
-	KindEncoder                     // encode
-	KindSink                        // mux
-	KindGoProcessor                 // custom Go per-frame processor
-	KindCopy                        // stream copy: forward demuxer packets to muxer
+	KindSource         NodeKind = iota // demux + decode
+	KindFilter                         // libavfilter
+	KindEncoder                        // encode
+	KindSink                           // mux
+	KindGoProcessor                    // custom Go per-frame processor
+	KindCopy                           // stream copy: forward demuxer packets to muxer
+	KindMetadataReader                 // read container/stream metadata or chapters from a source (Wave 2 #11)
+	KindMetadataWriter                 // write container/stream metadata or chapters into a sink (Wave 2 #11)
+	KindFilterSource                   // libavfilter source filter (color, testsrc, sine — 0 inbound) (Wave 7 #36)
+	KindFilterSink                     // libavfilter sink filter (nullsink, anullsink — 0 outbound) (Wave 7 #36)
 )
 
 func (k NodeKind) String() string {
@@ -45,6 +50,14 @@ func (k NodeKind) String() string {
 		return "go_processor"
 	case KindCopy:
 		return "copy"
+	case KindMetadataReader:
+		return "metadata_reader"
+	case KindMetadataWriter:
+		return "metadata_writer"
+	case KindFilterSource:
+		return "filter_source"
+	case KindFilterSink:
+		return "filter_sink"
 	default:
 		return fmt.Sprintf("NodeKind(%d)", int(k))
 	}
@@ -73,6 +86,12 @@ type NodeDef struct {
 	Filter    string         // filter name (for filter nodes)
 	Processor string         // registered processor name (for go_processor nodes)
 	Params    map[string]any // filter/encoder/processor parameters
+	// OutputMediaType, when set on a KindFilter node, declares the media type
+	// produced on the node's outbound pads. Required for cross-media-type
+	// filters (showwavespic, showspectrumpic, concat=v=1:a=1, ...) where the
+	// output type cannot be inferred from the inbound edge type. Build
+	// rejects any outbound edge whose Type does not match. (Wave 7 #37)
+	OutputMediaType PortType
 }
 
 // OutputDef describes an output sink.
@@ -96,6 +115,10 @@ type Node struct {
 	Filter    string         // filter name (KindFilter only)
 	Processor string         // registered processor name (KindGoProcessor only)
 	Params    map[string]any // filter/encoder/processor parameters
+	// OutputMediaType is the declared output media type for cross-media-type
+	// filters (e.g. showwavespic: audio in, video out). Empty when the
+	// downstream type matches the upstream type. (Wave 7 #37)
+	OutputMediaType PortType
 
 	Inbound  []*Edge
 	Outbound []*Edge
@@ -150,6 +173,17 @@ func Build(def *Def) (*Graph, error) {
 		if err := g.addNode(nd.ID, kind, nd.Filter, nd.Processor, nd.Params); err != nil {
 			return nil, err
 		}
+		if nd.OutputMediaType != "" {
+			if kind != KindFilter {
+				return nil, fmt.Errorf("node %q: output_media_type only valid on filter nodes", nd.ID)
+			}
+			switch nd.OutputMediaType {
+			case PortVideo, PortAudio, PortSubtitle, PortData:
+			default:
+				return nil, fmt.Errorf("node %q: invalid output_media_type %q", nd.ID, nd.OutputMediaType)
+			}
+			g.Nodes[nd.ID].OutputMediaType = nd.OutputMediaType
+		}
 	}
 
 	// 3. Create sink nodes from outputs.
@@ -172,9 +206,9 @@ func Build(def *Def) (*Graph, error) {
 	// 5. Classify sources and sinks from node kinds.
 	for _, n := range g.Nodes {
 		switch n.Kind {
-		case KindSource:
+		case KindSource, KindFilterSource:
 			g.Sources = append(g.Sources, n)
-		case KindSink:
+		case KindSink, KindFilterSink:
 			g.Sinks = append(g.Sinks, n)
 		}
 	}
@@ -261,7 +295,23 @@ func (g *Graph) addEdge(index int, ed EdgeDef) error {
 		return fmt.Errorf("edge[%d]: self-loop on node %q", index, fromID)
 	}
 
+	if fromNode.Kind == KindFilterSink {
+		return fmt.Errorf("edge[%d]: filter_sink node %q cannot have outbound edges", index, fromID)
+	}
+	if toNode.Kind == KindFilterSource {
+		return fmt.Errorf("edge[%d]: filter_source node %q cannot have inbound edges", index, toID)
+	}
+
 	pt := PortType(ed.Type)
+
+	// Wave 7 #37: when the source node declares an OutputMediaType, every
+	// outbound edge must match it. This catches accidental wiring of a
+	// cross-media-type filter (showwavespic, etc.) into a same-type
+	// downstream consumer at build time rather than as an opaque libavfilter
+	// pad-type mismatch at runtime.
+	if fromNode.OutputMediaType != "" && pt != fromNode.OutputMediaType {
+		return fmt.Errorf("edge[%d]: node %q declares output_media_type=%q but edge type is %q", index, fromID, fromNode.OutputMediaType, pt)
+	}
 
 	edge := &Edge{
 		From:     fromNode,
@@ -320,6 +370,14 @@ func parseNodeKind(s string) (NodeKind, error) {
 		return KindGoProcessor, nil
 	case "copy":
 		return KindCopy, nil
+	case "metadata_reader":
+		return KindMetadataReader, nil
+	case "metadata_writer":
+		return KindMetadataWriter, nil
+	case "filter_source":
+		return KindFilterSource, nil
+	case "filter_sink":
+		return KindFilterSink, nil
 	default:
 		return 0, fmt.Errorf("unknown node type %q", s)
 	}

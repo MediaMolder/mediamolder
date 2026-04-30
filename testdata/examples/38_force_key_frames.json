@@ -1,0 +1,27 @@
+{
+  "schema_version": "1.0",
+  "description": "Force IDR keyframes every 2 seconds via the canonical HLS/DASH idiom `-force_key_frames \"expr:gte(t,n_forced*2)\"`. Mirrors `ffmpeg -y -i in.mp4 -c:v libx264 -force_key_frames \"expr:gte(t,n_forced*2)\" out.mp4`. The runtime parses the spec at config-load (rejects malformed expressions up-front), builds a per-encoder forceKeyFramesMatcher in handleEncoder, and stamps `frame.pict_type = AV_PICTURE_TYPE_I` before SendFrame on each match — libavcodec honours that as an IDR request regardless of the encoder's GOP cadence (faithful port of fftools/ffmpeg_enc.c::forced_kf_apply).",
+  "inputs": [
+    {
+      "id": "in0",
+      "url": "{{input}}",
+      "streams": [
+        { "input_index": 0, "type": "video", "track": 0 }
+      ]
+    }
+  ],
+  "graph": {
+    "nodes": [],
+    "edges": [
+      { "from": "in0:v:0", "to": "out0:v", "type": "video" }
+    ]
+  },
+  "outputs": [
+    {
+      "id": "out0",
+      "url": "{{output}}",
+      "codec_video": "libx264",
+      "force_key_frames": "expr:gte(t,n_forced*2)"
+    }
+  ]
+}

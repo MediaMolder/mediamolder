@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { FlowEdge, FlowNode } from '../lib/jsonAdapter';
 import { displayUrl, nodeDisplayLabel, nodeDisplaySublabel } from '../lib/jsonAdapter';
+import { displayName, lookupFriendlyName, useNamingMode } from '../lib/friendlyNames';
 import type { Input, NodeDef, Output, ProbeResponse, ProbedStream } from '../lib/jobTypes';
 import { MEDIA_FILE_EXTENSIONS } from '../lib/mediaExtensions';
 import { FileBrowser, type BrowseMode } from './FileBrowser';
@@ -29,12 +30,19 @@ export function Inspector({ node, nodes, edges, onChange, onDelete }: Props) {
   }
 
   const ref = node.data.ref;
+  const naming = useNamingMode();
+  const friendly =
+    node.data.friendlyName ?? lookupFriendlyName(node.data.label);
+  const heading = displayName(
+    { name: node.data.label, friendly_name: friendly },
+    naming,
+  );
 
   if (node.data.implicit) {
     return (
       <div className="inspector">
         <div className="inspector-header">
-          <h3>{node.data.label}</h3>
+          <h3>{heading}</h3>
         </div>
         <div className="mm-node-type" style={{ marginBottom: 12 }}>
           {describeKind(node.data.kind, node.data.streams ?? [])} (implicit)
@@ -56,7 +64,7 @@ export function Inspector({ node, nodes, edges, onChange, onDelete }: Props) {
   return (
     <div className="inspector">
       <div className="inspector-header">
-        <h3>{node.data.label}</h3>
+        <h3>{heading}</h3>
         <button className="danger" onClick={() => onDelete(node.id)}>Delete</button>
       </div>
       <div className="mm-node-type" style={{ marginBottom: 12 }}>
@@ -615,7 +623,7 @@ function NodeForm({ def, onChange }: { def: NodeDef; onChange: (next: NodeDef) =
     <>
       <Field label="ID" value={def.id} onChange={(v) => onChange({ ...def, id: v })} />
       <Field label="Type" value={def.type} onChange={(v) => onChange({ ...def, type: v })} />
-      {def.type === 'filter' && (
+      {(def.type === 'filter' || def.type === 'filter_source' || def.type === 'filter_sink') && (
         <Field
           label="Filter"
           value={def.filter ?? ''}
@@ -630,8 +638,10 @@ function NodeForm({ def, onChange }: { def: NodeDef; onChange: (next: NodeDef) =
         />
       )}
       {def.type === 'encoder' && <EncoderForm def={def} onChange={onChange} />}
-      {def.type === 'filter' && <FilterForm def={def} onChange={onChange} />}
-      {def.type !== 'encoder' && def.type !== 'filter' && (
+      {(def.type === 'filter' || def.type === 'filter_source' || def.type === 'filter_sink') && (
+        <FilterForm def={def} onChange={onChange} />
+      )}
+      {def.type !== 'encoder' && def.type !== 'filter' && def.type !== 'filter_source' && def.type !== 'filter_sink' && (
         <ParamsEditor params={def.params ?? {}} onChange={(p) => onChange({ ...def, params: p })} />
       )}
     </>

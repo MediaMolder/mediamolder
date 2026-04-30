@@ -21,6 +21,7 @@ go.work
 go.work.sum
 
 # IDE
+.claude/
 .idea/
 *.swp
 *.swo
@@ -65,3 +66,4 @@ docs/images/ABR.png
 docs/images/Separate_audio_video.png
 testdata/sample.jpg
 testdata/sample.aac
+testdata/sample.yuv

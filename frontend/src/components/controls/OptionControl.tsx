@@ -9,11 +9,15 @@
 //   - For bool: 'true' | 'false' | '' (unset).
 
 import type { EncoderOption } from '../../lib/encoderSchema';
+import { ExpressionInput } from './ExpressionInput';
 
 export interface OptionControlProps {
   option: EncoderOption;
   value: string; // always a string in the params record
   onChange: (next: string) => void;
+  /** Filter name; required for expression-typed options so the
+   * ExpressionInput can hit /api/filters/{filter}/eval-expression. */
+  filter?: string;
 }
 
 /** Heuristic: decide whether to render this option as an enum-select. */
@@ -21,7 +25,23 @@ export function isEnum(option: EncoderOption): boolean {
   return Array.isArray(option.constants) && option.constants.length > 0;
 }
 
-export function OptionControl({ option, value, onChange }: OptionControlProps) {
+export function OptionControl({ option, value, onChange, filter }: OptionControlProps) {
+  // Expression-typed (filter, option) pairs (Wave 5 #20). Falls
+  // through to plain text when no filter is supplied (e.g. encoder
+  // forms — encoders don't currently have expression options).
+  if (option.expression && filter) {
+    return (
+      <ExpressionInput
+        filter={filter}
+        option={option.name}
+        value={value}
+        variables={option.variables}
+        onChange={onChange}
+        placeholder={defaultDisplay(option)}
+      />
+    );
+  }
+
   if (isEnum(option)) {
     return (
       <select value={value} onChange={(e) => onChange(e.target.value)}>

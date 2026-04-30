@@ -264,8 +264,16 @@ func (p *Pipeline) stepForward(target State) error {
 	case StateReady:
 		// Validate config is usable (inputs/outputs present).
 		// Actual resource allocation is deferred to PAUSED to keep READY cheap.
-		if len(p.cfg.Inputs) == 0 || len(p.cfg.Outputs) == 0 {
-			return fmt.Errorf("config has no inputs or outputs")
+		// Wave 7 #36c: a config may have zero Inputs when it stands
+		// entirely on filter_source nodes (color, testsrc, sine, …).
+		// Wave 7 #36d: a config may have zero Outputs when every sink
+		// is a filter_sink (nullsink/anullsink terminating a side-effect
+		// chain such as ebur128 or ametadata=mode=print).
+		if len(p.cfg.Outputs) == 0 && !configHasFilterSink(p.cfg) {
+			return fmt.Errorf("config has no outputs or filter_sink nodes")
+		}
+		if len(p.cfg.Inputs) == 0 && !configHasFilterSource(p.cfg) {
+			return fmt.Errorf("config has no inputs or filter_source nodes")
 		}
 
 	case StatePaused:
@@ -754,6 +762,31 @@ func (e *Pipeline) runLinear(ctx context.Context, g *errgroup.Group) error {
 	return muxer.Close()
 }
 
+// configHasFilterSource reports whether cfg.Graph contains at least one
+// node of type "filter_source" (Wave 7 #36c). Lets the engine accept a
+// pure source-only pipeline (testsrc → encoder → file) without inputs.
+func configHasFilterSource(cfg *Config) bool {
+	for _, n := range cfg.Graph.Nodes {
+		if n.Type == "filter_source" {
+			return true
+		}
+	}
+	return false
+}
+
+// configHasFilterSink reports whether cfg.Graph contains at least one
+// node of type "filter_sink" (Wave 7 #36d). Lets the engine accept a
+// pipeline whose terminal nodes are all libavfilter sinks (nullsink,
+// anullsink, ebur128 → anullsink, …) with no top-level muxer outputs.
+func configHasFilterSink(cfg *Config) bool {
+	for _, n := range cfg.Graph.Nodes {
+		if n.Type == "filter_sink" {
+			return true
+		}
+	}
+	return false
+}
+
 func buildFilterSpec(node NodeDef) string {
 	if node.Filter == "" {
 		return "null"
@@ -779,6 +812,13 @@ func buildFilterSpec(node NodeDef) string {
 				positional = append(positional, posArg{idx: i, val: node.Params[k]})
 				continue
 			}
+		}
+		// Reserved internal markers used by the runtime to thread
+		// pipeline-level state into a filter node (e.g. the loudnorm
+		// shuttle's `__loudnorm_pass` / `__loudnorm_stats`). They
+		// must not reach the libavfilter parser.
+		if strings.HasPrefix(k, "__") {
+			continue
 		}
 		named = append(named, k)
 	}
@@ -893,6 +933,18 @@ func (p *Pipeline) runGraph(ctx context.Context) (runErr error) {
 			fg, err := runner.createFilter(dag, node)
 			if err != nil {
 				return fmt.Errorf("create filter %q: %w", node.ID, err)
+			}
+			runner.filters[node.ID] = fg
+		case graph.KindFilterSource:
+			fg, err := runner.createFilterSource(node)
+			if err != nil {
+				return fmt.Errorf("create filter_source %q: %w", node.ID, err)
+			}
+			runner.filters[node.ID] = fg
+		case graph.KindFilterSink:
+			fg, err := runner.createFilterSink(dag, node)
+			if err != nil {
+				return fmt.Errorf("create filter_sink %q: %w", node.ID, err)
 			}
 			runner.filters[node.ID] = fg
 		case graph.KindEncoder:

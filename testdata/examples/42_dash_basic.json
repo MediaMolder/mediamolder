@@ -1,0 +1,29 @@
+{
+  "schema_version": "1.0",
+  "description": "Single-rendition DASH output exercising typed Output.DASH fields (Wave 3 #12). 2 s segments, explicit adaptation_sets, CMAF dual-pack (hls_playlist=true) so the muxer also writes an HLS sidecar manifest.",
+  "inputs": [
+    {
+      "id": "in0",
+      "url": "{{input}}",
+      "streams": [
+        { "input_index": 0, "type": "video", "track": 0 },
+        { "input_index": 0, "type": "audio", "track": 0 }
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "id": "out0",
+      "url": "{{output}}",
+      "format": "dash",
+      "codec_video": "libx264",
+      "codec_audio": "aac",
+      "force_key_frames": "expr:gte(t,n_forced*2)",
+      "dash": {
+        "seg_duration": 2,
+        "adaptation_sets": "id=0,streams=v id=1,streams=a",
+        "hls_playlist": true
+      }
+    }
+  ]
+}

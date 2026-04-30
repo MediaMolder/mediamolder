@@ -338,3 +338,71 @@ func TestParseCopyTS(t *testing.T) {
 		t.Fatalf("Config.CopyTS = false, want true")
 	}
 }
+
+// TestParseTimestampPolicy covers Wave 6 #29: -muxdelay, -muxpreload,
+// -start_at_zero, -avoid_negative_ts. -start_at_zero lands on
+// Config.StartAtZero (global, modulates -copyts); the others land on
+// Output.MuxDelay / MuxPreload / AvoidNegativeTS for the next output.
+func TestParseTimestampPolicy(t *testing.T) {
+	cfg, err := Parse("ffmpeg -copyts -start_at_zero -i in.mp4 -muxdelay 1.5 -muxpreload 0.25 -avoid_negative_ts make_zero -c copy out.mp4")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.CopyTS || !cfg.StartAtZero {
+		t.Fatalf("CopyTS=%v StartAtZero=%v, want both true", cfg.CopyTS, cfg.StartAtZero)
+	}
+	if len(cfg.Outputs) != 1 {
+		t.Fatalf("got %d outputs, want 1", len(cfg.Outputs))
+	}
+	out := cfg.Outputs[0]
+	if out.MuxDelay != 1.5 {
+		t.Errorf("MuxDelay = %g, want 1.5", out.MuxDelay)
+	}
+	if out.MuxPreload != 0.25 {
+		t.Errorf("MuxPreload = %g, want 0.25", out.MuxPreload)
+	}
+	if out.AvoidNegativeTS != "make_zero" {
+		t.Errorf("AvoidNegativeTS = %q, want make_zero", out.AvoidNegativeTS)
+	}
+}
+
+// TestParseTimestampPolicyErrors covers the validator branches for
+// Wave 6 #29.
+func TestParseTimestampPolicyErrors(t *testing.T) {
+	cases := []string{
+		"ffmpeg -i in.mp4 -muxdelay -1 -c copy out.mp4",
+		"ffmpeg -i in.mp4 -muxpreload -0.5 -c copy out.mp4",
+		"ffmpeg -i in.mp4 -avoid_negative_ts bogus -c copy out.mp4",
+	}
+	for _, c := range cases {
+		t.Run(c, func(t *testing.T) {
+			if _, err := Parse(c); err == nil {
+				t.Fatal("expected error, got nil")
+			}
+		})
+	}
+}
+
+// TestParseDisableStreams covers Wave 6 #32: -vn / -an / -sn / -dn
+// scoped to the next output. Each lands on Output.DisableVideo /
+// DisableAudio / DisableSubtitle / DisableData and the parser flag is
+// reset so a second output gets a fresh latch.
+func TestParseDisableStreams(t *testing.T) {
+	cfg, err := Parse("ffmpeg -i in.mp4 -vn -an -sn -dn -c copy a.mp4 -c copy b.mp4")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Outputs) != 2 {
+		t.Fatalf("got %d outputs, want 2", len(cfg.Outputs))
+	}
+	a := cfg.Outputs[0]
+	if !a.DisableVideo || !a.DisableAudio || !a.DisableSubtitle || !a.DisableData {
+		t.Errorf("output[0] disables = v:%v a:%v s:%v d:%v, want all true",
+			a.DisableVideo, a.DisableAudio, a.DisableSubtitle, a.DisableData)
+	}
+	b := cfg.Outputs[1]
+	if b.DisableVideo || b.DisableAudio || b.DisableSubtitle || b.DisableData {
+		t.Errorf("output[1] disables = v:%v a:%v s:%v d:%v, want all false",
+			b.DisableVideo, b.DisableAudio, b.DisableSubtitle, b.DisableData)
+	}
+}

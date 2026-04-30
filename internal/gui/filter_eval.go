@@ -98,6 +98,87 @@ var filterExprVars = map[string][]string{
 // surface (see libavfilter/avfilter.c `enable_var_names[]`).
 var fallbackExprVars = []string{"t", "n", "pos", "w", "h"}
 
+// filterExprOptions is the curated registry of (filter, option) pairs
+// whose value is parsed by libavutil's expression evaluator. The GUI
+// uses it to render the syntax-highlighted expression input + cookbook
+// (Wave 5 #19/#20). Authoritative source: each filter's option table
+// in libavfilter (e.g. `vf_drawtext.c` flags `text_x`, `text_y`,
+// `enable` as expressions; `vf_overlay.c` flags `x`, `y`; etc.).
+//
+// Keep entries minimal: every (filter, option) pair listed becomes
+// part of the public schema contract surfaced by
+// GET /api/filters/{name}/options.
+var filterExprOptions = map[string]map[string]bool{
+	"drawtext": {
+		"x": true, "y": true,
+		"text_x": true, "text_y": true,
+		"box_w": true, "box_h": true,
+		"fontsize": true, "alpha": true,
+		"enable": true,
+	},
+	"overlay": {
+		"x": true, "y": true,
+		"enable": true,
+	},
+	"crop": {
+		"x": true, "y": true, "w": true, "h": true,
+		"out_w": true, "out_h": true,
+		"enable": true,
+	},
+	"scale": {
+		"w": true, "h": true,
+		"width": true, "height": true,
+		"eval": false, // an enum, NOT an expression itself
+	},
+	"pad": {
+		"w": true, "h": true,
+		"x": true, "y": true,
+		"enable": true,
+	},
+	"rotate": {
+		"angle": true, "a": true,
+		"out_w": true, "ow": true,
+		"out_h": true, "oh": true,
+		"enable": true,
+	},
+	"zoompan": {
+		"zoom": true, "z": true,
+		"x": true, "y": true,
+		"d": true, "fps": true,
+		"enable": true,
+	},
+	"setpts":  {"expr": true},
+	"asetpts": {"expr": true},
+	"volume": {
+		"volume": true,
+		"enable": true,
+	},
+}
+
+// FilterExprVariables returns the curated list of variable names
+// recognised inside expression-typed options on the named filter.
+// Falls back to the universal timeline set (`t`, `n`, `pos`, `w`,
+// `h`) when the filter has no curated table.
+func FilterExprVariables(filter string) []string {
+	if vs, ok := filterExprVars[filter]; ok {
+		return append([]string(nil), vs...)
+	}
+	return append([]string(nil), fallbackExprVars...)
+}
+
+// IsExpressionOption reports whether the (filter, option) pair is in
+// the curated registry of expression-typed options. Returns false for
+// unknown pairs (the safe default \u2014 a free-form text input is always
+// a correct render for an unmarked AVOption).
+func IsExpressionOption(filter, option string) bool {
+	m, ok := filterExprOptions[filter]
+	if !ok {
+		return false
+	}
+	v, ok := m[option]
+	return ok && v
+}
+
 // evalExpressionResponse mirrors the JSON shape served to the GUI.
 //
 // Ok=true when the expression parses and evaluates under the supplied

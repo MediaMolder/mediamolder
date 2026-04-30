@@ -242,6 +242,48 @@ func (f *InputFormatContext) AllStreams() ([]StreamInfo, error) {
 	return out, nil
 }
 
+// ProgramInfo describes a single AVProgram entry as seen by
+// libavformat. MPEG-TS captures and HLS playlists with multiple
+// rendition groups expose programs; most other containers do not.
+// Mirrors the subset of `AVProgram` (libavformat/avformat.h) the
+// `-map 0:p:N` selector needs.
+type ProgramInfo struct {
+	// ID is the program identifier (NOT the array index). For
+	// MPEG-TS this is the PMT-assigned program number; FFmpeg's
+	// `cmdutils.c::check_stream_specifier` matches `p:N` against
+	// this field.
+	ID int
+	// StreamIndices lists the stream indices that belong to this
+	// program (`AVProgram.stream_index` array).
+	StreamIndices []int
+}
+
+// Programs returns the AVProgram table of the input. Empty for
+// containers that don't expose programs (most non-MPEG-TS files).
+func (f *InputFormatContext) Programs() []ProgramInfo {
+	n := int(f.p.nb_programs)
+	if n <= 0 {
+		return nil
+	}
+	out := make([]ProgramInfo, 0, n)
+	progs := (*[1 << 20]*C.AVProgram)(unsafe.Pointer(f.p.programs))[:n:n]
+	for _, prog := range progs {
+		if prog == nil {
+			continue
+		}
+		ns := int(prog.nb_stream_indexes)
+		idxs := make([]int, 0, ns)
+		if ns > 0 {
+			arr := (*[1 << 20]C.uint)(unsafe.Pointer(prog.stream_index))[:ns:ns]
+			for _, si := range arr {
+				idxs = append(idxs, int(si))
+			}
+		}
+		out = append(out, ProgramInfo{ID: int(prog.id), StreamIndices: idxs})
+	}
+	return out
+}
+
 // ReadPacket reads the next packet from the container into pkt.
 // Returns ErrEOF at end of stream.
 func (f *InputFormatContext) ReadPacket(pkt *Packet) error {

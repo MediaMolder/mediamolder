@@ -44,6 +44,30 @@ export interface EncoderOption {
   default?: EncoderOptionVal;
   constants?: EncoderOptionEnum[];
   is_private: boolean;
+
+  // AVOption.flags bitmask + decoded bits (Wave 5 #19). Mirrors
+  // av.EncoderOption in av/options.go.
+  flags?: number;
+  is_encoding_param?: boolean;
+  is_decoding_param?: boolean;
+  is_audio_param?: boolean;
+  is_video_param?: boolean;
+  is_subtitle_param?: boolean;
+  is_export?: boolean;
+  is_read_only?: boolean;
+  is_bsf_param?: boolean;
+  is_runtime_param?: boolean;
+  is_filtering_param?: boolean;
+  is_deprecated?: boolean;
+  is_child_consts?: boolean;
+
+  // Curated by the gui layer (not by libavutil) for (filter, option)
+  // pairs whose value is parsed by the libavutil expression
+  // evaluator. When `expression` is true the GUI renders the
+  // syntax-highlighted ExpressionInput; `variables` lists the
+  // identifiers the expression may reference.
+  expression?: boolean;
+  variables?: string[];
 }
 
 export interface EncoderInfo {

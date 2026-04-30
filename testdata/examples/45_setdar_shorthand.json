@@ -1,0 +1,37 @@
+{
+  "schema_version": "1.0",
+  "description": "setdar shorthand on Output (Wave 3 #15). Transcodes BBB_10sec.mp4 with the legacy SD anamorphic shape: scales to 720x576 (DV-PAL 4:3) and stamps DAR=4:3 on the output, which the runtime resolves to SAR 16:15 against the encoder's W/H and writes onto AVStream.codecpar.sample_aspect_ratio so downstream players display the correct 4:3 frame from a 720x576 raster. Mirrors ffmpeg -aspect 4:3.",
+  "inputs": [
+    {
+      "id": "in0",
+      "url": "{{input}}",
+      "streams": [
+        { "input_index": 0, "type": "video", "track": 0 }
+      ]
+    }
+  ],
+  "graph": {
+    "nodes": [
+      {
+        "id": "f0",
+        "type": "filter",
+        "filter": "scale",
+        "params": { "w": "720", "h": "576" }
+      }
+    ],
+    "edges": [
+      { "from": "in0:v:0", "to": "f0", "type": "video" },
+      { "from": "f0", "to": "out0:v", "type": "video" }
+    ]
+  },
+  "outputs": [
+    {
+      "id": "out0",
+      "url": "{{output}}",
+      "format": "mp4",
+      "codec_video": "libx264",
+      "encoder_params_video": { "preset": "ultrafast", "crf": "30" },
+      "dar": "4:3"
+    }
+  ]
+}

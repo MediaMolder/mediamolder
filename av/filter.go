@@ -89,6 +89,7 @@ type VideoFilterGraphConfig struct {
 	FRNum      int    // frame_rate numerator (0 = unknown, omitted from buffersrc args)
 	FRDen      int    // frame_rate denominator
 	FilterSpec string // e.g. "scale=1280:720"
+	Threads    int    // 0 = libavfilter default; otherwise written to graph->nb_threads (Wave 7 #38)
 }
 
 // AudioFilterGraphConfig carries the parameters needed to build an audio filter graph.
@@ -97,6 +98,7 @@ type AudioFilterGraphConfig struct {
 	SampleRate int
 	Channels   int
 	FilterSpec string // e.g. "aresample=44100"
+	Threads    int    // 0 = libavfilter default; otherwise written to graph->nb_threads (Wave 7 #38)
 }
 
 // NewVideoFilterGraph creates a video filter graph with a single filter chain.
@@ -105,6 +107,9 @@ func NewVideoFilterGraph(cfg VideoFilterGraphConfig) (*FilterGraph, error) {
 	graph := C.avfilter_graph_alloc()
 	if graph == nil {
 		return nil, &Err{Code: -12, Message: "avfilter_graph_alloc: out of memory"}
+	}
+	if cfg.Threads > 0 {
+		graph.nb_threads = C.int(cfg.Threads)
 	}
 
 	cBufName := C.CString("buffer")
@@ -351,6 +356,9 @@ func NewAudioFilterGraph(cfg AudioFilterGraphConfig) (*FilterGraph, error) {
 	if graph == nil {
 		return nil, &Err{Code: -12, Message: "avfilter_graph_alloc: out of memory"}
 	}
+	if cfg.Threads > 0 {
+		graph.nb_threads = C.int(cfg.Threads)
+	}
 
 	cBufName := C.CString("abuffer")
 	defer C.free(unsafe.Pointer(cBufName))
@@ -467,6 +475,7 @@ type ComplexFilterGraphConfig struct {
 	Inputs     []FilterPadConfig
 	Outputs    []FilterOutputConfig
 	FilterSpec string
+	Threads    int // 0 = libavfilter default; otherwise written to graph->nb_threads (Wave 7 #38)
 }
 
 // NewComplexFilterGraph creates a filter graph with an arbitrary number of
@@ -482,6 +491,9 @@ func NewComplexFilterGraph(cfg ComplexFilterGraphConfig) (*FilterGraph, error) {
 	graph := C.avfilter_graph_alloc()
 	if graph == nil {
 		return nil, &Err{Code: -12, Message: "avfilter_graph_alloc: out of memory"}
+	}
+	if cfg.Threads > 0 {
+		graph.nb_threads = C.int(cfg.Threads)
 	}
 
 	// --- Create buffer sources for each input pad ---
@@ -627,6 +639,249 @@ func NewComplexFilterGraph(cfg ComplexFilterGraphConfig) (*FilterGraph, error) {
 		graph:     graph,
 		bufSrcs:   bufSrcs,
 		bufSinks:  bufSinks,
+		mediaType: cfg.Inputs[0].MediaType,
+	}, nil
+}
+
+// ---------- Source-only / sink-only filter graphs (Wave 7 #36b) ----------
+
+// SourceFilterGraphConfig configures a source-only filter graph: zero
+// buffer sources, N buffer sinks. The FilterSpec must contain a libavfilter
+// source filter (e.g. "color=c=black:s=320x240:r=24:d=1[out0]" or
+// "testsrc2=d=5[out0]") that emits frames into the named output pads.
+type SourceFilterGraphConfig struct {
+	Outputs    []FilterOutputConfig
+	FilterSpec string
+	Threads    int // 0 = libavfilter default
+}
+
+// NewSourceFilterGraph creates a filter graph with zero inputs and N
+// buffer sinks, fed by source filters declared inside FilterSpec.
+//
+// Wave 7 #36b — backs KindFilterSource runtime nodes (color, testsrc,
+// sine, anullsrc, movie, …). Mirrors the source-filter half of
+// avfilter_graph_parse_ptr's contract: when the parsed graph has no
+// open input pads, the inputs linked list (= currently-open outputs
+// to attach to those open input pads) is nil.
+func NewSourceFilterGraph(cfg SourceFilterGraphConfig) (*FilterGraph, error) {
+	if len(cfg.Outputs) == 0 {
+		return nil, fmt.Errorf("source filter graph requires at least one output")
+	}
+	if cfg.FilterSpec == "" {
+		return nil, fmt.Errorf("source filter graph requires a non-empty FilterSpec")
+	}
+
+	graph := C.avfilter_graph_alloc()
+	if graph == nil {
+		return nil, &Err{Code: -12, Message: "avfilter_graph_alloc: out of memory"}
+	}
+	if cfg.Threads > 0 {
+		graph.nb_threads = C.int(cfg.Threads)
+	}
+
+	// --- Create buffer sinks for each output pad ---
+	bufSinks := make([]*C.AVFilterContext, len(cfg.Outputs))
+	for i, out := range cfg.Outputs {
+		var sinkFilter *C.AVFilter
+		switch out.MediaType {
+		case MediaTypeVideo:
+			cName := C.CString("buffersink")
+			sinkFilter = C.avfilter_get_by_name(cName)
+			C.free(unsafe.Pointer(cName))
+		case MediaTypeAudio:
+			cName := C.CString("abuffersink")
+			sinkFilter = C.avfilter_get_by_name(cName)
+			C.free(unsafe.Pointer(cName))
+		default:
+			C.avfilter_graph_free(&graph)
+			return nil, fmt.Errorf("unsupported output media type for pad %q", out.Label)
+		}
+		if sinkFilter == nil {
+			C.avfilter_graph_free(&graph)
+			return nil, fmt.Errorf("buffersink filter not found for %q", out.Label)
+		}
+
+		cLabel := C.CString(out.Label)
+		ret := C.avfilter_graph_create_filter(&bufSinks[i], sinkFilter,
+			cLabel, nil, nil, graph)
+		C.free(unsafe.Pointer(cLabel))
+		if ret < 0 {
+			C.avfilter_graph_free(&graph)
+			return nil, fmt.Errorf("create buffer sink %q: %w", out.Label, newErr(ret))
+		}
+	}
+
+	// --- Build AVFilterInOut linked list for the parsed graph's open
+	// outputs (each output pad in FilterSpec gets attached to the
+	// corresponding buffersink). The parsed graph has no open inputs,
+	// so the outputs side of avfilter_graph_parse_ptr is nil.
+	var inputs *C.AVFilterInOut
+	for i := len(cfg.Outputs) - 1; i >= 0; i-- {
+		io := C.avfilter_inout_alloc()
+		if io == nil {
+			C.avfilter_inout_free(&inputs)
+			C.avfilter_graph_free(&graph)
+			return nil, fmt.Errorf("avfilter_inout_alloc: out of memory")
+		}
+		cLabel := C.CString(cfg.Outputs[i].Label)
+		io.name = C.av_strdup(cLabel)
+		C.free(unsafe.Pointer(cLabel))
+		io.filter_ctx = bufSinks[i]
+		io.pad_idx = 0
+		io.next = inputs
+		inputs = io
+	}
+
+	cSpec := C.CString(cfg.FilterSpec)
+	defer C.free(unsafe.Pointer(cSpec))
+
+	var outputs *C.AVFilterInOut
+	ret := C.avfilter_graph_parse_ptr(graph, cSpec, &inputs, &outputs, nil)
+	C.avfilter_inout_free(&inputs)
+	C.avfilter_inout_free(&outputs)
+	if ret < 0 {
+		C.avfilter_graph_free(&graph)
+		return nil, fmt.Errorf("avfilter_graph_parse_ptr(%q): %w", cfg.FilterSpec, newErr(ret))
+	}
+
+	ret = C.avfilter_graph_config(graph, nil)
+	if ret < 0 {
+		C.avfilter_graph_free(&graph)
+		return nil, fmt.Errorf("avfilter_graph_config: %w", newErr(ret))
+	}
+
+	return &FilterGraph{
+		graph:     graph,
+		bufSrcs:   nil,
+		bufSinks:  bufSinks,
+		mediaType: cfg.Outputs[0].MediaType,
+	}, nil
+}
+
+// SinkFilterGraphConfig configures a sink-only filter graph: N buffer
+// sources, zero buffer sinks. The FilterSpec must terminate every input
+// pad in a libavfilter sink filter (e.g. "[in0]nullsink" or
+// "[in0]ametadata=mode=print:file=/tmp/x.log,anullsink").
+type SinkFilterGraphConfig struct {
+	Inputs     []FilterPadConfig
+	FilterSpec string
+	Threads    int // 0 = libavfilter default
+}
+
+// NewSinkFilterGraph creates a filter graph with N buffer sources and
+// zero buffer sinks. Inbound frames pushed via PushFrameAt are consumed
+// by the sink filters in FilterSpec and discarded (or routed to a side
+// effect, e.g. ametadata=mode=print:file=...).
+//
+// Wave 7 #36b — backs KindFilterSink runtime nodes (nullsink,
+// anullsink). The parsed graph has no open output pads, so the inputs
+// side of avfilter_graph_parse_ptr is nil.
+func NewSinkFilterGraph(cfg SinkFilterGraphConfig) (*FilterGraph, error) {
+	if len(cfg.Inputs) == 0 {
+		return nil, fmt.Errorf("sink filter graph requires at least one input")
+	}
+	if cfg.FilterSpec == "" {
+		return nil, fmt.Errorf("sink filter graph requires a non-empty FilterSpec")
+	}
+
+	graph := C.avfilter_graph_alloc()
+	if graph == nil {
+		return nil, &Err{Code: -12, Message: "avfilter_graph_alloc: out of memory"}
+	}
+	if cfg.Threads > 0 {
+		graph.nb_threads = C.int(cfg.Threads)
+	}
+
+	// --- Create buffer sources for each input pad (mirrors the
+	// per-input branch in NewComplexFilterGraph above). ---
+	bufSrcs := make([]*C.AVFilterContext, len(cfg.Inputs))
+	for i, inp := range cfg.Inputs {
+		var srcFilter *C.AVFilter
+		var argsBuf [512]C.char
+
+		switch inp.MediaType {
+		case MediaTypeVideo:
+			cName := C.CString("buffer")
+			srcFilter = C.avfilter_get_by_name(cName)
+			C.free(unsafe.Pointer(cName))
+			if srcFilter == nil {
+				C.avfilter_graph_free(&graph)
+				return nil, fmt.Errorf("buffer filter not found")
+			}
+			C.make_video_src_args(&argsBuf[0], 512,
+				C.int(inp.Width), C.int(inp.Height), C.int(inp.PixFmt),
+				C.int(inp.TBNum), C.int(inp.TBDen),
+				C.int(inp.SARNum), C.int(inp.SARDen),
+				C.int(inp.FRNum), C.int(inp.FRDen))
+
+		case MediaTypeAudio:
+			cName := C.CString("abuffer")
+			srcFilter = C.avfilter_get_by_name(cName)
+			C.free(unsafe.Pointer(cName))
+			if srcFilter == nil {
+				C.avfilter_graph_free(&graph)
+				return nil, fmt.Errorf("abuffer filter not found")
+			}
+			C.make_audio_src_args(&argsBuf[0], 512,
+				C.int(inp.SampleFmt), C.int(inp.SampleRate), C.int(inp.Channels),
+				C.int(inp.TBNum), C.int(inp.TBDen))
+
+		default:
+			C.avfilter_graph_free(&graph)
+			return nil, fmt.Errorf("unsupported input media type for pad %q", inp.Label)
+		}
+
+		cLabel := C.CString(inp.Label)
+		ret := C.avfilter_graph_create_filter(&bufSrcs[i], srcFilter,
+			cLabel, &argsBuf[0], nil, graph)
+		C.free(unsafe.Pointer(cLabel))
+		if ret < 0 {
+			C.avfilter_graph_free(&graph)
+			return nil, fmt.Errorf("create buffer source %q: %w", inp.Label, newErr(ret))
+		}
+	}
+
+	// --- Build AVFilterInOut linked list for buffersrcs (= currently
+	// open outputs to attach to the parsed graph's open input pads). ---
+	var outputs *C.AVFilterInOut
+	for i := len(cfg.Inputs) - 1; i >= 0; i-- {
+		io := C.avfilter_inout_alloc()
+		if io == nil {
+			C.avfilter_inout_free(&outputs)
+			C.avfilter_graph_free(&graph)
+			return nil, fmt.Errorf("avfilter_inout_alloc: out of memory")
+		}
+		cLabel := C.CString(cfg.Inputs[i].Label)
+		io.name = C.av_strdup(cLabel)
+		C.free(unsafe.Pointer(cLabel))
+		io.filter_ctx = bufSrcs[i]
+		io.pad_idx = 0
+		io.next = outputs
+		outputs = io
+	}
+
+	cSpec := C.CString(cfg.FilterSpec)
+	defer C.free(unsafe.Pointer(cSpec))
+
+	var inputs *C.AVFilterInOut
+	ret := C.avfilter_graph_parse_ptr(graph, cSpec, &inputs, &outputs, nil)
+	C.avfilter_inout_free(&inputs)
+	C.avfilter_inout_free(&outputs)
+	if ret < 0 {
+		C.avfilter_graph_free(&graph)
+		return nil, fmt.Errorf("avfilter_graph_parse_ptr(%q): %w", cfg.FilterSpec, newErr(ret))
+	}
+
+	ret = C.avfilter_graph_config(graph, nil)
+	if ret < 0 {
+		C.avfilter_graph_free(&graph)
+		return nil, fmt.Errorf("avfilter_graph_config: %w", newErr(ret))
+	}
+
+	return &FilterGraph{
+		graph:     graph,
+		bufSrcs:   bufSrcs,
+		bufSinks:  nil,
 		mediaType: cfg.Inputs[0].MediaType,
 	}, nil
 }

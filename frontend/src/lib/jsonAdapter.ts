@@ -23,6 +23,7 @@ const STREAM_LETTER: Record<StreamType, string> = {
   audio: 'a',
   subtitle: 's',
   data: 'd',
+  metadata: 'm',
 };
 
 const LETTER_STREAM: Record<string, StreamType> = {
@@ -65,6 +66,14 @@ export interface FlowNodeData extends Record<string, unknown> {
    * export and rendered read-only in the Inspector.
    */
   implicit?: boolean;
+  /**
+   * Curated friendly label for the canonical libavcodec / libavfilter
+   * name carried in `label` (e.g. "x264" for "libx264", "Resize" for
+   * "scale"). Editor-only — never serialised. Set by spawnNodeFrom
+   * when the user drags a curated palette entry, and resolved by the
+   * graph adapter on JSON load via the curation lookup table.
+   */
+  friendlyName?: string;
 }
 
 export interface FlowEdgeData extends Record<string, unknown> {
