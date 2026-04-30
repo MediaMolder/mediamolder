@@ -48,11 +48,110 @@ type Input struct {
 	// libavformat's lavfi virtual demuxer (FFmpeg's `-f lavfi -i …`); the
 	// URL field then holds the filtergraph spec, e.g.
 	// "anullsrc=r=48000:cl=stereo" or "color=black:s=1920x1080:r=30".
-	// Required for synthetic sources (silent audio, test cards, color
-	// padding tracks) where there is no underlying file to demux.
+	// "raw" opens an unframed elementary stream — the demuxer is forced
+	// via Format (e.g. "rawvideo", "s16le", "image2") and the geometry
+	// fields (PixelFormat / VideoSize / FrameRate for video; SampleRate
+	// / Channels for audio) are required because the bytestream itself
+	// carries no headers. "concat" opens a list of media segments via
+	// libavformat's concat demuxer (FFmpeg `-f concat`); see ConcatList.
 	Kind    string         `json:"kind,omitempty"`
 	Streams []StreamSelect `json:"streams"`
 	Options map[string]any `json:"options,omitempty"`
+	// Format forces the libavformat demuxer instead of letting
+	// avformat_open_input probe the URL. Mirrors FFmpeg's per-input
+	// `-f FMT` flag. Required when Kind="raw" (e.g. "rawvideo",
+	// "s16le", "image2"); optional otherwise — common values include
+	// "mpegts", "concat", "image2", "alaw". Validated lazily at
+	// open time via libavformat's `av_find_input_format`; an unknown
+	// name surfaces as a clear "unknown input format" error.
+	Format string `json:"format,omitempty"`
+	// FrameRate sets the input frame rate for unframed/raw video and
+	// for the image2 demuxer's PNG/JPEG sequences. Mirrors FFmpeg's
+	// per-input `-framerate FPS` (or the legacy `-r FPS` before `-i`).
+	// Pushed to the demuxer as the AVOption `framerate`. Ignored by
+	// container-aware demuxers (mp4/mov/mkv/ts) which carry their own
+	// timing. Negative values are rejected by validate(); 0 means
+	// "unset" (the demuxer falls back to its compiled default — 25 for
+	// rawvideo, 1/5 for image2).
+	FrameRate float64 `json:"framerate,omitempty"`
+	// PixelFormat names the planar layout of unframed/raw video frames
+	// (e.g. "yuv420p", "rgb24", "nv12"). Mirrors FFmpeg's per-input
+	// `-pix_fmt FMT` (or `-pixel_format` for some demuxers). Pushed to
+	// the demuxer as `pixel_format`. Required when Kind="raw" and
+	// Format names a video raw demuxer; ignored otherwise.
+	PixelFormat string `json:"pixel_format,omitempty"`
+	// VideoSize is the WxH frame size of unframed/raw video, or one of
+	// libavutil's named presets ("hd720", "vga", "ntsc", …). Mirrors
+	// FFmpeg's per-input `-video_size SIZE` (or `-s SIZE` before `-i`).
+	// Pushed to the demuxer as `video_size`. Required when Kind="raw"
+	// and Format names a video raw demuxer; ignored otherwise.
+	VideoSize string `json:"video_size,omitempty"`
+	// SampleRate is the sampling rate (Hz) of unframed/raw PCM audio.
+	// Mirrors FFmpeg's per-input `-ar RATE` (or `-sample_rate`). Pushed
+	// to the demuxer as `sample_rate`. Required when Kind="raw" and
+	// Format names a PCM audio raw demuxer (s16le, f32le, …).
+	SampleRate int `json:"sample_rate,omitempty"`
+	// Channels is the channel count of unframed/raw PCM audio. Mirrors
+	// FFmpeg's per-input `-ac N` (or `-channels`). Pushed to the
+	// demuxer as `channels`. Required when Kind="raw" and Format names
+	// a PCM audio raw demuxer.
+	Channels int `json:"channels,omitempty"`
+	// SampleFormat optionally pins the libavutil sample format for
+	// audio raw demuxers that accept it (rare; most PCM demuxers
+	// hard-code the format from their name). Mirrors FFmpeg's
+	// `-sample_fmt FMT` on the input side. Pushed to the demuxer as
+	// `sample_fmt`. Empty = let the demuxer choose.
+	SampleFormat string `json:"sample_fmt,omitempty"`
+	// ConcatList is the in-config concat playlist used when Kind="concat".
+	// Each entry mirrors a `file '…'` block of FFmpeg's concat-demuxer
+	// listfile grammar (libavformat/concatdec.c) — the runtime serialises
+	// the slice into a temp file and points avformat_open_input at it
+	// with Format="concat" forced. Letting the editor describe the
+	// playlist directly avoids the chicken-and-egg "I need a sidecar
+	// .txt file under version control" problem most concat workflows
+	// hit. When ConcatList is empty and Kind="concat", URL is treated
+	// as a path to an existing concat listfile.
+	ConcatList []ConcatEntry `json:"concat_list,omitempty"`
+	// AccurateSeek selects between accurate (decode-and-discard until
+	// PTS reaches the seek target — the FFmpeg default) and fast
+	// (snap to the nearest keyframe) seeking when -ss is set on the
+	// input. Mirrors FFmpeg's `-accurate_seek` / `-noaccurate_seek`.
+	// Pointer-typed so an unset value resolves to the FFmpeg default
+	// (true); only honoured when input timing has a `ss` value.
+	AccurateSeek *bool `json:"accurate_seek,omitempty"`
+	// SeekTimestamp, when true, interprets the `-ss` value as an
+	// absolute container timestamp rather than as an offset from the
+	// container's start_time. Mirrors FFmpeg's `-seek_timestamp 1`.
+	// Required for inputs whose first PTS is non-zero (MPEG-TS
+	// captures, ad-spliced segments) when the user wants to seek to a
+	// specific wall-clock PTS rather than a position in the file.
+	SeekTimestamp bool `json:"seek_timestamp,omitempty"`
+	// ThreadQueueSize sets the demuxer's input packet queue depth in
+	// frames. Mirrors FFmpeg's per-input `-thread_queue_size N`.
+	// Pushed to the demuxer as `thread_queue_size`. Larger values
+	// (default 8) buffer more packets when the upstream demuxer is
+	// faster than the downstream consumer — required for high-bitrate
+	// live captures (SDI, NDI, RTMP) where bursty I/O would otherwise
+	// stall the pipeline. Negative values rejected by validate().
+	ThreadQueueSize int `json:"thread_queue_size,omitempty"`
+	// ProtocolWhitelist restricts which libavformat protocols this
+	// input may dereference. Mirrors FFmpeg's `-protocol_whitelist
+	// "p1,p2,…"`. Joined with commas and pushed to the demuxer as
+	// `protocol_whitelist`. Empty = libavformat default
+	// ("file,crypto,data" plus whatever the build enables); set to
+	// e.g. ["file","tcp","tls","https"] for network inputs that load
+	// remote subtitles or playlists, or to ["file"] to forbid network
+	// access entirely. Names are not validated up-front; libavformat
+	// rejects unknowns at open time.
+	ProtocolWhitelist []string `json:"protocol_whitelist,omitempty"`
+	// PatternType selects the image-sequence matcher used by the
+	// image2 demuxer when URL contains a wildcard. Mirrors FFmpeg's
+	// `-pattern_type {none|sequence|glob|glob_sequence}`. Defaults
+	// (empty) to libavformat's "glob_sequence" autodetect. Common
+	// settings: "glob" for `*.png`, "sequence" for `frame_%04d.png`.
+	// Pushed to the demuxer as `pattern_type`. Ignored when the
+	// demuxer is not image2.
+	PatternType string `json:"pattern_type,omitempty"`
 	// MapMetadata, when true, copies the container-level metadata of
 	// this input onto every Output that does not set its own
 	// `Output.Metadata`. Mirrors FFmpeg's `-map_metadata IDX` when IDX
@@ -139,6 +238,40 @@ type Input struct {
 	// ignored when ReadRate is zero. Rejected by validate when
 	// `0 < ReadRateCatchup < ReadRate`.
 	ReadRateCatchup float64 `json:"read_rate_catchup,omitempty"`
+}
+
+// ConcatEntry is one row of the libavformat concat-demuxer playlist.
+// Mirrors the `file '…' [duration X] [inpoint X] [outpoint X]
+// [file_packet_metadata K=V]` grammar parsed by
+// libavformat/concatdec.c. The runtime serialises a slice of
+// ConcatEntry into a temp listfile when Input.Kind="concat" and
+// ConcatList is non-empty, so the editor never has to ship a sidecar
+// .txt file alongside the JSON.
+type ConcatEntry struct {
+	// File is the URL or path of the segment. Quoted with single
+	// quotes in the serialised listfile (concatdec.c expects POSIX
+	// shell quoting); a literal apostrophe must be escaped as `'\''`
+	// upstream — the runtime emits the file path verbatim under
+	// single quotes and rejects entries containing one.
+	File string `json:"file"`
+	// Duration optionally pins the segment's reported duration in
+	// seconds. Mirrors the listfile `duration` directive. Required
+	// for streamed (pipe:) segments because the demuxer cannot
+	// probe their length; ignored for seekable file segments unless
+	// the user wants to override the container's reported duration.
+	Duration float64 `json:"duration,omitempty"`
+	// InPoint optionally trims the segment to start at this PTS
+	// (seconds from the segment's start). Mirrors the listfile
+	// `inpoint` directive.
+	InPoint float64 `json:"inpoint,omitempty"`
+	// OutPoint optionally trims the segment to stop at this PTS
+	// (seconds from the segment's start). Mirrors the listfile
+	// `outpoint` directive. Must be > InPoint when both are set.
+	OutPoint float64 `json:"outpoint,omitempty"`
+	// Metadata adds key=value pairs as `file_packet_metadata`
+	// directives, attached to every packet emitted from this
+	// segment via AV_PKT_DATA_STRINGS_METADATA.
+	Metadata map[string]string `json:"metadata,omitempty"`
 }
 
 // StreamSelect selects a specific stream from an input.
@@ -854,6 +987,14 @@ func validate(cfg *Config) error {
 		seen[inp.ID] = true
 		if inp.URL == "" {
 			return fmt.Errorf("input %q missing url", inp.ID)
+		}
+		switch inp.Kind {
+		case "", "file", "lavfi", "raw", "concat":
+		default:
+			return fmt.Errorf("input %q: invalid kind %q (want \"file\", \"lavfi\", \"raw\" or \"concat\")", inp.ID, inp.Kind)
+		}
+		if err := validateInputDemuxerFields(inp); err != nil {
+			return err
 		}
 		for j, s := range inp.Streams {
 			if s.Type == "" {

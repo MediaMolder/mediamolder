@@ -38,7 +38,20 @@
       "properties": {
         "id": { "type": "string", "minLength": 1 },
         "url": { "type": "string", "minLength": 1 },
-        "kind": { "type": "string", "enum": ["file", "lavfi"], "description": "How to open the input. \"file\" (default) probes the URL with libavformat. \"lavfi\" routes through the lavfi virtual demuxer (FFmpeg's -f lavfi); the URL is then a filtergraph spec such as 'anullsrc=r=48000:cl=stereo' or 'color=black:s=1920x1080:r=30'." },
+        "kind": { "type": "string", "enum": ["file", "lavfi", "raw", "concat"], "description": "How to open the input. \"file\" (default) probes the URL with libavformat. \"lavfi\" routes through the lavfi virtual demuxer. \"raw\" forces a rawvideo / PCM demuxer (requires format + geometry/audio params). \"concat\" opens an inline concat_list (or an existing listfile pointed to by url) via libavformat's concat demuxer." },
+        "format": { "type": "string", "description": "Force libavformat demuxer name (mirrors ffmpeg `-f FMT`). Required when kind=\"raw\". Common values: rawvideo, s16le, image2, mpegts, concat." },
+        "framerate": { "type": "number", "minimum": 0, "description": "Frame rate for unframed/raw video and image2 sequences (mirrors `-framerate`). Pushed to the demuxer as `framerate`." },
+        "pixel_format": { "type": "string", "description": "Planar layout of unframed/raw video frames (mirrors `-pix_fmt`). Required when kind=\"raw\" + format=rawvideo." },
+        "video_size": { "type": "string", "description": "Frame size of unframed/raw video as WxH or a libavutil named preset (hd720/vga/ntsc/...). Mirrors `-video_size` / `-s`." },
+        "sample_rate": { "type": "integer", "minimum": 0, "description": "Sample rate (Hz) of unframed/raw PCM audio (mirrors `-ar`). Required when kind=\"raw\" + format names a PCM demuxer." },
+        "channels": { "type": "integer", "minimum": 0, "description": "Channel count of unframed/raw PCM audio (mirrors `-ac`). Required when kind=\"raw\" + format names a PCM demuxer." },
+        "sample_fmt": { "type": "string", "description": "Optional libavutil sample format for audio raw demuxers that accept it (mirrors input-side `-sample_fmt`)." },
+        "concat_list": { "type": "array", "items": { "$ref": "#/$defs/concat_entry" }, "description": "In-config concat playlist used when kind=\"concat\". Each entry is one row of libavformat's concat-demuxer listfile grammar; the runtime serialises into a temp file at open time." },
+        "accurate_seek": { "type": "boolean", "description": "Toggle accurate (decode-and-discard until target PTS) vs fast (snap-to-keyframe) seeking when -ss is set. Mirrors `-accurate_seek` / `-noaccurate_seek`. Default true." },
+        "seek_timestamp": { "type": "boolean", "description": "When true, interpret `-ss` as an absolute container timestamp rather than an offset from start_time (mirrors `-seek_timestamp 1`)." },
+        "thread_queue_size": { "type": "integer", "minimum": 0, "description": "Demuxer input packet queue depth in frames (mirrors `-thread_queue_size`)." },
+        "protocol_whitelist": { "type": "array", "items": { "type": "string", "minLength": 1 }, "description": "Restrict which libavformat protocols this input may dereference (mirrors `-protocol_whitelist`). Joined with commas before being pushed to the demuxer." },
+        "pattern_type": { "type": "string", "enum": ["", "none", "sequence", "glob", "glob_sequence"], "description": "Image-sequence matcher used by the image2 demuxer (mirrors `-pattern_type`). Empty = libavformat default (\"glob_sequence\" autodetect)." },
         "map_metadata": { "type": "boolean", "description": "When true, copy this input's container-level metadata onto every output that does not set its own `metadata`. Mirrors ffmpeg `-map_metadata IDX`. Multiple inputs merge in declaration order; last writer wins per key." },
         "map_chapters": { "type": "boolean", "description": "When true, copy this input's chapter table onto every output that does not set its own `chapters`. Mirrors ffmpeg `-map_chapters IDX`. First input with map_chapters=true wins (single-source semantics)." },
         "stream_loop": { "type": "integer", "minimum": -1, "description": "Number of additional times the demuxer rewinds to the start and re-emits packets after EOF. 0 = no loop, N>0 = play N+1 times total, -1 = infinite. Mirrors ffmpeg per-input `-stream_loop N` (fftools/ffmpeg_demux.c::seek_to_start). On rewind, the runtime captures `(max_pts - min_pts)` of the previous iteration and adds it to every subsequent packet's PTS/DTS so timestamps remain monotone. Canonical use case: a 5s logo PNG looped indefinitely against a finite main video with `-shortest` ending the output." },
@@ -71,6 +84,18 @@
         "optional": { "type": "boolean", "default": false },
         "negate": { "type": "boolean", "default": false },
         "program": { "type": "integer", "minimum": 0, "default": 0 }
+      }
+    },
+    "concat_entry": {
+      "type": "object",
+      "required": ["file"],
+      "additionalProperties": false,
+      "properties": {
+        "file": { "type": "string", "minLength": 1, "description": "Path or URL of the segment. Quoted with single quotes in the serialised concat listfile; embedded apostrophes are rejected at validate time." },
+        "duration": { "type": "number", "minimum": 0, "description": "Optional segment duration in seconds (mirrors concat-demuxer `duration` directive)." },
+        "inpoint": { "type": "number", "minimum": 0, "description": "Optional segment in-point in seconds." },
+        "outpoint": { "type": "number", "minimum": 0, "description": "Optional segment out-point in seconds. Must be > inpoint when both are set." },
+        "metadata": { "type": "object", "additionalProperties": { "type": "string" }, "description": "Optional key=value pairs attached to every packet emitted from this segment via AV_PKT_DATA_STRINGS_METADATA." }
       }
     },
     "graph": {

@@ -79,15 +79,15 @@ Legend: ✅ supported · ⚠️ partial · ❌ missing
 | `-itsoffset`                                                | ✅    | `Input.ITSOffset` (seconds). `pipeline/handlers.go::openSource` composes additively with the implicit `-ss` ts_offset (matches FFmpeg's `f->ts_offset = o->input_ts_offset - timestamp` in `fftools/ffmpeg_demux.c`); applied via `Packet.ShiftTS` for every demuxed packet. |
 | `-stream_loop N`                                            | ✅    | `Input.StreamLoop` (0=off, N>0=play N+1 times, -1=infinite). `handleSource` tracks per-iteration min/max packet PTS in AV_TIME_BASE us; on EOF, if loops remain, calls `SeekFile(StartTime)`, accumulates `(max - min)` into `loopOffsetUS`, decrements the counter, and shifts subsequent packets so PTS stay monotone. Mirrors `fftools/ffmpeg_demux.c::seek_to_start` + `ts_fixup`. |
 | `-readrate`, `-re` (real-time read)                         | ✅    | `Input.ReadRate` / `ReadRateInitialBurst` / `ReadRateCatchup`. `-re` is shorthand for `-readrate 1`. Implemented by `pipeline.readRatePacer` (faithful port of `fftools/ffmpeg_demux.c::readrate_sleep` including the 0.3 s lag-detection threshold); pacing sleep is context-aware so cancellation aborts immediately. |
-| `-framerate`, `-r` (input override)                         | ⚠️    | Can be passed in `Input.Options` AVDict; not first-class and not validated |
-| `-pix_fmt`, `-video_size`, `-pixel_format`                  | ⚠️    | Same: AVDict passthrough, no schema field |
-| `-f` (force demuxer)                                        | ⚠️    | `Input.Kind = "lavfi"` covers the virtual-source case via `av.OpenInputWithFormat`; arbitrary forced demuxers (`rawvideo`, `s16le`) not yet first-class |
-| `-thread_queue_size`                                        | ⚠️    | AVDict only |
-| `-accurate_seek` / `-noaccurate_seek` / `-seek_timestamp`   | ❌    | Required for frame-accurate trim of long-GOP sources |
-| `-protocol_whitelist`                                       | ⚠️    | AVDict only; should be elevated for security review |
+| `-framerate`, `-r` (input override)                         | ✅    | `Input.FrameRate` (typed `float64` fps); ffcli `-framerate` and `-r`-before-`-i` latch into pendingFileOpts and drain into the typed field; rejected when `<= 0` |
+| `-pix_fmt`, `-video_size`, `-pixel_format`                  | ✅    | `Input.PixelFormat` and `Input.VideoSize` (`WxH` or libavutil named preset); ffcli `-pix_fmt`/`-pixel_format`/`-s`/`-video_size` route to the input when seen before `-i` and to the encoder otherwise |
+| `-f` (force demuxer)                                        | ✅    | `Input.Format` is now first-class for arbitrary demuxers (`mpegts`, `mxf`, `rawvideo`, `s16le`, …). `Input.Kind = "raw"` is auto-detected by ffcli when `-f` names a known raw audio/video format; `Kind = "lavfi"` and `Kind = "concat"` similarly auto-detected |
+| `-thread_queue_size`                                        | ✅    | `Input.ThreadQueueSize` (validated `>= 0`) |
+| `-accurate_seek` / `-noaccurate_seek` / `-seek_timestamp`   | ✅    | `Input.AccurateSeek` (`*bool`; only emits `accurate_seek=0` to libav when explicitly false, matching FFmpeg default) and `Input.SeekTimestamp` (bool) |
+| `-protocol_whitelist`                                       | ✅    | `Input.ProtocolWhitelist []string`; comma-joined into the demuxer AVDict at open time |
 | Lavfi virtual sources (`-f lavfi -i color=…`)               | ✅    | `Input.Kind = "lavfi"`; `URL` carries the filtergraph spec. libavdevice linked + `avdevice_register_all()` at init |
-| `image2` glob pattern (`-i 'frames/*.png'`)                 | ⚠️    | Works via AVDict if user knows the syntax; no schema affordance |
-| `concat` demuxer (listfile)                                 | ❌    | Today users must build a concat **filter** graph; no `concat:` input kind |
+| `image2` glob pattern (`-i 'frames/*.png'`)                 | ✅    | `Input.PatternType` (`""`/`"none"`/`"sequence"`/`"glob"`/`"glob_sequence"`); validated against the libavformat enum |
+| `concat` demuxer (listfile)                                 | ✅    | `Input.Kind = "concat"` + `Input.ConcatList []ConcatEntry` (file/duration/inpoint/outpoint/metadata). `pipeline.materialiseConcatList` writes an `ffconcat 1.0` listfile to a temp path, opened with `format="concat"`; cleanup runs at input close. Apostrophes/newlines in filenames are rejected up front |
 | Device capture (`-f avfoundation`, `-f dshow`, `-f v4l2`)   | ⚠️    | Works through AVDict; no GUI palette, no probe |
 | `-hwaccel`, `-hwaccel_device`, `-hwaccel_output_format`     | ⚠️    | Global only; not per-input |
 
@@ -203,7 +203,7 @@ Legend: ✅ supported · ⚠️ partial · ❌ missing
 | Dynamic per-frame metadata via ZMQ filter                         | ❌    | |
 | **`-init_hw_device` (multi-device graphs)**                       | ❌    | Pipelines that bridge CUDA decode → CPU filter → QSV encode need named device declarations + `hwmap` between them |
 | **`scale_npp` availability separate from `scale_cuda`**           | ⚠️    | Different libraries; needs per-filter availability probe at startup |
-| **First-class raw-stream input** (`-f rawvideo -pix_fmt yuv420p -s 1920x1080 -r 30 -i raw.yuv`) | ⚠️ | Works via AVDict; the canonical bug-report fixture format deserves a typed schema |
+| **First-class raw-stream input** (`-f rawvideo -pix_fmt yuv420p -s 1920x1080 -r 30 -i raw.yuv`) | ✅ | `Input.Kind = "raw"` + typed `Format`/`PixelFormat`/`VideoSize`/`FrameRate`/`SampleRate`/`Channels`/`SampleFormat`. Validated up front (raw inputs require `Format` plus the matching geometry/format fields). Round-trip-tested via `compat/ffcli` and `testdata/community-scripts/27_raw_yuv.json` |
 
 ### 2.8 Frontend GUI gaps (in addition to schema gaps)
 
@@ -773,43 +773,51 @@ Promote every common input-side AVDict passthrough to a typed
 schema field so the importer/exporter round-trip and the GUI both
 have a name for it. No new orchestration — pure schema + validation.
 
-23. **Typed input source parameters** (§2.1) — `Input.FrameRate`
+23. **Typed input source parameters** (§2.1) — ✅ Wave 5. `Input.FrameRate`
     (replaces `-framerate`/`-r` on the input), `Input.PixelFormat`
     (`-pix_fmt`/`-pixel_format`), `Input.VideoSize` (`-video_size`,
     `WxH` or named preset), `Input.SampleRate`, `Input.Channels`,
-    `Input.SampleFormat` (audio twins). Validate against the
-    selected demuxer at config-load. `compat/ffcli` rewrites the
-    legacy spellings.
-24. **Force-demuxer for arbitrary formats** (§2.1) — Generalise
-    `Input.Kind` beyond `{file, lavfi}` to accept a `Format` field
-    (`rawvideo`, `s16le`, `image2`, `concat`, `mpegts`, …) routed
-    through `av.OpenInputWithFormat`. Strict allow-list at the
-    schema layer; any value not in the list is a validation error
-    rather than a silent passthrough.
-25. **First-class raw-stream input** (§1.1, §2.7) — Composite
-    fixture template combining #23 + #24: `Input.Kind="raw"` is a
-    documented shape that requires `Format`, `PixelFormat`,
-    `VideoSize`, and `FrameRate` together. Canonical bug-report
-    repro format; lock in `testdata/community-scripts/27_raw_yuv.json`
-    as a passing case.
-26. **`concat` demuxer as input kind** (§2.1) — `Input.Kind="concat"`
-    + `Input.ConcatList []ConcatEntry` (`{file, duration?,
-    inpoint?, outpoint?, metadata?}`); engine writes a temp listfile
-    before opening, or streams it via the `pipe:` protocol when the
-    list is short. Distinct from the concat **filter** (already
-    supported) because the demuxer preserves stream copy.
+    `Input.SampleFormat` (audio twins). Validated at config-load by
+    `pipeline.validateInputDemuxerFields`; `compat/ffcli` latches the
+    legacy spellings into `pendingFileOpts` and routes them to the typed
+    fields at the next `-i` boundary (so the same flag can mean "input
+    override" or "encoder option" depending on position).
+24. **Force-demuxer for arbitrary formats** (§2.1) — ✅ Wave 5.
+    `Input.Format` is now first-class. `compat/ffcli` auto-promotes
+    `-f rawvideo`/`-f s16le` etc. to `Input.Kind = "raw"`, `-f lavfi`
+    to `lavfi`, `-f concat` to `concat`. Other format names are kept
+    as a typed `Input.Format` string and passed to
+    `av.OpenInputWithFormat`.
+25. **First-class raw-stream input** (§1.1, §2.7) — ✅ Wave 5.
+    `Input.Kind = "raw"` is the documented composite shape and
+    requires `Format` plus the matching geometry/format fields
+    (`PixelFormat`+`VideoSize` for video, `SampleRate`+`Channels`+
+    `SampleFormat` for audio). Locked in by
+    `testdata/community-scripts/27_raw_yuv.json` (skipped when the
+    fixture is absent; harness prints the `ffmpeg` command to
+    generate it).
+26. **`concat` demuxer as input kind** (§2.1) — ✅ Wave 5.
+    `Input.Kind = "concat"` + `Input.ConcatList []ConcatEntry`
+    (`{file, duration?, inpoint?, outpoint?, metadata?}`).
+    `pipeline.materialiseConcatList` writes an `ffconcat 1.0`
+    listfile to a temp file before `openSource`, opens it with
+    `format="concat"`, and registers a cleanup func on
+    `sourceResources` so the temp file is removed at input close.
+    Apostrophes/newlines in filenames are rejected at validation
+    time. Distinct from the concat **filter** (already supported)
+    because the demuxer preserves stream copy.
 27. **`-accurate_seek` / `-noaccurate_seek` / `-seek_timestamp`**
-    (§2.1) — `Input.AccurateSeek` (default true, mirrors FFmpeg)
-    and `Input.SeekTimestamp` (boolean). Required for frame-accurate
-    trim of long-GOP sources; the existing `-ss` plumbing already
-    composes correctly once the flags are surfaced.
+    (§2.1) — ✅ Wave 5. `Input.AccurateSeek` (`*bool`; FFmpeg's
+    default of `true` is preserved by emitting `accurate_seek=0`
+    only when explicitly set to `false`) and `Input.SeekTimestamp`
+    (bool). Composes with the existing `-ss` plumbing.
 28. **`-thread_queue_size`, `-protocol_whitelist`, `image2`
-    `-pattern_type`** (§2.1) — Three small typed promotions out
-    of the AVDict bag. `Input.ThreadQueueSize int`; `Input.ProtocolWhitelist
-    []string` (security-reviewed: schema rejects empty list, GUI
-    surfaces a warning); `Input.PatternType ∈ {none, glob, sequence}`
-    paired with `Input.Glob string`. The schema rejects `printf`
-    `%d`-style globs at validation time as a footgun (per §6.8).
+    `-pattern_type`** (§2.1) — ✅ Wave 5. `Input.ThreadQueueSize int`
+    (validated `>= 0`); `Input.ProtocolWhitelist []string`
+    (comma-joined into the demuxer AVDict at open time);
+    `Input.PatternType ∈ {none, sequence, glob, glob_sequence}`
+    (validated against the libavformat enum). Round-trip tests in
+    `compat/ffcli/input_demuxer_test.go`.
 
 ### 6.6 Wave 6 — "muxer / encoder fidelity" (Phase C burn-down)
 

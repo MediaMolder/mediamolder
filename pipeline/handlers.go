@@ -508,6 +508,11 @@ type sourceResources struct {
 	// the demux loop. Nil when no pacing is configured. See
 	// readRatePacer for the algorithm details.
 	pacer *readRatePacer
+	// concatCleanup removes the temp listfile materialised from
+	// Input.ConcatList when Kind="concat". Nil for every other
+	// input kind. Invoked from Close() after the demuxer has
+	// shut down so libavformat is no longer reading the file.
+	concatCleanup func()
 }
 
 func (s *sourceResources) Close() {
@@ -519,6 +524,10 @@ func (s *sourceResources) Close() {
 	}
 	if s.input != nil {
 		s.input.Close()
+	}
+	if s.concatCleanup != nil {
+		s.concatCleanup()
+		s.concatCleanup = nil
 	}
 }
 
@@ -1918,14 +1927,90 @@ func (r *graphRunner) openSource(cfg Input, srcNode *graph.Node, decOpts av.Deco
 	var formatName string
 	switch cfg.Kind {
 	case "", "file":
-		// default file probing
+		// default file probing; honour explicit Format override
+		formatName = cfg.Format
 	case "lavfi":
 		formatName = "lavfi"
+	case "raw":
+		// kind="raw" requires Format to name the rawvideo / PCM
+		// demuxer (validated upstream by validateInputDemuxerFields).
+		formatName = cfg.Format
+	case "concat":
+		// kind="concat" pins the demuxer; if ConcatList was supplied
+		// the runtime serialises it to a temp listfile (handled
+		// below); otherwise URL points at an existing listfile.
+		formatName = "concat"
 	default:
-		return nil, fmt.Errorf("input %q: unsupported kind %q (want \"file\" or \"lavfi\")", cfg.ID, cfg.Kind)
+		return nil, fmt.Errorf("input %q: unsupported kind %q (want \"file\", \"lavfi\", \"raw\" or \"concat\")", cfg.ID, cfg.Kind)
 	}
 
-	input, err := av.OpenInputWithFormat(cfg.URL, formatName, inputOpts)
+	// Promote the typed demuxer fields (Wave 5 #23-#28) into the
+	// AVDictionary the demuxer actually consumes. Each field maps to
+	// the canonical AVOption name documented on the libavformat
+	// demuxer that recognises it; collisions with cfg.Options leave
+	// the typed field as the winner so the schema layer is the
+	// source of truth.
+	openURL := cfg.URL
+	var concatCleanup func()
+	defer func() {
+		if concatCleanup != nil {
+			// On failure between materialisation and successful return.
+			concatCleanup()
+		}
+	}()
+	if cfg.Kind == "concat" && len(cfg.ConcatList) > 0 {
+		path, cleanup, err := materialiseConcatList(cfg.ConcatList)
+		if err != nil {
+			return nil, fmt.Errorf("input %q: materialise concat list: %w", cfg.ID, err)
+		}
+		openURL = path
+		concatCleanup = cleanup
+	}
+	if inputOpts == nil {
+		inputOpts = map[string]string{}
+	}
+	if cfg.FrameRate > 0 {
+		inputOpts["framerate"] = strconv.FormatFloat(cfg.FrameRate, 'f', -1, 64)
+	}
+	if cfg.PixelFormat != "" {
+		inputOpts["pixel_format"] = cfg.PixelFormat
+	}
+	if cfg.VideoSize != "" {
+		inputOpts["video_size"] = cfg.VideoSize
+	}
+	if cfg.SampleRate > 0 {
+		inputOpts["sample_rate"] = strconv.Itoa(cfg.SampleRate)
+	}
+	if cfg.Channels > 0 {
+		inputOpts["channels"] = strconv.Itoa(cfg.Channels)
+	}
+	if cfg.SampleFormat != "" {
+		inputOpts["sample_fmt"] = cfg.SampleFormat
+	}
+	if cfg.ThreadQueueSize > 0 {
+		inputOpts["thread_queue_size"] = strconv.Itoa(cfg.ThreadQueueSize)
+	}
+	if len(cfg.ProtocolWhitelist) > 0 {
+		inputOpts["protocol_whitelist"] = strings.Join(cfg.ProtocolWhitelist, ",")
+	}
+	if cfg.PatternType != "" {
+		inputOpts["pattern_type"] = cfg.PatternType
+	}
+	if cfg.SeekTimestamp {
+		inputOpts["seek_timestamp"] = "1"
+	}
+	// AccurateSeek: only emit when explicitly false (FFmpeg default
+	// is true). Mapped to "noaccurate_seek" in the runtime via
+	// dropping the +start_time addition below; we still pass
+	// through so any future libavformat consumer sees it.
+	if cfg.AccurateSeek != nil && !*cfg.AccurateSeek {
+		inputOpts["accurate_seek"] = "0"
+	}
+	if len(inputOpts) == 0 {
+		inputOpts = nil
+	}
+
+	input, err := av.OpenInputWithFormat(openURL, formatName, inputOpts)
 	if err != nil {
 		return nil, fmt.Errorf("open input %q: %w", cfg.URL, err)
 	}
@@ -2089,7 +2174,7 @@ func (r *graphRunner) openSource(cfg Input, srcNode *graph.Node, decOpts av.Deco
 		pacer = newReadRatePacer(cfg.ReadRate, burst, catchup)
 	}
 
-	return &sourceResources{
+	res := &sourceResources{
 		input:               input,
 		decoders:            decoders,
 		subDecoders:         subDecoders,
@@ -2100,7 +2185,10 @@ func (r *graphRunner) openSource(cfg Input, srcNode *graph.Node, decOpts av.Deco
 		tsOffsetUS:          tsOffsetUS,
 		streamLoopRemaining: cfg.StreamLoop,
 		pacer:               pacer,
-	}, nil
+		concatCleanup:       concatCleanup,
+	}
+	concatCleanup = nil // ownership transferred to res.Close()
+	return res, nil
 }
 
 func (r *graphRunner) createFilter(dag *graph.Graph, node *graph.Node) (*av.FilterGraph, error) {

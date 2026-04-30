@@ -173,6 +173,16 @@ func (p *parser) parse() (*pipeline.Config, error) {
 				in.Options = p.pendingFileOpts
 				p.pendingFileOpts = nil
 			}
+			// Wave 5 #23-#28: pull the typed input-side demuxer keys
+			// (latched from `-f`, `-framerate`, `-pix_fmt`,
+			// `-video_size`/`-s`, `-ar`, `-ac`, `-sample_fmt`,
+			// `-thread_queue_size`, `-pattern_type`,
+			// `-protocol_whitelist`, `-accurate_seek`,
+			// `-seek_timestamp`) out of the pendingFileOpts catch-all
+			// and into the matching typed Input field. Unknown keys
+			// stay in Options as before so legacy AVDict pass-through
+			// still works.
+			drainTypedInputDemuxer(&in, in.Options)
 			if p.pendingStreamLoopSet {
 				in.StreamLoop = p.pendingStreamLoop
 				p.pendingStreamLoop, p.pendingStreamLoopSet = 0, false
@@ -226,10 +236,18 @@ func (p *parser) parse() (*pipeline.Config, error) {
 			}
 			p.audioFilters = p.next()
 		case arg == "-f":
+			// FFmpeg's `-f FMT` is per-file (OPT_INPUT|OPT_OUTPUT):
+			// it sets the demuxer when followed by `-i`, the muxer
+			// otherwise. Latch into pendingFileOpts under the
+			// canonical `__format` key so the input/output drain
+			// can route it to Input.Format or Output.Format.
 			if !p.hasMore() {
 				return nil, fmt.Errorf("-f requires an argument")
 			}
-			p.globalOpts["format"] = p.next()
+			if p.pendingFileOpts == nil {
+				p.pendingFileOpts = make(map[string]any)
+			}
+			p.pendingFileOpts["__format"] = p.next()
 		case arg == "-b:v":
 			if !p.hasMore() {
 				return nil, fmt.Errorf("-b:v requires an argument")
@@ -241,10 +259,89 @@ func (p *parser) parse() (*pipeline.Config, error) {
 			}
 			p.audioEncOpts["b"] = p.next()
 		case arg == "-r":
+			// `-r` is per-file: input-side it's the demuxer
+			// framerate (synonym of `-framerate`), output-side
+			// it's the encoder framerate. Latch into
+			// pendingFileOpts; drained by either input (typed
+			// FrameRate) or output (videoEncOpts["r"]).
 			if !p.hasMore() {
 				return nil, fmt.Errorf("-r requires an argument")
 			}
-			p.globalOpts["framerate"] = p.next()
+			if p.pendingFileOpts == nil {
+				p.pendingFileOpts = make(map[string]any)
+			}
+			p.pendingFileOpts["__r"] = p.next()
+		case arg == "-framerate":
+			if !p.hasMore() {
+				return nil, fmt.Errorf("-framerate requires an argument")
+			}
+			if p.pendingFileOpts == nil {
+				p.pendingFileOpts = make(map[string]any)
+			}
+			p.pendingFileOpts["framerate"] = p.next()
+		case arg == "-video_size" || arg == "-s":
+			if !p.hasMore() {
+				return nil, fmt.Errorf("%s requires an argument", arg)
+			}
+			if p.pendingFileOpts == nil {
+				p.pendingFileOpts = make(map[string]any)
+			}
+			p.pendingFileOpts["video_size"] = p.next()
+		case arg == "-pixel_format":
+			if !p.hasMore() {
+				return nil, fmt.Errorf("-pixel_format requires an argument")
+			}
+			if p.pendingFileOpts == nil {
+				p.pendingFileOpts = make(map[string]any)
+			}
+			p.pendingFileOpts["pixel_format"] = p.next()
+		case arg == "-sample_fmt":
+			if !p.hasMore() {
+				return nil, fmt.Errorf("-sample_fmt requires an argument")
+			}
+			if p.pendingFileOpts == nil {
+				p.pendingFileOpts = make(map[string]any)
+			}
+			p.pendingFileOpts["sample_fmt"] = p.next()
+		case arg == "-thread_queue_size":
+			if !p.hasMore() {
+				return nil, fmt.Errorf("-thread_queue_size requires an argument")
+			}
+			if p.pendingFileOpts == nil {
+				p.pendingFileOpts = make(map[string]any)
+			}
+			p.pendingFileOpts["thread_queue_size"] = p.next()
+		case arg == "-protocol_whitelist":
+			if !p.hasMore() {
+				return nil, fmt.Errorf("-protocol_whitelist requires an argument")
+			}
+			if p.pendingFileOpts == nil {
+				p.pendingFileOpts = make(map[string]any)
+			}
+			p.pendingFileOpts["protocol_whitelist"] = p.next()
+		case arg == "-pattern_type":
+			if !p.hasMore() {
+				return nil, fmt.Errorf("-pattern_type requires an argument")
+			}
+			if p.pendingFileOpts == nil {
+				p.pendingFileOpts = make(map[string]any)
+			}
+			p.pendingFileOpts["pattern_type"] = p.next()
+		case arg == "-accurate_seek":
+			if p.pendingFileOpts == nil {
+				p.pendingFileOpts = make(map[string]any)
+			}
+			p.pendingFileOpts["accurate_seek"] = "1"
+		case arg == "-noaccurate_seek":
+			if p.pendingFileOpts == nil {
+				p.pendingFileOpts = make(map[string]any)
+			}
+			p.pendingFileOpts["accurate_seek"] = "0"
+		case arg == "-seek_timestamp":
+			if p.pendingFileOpts == nil {
+				p.pendingFileOpts = make(map[string]any)
+			}
+			p.pendingFileOpts["seek_timestamp"] = "1"
 		case arg == "-y" || arg == "-n":
 			// overwrite flags - ignored
 		case arg == "-an":
@@ -687,7 +784,7 @@ func (p *parser) parse() (*pipeline.Config, error) {
 		case arg == "-crf" || arg == "-qp" || arg == "-preset" || arg == "-tune" ||
 			arg == "-profile:v" || arg == "-level" || arg == "-g" || arg == "-bf" ||
 			arg == "-maxrate" || arg == "-minrate" || arg == "-bufsize" ||
-			arg == "-pix_fmt" || arg == "-x264-params" || arg == "-x265-params":
+			arg == "-x264-params" || arg == "-x265-params":
 			if !p.hasMore() {
 				return nil, fmt.Errorf("%s requires an argument", arg)
 			}
@@ -697,8 +794,21 @@ func (p *parser) parse() (*pipeline.Config, error) {
 				key = "profile"
 			}
 			p.videoEncOpts[key] = p.next()
+		case arg == "-pix_fmt":
+			// `-pix_fmt FMT` is per-file: input-side it's the
+			// rawvideo demuxer's pixel format, output-side it's
+			// the encoder's. Latch into pendingFileOpts; drained
+			// by either input (typed PixelFormat) or output
+			// (videoEncOpts["pix_fmt"]).
+			if !p.hasMore() {
+				return nil, fmt.Errorf("-pix_fmt requires an argument")
+			}
+			if p.pendingFileOpts == nil {
+				p.pendingFileOpts = make(map[string]any)
+			}
+			p.pendingFileOpts["pix_fmt"] = p.next()
 		// ---- Audio encoder options ----
-		case arg == "-q:a" || arg == "-aq" || arg == "-ar" || arg == "-ac" ||
+		case arg == "-q:a" || arg == "-aq" ||
 			arg == "-profile:a":
 			if !p.hasMore() {
 				return nil, fmt.Errorf("%s requires an argument", arg)
@@ -711,6 +821,26 @@ func (p *parser) parse() (*pipeline.Config, error) {
 				key = "profile"
 			}
 			p.audioEncOpts[key] = p.next()
+		case arg == "-ar":
+			// `-ar RATE` is per-file: input-side raw PCM sample
+			// rate, output-side encoder sample rate. Latch.
+			if !p.hasMore() {
+				return nil, fmt.Errorf("-ar requires an argument")
+			}
+			if p.pendingFileOpts == nil {
+				p.pendingFileOpts = make(map[string]any)
+			}
+			p.pendingFileOpts["ar"] = p.next()
+		case arg == "-ac":
+			// `-ac N` is per-file: input-side raw PCM channel
+			// count, output-side encoder channel count. Latch.
+			if !p.hasMore() {
+				return nil, fmt.Errorf("-ac requires an argument")
+			}
+			if p.pendingFileOpts == nil {
+				p.pendingFileOpts = make(map[string]any)
+			}
+			p.pendingFileOpts["ac"] = p.next()
 		case arg == "-t" || arg == "-ss" || arg == "-to":
 			if !p.hasMore() {
 				return nil, fmt.Errorf("%s requires an argument", arg)
@@ -730,6 +860,11 @@ func (p *parser) parse() (*pipeline.Config, error) {
 				out.Options = p.pendingFileOpts
 				p.pendingFileOpts = nil
 			}
+			// Wave 5 #23-#28: re-route per-file flags that landed in
+			// pendingFileOpts onto their canonical output-side
+			// destinations: `-f` → Output.Format (existing field),
+			// `-pix_fmt` / `-r` / `-ar` / `-ac` → encoder opts.
+			drainTypedOutputDemuxer(&out, p.videoEncOpts, p.audioEncOpts, out.Options)
 			if p.codecV != "" && p.codecV != "none" {
 				out.CodecVideo = p.codecV
 			}

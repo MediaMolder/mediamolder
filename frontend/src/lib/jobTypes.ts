@@ -21,8 +21,47 @@ export interface Input {
    *  libavformat. "lavfi" routes through the lavfi virtual demuxer
    *  (FFmpeg's `-f lavfi`); the `url` field is then a filtergraph spec
    *  such as `anullsrc=r=48000:cl=stereo` or
-   *  `color=black:s=1920x1080:r=30`. */
-  kind?: "file" | "lavfi";
+   *  `color=black:s=1920x1080:r=30`. "raw" forces a rawvideo / PCM
+   *  demuxer (requires `format` + geometry/audio params). "concat"
+   *  opens an inline `concat_list` (or an existing listfile pointed
+   *  to by `url`) via libavformat's concat demuxer. */
+  kind?: 'file' | 'lavfi' | 'raw' | 'concat';
+  /** Force libavformat demuxer name (mirrors ffmpeg `-f FMT`).
+   *  Required when `kind="raw"`. Common values: rawvideo, s16le,
+   *  image2, mpegts, concat. */
+  format?: string;
+  /** Frame rate for unframed/raw video and image2 sequences. Pushed
+   *  to the demuxer as `framerate`. Mirrors ffmpeg `-framerate`. */
+  framerate?: number;
+  /** Planar layout of unframed/raw video frames (mirrors `-pix_fmt`).
+   *  Required when `kind="raw"` and `format=rawvideo`. */
+  pixel_format?: string;
+  /** Frame size of unframed/raw video as WxH or a libavutil named
+   *  preset (hd720/vga/ntsc/...). Mirrors `-video_size`/`-s`. */
+  video_size?: string;
+  /** Sample rate (Hz) of unframed/raw PCM audio (mirrors `-ar`).
+   *  Required when `kind="raw"` + format names a PCM demuxer. */
+  sample_rate?: number;
+  /** Channel count of unframed/raw PCM audio (mirrors `-ac`).
+   *  Required when `kind="raw"` + format names a PCM demuxer. */
+  channels?: number;
+  /** Optional libavutil sample format for audio raw demuxers that
+   *  accept it (input-side `-sample_fmt`). */
+  sample_fmt?: string;
+  /** In-config concat playlist used when `kind="concat"`. */
+  concat_list?: ConcatEntry[];
+  /** Accurate (decode-and-discard until target PTS) vs fast
+   *  (snap-to-keyframe) seeking when `-ss` is set. Default true. */
+  accurate_seek?: boolean;
+  /** When true, interpret `-ss` as an absolute container timestamp
+   *  rather than an offset from start_time. */
+  seek_timestamp?: boolean;
+  /** Demuxer input packet queue depth in frames. */
+  thread_queue_size?: number;
+  /** Restrict which libavformat protocols this input may dereference. */
+  protocol_whitelist?: string[];
+  /** Image-sequence matcher used by image2 demuxer. */
+  pattern_type?: '' | 'none' | 'sequence' | 'glob' | 'glob_sequence';
   /** Copy this input's container metadata onto outputs that don't set
    *  their own `metadata` (mirrors ffmpeg `-map_metadata IDX`).
    *  Multiple inputs merge in declaration order; last writer wins. */
@@ -57,6 +96,14 @@ export interface Input {
   read_rate_catchup?: number;
   streams: StreamSelect[];
   options?: Record<string, unknown>;
+}
+
+export interface ConcatEntry {
+  file: string;
+  duration?: number;
+  inpoint?: number;
+  outpoint?: number;
+  metadata?: Record<string, string>;
 }
 
 export interface NodeDef {
