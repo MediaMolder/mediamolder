@@ -114,18 +114,18 @@ Legend: ✅ supported · ⚠️ partial · ❌ missing
 | Complex filtergraphs (N-in, M-out)                          | ✅    | Same file, complex path via `avfilter_graph_parse_ptr` |
 | Multi-input filters (`overlay`, `concat`, `hstack`, `amix`) | ✅    | Demonstrated by 09–10, 14 community scripts |
 | Multi-output filters (`split`, `asplit`, `tile`)            | ✅    | |
-| Source/virtual filters (`color=`, `testsrc=`, `anullsrc=`, `sine=`, `smptebars=`, `movie=`, `amovie=`) | ❌ | No node kind for "filter that has zero inputs" |
-| Sink filters (`nullsink`, `nullaudiosink`)                  | ❌    | No node kind for "filter that has zero outputs" |
-| Cross-media-type filters (`showwavespic`, `showspectrum*`, `concat=v=1:a=1`) | ⚠️ | The library supports them but the engine assumes 1 media-type per edge; needs explicit "this filter promotes audio→video" handling |
+| Source/virtual filters (`color=`, `testsrc=`, `anullsrc=`, `sine=`, `smptebars=`, `movie=`, `amovie=`) | ✅ | `KindFilterSource` (Wave 7 #36a enum; #36b av-layer; #36c runtime). `movie=`/`amovie=` get security validation + `protocol_whitelist` injection (#36e). GUI palette deferred to Wave 8 #44. |
+| Sink filters (`nullsink`, `anullsink`)                       | ✅    | `KindFilterSink` (Wave 7 #36a enum; #36b av-layer; #36d runtime). Pure-analyser pipeline (no muxer output) now valid. |
+| Cross-media-type filters (`showwavespic`, `showspectrum*`, `concat=v=1:a=1`) | ✅ | `output_media_type` field + `crossMediaTypeFilters` registry + validator + auto-fill + complex-graph dispatch (Wave 7 #37). `concat=v=1:a=1` multi-pad routing (per-output-pad lists) deferred. |
 | Frame-rate / time-base advertised on `FilterPadConfig`      | ✅    | `FRNum/FRDen` added; `make_video_src_args` emits `frame_rate=N/D`; buffersink rate re-queried after each upstream filter. Unblocked `xfade`/`acrossfade` (13/14 community-scripts now pass). |
 | `-filter_complex_threads`                                   | ✅    | Per-graph thread cap (Wave 7 #38) |
-| `-filter_threads`                                           | ⚠️    | Set globally only |
+| `-filter_threads`                                           | ✅    | Per-node override via `NodeDef.Threads`; pipeline-wide cap via `Config.FilterComplexThreads`. Both map to `AVFilterGraph.nb_threads`. (Wave 7 #38) |
 | Filter quoting (`,`, `;`, `'` in values)                    | ✅    | Fixed in commit `04f1a0c7` (`pipeline/engine.go` `buildFilterSpec`) |
 | Sidedata / per-frame metadata propagation                   | ✅    | `AVFrame->metadata` propagates through libavfilter natively; `metadata`/`ametadata` filters wired as regular `filter` nodes; av-layer `Frame.Metadata()`/`GetMetadata`/`SetMetadata` exposed for Go processors (Wave 7 #39). Fixture `51_metadata_filter.json`. |
 | Hardware filter auto-mapping (sw `scale` → `scale_cuda` etc.) | ❌  | User must spell the hardware filter name today |
 | `hwupload`, `hwdownload`, `hwmap` filters                   | ⚠️    | Available via filter name, no first-class palette |
 | **Filter expression engine** (`t`, `n`, `frame`, `tw`, `th`, `text_w`, `text_h`, `w`, `h`, `enable=between(t,2,8)`, arithmetic) | ✅ | Strings reach libavfilter intact; `GET /api/filters/{name}/eval-expression` validator (§5#7); `expression: true` AVOption flag bit + curated per-filter variable registry (Wave 4 #19); syntax-highlighted `ExpressionInput` GUI control with cookbook + live validation (Wave 4 #20). |
-| **Mixed labelled + unlabelled `-filter_complex` outputs**   | ⚠️    | Works when constructed manually; importer/exporter round-trip not yet tested |
+| **Mixed labelled + unlabelled `-filter_complex` outputs**   | ✅    | `compat/ffcli.NormalizeFilterComplex` rewrites dangling pads to synthetic `[mm_fc_out_N]`/`[mm_fc_in_0]` labels; idempotent (Wave 7 #40). Full `-filter_complex` parse → node+edge wiring deferred to Wave 8 #53. |
 | `setsar`, `setdar` (SAR/DAR overrides)                      | ✅    | `Output.SAR` / `Output.DAR` shorthand; `compat/ffcli` rewrites legacy `-aspect`. Wave 3 #15. |
 | `arnndn` (RNNoise) and other model-file filters             | ⚠️    | Filter runs if model path is correct; no fixture story for filter-side data files |
 | `zscale` + `tonemap` (HDR)                                  | ✅    | Validator (`pipeline.validateFilterAvailability`) rejects unknown / unbuilt filters with an actionable hint (`zscale` → `--enable-libzimg`, `tonemap_opencl` → `--enable-opencl`, …) instead of waiting for a runtime "filter not found". Palette (`/api/nodes`) only lists filters reported by `av.ListFilters()`, so unbuilt entries are absent automatically. (Wave 7 #42) |
@@ -188,7 +188,7 @@ Legend: ✅ supported · ⚠️ partial · ❌ missing
 | Burn-in via `subtitles=` filter                                   | ✅    | (works once libass is available in the build) |
 | Codec conversion (`mov_text` ↔ `srt` ↔ `ass` ↔ `webvtt`)          | ⚠️    | Works through encoder selection but not validated for incompatible pairs |
 | Subtitle charset (`-sub_charenc`)                                 | ✅    | `Input.SubtitleCharenc` (Wave 6 #34) |
-| Forced / hearing-impaired flags                                   | ❌    | Per-stream metadata gap |
+| Forced / hearing-impaired flags                                   | ✅    | `Output.Streams[].Disposition` carries `AV_DISPOSITION_FORCED` / `AV_DISPOSITION_HEARING_IMPAIRED` (Wave 1 #3); `compat/ffcli` parses `-disposition:s:v:0` (Wave 2 #9); GUI affordances deferred to Wave 8 #52. |
 | Karaoke ASS effects, fontconfig integration                       | ⚠️    | Filter passes through; no GUI affordance |
 
 ### 2.7 Devices, networking, advanced
