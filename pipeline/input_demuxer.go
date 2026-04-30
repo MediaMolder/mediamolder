@@ -38,7 +38,7 @@ var rawAudioFormats = map[string]bool{
 // img2dec.c (the latter accepts pattern_type instead of geometry but
 // still benefits from an explicit framerate).
 var rawVideoFormats = map[string]bool{
-	"rawvideo": true,
+	"rawvideo":     true,
 	"yuv4mpegpipe": true,
 }
 
