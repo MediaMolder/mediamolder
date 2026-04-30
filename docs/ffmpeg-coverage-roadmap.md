@@ -928,7 +928,8 @@ Close remaining ⚠️/❌ items in §2.3 that are not hardware-related.
     typing.
 
     **36b — av-layer source-only / sink-only filter graph
-    constructors (cgo).** New
+    constructors (cgo).** ✅ Wave 7.
+    New
     `av.NewSourceFilterGraph(spec string, outputs
     []FilterOutputConfig, threads int)` builds
     `<spec> [out0]…; …; buffersink` with no buffersrc; the
