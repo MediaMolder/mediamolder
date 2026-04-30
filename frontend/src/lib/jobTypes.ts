@@ -114,6 +114,10 @@ export interface NodeDef {
   processor?: string;
   params?: Record<string, unknown>;
   error_policy?: ErrorPolicy;
+  /** Per-graph thread cap (Wave 7 #38). Filter nodes only.
+   *  Mirrors ffmpeg's per-filter `-filter_threads`; written to
+   *  `AVFilterGraph.nb_threads`. Wins over `Config.filter_complex_threads`. */
+  threads?: number;
 }
 
 export interface EdgeDef {
@@ -537,6 +541,11 @@ export interface JobConfig {
    *  Mirrors ffmpeg's global `-start_at_zero`
    *  (`fftools/ffmpeg_demux.c` L486). Requires `copy_ts=true`. */
   start_at_zero?: boolean;
+  /** Pipeline-wide cap on threads per filter graph (Wave 7 #38).
+   *  Mirrors ffmpeg's global `-filter_complex_threads`; written to
+   *  `AVFilterGraph.nb_threads`. 0 leaves libavfilter's default in place.
+   *  Per-node `threads` overrides this. */
+  filter_complex_threads?: number;
 }
 
 /**

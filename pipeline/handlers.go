@@ -38,12 +38,36 @@ func configToGraphDef(cfg *Config) *graph.Def {
 		if node.Type == "metadata_reader" || node.Type == "metadata_writer" {
 			continue
 		}
+		params := node.Params
+		// Wave 7 #38: propagate per-node thread cap (or pipeline-wide
+		// default) into the runtime's filter graph allocator via the
+		// Params bag. Per-node `Threads` wins over the pipeline-wide
+		// `Config.FilterComplexThreads`. Both are applied only to
+		// filter nodes — encoders have their own `threads` AVOption.
+		if node.Type == "filter" {
+			eff := node.Threads
+			if eff == 0 {
+				eff = cfg.FilterComplexThreads
+			}
+			if eff > 0 {
+				if params == nil {
+					params = make(map[string]any, 1)
+				} else {
+					cp := make(map[string]any, len(params)+1)
+					for k, v := range params {
+						cp[k] = v
+					}
+					params = cp
+				}
+				params["__filter_threads"] = eff
+			}
+		}
 		def.Nodes = append(def.Nodes, graph.NodeDef{
 			ID:        node.ID,
 			Type:      node.Type,
 			Filter:    node.Filter,
 			Processor: node.Processor,
-			Params:    node.Params,
+			Params:    params,
 		})
 	}
 	for _, out := range cfg.Outputs {
@@ -2312,6 +2336,7 @@ func (r *graphRunner) createFilter(dag *graph.Graph, node *graph.Node) (*av.Filt
 		Filter: node.Filter,
 		Params: params,
 	})
+	threads := paramInt(params, "__filter_threads")
 
 	// Simple 1→1 filter.
 	if len(node.Inbound) == 1 && len(node.Outbound) == 1 {
@@ -2331,6 +2356,7 @@ func (r *graphRunner) createFilter(dag *graph.Graph, node *graph.Node) (*av.Filt
 				FRNum:      si.FrameRate[0],
 				FRDen:      si.FrameRate[1],
 				FilterSpec: filterSpec,
+				Threads:    threads,
 			})
 		}
 		return av.NewAudioFilterGraph(av.AudioFilterGraphConfig{
@@ -2338,6 +2364,7 @@ func (r *graphRunner) createFilter(dag *graph.Graph, node *graph.Node) (*av.Filt
 			SampleRate: si.SampleRate,
 			Channels:   si.Channels,
 			FilterSpec: filterSpec,
+			Threads:    threads,
 		})
 	}
 
@@ -2380,6 +2407,7 @@ func (r *graphRunner) createFilter(dag *graph.Graph, node *graph.Node) (*av.Filt
 		Inputs:     inputs,
 		Outputs:    outputs,
 		FilterSpec: spec,
+		Threads:    threads,
 	})
 }
 

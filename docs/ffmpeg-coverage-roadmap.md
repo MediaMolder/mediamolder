@@ -118,7 +118,7 @@ Legend: ✅ supported · ⚠️ partial · ❌ missing
 | Sink filters (`nullsink`, `nullaudiosink`)                  | ❌    | No node kind for "filter that has zero outputs" |
 | Cross-media-type filters (`showwavespic`, `showspectrum*`, `concat=v=1:a=1`) | ⚠️ | The library supports them but the engine assumes 1 media-type per edge; needs explicit "this filter promotes audio→video" handling |
 | Frame-rate / time-base advertised on `FilterPadConfig`      | ✅    | `FRNum/FRDen` added; `make_video_src_args` emits `frame_rate=N/D`; buffersink rate re-queried after each upstream filter. Unblocked `xfade`/`acrossfade` (13/14 community-scripts now pass). |
-| `-filter_complex_threads`                                   | ❌    | Per-graph thread cap |
+| `-filter_complex_threads`                                   | ✅    | Per-graph thread cap (Wave 7 #38) |
 | `-filter_threads`                                           | ⚠️    | Set globally only |
 | Filter quoting (`,`, `;`, `'` in values)                    | ✅    | Fixed in commit `04f1a0c7` (`pipeline/engine.go` `buildFilterSpec`) |
 | Sidedata / per-frame metadata propagation                   | ⚠️    | Frames carry `AVFrame->metadata` but there is no JSON-side `metadata` filter wiring |
@@ -906,10 +906,12 @@ Close remaining ⚠️/❌ items in §2.3 that are not hardware-related.
     (and `concat=v=1:a=1` returns both). The GUI then renders
     downstream edges with the correct media type. Unblocks
     `waveform`, `showspectrum*`.
-38. **Per-graph thread caps** (§2.3) —
-    `Pipeline.FilterComplexThreads int` and per-`KindFilter`
-    `Threads int`. Maps to `avfilter_graph_alloc.nb_threads`.
-    Required for predictable throughput on shared hosts.
+38. **Per-graph thread caps** (§2.3) — ✅ Wave 7
+    `Config.FilterComplexThreads int` (pipeline-wide) and
+    `NodeDef.Threads int` (per-filter override). Threaded into
+    `AVFilterGraph.nb_threads` via the `__filter_threads` Params
+    sentinel; ffcli `-filter_complex_threads N`; schema fields on
+    both v1.0 and v1.1.
 39. **Sidedata / per-frame metadata propagation** (§2.3) — Wire
     `AVFrame->metadata` through the typed-edges model so
     `metadata=mode=add` filter chains can be authored as graph

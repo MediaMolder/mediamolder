@@ -29,7 +29,8 @@
     },
     "global_options": { "$ref": "#/$defs/global_options" },
     "copy_ts": { "type": "boolean", "description": "Preserve the original demuxer timestamps end-to-end instead of rebasing every input to PTS 0. Mirrors ffmpeg's global -copyts: suppresses the demuxer-side ts_offset shift that normally accompanies -ss, and changes the meaning of any output-side -ss / -to (in output.options) to absolute timeline values rather than offsets from the input's start. Required for accurate broadcast / HLS PTS handling." },
-    "start_at_zero": { "type": "boolean", "description": "Modulates copy_ts. When true, re-enables the demuxer-side ts_offset shift even under copy_ts so the first kept packet still anchors at PTS 0 while later timing is preserved. Mirrors ffmpeg's global -start_at_zero (fftools/ffmpeg_demux.c L486). Requires copy_ts=true." }
+    "start_at_zero": { "type": "boolean", "description": "Modulates copy_ts. When true, re-enables the demuxer-side ts_offset shift even under copy_ts so the first kept packet still anchors at PTS 0 while later timing is preserved. Mirrors ffmpeg's global -start_at_zero (fftools/ffmpeg_demux.c L486). Requires copy_ts=true." },
+    "filter_complex_threads": { "type": "integer", "minimum": 0, "description": "Pipeline-wide cap on threads per filter graph. Mirrors ffmpeg's global -filter_complex_threads. Written to AVFilterGraph.nb_threads. 0 leaves libavfilter's default in place. Per-node `threads` overrides this." }
   },
   "$defs": {
     "input": {
@@ -131,6 +132,7 @@
           "type": "object",
           "additionalProperties": true
         },
+        "threads": { "type": "integer", "minimum": 0 },
         "error_policy": { "$ref": "#/$defs/error_policy" }
       }
     },

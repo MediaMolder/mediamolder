@@ -49,6 +49,13 @@ type Config struct {
 	// meaningful when `CopyTS=true`; rejected by validate() when
 	// set without `CopyTS`.
 	StartAtZero bool `json:"start_at_zero,omitempty"`
+	// FilterComplexThreads sets the upper bound on threads each filter
+	// graph may use. Mirrors FFmpeg's global `-filter_complex_threads`
+	// flag and the per-filter `-filter_threads`. Written to
+	// `AVFilterGraph.nb_threads` after `avfilter_graph_alloc`. 0 leaves
+	// libavfilter's default in place (typically `nproc`). Per-node
+	// overrides via `NodeDef.Threads` win when set. (Wave 7 #38)
+	FilterComplexThreads int `json:"filter_complex_threads,omitempty"`
 }
 
 // Input describes a single input source.
@@ -370,6 +377,12 @@ type NodeDef struct {
 	Processor   string         `json:"processor,omitempty"`
 	Params      map[string]any `json:"params,omitempty"`
 	ErrorPolicy *ErrorPolicy   `json:"error_policy,omitempty"`
+	// Threads, when > 0, sets the per-graph thread cap written to
+	// `AVFilterGraph.nb_threads` for this filter's compiled graph.
+	// Only meaningful for `Type == "filter"`. Mirrors FFmpeg's
+	// per-filter `-filter_threads`. Wins over the pipeline-wide
+	// `Config.FilterComplexThreads`. (Wave 7 #38)
+	Threads int `json:"threads,omitempty"`
 }
 
 // EdgeDef describes a directed edge between two nodes.

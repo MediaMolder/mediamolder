@@ -89,6 +89,7 @@ type VideoFilterGraphConfig struct {
 	FRNum      int    // frame_rate numerator (0 = unknown, omitted from buffersrc args)
 	FRDen      int    // frame_rate denominator
 	FilterSpec string // e.g. "scale=1280:720"
+	Threads    int    // 0 = libavfilter default; otherwise written to graph->nb_threads (Wave 7 #38)
 }
 
 // AudioFilterGraphConfig carries the parameters needed to build an audio filter graph.
@@ -97,6 +98,7 @@ type AudioFilterGraphConfig struct {
 	SampleRate int
 	Channels   int
 	FilterSpec string // e.g. "aresample=44100"
+	Threads    int   // 0 = libavfilter default; otherwise written to graph->nb_threads (Wave 7 #38)
 }
 
 // NewVideoFilterGraph creates a video filter graph with a single filter chain.
@@ -105,6 +107,9 @@ func NewVideoFilterGraph(cfg VideoFilterGraphConfig) (*FilterGraph, error) {
 	graph := C.avfilter_graph_alloc()
 	if graph == nil {
 		return nil, &Err{Code: -12, Message: "avfilter_graph_alloc: out of memory"}
+	}
+	if cfg.Threads > 0 {
+		graph.nb_threads = C.int(cfg.Threads)
 	}
 
 	cBufName := C.CString("buffer")
@@ -351,6 +356,9 @@ func NewAudioFilterGraph(cfg AudioFilterGraphConfig) (*FilterGraph, error) {
 	if graph == nil {
 		return nil, &Err{Code: -12, Message: "avfilter_graph_alloc: out of memory"}
 	}
+	if cfg.Threads > 0 {
+		graph.nb_threads = C.int(cfg.Threads)
+	}
 
 	cBufName := C.CString("abuffer")
 	defer C.free(unsafe.Pointer(cBufName))
@@ -467,6 +475,7 @@ type ComplexFilterGraphConfig struct {
 	Inputs     []FilterPadConfig
 	Outputs    []FilterOutputConfig
 	FilterSpec string
+	Threads    int // 0 = libavfilter default; otherwise written to graph->nb_threads (Wave 7 #38)
 }
 
 // NewComplexFilterGraph creates a filter graph with an arbitrary number of
@@ -482,6 +491,9 @@ func NewComplexFilterGraph(cfg ComplexFilterGraphConfig) (*FilterGraph, error) {
 	graph := C.avfilter_graph_alloc()
 	if graph == nil {
 		return nil, &Err{Code: -12, Message: "avfilter_graph_alloc: out of memory"}
+	}
+	if cfg.Threads > 0 {
+		graph.nb_threads = C.int(cfg.Threads)
 	}
 
 	// --- Create buffer sources for each input pad ---

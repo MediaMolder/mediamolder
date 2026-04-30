@@ -47,6 +47,7 @@ type parser struct {
 	maxFileSize    int64
 	copyTS         bool
 	startAtZero    bool
+	filterCxThreads int
 	muxDelay       float64
 	muxPreload     float64
 	avoidNegTS     string
@@ -556,6 +557,19 @@ func (p *parser) parse() (*pipeline.Config, error) {
 			// `-copyts` is set, so the first kept packet still anchors
 			// at PTS 0. See fftools/ffmpeg_demux.c L486.
 			p.startAtZero = true
+		case arg == "-filter_complex_threads":
+			// FFmpeg `-filter_complex_threads N` (global int;
+			// fftools/ffmpeg_opt.c). Pipeline-wide cap on the
+			// per-graph `AVFilterGraph.nb_threads`. (Wave 7 #38)
+			if !p.hasMore() {
+				return nil, fmt.Errorf("-filter_complex_threads requires an argument")
+			}
+			v := p.next()
+			n, err := strconv.Atoi(v)
+			if err != nil || n < 0 {
+				return nil, fmt.Errorf("-filter_complex_threads: invalid value %q (want non-negative integer)", v)
+			}
+			p.filterCxThreads = n
 		case arg == "-muxdelay":
 			// FFmpeg `-muxdelay SECONDS` (per-output float OPT_OFFSET;
 			// fftools/ffmpeg_opt.c L2134). Latched onto the next output's
@@ -1275,6 +1289,9 @@ func (p *parser) parse() (*pipeline.Config, error) {
 	}
 	if p.startAtZero {
 		cfg.StartAtZero = true
+	}
+	if p.filterCxThreads > 0 {
+		cfg.FilterComplexThreads = p.filterCxThreads
 	}
 	if p.hwAccel != "" {
 		cfg.GlobalOptions.HardwareAccel = p.hwAccel
