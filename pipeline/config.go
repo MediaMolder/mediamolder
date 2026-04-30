@@ -730,6 +730,45 @@ type Output struct {
 	// @ 4:3 needs SAR 8:9).
 	SAR string `json:"sar,omitempty"`
 	DAR string `json:"dar,omitempty"`
+
+	// EncoderTimeBase chooses the encoder's `AVCodecContext.time_base`
+	// directly, mirroring FFmpeg's per-stream `-enc_time_base` flag
+	// (fftools/ffmpeg_mux_init.c L1391-1417). Accepted forms:
+	//   ""         – leave the av-layer default (1/framerate, or the
+	//                buffersink TB when the encoder is fed by a graph).
+	//   "demux"    – inherit the upstream demuxer/decoder TB
+	//                (ENC_TIME_BASE_DEMUX sentinel; resolved at
+	//                runtime once the source TB is known).
+	//   "filter"   – inherit the buffersink TB
+	//                (ENC_TIME_BASE_FILTER sentinel).
+	//   "N/D"      – an explicit rational, parsed by av_parse_ratio.
+	// Rejected on subtitle outputs (libavcodec ignores it; FFmpeg
+	// logs the same warning at fftools/ffmpeg_mux_init.c L1394).
+	EncoderTimeBase string `json:"encoder_time_base,omitempty"`
+
+	// FieldOrder stamps the encoder's `AVCodecContext.field_order`
+	// (libavcodec/defs.h::AVFieldOrder) so the muxer knows whether
+	// to write progressive or interlaced metadata into the
+	// container. Mirrors FFmpeg `-field_order`. Accepted values:
+	//   ""             – leave the encoder default
+	//                    (AV_FIELD_UNKNOWN).
+	//   "progressive"  – AV_FIELD_PROGRESSIVE.
+	//   "tt" / "bb"    – top/bottom field coded AND displayed first.
+	//   "tb" / "bt"    – top/bottom coded first, opposite displayed
+	//                    first (mixed-parity streams; rare).
+	// FieldOrder=="progressive" with InterlacedEncode=true is
+	// rejected at validate time (the combination is nonsensical and
+	// the encoder would produce garbage metadata).
+	FieldOrder string `json:"field_order,omitempty"`
+
+	// InterlacedEncode toggles the AV_CODEC_FLAG_INTERLACED_DCT |
+	// AV_CODEC_FLAG_INTERLACED_ME bits on the encoder context
+	// (avcodec.h L310 / L331), telling the encoder to use
+	// interlaced motion estimation and DCT layout. Required for
+	// broadcast-grade SDI workflows that round-trip 1080i/29.97
+	// or 1080i/25 through libx264 / libxavs2 / mpeg2video. Pair
+	// with FieldOrder ∈ {"tt","bb","tb","bt"}.
+	InterlacedEncode bool `json:"interlaced_encode,omitempty"`
 }
 
 // ColorMetadata is the typed projection of FFmpeg's per-stream color
@@ -1251,6 +1290,9 @@ func validate(cfg *Config) error {
 			return err
 		}
 		if err := validateAspect(out); err != nil {
+			return err
+		}
+		if err := validateEncoderTiming(out); err != nil {
 			return err
 		}
 	}

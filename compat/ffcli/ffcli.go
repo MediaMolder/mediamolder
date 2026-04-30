@@ -78,6 +78,11 @@ type parser struct {
 	// to DAR per §6.8 of docs/ffmpeg-coverage-roadmap.md).
 	pendingSAR string
 	pendingDAR string
+	// Wave 6 #33: per-output encoder colour/timing edges
+	// (-enc_time_base, -field_order, -flags +ildct+ilme alias).
+	pendingEncTimeBase  string
+	pendingFieldOrder   string
+	pendingInterlaced   bool
 	hwAccel    string
 	hwDevice   string
 	hwOutFmt   string
@@ -613,6 +618,42 @@ func (p *parser) parse() (*pipeline.Config, error) {
 				return nil, fmt.Errorf("-setdar requires an argument")
 			}
 			p.pendingDAR = p.next()
+		case arg == "-enc_time_base":
+			// FFmpeg per-stream OPT_TYPE_STRING (mux side):
+			// fftools/ffmpeg_mux_init.c L1391-1417. Accepts
+			// "demux", "filter", or N/D rational.
+			if !p.hasMore() {
+				return nil, fmt.Errorf("-enc_time_base requires an argument")
+			}
+			p.pendingEncTimeBase = p.next()
+		case arg == "-field_order":
+			// FFmpeg per-stream OPT_TYPE_STRING (encoder side):
+			// AVCodecContext.field_order via av_opt_set on the
+			// codec context. Accepts progressive / tt / bb / tb / bt.
+			if !p.hasMore() {
+				return nil, fmt.Errorf("-field_order requires an argument")
+			}
+			p.pendingFieldOrder = p.next()
+		case arg == "-flags":
+			// We only translate the broadcast-grade interlaced bits
+			// (`+ildct+ilme` / `+ilme+ildct`) here; the rest of
+			// `-flags` continues to flow through Output.Options as
+			// the catch-all key. Mirrors FFmpeg's `AV_CODEC_FLAG_*`
+			// option-table parsing in avcodec.h L310 / L331.
+			if !p.hasMore() {
+				return nil, fmt.Errorf("-flags requires an argument")
+			}
+			v := p.next()
+			if strings.Contains(v, "ildct") || strings.Contains(v, "ilme") {
+				p.pendingInterlaced = true
+			}
+			// Keep the raw -flags arg in the encoder opts so the
+			// muxer-side AVOption is still set; the Output-level
+			// boolean is additive.
+			if p.videoEncOpts == nil {
+				p.videoEncOpts = make(map[string]any)
+			}
+			p.videoEncOpts["flags"] = v
 		// ---- HLS muxer options (libavformat/hlsenc.c) ----
 		case arg == "-hls_time" || arg == "-hls_init_time" ||
 			arg == "-hls_list_size" || arg == "-hls_playlist_type" ||
@@ -1044,6 +1085,18 @@ func (p *parser) parse() (*pipeline.Config, error) {
 			if p.pendingDAR != "" {
 				out.DAR = p.pendingDAR
 				p.pendingDAR = ""
+			}
+			if p.pendingEncTimeBase != "" {
+				out.EncoderTimeBase = p.pendingEncTimeBase
+				p.pendingEncTimeBase = ""
+			}
+			if p.pendingFieldOrder != "" {
+				out.FieldOrder = p.pendingFieldOrder
+				p.pendingFieldOrder = ""
+			}
+			if p.pendingInterlaced {
+				out.InterlacedEncode = true
+				p.pendingInterlaced = false
 			}
 			if len(p.containerMeta) > 0 {
 				out.Metadata = p.containerMeta

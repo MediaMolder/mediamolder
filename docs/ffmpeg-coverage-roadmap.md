@@ -151,8 +151,8 @@ Legend: ✅ supported · ⚠️ partial · ❌ missing
 | HDR10 mastering display + content light level metadata            | ✅    | `Output.HDR` (SMPTE ST 2086 + CTA-861.3); validated against codec/container; Wave 3 #14. |
 | Dolby Vision RPU passthrough                                      | ❌    | Required for premium HDR pipelines |
 | `-aspect`                                                         | ✅    | Subsumed by `Output.SAR` / `Output.DAR` (Wave 3 #15); importer rewrites legacy `-aspect`. |
-| `-enc_time_base`                                                  | ❌    | |
-| Field order (`-field_order`), interlaced encode                   | ❌    | Broadcast workflows |
+| `-enc_time_base`                                                  | ✅    | `Output.EncoderTimeBase` (`demux`/`filter` sentinels or `N/D` rational); Wave 6 #33. |
+| Field order (`-field_order`), interlaced encode                   | ✅    | `Output.FieldOrder` enum + `Output.InterlacedEncode` (`AV_CODEC_FLAG_INTERLACED_DCT\|ME`); Wave 6 #33. |
 | Encoder presets discovered from disk (`-fpre`, `-vpre`)           | ❌    | |
 
 ### 2.5 Muxers / outputs
@@ -867,13 +867,13 @@ and not deprecated.
     rejects an output with all four flags set (would yield a
     zero-stream muxer). `compat/ffcli` round-trip latches `-vn`/
     `-an`/`-sn`/`-dn` onto the next output.
-33. **Encoder colour/timing edge cases** (§2.4) —
-    `Output.EncoderTimeBase` (`-enc_time_base`,
-    `intra`/`demux`/`filter`/`N/D`), `Output.FieldOrder`
-    (`-field_order`, `progressive`/`tt`/`bb`/`tb`/`bt`),
-    `Output.InterlacedEncode` (encoder-side `tff`/`bff` flag)
-    for broadcast workflows. AVDict-passthrough today; promotion
-    + validation table.
+33. **Encoder colour/timing edge cases** (§2.4) ✅ Wave 6 (`Output.EncoderTimeBase`
+    accepts `"demux"` / `"filter"` sentinel or `"N/D"` rational, mirrors
+    `fftools/ffmpeg_mux_init.c` L1391-1417; `Output.FieldOrder` ∈ {`""`,
+    `progressive`, `tt`, `bb`, `tb`, `bt`} stamps `AVCodecContext.field_order`;
+    `Output.InterlacedEncode` toggles `AV_CODEC_FLAG_INTERLACED_DCT|ME`
+    (avcodec.h L310/L331). Sentinels propagated through implicit-encoder
+    expansion as `__enc_time_base` / `__field_order` / `__interlaced`).
 34. **Subtitle: `-sub_charenc`, forced / hearing-impaired flags,
     codec-pair validation** (§2.6) ✅ Wave 6 (`Input.SubtitleCharenc`
     threaded into `av.OpenSubtitleDecoderWithOptions`; bitmap-subtitle

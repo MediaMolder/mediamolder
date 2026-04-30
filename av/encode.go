@@ -73,6 +73,17 @@ type EncoderOptions struct {
 	// unchanged from the encoder's default.
 	SampleAspectRatio [2]int
 
+	// FieldOrder stamps the encoder's `AVCodecContext.field_order`
+	// (libavcodec/defs.h::AVFieldOrder). 0 (AV_FIELD_UNKNOWN) leaves
+	// the encoder default. Mirrors FFmpeg `-field_order`.
+	FieldOrder int
+
+	// InterlacedEncode toggles AV_CODEC_FLAG_INTERLACED_DCT |
+	// AV_CODEC_FLAG_INTERLACED_ME on the encoder context (avcodec.h
+	// L310 / L331). Required for interlaced-DCT motion estimation
+	// in libx264 / mpeg2video / libxavs2.
+	InterlacedEncode bool
+
 	// --- Audio ---
 	SampleFmt  int // AVSampleFormat
 	SampleRate int
@@ -168,6 +179,12 @@ func OpenEncoder(opts EncoderOptions) (*EncoderContext, error) {
 				num: C.int(opts.SampleAspectRatio[0]),
 				den: C.int(opts.SampleAspectRatio[1]),
 			}
+		}
+		if opts.FieldOrder != 0 {
+			ctx.field_order = C.enum_AVFieldOrder(opts.FieldOrder)
+		}
+		if opts.InterlacedEncode {
+			ctx.flags |= C.AV_CODEC_FLAG_INTERLACED_DCT | C.AV_CODEC_FLAG_INTERLACED_ME
 		}
 	}
 

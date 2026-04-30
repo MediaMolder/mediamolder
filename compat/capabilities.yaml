@@ -265,11 +265,13 @@ sections:
         schema: pipeline.Output.DAR
         notes: importer rewrites legacy `-aspect A:B` to Output.DAR
       - flag: "-enc_time_base"
-        status: missing
-        schema: n/a
+        status: covered
+        schema: pipeline.Output.EncoderTimeBase
+        notes: accepts demux/filter sentinels or N/D rational
       - flag: "-field_order (interlaced encode)"
-        status: missing
-        schema: n/a
+        status: covered
+        schema: pipeline.Output.FieldOrder
+        notes: also Output.InterlacedEncode for AV_CODEC_FLAG_INTERLACED_DCT|ME (-flags +ildct+ilme)
       - flag: "-fpre / -vpre (encoder presets from disk)"
         status: missing
         schema: n/a

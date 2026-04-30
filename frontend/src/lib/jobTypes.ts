@@ -315,6 +315,9 @@ export interface Output {
    *  encoder's width/height: SAR = (DAR_num*H)/(DAR_den*W). Mutually
    *  exclusive with `sar`. */
   dar?: string;
+  encoder_time_base?: string;
+  field_order?: '' | 'progressive' | 'tt' | 'bb' | 'tb' | 'bt';
+  interlaced_encode?: boolean;
   options?: Record<string, unknown>;
 }
 

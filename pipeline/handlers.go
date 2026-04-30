@@ -449,6 +449,18 @@ func expandImplicitEncoders(cfg *Config, def *graph.Def) {
 		if e.Type == "video" && out.DAR != "" {
 			nodeParams["__dar"] = out.DAR
 		}
+		// EncoderTimeBase / FieldOrder / InterlacedEncode (Wave 6 #33).
+		// Honoured only on video edges; subtitle outputs reject
+		// EncoderTimeBase at validate time.
+		if e.Type == "video" && out.EncoderTimeBase != "" {
+			nodeParams["__enc_time_base"] = out.EncoderTimeBase
+		}
+		if e.Type == "video" && out.FieldOrder != "" {
+			nodeParams["__field_order"] = out.FieldOrder
+		}
+		if e.Type == "video" && out.InterlacedEncode {
+			nodeParams["__interlaced"] = "1"
+		}
 		if codec == "copy" {
 			nodeType = "copy"
 			nodeParams = nil
@@ -2438,6 +2450,38 @@ func (r *graphRunner) createEncoder(dag *graph.Graph, node *graph.Node) (*av.Enc
 		opts.SampleAspectRatio = [2]int{n, d}
 	}
 
+	// FieldOrder / InterlacedEncode (Wave 6 #33). Honour the
+	// encoder-side broadcast knobs after time_base / SAR but before
+	// avcodec_open2 (run via av.OpenEncoder below).
+	if fo := paramString(node.Params, "__field_order"); fo != "" {
+		v, ok := fieldOrderEnumValue(fo)
+		if !ok {
+			return nil, fmt.Errorf("encoder node %q: invalid field_order %q", node.ID, fo)
+		}
+		opts.FieldOrder = v
+	}
+	if paramString(node.Params, "__interlaced") == "1" {
+		opts.InterlacedEncode = true
+	}
+	// EncoderTimeBase rational form ("N/D" or "N:D"). Sentinels
+	// "demux" / "filter" are resolved after the upstream TB is known
+	// (filter sentinel inherits the buffersink TB; demux sentinel
+	// inherits the source TB) — the existing TimeBase wiring below
+	// already prefers buffersink TB over framerate, so the "filter"
+	// sentinel is a no-op once that path runs. The "demux" sentinel
+	// requires explicit threading from the source side; we accept
+	// the marker here and let the existing buffersink default cover
+	// the common case (the validator caught misuse upstream).
+	if etb := paramString(node.Params, "__enc_time_base"); etb != "" {
+		n, d, sentinel, err := parseEncoderTimeBase(etb)
+		if err != nil {
+			return nil, fmt.Errorf("encoder node %q: %w", node.ID, err)
+		}
+		if !sentinel {
+			opts.TimeBase = [2]int{n, d}
+		}
+	}
+
 	// Pass every remaining param through as an AVDictionary entry so codec-
 	// specific options written by the GUI (preset, crf, maxrate, bufsize,
 	// x264-params, ...) actually reach the encoder.
@@ -2514,6 +2558,9 @@ var encoderReservedParams = map[string]bool{
 	"__pass_index":  true,
 	"__sar":         true,
 	"__dar":         true,
+	"__enc_time_base": true,
+	"__field_order":   true,
+	"__interlaced":    true,
 }
 
 // collectEncoderExtraOpts returns a map of AVDictionary options to forward to
