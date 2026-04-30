@@ -129,7 +129,7 @@ Legend: ✅ supported · ⚠️ partial · ❌ missing
 | `setsar`, `setdar` (SAR/DAR overrides)                      | ✅    | `Output.SAR` / `Output.DAR` shorthand; `compat/ffcli` rewrites legacy `-aspect`. Wave 3 #15. |
 | `arnndn` (RNNoise) and other model-file filters             | ⚠️    | Filter runs if model path is correct; no fixture story for filter-side data files |
 | `zscale` + `tonemap` (HDR)                                  | ⚠️    | Requires libzimg in build; no feature probe |
-| `minterpolate` (motion-compensated interpolation)           | ⚠️    | Same FrameRate/TimeBase plumbing as xfade now done; remaining work is exposing motion-estimation params via the inspector |
+| `minterpolate` (motion-compensated interpolation)           | ✅    | Frame-rate / time-base plumbing done in §5 #1; the AVOption miner (§4 #19) exposes `mi_mode` / `mc_mode` / `me_mode` / `me` (and `vsbmc`) as typed `int` options carrying their named constants — the GUI Inspector renders them as enum dropdowns. (Wave 7 #43) |
 | Audio channel manipulation: `pan`, `channelsplit`, `channelmap`, `join`, `amerge`, `amix=weights` | ⚠️ | Available as filters; GUI has no per-channel routing UI |
 
 ### 2.4 Encoders
@@ -931,10 +931,13 @@ Close remaining ⚠️/❌ items in §2.3 that are not hardware-related.
     consults. Filter palette greys out `zscale` when libzimg is
     absent.
 43. **`minterpolate` motion-estimation parameter surface** (§2.3,
-    §1.1) — Schema-level promotion of `mi_mode` / `mc_mode` /
-    `me_mode` / `me` / `vsbmc` so the inspector shows them as
-    typed enums rather than free-text. Frame-rate / time-base
-    plumbing already done in §5 #1.
+    §1.1) ✅ — The AVOption miner (Wave 4 #19) already exposes
+    `mi_mode` / `mc_mode` / `me_mode` / `me` as typed `int`
+    AVOptions carrying their named constants (`mci`, `bidir`,
+    `epzs`, `umh`, …); the GUI Inspector renders them as enum
+    dropdowns automatically. `vsbmc` lands as an `int 0..1` toggle.
+    Locked in by `av/minterpolate_options_test.go`. Frame-rate /
+    time-base plumbing already done in §5 #1.
 
 ### 6.8 Wave 8 — "GUI completeness" (Phase E)
 
