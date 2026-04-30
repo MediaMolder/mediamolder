@@ -946,7 +946,8 @@ Close remaining ⚠️/❌ items in §2.3 that are not hardware-related.
     anullsink`. Pure av-layer change — no runtime / pipeline
     wiring.
 
-    **36c — `KindFilterSource` runtime handler.** New
+    **36c — `KindFilterSource` runtime handler.** ✅ Wave 7.
+    New
     `handleFilterSource` worker in
     [pipeline/handlers.go](../pipeline/handlers.go) — owns
     an `av.FilterGraph` built via `NewSourceFilterGraph`,

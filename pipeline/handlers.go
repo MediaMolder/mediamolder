@@ -795,13 +795,12 @@ func (r *graphRunner) handle(ctx context.Context, node *graph.Node, ins []<-chan
 		return r.handleGoProcessor(ctx, node, ins, outs)
 	case graph.KindCopy:
 		return r.handleCopy(ctx, node, ins, outs)
-	case graph.KindFilterSource, graph.KindFilterSink:
-		// Wave 7 #36a: enum + schema + validator landed; runtime
-		// handlers (#36c / #36d) and av-layer constructors (#36b)
-		// are pending. Surface an explicit, actionable error so
-		// jobs that include these node kinds fail at runner-
-		// construction time rather than producing garbled output.
-		return fmt.Errorf("node %q: kind %v not yet implemented (Wave 7 #36b/c/d pending)", node.ID, node.Kind)
+	case graph.KindFilterSource:
+		return r.handleFilterSource(ctx, node, outs)
+	case graph.KindFilterSink:
+		// Wave 7 #36d pending — av-layer constructor lands in #36b,
+		// runtime handler in #36d.
+		return fmt.Errorf("node %q: kind %v not yet implemented (Wave 7 #36d pending)", node.ID, node.Kind)
 	default:
 		return fmt.Errorf("unknown node kind %v for node %q", node.Kind, node.ID)
 	}
@@ -1415,6 +1414,81 @@ func (r *graphRunner) handleSimpleFilter(ctx context.Context, node *graph.Node, 
 		return err
 	}
 	return pull()
+}
+
+// ---------- FilterSource handler (Wave 7 #36c) ----------
+
+// handleFilterSource pumps frames from a source-only filter graph (built by
+// createFilterSource via av.NewSourceFilterGraph) into one outbound channel
+// per buffer sink. The source filter inside the graph (color, testsrc, sine,
+// anullsrc, …) generates frames synchronously inside libavfilter — this
+// handler just drains each sink in round-robin until every sink reports EOF.
+//
+// Bounded sources (testsrc2=duration=N, color=d=N, sine=duration=N, …)
+// terminate naturally. Unbounded sources (no duration / nb_frames) only
+// stop when the context is cancelled by the runtime, typically because the
+// downstream encoder/sink has finished and closed its output channel.
+func (r *graphRunner) handleFilterSource(ctx context.Context, node *graph.Node, outs []chan<- any) error {
+	fg := r.filters[node.ID]
+	if fg == nil {
+		return fmt.Errorf("filter_source handler: no filter graph for node %q", node.ID)
+	}
+	if len(outs) != fg.NumOutputs() {
+		return fmt.Errorf("filter_source %q: outs=%d but graph has %d sinks", node.ID, len(outs), fg.NumOutputs())
+	}
+	if fg.NumInputs() != 0 {
+		return fmt.Errorf("filter_source %q: graph has %d buffer sources, expected 0", node.ID, fg.NumInputs())
+	}
+
+	done := make([]bool, len(outs))
+	remaining := len(outs)
+
+	for remaining > 0 {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		anyProgress := false
+		for oi := range outs {
+			if done[oi] {
+				continue
+			}
+			f, err := av.AllocFrame()
+			if err != nil {
+				return err
+			}
+			if err := fg.PullFrameAt(oi, f); err != nil {
+				f.Close()
+				if av.IsEOF(err) {
+					done[oi] = true
+					remaining--
+					continue
+				}
+				if av.IsEAgain(err) {
+					// Source filters never legitimately return EAGAIN —
+					// they generate frames synchronously. Treat as EOF
+					// to avoid spinning.
+					done[oi] = true
+					remaining--
+					continue
+				}
+				return err
+			}
+			anyProgress = true
+			select {
+			case outs[oi] <- f:
+			case <-ctx.Done():
+				f.Close()
+				return ctx.Err()
+			}
+		}
+		if !anyProgress {
+			// Defensive: shouldn't happen given the EAGAIN→done coercion
+			// above, but guards against a libavfilter bug producing an
+			// infinite no-progress loop.
+			break
+		}
+	}
+	return nil
 }
 
 // ---------- Encoder handler ----------
@@ -2418,6 +2492,45 @@ func (r *graphRunner) createFilter(dag *graph.Graph, node *graph.Node) (*av.Filt
 	})
 }
 
+// createFilterSource builds a source-only filter graph for a KindFilterSource
+// node. The node's Filter + Params describe a libavfilter source filter
+// (color, testsrc, sine, anullsrc, …) and the resulting graph has zero
+// buffer sources and one buffer sink per outbound edge. Wave 7 #36c.
+func (r *graphRunner) createFilterSource(node *graph.Node) (*av.FilterGraph, error) {
+	if len(node.Outbound) == 0 {
+		return nil, fmt.Errorf("filter_source %q has no outbound edges", node.ID)
+	}
+	base := buildFilterSpec(NodeDef{Filter: node.Filter, Params: node.Params})
+	spec := buildSourceFilterSpec(base, len(node.Outbound))
+
+	outputs := make([]av.FilterOutputConfig, len(node.Outbound))
+	for i, e := range node.Outbound {
+		outputs[i] = av.FilterOutputConfig{
+			Label:     fmt.Sprintf("out%d", i),
+			MediaType: portTypeToAVMediaType(e.Type),
+		}
+	}
+
+	return av.NewSourceFilterGraph(av.SourceFilterGraphConfig{
+		Outputs:    outputs,
+		FilterSpec: spec,
+		Threads:    paramInt(node.Params, "__filter_threads"),
+	})
+}
+
+// buildSourceFilterSpec wraps a source filter chain with output pad labels.
+// For a single-output source: "color=c=red:s=320x240:d=1[out0]".
+// For an N-output source (e.g. testsrc + split): the base spec already
+// produces N pads and we append [out0][out1]… to label them.
+func buildSourceFilterSpec(base string, numOut int) string {
+	var sb strings.Builder
+	sb.WriteString(base)
+	for i := 0; i < numOut; i++ {
+		fmt.Fprintf(&sb, "[out%d]", i)
+	}
+	return sb.String()
+}
+
 func (r *graphRunner) createEncoder(dag *graph.Graph, node *graph.Node) (*av.EncoderContext, error) {
 	// Determine codec: first from node params, then from downstream output config.
 	codecName := paramString(node.Params, "codec")
@@ -3168,6 +3281,49 @@ func (r *graphRunner) resolveEdgeStreamInfo(dag *graph.Graph, e *graph.Edge) (av
 			return si, nil
 		}
 		return r.resolveStreamInfo(dag, from)
+	case graph.KindFilterSource:
+		// Wave 7 #36c: a filter_source has no inbound edges, so the
+		// only authoritative source for downstream geometry/format
+		// metadata is the buffer sink the source filter feeds.
+		fg := r.filters[from.ID]
+		if fg == nil {
+			return av.StreamInfo{}, fmt.Errorf("no filter graph for filter_source %q", from.ID)
+		}
+		padIdx := 0
+		if e.FromPort != "default" {
+			if n, err := strconv.Atoi(e.FromPort); err == nil {
+				padIdx = n
+			}
+		}
+		si := av.StreamInfo{Type: portTypeToAVMediaType(e.Type)}
+		switch e.Type {
+		case graph.PortVideo:
+			si.Width = fg.OutputWidth(padIdx)
+			si.Height = fg.OutputHeight(padIdx)
+			if pf := fg.OutputPixFmt(padIdx); pf >= 0 {
+				si.PixFmt = pf
+			}
+			if frn, frd := fg.OutputFrameRate(padIdx); frn > 0 && frd > 0 {
+				si.FrameRate = [2]int{frn, frd}
+			}
+			if tbn, tbd := fg.OutputTimeBase(padIdx); tbn > 0 && tbd > 0 {
+				si.TimeBase = [2]int{tbn, tbd}
+			}
+		case graph.PortAudio:
+			if sr := fg.OutputSampleRate(padIdx); sr > 0 {
+				si.SampleRate = sr
+			}
+			if ch := fg.OutputChannels(padIdx); ch > 0 {
+				si.Channels = ch
+			}
+			if sf := fg.OutputSampleFmt(padIdx); sf >= 0 {
+				si.SampleFmt = sf
+			}
+			if tbn, tbd := fg.OutputTimeBase(padIdx); tbn > 0 && tbd > 0 {
+				si.TimeBase = [2]int{tbn, tbd}
+			}
+		}
+		return si, nil
 	case graph.KindGoProcessor:
 		// Pass through to the node's upstream source.
 		return r.resolveStreamInfo(dag, from)

@@ -27,37 +27,37 @@ func ParseArgs(args []string) (*pipeline.Config, error) {
 }
 
 type parser struct {
-	args           []string
-	pos            int
-	inputs         []pipeline.Input
-	outputs        []pipeline.Output
-	nodes          []pipeline.NodeDef
-	edges          []pipeline.EdgeDef
-	codecV         string
-	codecA         string
-	codecS         string
-	videoFilters   string
-	audioFilters   string
-	bsfVideo       string
-	bsfAudio       string
-	bsfSubtitle    string
-	fpsMode        string
-	audioSync      int
-	shortest       bool
-	maxFileSize    int64
-	copyTS         bool
-	startAtZero    bool
+	args            []string
+	pos             int
+	inputs          []pipeline.Input
+	outputs         []pipeline.Output
+	nodes           []pipeline.NodeDef
+	edges           []pipeline.EdgeDef
+	codecV          string
+	codecA          string
+	codecS          string
+	videoFilters    string
+	audioFilters    string
+	bsfVideo        string
+	bsfAudio        string
+	bsfSubtitle     string
+	fpsMode         string
+	audioSync       int
+	shortest        bool
+	maxFileSize     int64
+	copyTS          bool
+	startAtZero     bool
 	filterCxThreads int
-	muxDelay       float64
-	muxPreload     float64
-	avoidNegTS     string
-	disableVideo   bool
-	disableAudio   bool
-	disableSub     bool
-	disableData    bool
-	pass           int
-	passLogFile    string
-	forceKeyFrames string
+	muxDelay        float64
+	muxPreload      float64
+	avoidNegTS      string
+	disableVideo    bool
+	disableAudio    bool
+	disableSub      bool
+	disableData     bool
+	pass            int
+	passLogFile     string
+	forceKeyFrames  string
 	// pendingHLS / pendingDASH collect typed HLS/DASH muxer options
 	// (`-hls_time`, `-hls_playlist_type`, `-seg_duration`, ...).
 	// Allocated lazily on first matching flag and drained onto the
