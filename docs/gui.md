@@ -5,9 +5,6 @@ building, validating, and running MediaMolder JSON pipelines. It is bundled
 into the same single binary as the CLI — no separate install or web server is
 required.
 ![MediaMolder GUI](images/ABR_x264.png)
-For an explanation of nodes, pads, edges, sources and sinks — and the rules
-that govern when two nodes can be wired directly versus when a transform
-filter has to sit between them — see [Graph Basics](graph-basics.md).
 
 ## Quick start
 
@@ -30,6 +27,10 @@ Useful flags:
 | `--dev`      | `false`     | Skip the embedded frontend; expects you to run `npm run dev` separately. |
 
 ## Your first pipeline (5-minute walkthrough)
+
+For an explanation of nodes, pads, edges, sources and sinks — and the rules
+that govern when two nodes can be wired directly versus when a transform
+filter has to sit between them — see [Graph Basics](graph-basics.md).
 
 If you have never used the editor before, the canvas opens with an
 **onboarding card** that summarises the steps below. Click the

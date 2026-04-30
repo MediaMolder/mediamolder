@@ -10,7 +10,7 @@ FFmpeg has two distinct layers:
 
 ### 1. Project Overview
 MediaMolder is an independent, open-source media processing engine written in Go. It provides a new interface/orchestration layer, built on top of the same battle-tested libraries that power FFmpeg; replacing the FFmpeg command-line interface with a clean, declarative JSON defining each job. Mediamolder includes a cross-platform graphical user interface that runs in your web browser, letting you create, edit and run media graphs.
-
+![MediaMolder User Interface](docs/images/ABR_x264.png)
 It is not a wrapper around the ffmpeg binary; it is a ground-up redesign of the high-level engine that retains full media conversion capability through direct libav* bindings.
 
 Version 1.x should be considered experimental.
