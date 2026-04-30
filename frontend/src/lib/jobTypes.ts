@@ -220,6 +220,15 @@ export interface Output {
    *  `-avoid_negative_ts`. Required for clean MP4/MOV writes when
    *  input PTS are negative (typical with `-ss` + `-copyts`). */
   avoid_negative_ts?: '' | 'auto' | 'disabled' | 'make_non_negative' | 'make_zero';
+  /** Drop every video stream from this output's muxer. Mirrors ffmpeg
+   *  `-vn` (OPT_OUTPUT). Filtered before implicit-encoder expansion. */
+  vn?: boolean;
+  /** Drop every audio stream from this output's muxer. Mirrors ffmpeg `-an`. */
+  an?: boolean;
+  /** Drop every subtitle stream from this output's muxer. Mirrors ffmpeg `-sn`. */
+  sn?: boolean;
+  /** Drop every data stream from this output's muxer. Mirrors ffmpeg `-dn`. */
+  dn?: boolean;
   /** Container-level metadata key/value pairs (`-metadata key=value`).
    *  Replaces any metadata mapped from inputs via `input.map_metadata`. */
   metadata?: Record<string, string>;

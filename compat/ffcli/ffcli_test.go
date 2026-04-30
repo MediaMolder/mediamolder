@@ -382,3 +382,27 @@ func TestParseTimestampPolicyErrors(t *testing.T) {
 		})
 	}
 }
+
+// TestParseDisableStreams covers Wave 6 #32: -vn / -an / -sn / -dn
+// scoped to the next output. Each lands on Output.DisableVideo /
+// DisableAudio / DisableSubtitle / DisableData and the parser flag is
+// reset so a second output gets a fresh latch.
+func TestParseDisableStreams(t *testing.T) {
+	cfg, err := Parse("ffmpeg -i in.mp4 -vn -an -sn -dn -c copy a.mp4 -c copy b.mp4")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Outputs) != 2 {
+		t.Fatalf("got %d outputs, want 2", len(cfg.Outputs))
+	}
+	a := cfg.Outputs[0]
+	if !a.DisableVideo || !a.DisableAudio || !a.DisableSubtitle || !a.DisableData {
+		t.Errorf("output[0] disables = v:%v a:%v s:%v d:%v, want all true",
+			a.DisableVideo, a.DisableAudio, a.DisableSubtitle, a.DisableData)
+	}
+	b := cfg.Outputs[1]
+	if b.DisableVideo || b.DisableAudio || b.DisableSubtitle || b.DisableData {
+		t.Errorf("output[1] disables = v:%v a:%v s:%v d:%v, want all false",
+			b.DisableVideo, b.DisableAudio, b.DisableSubtitle, b.DisableData)
+	}
+}

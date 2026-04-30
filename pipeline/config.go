@@ -519,6 +519,23 @@ type Output struct {
 	// (typical with `-ss` + `-copyts`). Validated against the enum
 	// at config-load.
 	AvoidNegativeTS string `json:"avoid_negative_ts,omitempty"`
+	// DisableVideo, DisableAudio, DisableSubtitle, DisableData drop
+	// every inbound edge of the corresponding media type at this
+	// output's sink, so no stream of that type is added to the muxer.
+	// Mirror FFmpeg's `-vn` / `-an` / `-sn` / `-dn` flags scoped to a
+	// single `-i`/`-`/`OUT.ext` block (see fftools/ffmpeg_opt.c
+	// L1977/2078/2115/2187 — `OPT_OUTPUT` aliases of the
+	// per-OutputFile `video_disable`/`audio_disable`/
+	// `subtitle_disable`/`data_disable` toggles). The implicit-encoder
+	// pass and stream-copy wiring are both suppressed for the dropped
+	// type. Edges are filtered in `BuildDef` before
+	// `expandImplicitEncoders` runs so no encoder context is ever
+	// created for the disabled type. validate() refuses an output
+	// whose four flags are all set (zero streams = invalid muxer).
+	DisableVideo    bool `json:"vn,omitempty"`
+	DisableAudio    bool `json:"an,omitempty"`
+	DisableSubtitle bool `json:"sn,omitempty"`
+	DisableData     bool `json:"dn,omitempty"`
 	// Metadata is the container-level metadata table written into the
 	// output (`-metadata key=value` in FFmpeg). When non-nil it
 	// completely replaces any metadata mapped from inputs via
@@ -1118,6 +1135,9 @@ func validate(cfg *Config) error {
 		case "", "auto", "disabled", "make_non_negative", "make_zero":
 		default:
 			return fmt.Errorf("output %q: invalid avoid_negative_ts %q (want auto|disabled|make_non_negative|make_zero)", out.ID, out.AvoidNegativeTS)
+		}
+		if out.DisableVideo && out.DisableAudio && out.DisableSubtitle && out.DisableData {
+			return fmt.Errorf("output %q: vn/an/sn/dn all set — output would have no streams", out.ID)
 		}
 		for j, ss := range out.Streams {
 			switch ss.Type {

@@ -48,10 +48,42 @@ func configToGraphDef(cfg *Config) *graph.Def {
 	for _, out := range cfg.Outputs {
 		def.Outputs = append(def.Outputs, graph.OutputDef{ID: out.ID})
 	}
+	// Index outputs by ID for the disable-by-media-type filter below.
+	outByID := make(map[string]*Output, len(cfg.Outputs))
+	for i := range cfg.Outputs {
+		outByID[cfg.Outputs[i].ID] = &cfg.Outputs[i]
+	}
 	for _, e := range cfg.Graph.Edges {
 		// Skip metadata-routing edges; they are runtime-only.
 		if e.Type == "metadata" {
 			continue
+		}
+		// Drop edges feeding a sink whose Output has the corresponding
+		// `-vn`/`-an`/`-sn`/`-dn` flag set. Filtering here, before
+		// expandImplicitEncoders, prevents the implicit-encoder pass
+		// from synthesising an encoder for the disabled type and
+		// keeps the stream-copy path from registering a copy stream
+		// at the sink. Mirrors fftools/ffmpeg_opt.c L1977/2078/2115/2187
+		// (the OPT_OUTPUT half of the dual-purpose disable flags).
+		if out := outByID[e.To]; out != nil {
+			switch e.Type {
+			case "video":
+				if out.DisableVideo {
+					continue
+				}
+			case "audio":
+				if out.DisableAudio {
+					continue
+				}
+			case "subtitle":
+				if out.DisableSubtitle {
+					continue
+				}
+			case "data":
+				if out.DisableData {
+					continue
+				}
+			}
 		}
 		def.Edges = append(def.Edges, graph.EdgeDef{
 			From: e.From,

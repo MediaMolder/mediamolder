@@ -100,7 +100,7 @@ Legend: ✅ supported · ⚠️ partial · ❌ missing
 | Negative / optional mapping (`-map -0:s`, `-map 0:s?`) | ✅ | `StreamSelect.{Negate,Optional}`; done Wave 2 #9 |
 | Program selection (`-map 0:p:N[:type[:idx]]`) | ✅    | `StreamSelect.Program` (matches `AVProgram.id`); done Wave 2 #10 |
 | `-map_metadata`, `-map_chapters`              | ✅    | `metadata_reader` / `metadata_writer` graph nodes + `Input.MapMetadata` / `Input.MapChapters` shorthand; done Wave 2 #11 |
-| `-vn` / `-an` / `-sn` / `-dn` per output      | ⚠️    | Implied by which edges connect — works but undocumented |
+| `-vn` / `-an` / `-sn` / `-dn` per output      | ✅    | `Output.DisableVideo`/`DisableAudio`/`DisableSubtitle`/`DisableData` drop every inbound edge of the corresponding media type at the sink before `expandImplicitEncoders` runs (mirrors fftools/ffmpeg_opt.c L1977/2078/2115/2187 — the OPT_OUTPUT half of the dual-purpose disable bools). Validator rejects all-four-set. |
 | Reuse of one decoded stream by N filters/outputs (`split`/`asplit`) | ✅ | Works via multi-output filters |
 | Per-input `-map` of *attachment* streams      | ❌    | (see §2.5 attachments) |
 
@@ -856,11 +856,17 @@ and not deprecated.
     `-attach FILE -metadata:s:t:0 mimetype=...`. Per-input
     `-map` of attachment streams (§2.2) falls out for free once
     the attachment stream type is plumbed.
-32. **`-vn` / `-an` / `-sn` / `-dn` per output** (§2.2) —
-    `Output.DisableVideo` / `DisableAudio` / `DisableSubtitle` /
-    `DisableData`. Documented (currently implied by edges) and
-    importer-supported. Lets users build "audio-only re-encode"
-    outputs without rewiring graph edges.
+32. **`-vn` / `-an` / `-sn` / `-dn` per output** (§2.2) — ✅
+    Wave 6. `Output.DisableVideo` / `DisableAudio` /
+    `DisableSubtitle` / `DisableData` drop every inbound edge of
+    the corresponding media type at this output's sink before
+    `expandImplicitEncoders` runs, so no implicit encoder is
+    synthesised and no copy stream is registered. Mirrors
+    `fftools/ffmpeg_opt.c` L1977/2078/2115/2187 (the `OPT_OUTPUT`
+    half of FFmpeg's dual-purpose disable bools). Validator
+    rejects an output with all four flags set (would yield a
+    zero-stream muxer). `compat/ffcli` round-trip latches `-vn`/
+    `-an`/`-sn`/`-dn` onto the next output.
 33. **Encoder colour/timing edge cases** (§2.4) —
     `Output.EncoderTimeBase` (`-enc_time_base`,
     `intra`/`demux`/`filter`/`N/D`), `Output.FieldOrder`

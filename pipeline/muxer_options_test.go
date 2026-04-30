@@ -66,3 +66,61 @@ func TestValidateAvoidNegativeTSEnum(t *testing.T) {
 		}
 	}
 }
+
+// TestValidateDisableAllStreamsRejected covers Wave 6 #32: an output
+// with -vn -an -sn -dn all set has no streams, which avformat_write_header
+// rejects. Surface the error at config-load instead.
+func TestValidateDisableAllStreamsRejected(t *testing.T) {
+	cfg := &Config{
+		SchemaVersion: "1.0",
+		Inputs:        []Input{{ID: "in0", URL: "in.mp4", Streams: []StreamSelect{{Type: "video"}}}},
+		Outputs: []Output{{
+			ID:              "out0",
+			URL:             "out.mp4",
+			DisableVideo:    true,
+			DisableAudio:    true,
+			DisableSubtitle: true,
+			DisableData:     true,
+		}},
+	}
+	if err := validate(cfg); err == nil {
+		t.Fatal("expected validate to reject all-disabled output")
+	}
+	cfg.Outputs[0].DisableData = false
+	if err := validate(cfg); err != nil {
+		t.Fatalf("expected validate to accept 3-of-4 disabled, got: %v", err)
+	}
+}
+
+// TestConfigToGraphDefDropsDisabledEdges covers Wave 6 #32: edges
+// feeding the sink for a disabled media type are filtered before
+// expandImplicitEncoders runs.
+func TestConfigToGraphDefDropsDisabledEdges(t *testing.T) {
+	cfg := &Config{
+		Inputs: []Input{{ID: "in0"}},
+		Graph: GraphDef{
+			Edges: []EdgeDef{
+				{From: "in0:v:0", To: "out0", Type: "video"},
+				{From: "in0:a:0", To: "out0", Type: "audio"},
+			},
+		},
+		Outputs: []Output{{ID: "out0", URL: "out.mp4", DisableAudio: true}},
+	}
+	def := configToGraphDef(cfg)
+	for _, e := range def.Edges {
+		if e.Type == "audio" {
+			t.Fatalf("expected audio edge dropped, got %+v", e)
+		}
+	}
+	// The video edge should survive (and be rewritten by
+	// expandImplicitEncoders into source -> enc -> sink).
+	hasVideo := false
+	for _, e := range def.Edges {
+		if e.Type == "video" {
+			hasVideo = true
+		}
+	}
+	if !hasVideo {
+		t.Fatal("expected video edge preserved")
+	}
+}

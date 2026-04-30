@@ -119,8 +119,9 @@ sections:
         schema: pipeline.NodeDef{Type:"metadata_reader"|"metadata_writer"} + pipeline.EdgeDef{Type:"metadata"}
         notes: Wave 2 #11; reader.params.source/section + writer.params.target/section pair routes container metadata or chapters per-output; Input.MapMetadata/MapChapters shorthand still works for single-input cases
       - flag: "-vn / -an / -sn / -dn (per output)"
-        status: partial
-        schema: graph edges
+        status: covered
+        schema: pipeline.Output.DisableVideo / DisableAudio / DisableSubtitle / DisableData
+        notes: Edges of the disabled media type are filtered before expandImplicitEncoders runs, so no implicit encoder is synthesised and no copy stream is registered (mirrors fftools/ffmpeg_opt.c L1977/2078/2115/2187 — OPT_OUTPUT half of the dual-purpose disable bools). Validator rejects all-four-set.
       - flag: "split / asplit reuse of one decoded stream"
         status: covered
         schema: pipeline.GraphDef.Edges

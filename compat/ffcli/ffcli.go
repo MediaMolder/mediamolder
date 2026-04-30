@@ -50,6 +50,10 @@ type parser struct {
 	muxDelay       float64
 	muxPreload     float64
 	avoidNegTS     string
+	disableVideo   bool
+	disableAudio   bool
+	disableSub     bool
+	disableData    bool
 	pass           int
 	passLogFile    string
 	forceKeyFrames string
@@ -349,11 +353,24 @@ func (p *parser) parse() (*pipeline.Config, error) {
 		case arg == "-y" || arg == "-n":
 			// overwrite flags - ignored
 		case arg == "-an":
+			// FFmpeg `-an` (OPT_OUTPUT half of fftools/ffmpeg_opt.c L2078):
+			// drop every audio stream from the next output's muxer.
+			// Also clears the audio codec selection so downstream
+			// codec=none lookups (legacy callers) keep working.
 			p.codecA = "none"
+			p.disableAudio = true
 		case arg == "-vn":
+			// FFmpeg `-vn` (fftools/ffmpeg_opt.c L1977).
 			p.codecV = "none"
+			p.disableVideo = true
 		case arg == "-sn":
+			// FFmpeg `-sn` (fftools/ffmpeg_opt.c L2115).
 			p.codecS = "none"
+			p.disableSub = true
+		case arg == "-dn":
+			// FFmpeg `-dn` (fftools/ffmpeg_opt.c L2187): drop every data
+			// stream from the next output's muxer.
+			p.disableData = true
 		case arg == "-c:s" || arg == "-scodec":
 			if !p.hasMore() {
 				return nil, fmt.Errorf("%s requires an argument", arg)
@@ -959,6 +976,22 @@ func (p *parser) parse() (*pipeline.Config, error) {
 			if p.avoidNegTS != "" {
 				out.AvoidNegativeTS = p.avoidNegTS
 				p.avoidNegTS = ""
+			}
+			if p.disableVideo {
+				out.DisableVideo = true
+				p.disableVideo = false
+			}
+			if p.disableAudio {
+				out.DisableAudio = true
+				p.disableAudio = false
+			}
+			if p.disableSub {
+				out.DisableSubtitle = true
+				p.disableSub = false
+			}
+			if p.disableData {
+				out.DisableData = true
+				p.disableData = false
 			}
 			if p.pass != 0 {
 				out.Pass = p.pass
