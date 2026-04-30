@@ -582,7 +582,7 @@ type Output struct {
 	// at least one input has MapChapters=true that input's chapter
 	// table is written instead. The container must support chapters
 	// (matroska, mp4, ogg, ffmetadata, …) for them to surface.
-	Chapters []Chapter      `json:"chapters,omitempty"`
+	Chapters []Chapter `json:"chapters,omitempty"`
 	// Attachments lists files muxed into the container as
 	// `AVMEDIA_TYPE_ATTACHMENT` streams (matroska / mkv / webm only).
 	// Mirrors the FFmpeg `-attach FILE` CLI: each entry's content

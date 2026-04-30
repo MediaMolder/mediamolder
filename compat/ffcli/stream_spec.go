@@ -67,34 +67,34 @@ type perStreamEncoderFlag struct {
 // in libavcodec/libx264.c, libavcodec/aacenc.c, etc.). Adding a
 // new key here is a one-line change.
 var perStreamEncoderKeys = map[string]bool{
-	"b":          true, // bitrate
-	"minrate":    true,
-	"maxrate":    true,
-	"bufsize":    true,
-	"crf":        true,
-	"qp":         true,
-	"qmin":       true,
-	"qmax":       true,
-	"qscale":     true,
-	"preset":     true,
-	"tune":       true,
-	"profile":    true,
-	"level":      true,
-	"g":          true, // gop_size
-	"bf":         true, // b-frames
-	"refs":       true,
-	"keyint_min": true,
-	"sc_threshold": true,
-	"x264-params":  true,
-	"x264opts":     true,
-	"x265-params":  true,
+	"b":             true, // bitrate
+	"minrate":       true,
+	"maxrate":       true,
+	"bufsize":       true,
+	"crf":           true,
+	"qp":            true,
+	"qmin":          true,
+	"qmax":          true,
+	"qscale":        true,
+	"preset":        true,
+	"tune":          true,
+	"profile":       true,
+	"level":         true,
+	"g":             true, // gop_size
+	"bf":            true, // b-frames
+	"refs":          true,
+	"keyint_min":    true,
+	"sc_threshold":  true,
+	"x264-params":   true,
+	"x264opts":      true,
+	"x265-params":   true,
 	"svtav1-params": true,
-	"aq-mode":      true,
-	"threads":      true,
-	"aspect":       true,
-	"ar":           true,
-	"ac":           true,
-	"sample_fmt":   true,
+	"aq-mode":       true,
+	"threads":       true,
+	"aspect":        true,
+	"ar":            true,
+	"ac":            true,
+	"sample_fmt":    true,
 }
 
 // parsePerStreamEncoderFlag returns a populated
