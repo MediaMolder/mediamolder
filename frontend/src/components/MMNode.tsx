@@ -12,8 +12,8 @@ export interface MMNodeRunData {
 }
 
 export function MMNode({ data, selected }: NodeProps & { data: FlowNodeData & { run?: MMNodeRunData } }) {
-  const isInput = data.kind === 'input';
-  const isOutput = data.kind === 'output';
+  const isInput = data.kind === 'input' || data.kind === 'filter_source';
+  const isOutput = data.kind === 'output' || data.kind === 'filter_sink';
   const run = data.run;
   const errored = !!run?.hasError || (run?.errors ?? 0) > 0;
 
@@ -114,6 +114,10 @@ export function describeKind(kind: string, supported: readonly string[]): string
       return 'Processor';
     case 'copy':
       return single ? `${cap(single)} stream copy` : 'Stream copy';
+    case 'filter_source':
+      return single ? `${cap(single)} virtual source` : 'Virtual source';
+    case 'filter_sink':
+      return single ? `${cap(single)} virtual sink` : 'Virtual sink';
     default:
       return kind;
   }

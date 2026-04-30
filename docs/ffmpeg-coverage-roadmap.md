@@ -1077,11 +1077,37 @@ Close remaining ⚠️/❌ items in §2.3 that are not hardware-related.
 Once Waves 5–7 land the schema gaps, the GUI side is unblocked. This
 wave delivers every §2.8 / §3.5 GUI item that the schema can now back.
 
-44. **Virtual-source palette** (§2.8, §3.5.1) — Drag-and-drop
-    nodes for `color`, `testsrc`, `sine`, `anullsrc`, `smptebars`,
-    `movie`, `amovie`, plus `Input.Kind="lavfi"` shorthand. Backed
-    by Wave 7 #36a (typing) + #36c (runtime) + #36e (`movie`/
-    `amovie` asset references).
+44. **Virtual-source palette** (§2.8, §3.5.1) ✅ Wave 8 —
+    Drag-and-drop nodes for `color`, `testsrc`, `testsrc2`,
+    `smptebars`, `smptehdbars`, `mandelbrot`, `life`, `yuvtestsrc`,
+    `rgbtestsrc`, `sine`, `anullsrc`, `aevalsrc`, `movie`, `amovie`
+    (all of `pipeline.knownFilterSources` from Wave 7 #36a) plus
+    `nullsink` / `anullsink` discard sinks and an `Input.Kind="lavfi"`
+    shorthand. Backend palette emission lives in
+    [internal/gui/api.go](../internal/gui/api.go) `handleListNodes`,
+    which now walks `av.ListFilters()` a second time and emits
+    `Type="filter_source"` / `"filter_sink"` entries for the curated
+    allow-list under the existing "Sources" / "Sinks" categories
+    (mirroring `pipeline.knownFilterSources` /
+    `knownFilterSinks` — only filters actually built into the
+    running libavfilter appear, so e.g. `mandelbrot` is hidden when
+    the binary lacks it). Frontend wiring extends
+    [`spawnNodeFrom`](../frontend/src/lib/spawn.ts) so dragging a
+    `filter_source` entry creates a `NodeDef{type:"filter_source",
+    filter:<name>, params:{duration:"5"}}` (the default
+    duration satisfies the Wave 7 #36c "must be bounded" validator;
+    `anullsrc` / `aevalsrc` skip it because they are always lazy);
+    [`MMNode`](../frontend/src/components/MMNode.tsx) hides the
+    target handle for `filter_source` and the source handle for
+    `filter_sink` so the React-Flow node looks like an input/output;
+    [`Inspector`](../frontend/src/components/Inspector.tsx) routes
+    the new types through the existing `FilterForm` so AVOption-typed
+    parameter editing works for free. The `lavfi_input` palette
+    entry materialises as a top-level `Input{kind:"lavfi",
+    url:"anullsrc=r=48000:cl=stereo"}` so the existing input
+    inspector form edits the filtergraph spec. Backed by Wave 7
+    #36a (typing) + #36c (runtime) + #36e (`movie` / `amovie` asset
+    references).
 45. **Multi-output inspector with per-stream encoder tabs** (§2.8,
     §3.5.2) — Replace the single-output form with a tabbed view
     showing every `Output` entry; per-output sub-tabs for each

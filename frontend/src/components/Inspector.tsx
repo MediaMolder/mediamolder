@@ -615,7 +615,7 @@ function NodeForm({ def, onChange }: { def: NodeDef; onChange: (next: NodeDef) =
     <>
       <Field label="ID" value={def.id} onChange={(v) => onChange({ ...def, id: v })} />
       <Field label="Type" value={def.type} onChange={(v) => onChange({ ...def, type: v })} />
-      {def.type === 'filter' && (
+      {(def.type === 'filter' || def.type === 'filter_source' || def.type === 'filter_sink') && (
         <Field
           label="Filter"
           value={def.filter ?? ''}
@@ -630,8 +630,10 @@ function NodeForm({ def, onChange }: { def: NodeDef; onChange: (next: NodeDef) =
         />
       )}
       {def.type === 'encoder' && <EncoderForm def={def} onChange={onChange} />}
-      {def.type === 'filter' && <FilterForm def={def} onChange={onChange} />}
-      {def.type !== 'encoder' && def.type !== 'filter' && (
+      {(def.type === 'filter' || def.type === 'filter_source' || def.type === 'filter_sink') && (
+        <FilterForm def={def} onChange={onChange} />
+      )}
+      {def.type !== 'encoder' && def.type !== 'filter' && def.type !== 'filter_source' && def.type !== 'filter_sink' && (
         <ParamsEditor params={def.params ?? {}} onChange={(p) => onChange({ ...def, params: p })} />
       )}
     </>

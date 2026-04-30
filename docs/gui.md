@@ -44,6 +44,24 @@ in-app help dialog.
    *Input file* onto the canvas. Click the new node, then in the Inspector
    on the right click **Browse…** next to **URL** to pick a media file from
    your local filesystem.
+
+   The **Sources › Virtual sources** subcategory carries drag-and-drop
+   nodes for libavfilter source filters that synthesise frames without
+   opening a file: `color`, `testsrc` / `testsrc2`, `smptebars` /
+   `smptehdbars`, `mandelbrot`, `life`, `yuvtestsrc` / `rgbtestsrc`,
+   `sine`, `anullsrc`, `aevalsrc`, plus `movie` / `amovie` (which open a
+   second asset file from inside libavfilter — handy for logo overlays).
+   Newly-spawned virtual sources default to `duration=5` seconds so the
+   job actually terminates; edit the field in the Inspector to bound by
+   `nb_frames` instead, or remove the cap for `anullsrc` / `aevalsrc`
+   which are always lazy. The **Lavfi virtual input** entry materialises
+   as a top-level `Input` with `kind="lavfi"` so the URL field carries a
+   full filtergraph spec (e.g. `anullsrc=r=48000:cl=stereo`) instead of
+   a file path.
+
+   The mirror **Sinks › Virtual sinks** subcategory ships `nullsink` and
+   `anullsink` for terminating analyser branches (e.g. `ebur128` →
+   `ametadata=mode=print` → `anullsink`) without a real muxer output.
 3. **Add processing nodes.** From the palette categories:
    * **Filters** — libavfilter operations (scaling, colour, denoise, audio
      dynamics, …) grouped by intent. Hover any entry for a tooltip with the
