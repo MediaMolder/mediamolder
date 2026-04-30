@@ -34,7 +34,7 @@ exposes:
 | `chapter-add`, `chapter-extract`, `chapter-csv`                 | **Chapter metadata read/write** (and per-stream/global metadata IO) | ✅ Done — `Output.Chapters` / `Output.Metadata` shorthand (§5 #5) + `metadata_reader`/`metadata_writer` graph nodes (Wave 2 #11) |
 | `extract-frame`, `tile-thumbnails`, `scene-images`              | **Per-output frame-count limits** (`-frames:v N`, `-vframes`) | ✅ Done — `Output.MaxFramesVideo` / `MaxFramesAudio` (§5 #2) |
 | `scene-cut`, `scene-cut-to`                                     | **Multi-output batch from a cut-list** (one input, many time-windowed outputs in a single pass) | ✅ Done — resolved via `MaxFrames` + `select=gt(scene,…)` filter; fixtures `21_*`–`25_*` (§5 #2) |
-| `waveform`                                                      | **Cross-media-type filters** (audio→video: `showwavespic`, `showspectrumpic`) wired through MediaMolder's encoder selection | ❌ Open — see §2.3 |
+| `waveform`                                                      | **Cross-media-type filters** (audio→video: `showwavespic`, `showspectrumpic`) wired through MediaMolder's encoder selection | ✅ Done — `output_media_type` field + cross-media registry (Wave 7 #37); fixture `50_audio_waveform.json` |
 | `clip-time`, `scene-time`, `sexagesimal-time`                   | Pure CLI utilities — out of scope for the engine, in scope for a future `mediamolder util` subcommand | out of scope |
 | `ebu-meter`, `scopes`                                           | ffplay-based interactive viewers — out of scope for the engine, possibly in scope for the GUI | out of scope |
 
@@ -994,7 +994,7 @@ Close remaining ⚠️/❌ items in §2.3 that are not hardware-related.
     — `[0:v][movie=logo.png]overlay=W-w-10:10`. Wave 8 #44
     cross-references this for the asset picker.
 
-37. **Cross-media-type filter contract** (§2.3, §3.1.4) — Add
+37. **Cross-media-type filter contract** ✅ Wave 7 (§2.3, §3.1.4) — Add
     `output_media_type` to filter node definitions so the engine
     knows `showwavespic` returns video despite consuming audio
     (and `concat=v=1:a=1` returns both). The GUI then renders

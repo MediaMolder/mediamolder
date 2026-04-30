@@ -86,6 +86,12 @@ type NodeDef struct {
 	Filter    string         // filter name (for filter nodes)
 	Processor string         // registered processor name (for go_processor nodes)
 	Params    map[string]any // filter/encoder/processor parameters
+	// OutputMediaType, when set on a KindFilter node, declares the media type
+	// produced on the node's outbound pads. Required for cross-media-type
+	// filters (showwavespic, showspectrumpic, concat=v=1:a=1, ...) where the
+	// output type cannot be inferred from the inbound edge type. Build
+	// rejects any outbound edge whose Type does not match. (Wave 7 #37)
+	OutputMediaType PortType
 }
 
 // OutputDef describes an output sink.
@@ -109,6 +115,10 @@ type Node struct {
 	Filter    string         // filter name (KindFilter only)
 	Processor string         // registered processor name (KindGoProcessor only)
 	Params    map[string]any // filter/encoder/processor parameters
+	// OutputMediaType is the declared output media type for cross-media-type
+	// filters (e.g. showwavespic: audio in, video out). Empty when the
+	// downstream type matches the upstream type. (Wave 7 #37)
+	OutputMediaType PortType
 
 	Inbound  []*Edge
 	Outbound []*Edge
@@ -162,6 +172,17 @@ func Build(def *Def) (*Graph, error) {
 		}
 		if err := g.addNode(nd.ID, kind, nd.Filter, nd.Processor, nd.Params); err != nil {
 			return nil, err
+		}
+		if nd.OutputMediaType != "" {
+			if kind != KindFilter {
+				return nil, fmt.Errorf("node %q: output_media_type only valid on filter nodes", nd.ID)
+			}
+			switch nd.OutputMediaType {
+			case PortVideo, PortAudio, PortSubtitle, PortData:
+			default:
+				return nil, fmt.Errorf("node %q: invalid output_media_type %q", nd.ID, nd.OutputMediaType)
+			}
+			g.Nodes[nd.ID].OutputMediaType = nd.OutputMediaType
 		}
 	}
 
@@ -282,6 +303,15 @@ func (g *Graph) addEdge(index int, ed EdgeDef) error {
 	}
 
 	pt := PortType(ed.Type)
+
+	// Wave 7 #37: when the source node declares an OutputMediaType, every
+	// outbound edge must match it. This catches accidental wiring of a
+	// cross-media-type filter (showwavespic, etc.) into a same-type
+	// downstream consumer at build time rather than as an opaque libavfilter
+	// pad-type mismatch at runtime.
+	if fromNode.OutputMediaType != "" && pt != fromNode.OutputMediaType {
+		return fmt.Errorf("edge[%d]: node %q declares output_media_type=%q but edge type is %q", index, fromID, fromNode.OutputMediaType, pt)
+	}
 
 	edge := &Edge{
 		From:     fromNode,

@@ -136,6 +136,11 @@
           "additionalProperties": true
         },
         "threads": { "type": "integer", "minimum": 0 },
+        "output_media_type": {
+          "type": "string",
+          "enum": ["video", "audio", "subtitle", "data"],
+          "description": "Declared output media type. Required for cross-media-type filters (showwavespic, showspectrumpic, showvolume, ...) where the output type cannot be inferred from the inbound edge type. Auto-filled from a curated registry when omitted."
+        },
         "error_policy": { "$ref": "#/$defs/error_policy" }
       },
       "if": {

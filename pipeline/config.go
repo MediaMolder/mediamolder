@@ -383,6 +383,16 @@ type NodeDef struct {
 	// per-filter `-filter_threads`. Wins over the pipeline-wide
 	// `Config.FilterComplexThreads`. (Wave 7 #38)
 	Threads int `json:"threads,omitempty"`
+	// OutputMediaType, when set, declares the media type produced on the
+	// node's outbound pads. Required for cross-media-type filters where the
+	// output type cannot be inferred from the inbound edge type — e.g.
+	// `showwavespic` / `showspectrumpic` / `showvolume` (audio in, video
+	// out) or `concat=v=1:a=1` (mixed in, mixed out). The pipeline
+	// validator checks every outbound edge type matches this field; the
+	// runtime forces such nodes through the complex-filter-graph path so
+	// the buffersink media type is set correctly. Valid values: "video",
+	// "audio", "subtitle", "data". (Wave 7 #37)
+	OutputMediaType string `json:"output_media_type,omitempty"`
 }
 
 // EdgeDef describes a directed edge between two nodes.
@@ -1460,6 +1470,12 @@ func validate(cfg *Config) error {
 	// filter_source nodes (filename required + sanitised; well-formed
 	// protocol_whitelist).
 	if err := validateMovieFilterParams(cfg); err != nil {
+		return err
+	}
+	// Wave 7 #37: enforce that filter nodes naming a known cross-media-type
+	// filter (showwavespic, showspectrumpic, showvolume, ...) have outbound
+	// edge types matching the filter's produced media type.
+	if err := validateCrossMediaTypeFilters(cfg); err != nil {
 		return err
 	}
 	// Validate metadata_reader / metadata_writer nodes (Wave 2 #11).

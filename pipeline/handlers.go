@@ -62,12 +62,24 @@ func configToGraphDef(cfg *Config) *graph.Def {
 				params["__filter_threads"] = eff
 			}
 		}
+		// Wave 7 #37: auto-fill OutputMediaType from the cross-media-type
+		// registry when the user did not declare one, so the runtime can
+		// route showwavespic / showspectrum / showvolume / ... through the
+		// complex-filter-graph path without the user having to spell it out
+		// in the JSON.
+		omt := graph.PortType(node.OutputMediaType)
+		if omt == "" && node.Type == "filter" {
+			if pt, ok := crossMediaTypeFilters[node.Filter]; ok {
+				omt = pt
+			}
+		}
 		def.Nodes = append(def.Nodes, graph.NodeDef{
-			ID:        node.ID,
-			Type:      node.Type,
-			Filter:    node.Filter,
-			Processor: node.Processor,
-			Params:    params,
+			ID:              node.ID,
+			Type:            node.Type,
+			Filter:          node.Filter,
+			Processor:       node.Processor,
+			Params:          params,
+			OutputMediaType: omt,
 		})
 	}
 	for _, out := range cfg.Outputs {
@@ -2507,8 +2519,13 @@ func (r *graphRunner) createFilter(dag *graph.Graph, node *graph.Node) (*av.Filt
 	})
 	threads := paramInt(params, "__filter_threads")
 
-	// Simple 1→1 filter.
-	if len(node.Inbound) == 1 && len(node.Outbound) == 1 {
+	// Simple 1→1 filter — fast path, but only when input and output
+	// media types match. Cross-media-type filters (showwavespic,
+	// showspectrumpic, showvolume, ...) need the complex graph because
+	// NewVideoFilterGraph / NewAudioFilterGraph hard-wire the buffersink
+	// type to match the buffersrc type. (Wave 7 #37)
+	crossMedia := node.OutputMediaType != "" && len(node.Inbound) > 0 && node.OutputMediaType != node.Inbound[0].Type
+	if len(node.Inbound) == 1 && len(node.Outbound) == 1 && !crossMedia {
 		si, err := r.resolveStreamInfo(dag, node)
 		if err != nil {
 			return nil, fmt.Errorf("filter %q: %w", node.ID, err)

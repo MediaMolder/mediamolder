@@ -118,6 +118,11 @@ export interface NodeDef {
    *  Mirrors ffmpeg's per-filter `-filter_threads`; written to
    *  `AVFilterGraph.nb_threads`. Wins over `Config.filter_complex_threads`. */
   threads?: number;
+  /** Declared output media type for cross-media-type filters (Wave 7 #37).
+   *  Required when the filter's output type differs from its input type
+   *  (e.g. `showwavespic`: audio in, video out). Auto-filled by the engine
+   *  from a curated registry when omitted. */
+  output_media_type?: StreamType;
 }
 
 export interface EdgeDef {
