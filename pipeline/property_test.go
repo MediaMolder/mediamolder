@@ -148,7 +148,7 @@ func genConfig(t *rapid.T) *Config {
 		cfg.Graph.Nodes = append(cfg.Graph.Nodes, NodeDef{
 			ID:     fmt.Sprintf("n_%d_%s", i, id),
 			Type:   rapid.SampledFrom(nodeTypes).Draw(t, "nodeType"),
-			Filter: rapid.StringMatching(`^[a-z_]{2,10}$`).Draw(t, "filter"),
+			Filter: rapid.SampledFrom([]string{"scale", "crop", "fps", "format", "null", "copy", "trim", "setpts", "overlay", "split"}).Draw(t, "filter"),
 		})
 	}
 

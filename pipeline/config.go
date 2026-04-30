@@ -1412,6 +1412,11 @@ func validate(cfg *Config) error {
 			return fmt.Errorf("node[%d] %q: go_processor requires a \"processor\" field", i, node.ID)
 		}
 	}
+	// Wave 7 #42: reject filters whose libavfilter implementation is
+	// not compiled into this build (e.g. zscale without --enable-libzimg).
+	if err := validateFilterAvailability(cfg); err != nil {
+		return err
+	}
 	// Validate metadata_reader / metadata_writer nodes (Wave 2 #11).
 	// Reader requires params.source = input id; writer requires
 	// params.target = output id. Optional params: section

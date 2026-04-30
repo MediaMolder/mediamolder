@@ -128,7 +128,7 @@ Legend: ✅ supported · ⚠️ partial · ❌ missing
 | **Mixed labelled + unlabelled `-filter_complex` outputs**   | ⚠️    | Works when constructed manually; importer/exporter round-trip not yet tested |
 | `setsar`, `setdar` (SAR/DAR overrides)                      | ✅    | `Output.SAR` / `Output.DAR` shorthand; `compat/ffcli` rewrites legacy `-aspect`. Wave 3 #15. |
 | `arnndn` (RNNoise) and other model-file filters             | ⚠️    | Filter runs if model path is correct; no fixture story for filter-side data files |
-| `zscale` + `tonemap` (HDR)                                  | ⚠️    | Requires libzimg in build; no feature probe |
+| `zscale` + `tonemap` (HDR)                                  | ✅    | Validator (`pipeline.validateFilterAvailability`) rejects unknown / unbuilt filters with an actionable hint (`zscale` → `--enable-libzimg`, `tonemap_opencl` → `--enable-opencl`, …) instead of waiting for a runtime "filter not found". Palette (`/api/nodes`) only lists filters reported by `av.ListFilters()`, so unbuilt entries are absent automatically. (Wave 7 #42) |
 | `minterpolate` (motion-compensated interpolation)           | ✅    | Frame-rate / time-base plumbing done in §5 #1; the AVOption miner (§4 #19) exposes `mi_mode` / `mc_mode` / `me_mode` / `me` (and `vsbmc`) as typed `int` options carrying their named constants — the GUI Inspector renders them as enum dropdowns. (Wave 7 #43) |
 | Audio channel manipulation: `pan`, `channelsplit`, `channelmap`, `join`, `amerge`, `amix=weights` | ⚠️ | Available as filters; GUI has no per-channel routing UI |
 
@@ -925,11 +925,17 @@ Close remaining ⚠️/❌ items in §2.3 that are not hardware-related.
     `channelmap`, `join`, `amerge`, `amix=weights`) (§2.3, §1.1) —
     Backend wiring + a fixture per filter; GUI matrix view lands
     in Wave 8.
-42. **HDR `zscale` + `tonemap`** (§2.3, §1.1) — Build-tag for
-    libzimg (mirrors `ffstatic`); per-filter availability probe
-    surfaces the result as a feature flag the schema validator
-    consults. Filter palette greys out `zscale` when libzimg is
-    absent.
+42. **HDR `zscale` + `tonemap`** (§2.3, §1.1) ✅ — New
+    `pipeline.validateFilterAvailability` walks every filter
+    node and rejects unknown filters at config-load time. The
+    error message includes the configure flag (e.g. `zscale` →
+    `--enable-libzimg`; `tonemap_opencl` → `--enable-opencl`)
+    via the `pipeline.optionalFilterLibs` registry, so the
+    operator gets an actionable rebuild hint instead of a
+    confusing runtime "filter not found". The palette
+    (`/api/nodes` → `handleListNodes`) already lists only
+    filters reported by `av.ListFilters()`, so unbuilt entries
+    are absent from the GUI automatically.
 43. **`minterpolate` motion-estimation parameter surface** (§2.3,
     §1.1) ✅ — The AVOption miner (Wave 4 #19) already exposes
     `mi_mode` / `mc_mode` / `me_mode` / `me` as typed `int`
