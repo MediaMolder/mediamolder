@@ -37,7 +37,6 @@ export function Inspector({ node, nodes, edges, onChange, onDelete }: Props) {
     { name: node.data.label, friendly_name: friendly },
     naming,
   );
-  const showCanonical = naming === 'friendly' && heading !== node.data.label;
 
   if (node.data.implicit) {
     return (
@@ -45,9 +44,6 @@ export function Inspector({ node, nodes, edges, onChange, onDelete }: Props) {
         <div className="inspector-header">
           <h3>{heading}</h3>
         </div>
-        {showCanonical && (
-          <div className="inspector-canonical"><code>{node.data.label}</code></div>
-        )}
         <div className="mm-node-type" style={{ marginBottom: 12 }}>
           {describeKind(node.data.kind, node.data.streams ?? [])} (implicit)
         </div>
@@ -71,9 +67,6 @@ export function Inspector({ node, nodes, edges, onChange, onDelete }: Props) {
         <h3>{heading}</h3>
         <button className="danger" onClick={() => onDelete(node.id)}>Delete</button>
       </div>
-      {showCanonical && (
-        <div className="inspector-canonical"><code>{node.data.label}</code></div>
-      )}
       <div className="mm-node-type" style={{ marginBottom: 12 }}>
         {describeKind(node.data.kind, node.data.streams ?? [])}
       </div>

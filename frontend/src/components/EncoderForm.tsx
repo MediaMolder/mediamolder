@@ -154,10 +154,7 @@ export function EncoderForm({ def, onChange }: Props) {
   return (
     <>
       <div className="encoder-form-header" style={{ marginTop: 4, marginBottom: 8 }}>
-        <strong>{info.long_name || info.name}</strong>
-        <div className="empty" style={{ fontSize: 11, marginTop: 2 }}>
-          {info.media_type} · {codec}
-        </div>
+        <strong>{prettyCodecFormat(info, codec)}</strong>
       </div>
 
       {preset && (
@@ -657,6 +654,40 @@ function PrimaryRow({
       )}
     </>
   );
+}
+
+/**
+ * Trim FFmpeg's verbose codec long_name down to the two most common
+ * names for the underlying coding standard. libavcodec long_names
+ * routinely include the implementation prefix and every historical
+ * alias for the codec, e.g.
+ *
+ *   libx264:    "libx264 H.264 / AVC / MPEG-4 AVC / MPEG-4 part 10"
+ *   libx265:    "libx265 H.265 / HEVC (High Efficiency Video Coding)"
+ *   libsvtav1:  "SVT-AV1(Scalable Video Technology for AV1) encoder"
+ *   aac:        "AAC (Advanced Audio Coding)"
+ *
+ * Users want one short, unambiguous "this is the format you'll get"
+ * line — so we strip the implementation name when it leads, then
+ * keep at most the first two slash-separated tokens. The implementation
+ * name is already shown elsewhere (the node heading and the codec field
+ * in the params block) so dropping it here removes a redundancy, not
+ * information.
+ */
+function prettyCodecFormat(info: EncoderInfo, codec: string): string {
+  let s = (info.long_name || info.name || codec).trim();
+  // Strip leading "<codec>" prefix when libavcodec embeds it (libx264,
+  // libx265, libfdk_aac all do this).
+  const lower = s.toLowerCase();
+  const prefix = codec.toLowerCase();
+  if (lower.startsWith(prefix + ' ')) s = s.slice(prefix.length + 1).trim();
+  else if (lower.startsWith(prefix + '(')) s = s.slice(prefix.length).trim();
+  // Drop a trailing " encoder" word that some long_names append.
+  s = s.replace(/\s+encoder$/i, '').trim();
+  // Keep at most the first two " / "-separated tokens.
+  const parts = s.split(/\s*\/\s*/);
+  if (parts.length > 2) s = parts.slice(0, 2).join(' / ');
+  return s;
 }
 
 function prettyLabel(name: string): string {
