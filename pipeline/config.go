@@ -1199,7 +1199,20 @@ func validate(cfg *Config) error {
 		}
 	}
 	if len(cfg.Outputs) == 0 {
-		return fmt.Errorf("config must have at least one output")
+		// Wave 7 #36d: a pipeline whose terminal nodes are all
+		// filter_sink (nullsink/anullsink, optionally chained behind
+		// a side-effect filter such as ebur128 or
+		// ametadata=mode=print) needs no top-level muxer output.
+		hasFilterSink := false
+		for _, n := range cfg.Graph.Nodes {
+			if n.Type == "filter_sink" {
+				hasFilterSink = true
+				break
+			}
+		}
+		if !hasFilterSink {
+			return fmt.Errorf("config must have at least one output")
+		}
 	}
 	if cfg.StartAtZero && !cfg.CopyTS {
 		return fmt.Errorf("start_at_zero requires copy_ts=true (it modulates -copyts behaviour; see fftools/ffmpeg_demux.c)")

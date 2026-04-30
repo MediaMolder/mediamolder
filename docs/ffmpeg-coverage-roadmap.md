@@ -967,7 +967,8 @@ Close remaining ⚠️/❌ items in §2.3 that are not hardware-related.
     [testdata/examples/52_filter_source_testsrc_only.json](../testdata/examples/52_filter_source_testsrc_only.json)
     (`testsrc2=d=5` → libx264 → mp4 with no top-level `-i`).
 
-    **36d — `KindFilterSink` runtime handler.** New
+    **36d — `KindFilterSink` runtime handler.** ✅ Wave 7.
+    New
     `handleFilterSink` worker — drains the inbound channel
     into a `NewSinkFilterGraph`-built graph, discards
     consumed frames, honours `ctx.Done()`. Validator: at

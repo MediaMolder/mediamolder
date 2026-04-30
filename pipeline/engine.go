@@ -266,8 +266,11 @@ func (p *Pipeline) stepForward(target State) error {
 		// Actual resource allocation is deferred to PAUSED to keep READY cheap.
 		// Wave 7 #36c: a config may have zero Inputs when it stands
 		// entirely on filter_source nodes (color, testsrc, sine, …).
-		if len(p.cfg.Outputs) == 0 {
-			return fmt.Errorf("config has no outputs")
+		// Wave 7 #36d: a config may have zero Outputs when every sink
+		// is a filter_sink (nullsink/anullsink terminating a side-effect
+		// chain such as ebur128 or ametadata=mode=print).
+		if len(p.cfg.Outputs) == 0 && !configHasFilterSink(p.cfg) {
+			return fmt.Errorf("config has no outputs or filter_sink nodes")
 		}
 		if len(p.cfg.Inputs) == 0 && !configHasFilterSource(p.cfg) {
 			return fmt.Errorf("config has no inputs or filter_source nodes")
@@ -771,6 +774,19 @@ func configHasFilterSource(cfg *Config) bool {
 	return false
 }
 
+// configHasFilterSink reports whether cfg.Graph contains at least one
+// node of type "filter_sink" (Wave 7 #36d). Lets the engine accept a
+// pipeline whose terminal nodes are all libavfilter sinks (nullsink,
+// anullsink, ebur128 → anullsink, …) with no top-level muxer outputs.
+func configHasFilterSink(cfg *Config) bool {
+	for _, n := range cfg.Graph.Nodes {
+		if n.Type == "filter_sink" {
+			return true
+		}
+	}
+	return false
+}
+
 func buildFilterSpec(node NodeDef) string {
 	if node.Filter == "" {
 		return "null"
@@ -923,6 +939,12 @@ func (p *Pipeline) runGraph(ctx context.Context) (runErr error) {
 			fg, err := runner.createFilterSource(node)
 			if err != nil {
 				return fmt.Errorf("create filter_source %q: %w", node.ID, err)
+			}
+			runner.filters[node.ID] = fg
+		case graph.KindFilterSink:
+			fg, err := runner.createFilterSink(dag, node)
+			if err != nil {
+				return fmt.Errorf("create filter_sink %q: %w", node.ID, err)
 			}
 			runner.filters[node.ID] = fg
 		case graph.KindEncoder:

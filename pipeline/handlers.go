@@ -798,9 +798,7 @@ func (r *graphRunner) handle(ctx context.Context, node *graph.Node, ins []<-chan
 	case graph.KindFilterSource:
 		return r.handleFilterSource(ctx, node, outs)
 	case graph.KindFilterSink:
-		// Wave 7 #36d pending — av-layer constructor lands in #36b,
-		// runtime handler in #36d.
-		return fmt.Errorf("node %q: kind %v not yet implemented (Wave 7 #36d pending)", node.ID, node.Kind)
+		return r.handleFilterSink(ctx, node, ins)
 	default:
 		return fmt.Errorf("unknown node kind %v for node %q", node.Kind, node.ID)
 	}
@@ -1486,6 +1484,96 @@ func (r *graphRunner) handleFilterSource(ctx context.Context, node *graph.Node, 
 			// above, but guards against a libavfilter bug producing an
 			// infinite no-progress loop.
 			break
+		}
+	}
+	return nil
+}
+
+// ---------- FilterSink handler (Wave 7 #36d) ----------
+
+// handleFilterSink pushes frames from N inbound channels into the buffer
+// sources of a sink-only filter graph (built by createFilterSink via
+// av.NewSinkFilterGraph). The graph terminates every input pad in a
+// libavfilter sink (nullsink, anullsink, or a chain ending in one such
+// as `ebur128,anullsink` or `ametadata=mode=print:file=…,anullsink`),
+// so there are no buffer sinks to drain. Frames are consumed for their
+// side effects and discarded.
+func (r *graphRunner) handleFilterSink(ctx context.Context, node *graph.Node, ins []<-chan any) error {
+	fg := r.filters[node.ID]
+	if fg == nil {
+		return fmt.Errorf("filter_sink handler: no filter graph for node %q", node.ID)
+	}
+	if len(ins) != fg.NumInputs() {
+		return fmt.Errorf("filter_sink %q: ins=%d but graph has %d sources", node.ID, len(ins), fg.NumInputs())
+	}
+	if fg.NumOutputs() != 0 {
+		return fmt.Errorf("filter_sink %q: graph has %d buffer sinks, expected 0", node.ID, fg.NumOutputs())
+	}
+
+	// Single-input fast path.
+	if len(ins) == 1 {
+		for v := range ins[0] {
+			f := v.(*av.Frame)
+			if err := fg.PushFrame(f); err != nil {
+				f.Close()
+				if av.IsEOF(err) || av.IsEAgain(err) {
+					continue
+				}
+				return err
+			}
+			f.Close()
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+		}
+		if err := fg.Flush(); err != nil && !av.IsEOF(err) {
+			return err
+		}
+		return nil
+	}
+
+	// Multi-input: serialise all filter-graph operations through a
+	// single goroutine (mirrors handleFilter).
+	type filterMsg struct {
+		padIdx int
+		frame  *av.Frame // nil = this input is exhausted
+	}
+	msgCh := make(chan filterMsg, 8*len(ins))
+
+	var wg sync.WaitGroup
+	for i, in := range ins {
+		i, in := i, in
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for v := range in {
+				msgCh <- filterMsg{padIdx: i, frame: v.(*av.Frame)}
+			}
+			msgCh <- filterMsg{padIdx: i, frame: nil}
+		}()
+	}
+	go func() {
+		wg.Wait()
+		close(msgCh)
+	}()
+
+	for msg := range msgCh {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if msg.frame == nil {
+			if err := fg.FlushAt(msg.padIdx); err != nil && !av.IsEOF(err) {
+				return err
+			}
+			continue
+		}
+		if err := fg.PushFrameAt(msg.padIdx, msg.frame); err != nil {
+			msg.frame.Close()
+			if !av.IsEOF(err) && !av.IsEAgain(err) {
+				return err
+			}
+		} else {
+			msg.frame.Close()
 		}
 	}
 	return nil
@@ -2528,6 +2616,61 @@ func buildSourceFilterSpec(base string, numOut int) string {
 	for i := 0; i < numOut; i++ {
 		fmt.Fprintf(&sb, "[out%d]", i)
 	}
+	return sb.String()
+}
+
+// createFilterSink builds a sink-only filter graph for a KindFilterSink
+// node. The node's Filter + Params describe a libavfilter sink chain
+// terminating in nullsink/anullsink (e.g. "nullsink" or
+// "ebur128=peak=true,anullsink"); the resulting graph has one buffer
+// source per inbound edge and zero buffer sinks. Wave 7 #36d.
+func (r *graphRunner) createFilterSink(dag *graph.Graph, node *graph.Node) (*av.FilterGraph, error) {
+	if len(node.Inbound) == 0 {
+		return nil, fmt.Errorf("filter_sink %q has no inbound edges", node.ID)
+	}
+	base := buildFilterSpec(NodeDef{Filter: node.Filter, Params: node.Params})
+	spec := buildSinkFilterSpec(base, len(node.Inbound))
+
+	inputs := make([]av.FilterPadConfig, len(node.Inbound))
+	for i, e := range node.Inbound {
+		si, err := r.resolveEdgeStreamInfo(dag, e)
+		if err != nil {
+			return nil, fmt.Errorf("filter_sink %q input %d: %w", node.ID, i, err)
+		}
+		inputs[i] = av.FilterPadConfig{
+			Label:      fmt.Sprintf("in%d", i),
+			MediaType:  portTypeToAVMediaType(e.Type),
+			Width:      si.Width,
+			Height:     si.Height,
+			PixFmt:     si.PixFmt,
+			TBNum:      si.TimeBase[0],
+			TBDen:      si.TimeBase[1],
+			SARNum:     1,
+			SARDen:     1,
+			FRNum:      si.FrameRate[0],
+			FRDen:      si.FrameRate[1],
+			SampleFmt:  si.SampleFmt,
+			SampleRate: si.SampleRate,
+			Channels:   si.Channels,
+		}
+	}
+
+	return av.NewSinkFilterGraph(av.SinkFilterGraphConfig{
+		Inputs:     inputs,
+		FilterSpec: spec,
+		Threads:    paramInt(node.Params, "__filter_threads"),
+	})
+}
+
+// buildSinkFilterSpec wraps a sink filter chain with input pad labels.
+// For a single-input sink: "[in0]nullsink".
+// For an N-input sink (e.g. concat + nullsink): "[in0][in1]concat=…,nullsink".
+func buildSinkFilterSpec(base string, numIn int) string {
+	var sb strings.Builder
+	for i := 0; i < numIn; i++ {
+		fmt.Fprintf(&sb, "[in%d]", i)
+	}
+	sb.WriteString(base)
 	return sb.String()
 }
 
