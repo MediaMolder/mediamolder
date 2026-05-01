@@ -70,8 +70,12 @@ func NewServer(opts Options) (*http.Server, error) {
 	}
 
 	return &http.Server{
-		Addr:    opts.Addr,
-		Handler: logRequests(mux),
+		Addr:              opts.Addr,
+		Handler:           logRequests(mux),
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      60 * time.Second,
+		IdleTimeout:       120 * time.Second,
 	}, nil
 }
 

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"net/http"
 	"os"
@@ -15,6 +16,11 @@ import (
 	"sort"
 	"strings"
 )
+
+// mkdirBodyLimit caps the request body for POST /api/files/mkdir.
+// The endpoint only carries a parent path and a folder name, so 4 KiB is
+// generous. If you need to pass unusually long paths, raise this constant.
+const mkdirBodyLimit = 4 * 1024
 
 // fileEntry represents one item in a directory listing.
 type fileEntry struct {
@@ -256,7 +262,7 @@ type mkdirResponse struct {
 // handleListDir: localhost-only.
 func handleMkdir(w http.ResponseWriter, r *http.Request) {
 	var req mkdirRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.NewDecoder(io.LimitReader(r.Body, mkdirBodyLimit)).Decode(&req); err != nil {
 		writeJSONError(w, http.StatusBadRequest, fmt.Errorf("invalid JSON body: %w", err))
 		return
 	}
