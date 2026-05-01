@@ -25,7 +25,6 @@ The goal is **maximum usability and operational reliability** while preserving 1
 ### 3. Non-Goals
 - Pure-Go implementation of codecs/filters (performance and compatibility reasons).
 - Replacing any libav* library.
-- GUI or web UI (those can be built on top).
 
 ### 4. High-Level Architecture
 ```
@@ -78,19 +77,41 @@ The goal is **maximum usability and operational reliability** while preserving 1
 - **cgo boundary safety**: All C pointer lifetimes are pinned to Go object lifetimes via explicit allocation/free pairs. No C pointers are stored in Go heap objects beyond their owning wrapper. Race-detector-compatible tests exercise concurrent access patterns.
 
 #### 6.2 Pipeline Definition (`mediamolder/pipeline`)
-- **Pipeline** struct containing:
-  - Inputs (array of `Input` with URL, format options, structured stream selection)
-  - Graph (directed acyclic graph of nodes + **explicit typed edges**)
-  - Outputs (array of `Output` with muxer, codec, metadata)
-  - Global options (thread count, hardware accel, metadata, timestamps)
-- Nodes are typed:
-  - `SourceNode` (demux+decode)
-  - `FilterNode` (any libavfilter)
-  - `EncoderNode`
-  - `SinkNode` (mux)
+- **Config** struct containing:
+  - `inputs[]` — array of `Input` with URL, kind, demuxer options, structured stream selection, timing/seek parameters
+  - `graph` — directed acyclic graph of `NodeDef` nodes and `EdgeDef` edges
+  - `outputs[]` — array of `Output` with muxer, codec, HLS/DASH options, two-pass, HDR metadata, attachments
+  - Global options: thread count, hardware accel, metadata, timestamps, `filter_complex_threads`
+- **Node types** (`NodeDef.type`):
+  - `"filter"` — any libavfilter filter (scale, drawtext, overlay, …). `filter` names the libavfilter string; `params` carries typed options. Optional `threads` overrides per-node filter thread count; `output_media_type` declares the outbound pad type for cross-media filters (e.g. `showwavespic`).
+  - `"filter_source"` — libavfilter source that synthesises frames without a demuxer input (allow-listed: `color`, `testsrc`, `testsrc2`, `smptebars`, `sine`, `anullsrc`, `aevalsrc`, `movie`, `amovie`, etc.). Required when a pipeline has no top-level `inputs[]`.
+  - `"filter_sink"` — libavfilter sink that terminates an analyser branch without a muxer output (allow-listed: `nullsink`, `anullsink`).
+  - `"go_processor"` — a Go-native frame processor from the `mediamolder/processors` registry (see §18). `processor` names the registered type; `params` is forwarded to `Processor.Init`.
+  - `"encoder"`, `"source"`, `"sink"` — internal legacy aliases; prefer the types above in new configs.
+- **Input extended fields**:
+  - `kind`: `""` / `"file"` (default), `"lavfi"` (libavfilter source via lavfi demuxer), `"raw"` (unframed PCM/video requiring `format` + geometry fields), `"concat"` (libavformat concat demuxer with inline `concat_list[]`).
+  - `accurate_seek`, `seek_timestamp`, `thread_queue_size`, `protocol_whitelist[]`, `pattern_type`.
+  - `stream_loop` for looped inputs; `itsoffset` for per-input timestamp shift; `read_rate` / `read_rate_initial_burst` / `read_rate_catchup` for live-restream pacing.
+  - `map_metadata`, `map_chapters`, `subtitle_charenc` for container-level metadata control.
+  - `concat_list[]` — inline playlist (avoids sidecar `.txt` files for concat workflows).
+- **Output extended fields**:
+  - `kind`: `""` / `"file"` (default), `"tee"` — fan-out to multiple destinations via libavformat tee muxer. Tee outputs carry a `targets[]` array of `TeeTarget` (each with `url`, `format`, `select`, `on_fail`, `use_fifo`, `fifo_options`).
+  - `pass` (1 or 2) + `passlogfile` — two-pass video encoding. The runtime assigns a unique pass-log index to each two-pass output so multiple passes in one job do not collide.
+  - `loudnorm_pass` (1 or 2) — EBU R128 two-pass loudness normalisation via the `loudnorm` filter.
+  - `hls` — typed `HLSOptions` struct (segment duration, playlist type, segment type, fMP4 init filename, HLS flags, etc.) instead of raw `options` map entries.
+  - `dash` — typed `DASHOptions` struct (segment duration, window size, extra windows, LDASH, HLS playlist sidecar, DASH flags, etc.).
+  - `attachments[]` — files muxed as `AVMEDIA_TYPE_ATTACHMENT` streams (MKV/WebM only; mirrors FFmpeg's `-attach`).
+  - `audio_sync` — resync compensation threshold (mirrors `-async N`).
+  - `shortest` — stop muxing when the shortest input stream ends.
+  - `max_frames_video` / `max_frames_audio` — packet caps per stream type.
+  - `fps_mode` — VFR/CFR reconciliation policy.
+  - `bsf_video` / `bsf_audio` / `bsf_subtitle` — bitstream filter chains.
+  - `codec_tag_video` / `codec_tag_audio` / `codec_tag_subtitle` — FourCC overrides (e.g. `"hvc1"` for Safari HEVC).
+  - `encoder_params_video` / `encoder_params_audio` / `encoder_params_subtitle` — codec-specific options (preset, crf, tune, …) attached to implicit encoders; populated by `ffcli.Parse` for CLI round-trips.
+- **HDR / colour metadata** (`Output.VideoStream.ColorSpace`, `HDRMetadata`): SMPTE ST 2086 mastering display, CTA-861.3 content light level, and Dolby Vision (`DoViMetadata`) configuration record (`AVDOVIDecoderConfigurationRecord`).
+- **Graph UI layout** (`GraphDef.UI`): optional `positions` map keyed by node ID, ignored by the runtime, preserved on round-trip so the visual editor can persist canvas layouts in schema v1.2 configs.
 - Edges connect named ports between nodes and carry a media type (`video`, `audio`, `subtitle`, `data`). Validation rejects edges that connect incompatible port types.
-- Supports filter chains, multi-input/multi-output filters, split/merge, and labels via Go API only.
-- Validation at build time (type checking of ports: video/audio/subtitle/data) using JSON Schema.
+- `DisallowUnknownFields` is enforced on all `ParseConfig` calls; schema mismatch surfaces as a clear parse error rather than silent mis-validation.
 
 #### 6.3 Graph Engine (`mediamolder/graph`)
 - Builds libavfilter graph from the declarative Go model (loaded from JSON command payload).
@@ -192,14 +213,17 @@ MediaMolder provides a parser that accepts FFmpeg CLI command strings and conver
 
 ### 8. JSON Schema Versioning & Migration
 
-- Every JSON command payload includes a top-level `"schema_version"` field (e.g., `"schema_version": "1.0"`).
+- Every JSON command payload includes a top-level `"schema_version"` field (e.g., `"schema_version": "1.2"`).
+- **Supported versions**: `"1.0"`, `"1.1"`, `"1.2"`. The parser rejects any other value with a clear error.
 - **Parsing rules**:
-  - Unknown fields are rejected by default (strict mode). An `--allow-unknown-fields` flag enables lenient parsing for forward compatibility during transitions.
+  - Unknown fields are rejected by default (`DisallowUnknownFields`). An `--allow-unknown-fields` flag enables lenient parsing for forward compatibility during transitions.
   - Missing optional fields receive documented defaults.
 - **Schema evolution**:
-  - Minor versions (1.0 → 1.1): Additive only (new optional fields). Older payloads are valid without modification.
-  - Major versions (1.x → 2.0): Breaking changes. A migration tool (`mediamolder migrate --from=1 --to=2 config.json`) rewrites payloads automatically.
-- **JSON Schema files** are published alongside releases at `mediamolder/schema/v1.0.json` etc. and are usable for editor autocompletion and CI validation.
+  - `1.0 → 1.1`: Added per-output `hls` / `dash` typed option structs, `attachments[]`, `pass` / `passlogfile` two-pass video encoding, `loudnorm_pass` audio two-pass.
+  - `1.1 → 1.2`: Added `graph.ui` layout metadata (editor canvas positions), `filter_source` / `filter_sink` node types, `go_processor` node type, extended input fields (`stream_loop`, `itsoffset`, `read_rate`, `read_rate_catchup`, `read_rate_initial_burst`, `map_metadata`, `map_chapters`, `subtitle_charenc`), output fields (`audio_sync`, `shortest`, `max_frames_video`, `max_frames_audio`, `fps_mode`, `codec_tag_*`, `encoder_params_*`), HDR/DoVI metadata.
+  - Minor versions are additive: older payloads remain valid without modification.
+  - Major versions (1.x → 2.0): Breaking changes. A migration tool (`mediamolder migrate`) rewrites payloads automatically.
+- **JSON Schema files** are published alongside releases at `mediamolder/schema/v1.0.json`, `mediamolder/schema/v1.1.json`, etc. and are usable for editor autocompletion and CI validation. (`schema/v1.2.json` is pending; the runtime accepts v1.2 configs but the published schema file has not been generated yet.)
 
 ### 9. Configuration Example (JSON – Primary Command Payload)
 ```json
@@ -380,29 +404,42 @@ MediaMolder's Go code is licensed under **LGPL-2.1-or-later**, matching the liba
 ### 16. Security Considerations
 
 #### 16.1 Input Validation
-- **URLs**: Only `file://`, `http://`, `https://`, `rtmp://`, `rtsp://`, and `srt://` schemes are accepted by default. An allowlist is configurable. File paths are resolved and checked against a configurable base directory to prevent path traversal. Symlinks are resolved before validation.
+- **URLs / input sources**: The `ProtocolWhitelist` field on each `Input` restricts which libavformat protocols that input may dereference (mirrors FFmpeg's `protocol_whitelist` AVOption). Default is libavformat's compiled-in set; set to `["file"]` to forbid all network access for a given input. `movie` / `amovie` filter nodes enforce the same whitelist via a `protocol_whitelist` node param; the runtime rewrites it as a `format_opts` dictionary entry so libavformat honours it inside the filter demuxer. Malformed whitelist entries (empty values, embedded commas) are rejected at config parse time.
+- **`movie` / `amovie` filenames**: Rejected at config parse time if the filename contains NUL, CR, or LF bytes, which would truncate the libavfilter args parser or inject a synthetic filter chain.
+- **Concat listfile entries**: File paths in `ConcatList` are rejected if they contain a single quote or newline — characters that would break the serialised listfile grammar.
 - **Media content**: The libav* libraries handle demuxing/decoding of potentially hostile media. MediaMolder adds resource limits on top:
   - Maximum input file size (configurable, default: none).
   - Maximum decode dimensions (configurable, default: 16384×16384).
   - Maximum stream count per input (configurable, default: 64).
   - Timeout on demux probe (default: 10s) to prevent slowloris-style hangs on network inputs.
 
-#### 16.2 cgo Boundary Safety
+#### 16.2 HTTP Server (GUI)
+The `mediamolder gui` HTTP server (§18) is intended for **localhost use only** by default (bound to `127.0.0.1`). When bound to a non-loopback address, the following hardening applies:
+- **Server-level timeouts**: `ReadHeaderTimeout` (10s), `ReadTimeout` (30s), `WriteTimeout` (60s), `IdleTimeout` (120s) are set on the `http.Server` to prevent slow-loris and connection-leak attacks.
+- **Request body limits**: POST bodies are capped — `1 MiB` for `/api/validate` and `/api/run` (`jobConfigBodyLimit`), `16 KiB` for `/api/files/mkdir` (`mkdirBodyLimit`). These constants are in `internal/gui/run.go` and `internal/gui/files.go` respectively; raise them and recompile for pipelines with very large concat lists.
+- **File browser path confinement**: `GET /api/files` and `POST /api/files/mkdir` restrict browsing to a set of `defaultRoots` (home directory, cwd, filesystem root on Unix, drive letters on Windows, and mounted volumes). Paths outside the allowed roots are rejected with HTTP 400.
+- **No shell usage**: All subprocess invocations (FFmpeg, FFprobe) use `exec.Command(binary, args...)` with argument arrays — no shell interpolation, no `sh -c`.
+
+#### 16.3 cgo Boundary Safety
 - All C allocations are paired with explicit frees in `Close()` methods. The leak-detection build tag (`-tags=avleakcheck`) tracks allocations and reports leaks at process exit.
 - No C pointers are stored in Go objects that may be moved by the garbage collector. All C pointer access is scoped within cgo call blocks or pinned via `runtime.Pinner`.
 - Integration tests run under AddressSanitizer (`CGO_CFLAGS=-fsanitize=address`) in CI.
 
-#### 16.3 Resource Limits
+#### 16.4 Resource Limits
 - Configurable maximum concurrent pipelines per process (default: 16).
 - Per-pipeline memory cap (enforced via `RLIMIT_AS` on Linux or manual tracking).
 - Per-pipeline CPU thread limit (passed through to libav* thread pool).
 
 ### 17. CLI Tool (`mediamolder`)
-- `mediamolder run config.json [--metrics-addr=:9090]`
+- `mediamolder run [--json] [--metadata-out=PATH] [--set KEY=VALUE ...] config.json` — execute a pipeline. `--json` streams progress as JSON Lines; `--metadata-out` writes processor metadata events to a file or stdout; `--set` performs `{{KEY}}` template substitution in the JSON before parsing (enables re-usable parameterised configs).
 - `mediamolder inspect config.json` — validate and pretty-print the resolved pipeline graph.
 - `mediamolder convert-cmd "ffmpeg ..."` — parse an FFmpeg CLI string and emit the equivalent JSON payload.
-- `mediamolder migrate --from=1 --to=2 config.json` — migrate a config payload between schema versions.
-- `mediamolder list-filters`, `list-codecs`, `list-formats`, etc.
+- `mediamolder migrate [--from=N --to=N] config.json` — migrate a config payload between schema versions.
+- `mediamolder probe <url>` — probe a media file and print stream metadata as JSON.
+- `mediamolder list-codecs`, `list-filters`, `list-formats` — enumerate libav* capabilities.
+- `mediamolder list-processors` — enumerate registered Go processor types (see §19).
+- `mediamolder gui [--host=127.0.0.1] [--port=8080] [--no-open] [--examples=DIR] [--dev]` — serve the browser-based visual editor (see §18).
+- `mediamolder version` — print version, FFmpeg configuration, and licence type.
 - Real-time progress and JSON status output.
 
 ### Related Documents
@@ -410,3 +447,98 @@ MediaMolder's Go code is licensed under **LGPL-2.1-or-later**, matching the liba
 - [Development Roadmap](roadmap.md)
 - [Contribution & Governance](contribution_and_governance.md)
 - [Possible Future Improvements](future_improvements.md)
+
+---
+
+### 18. Visual Editor (`mediamolder gui`)
+
+The `mediamolder gui` subcommand serves a browser-based visual pipeline editor embedded in the same binary as the CLI — no separate install is required.
+
+#### 18.1 Architecture
+- **Backend**: Go HTTP server (`internal/gui`) built on `net/http`. The embedded React/TypeScript frontend is compiled to static assets (`frontend/`) and served from the binary via `embed.FS`. In dev mode (`--dev`) the backend serves only the API; the Vite dev server handles the frontend at `localhost:5173`.
+- **Frontend**: React + TypeScript (strict mode) built on [React Flow](https://reactflow.dev) (`@xyflow/react`). Translation between the visual graph and the JSON pipeline config is handled by `frontend/src/lib/jsonAdapter.ts` (`flowToConfig` / `configToFlow`).
+
+#### 18.2 REST API
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET`  | `/api/health` | Liveness check. |
+| `GET`  | `/api/nodes` | Palette: full node catalog (filter / encoder / processor metadata). |
+| `GET`  | `/api/examples` | List example JSON files from `--examples` directory. |
+| `GET`  | `/api/files` | Directory listing for the file picker (path-confined to `defaultRoots`). |
+| `POST` | `/api/files/mkdir` | Create a subdirectory (file-save dialog "New folder"). Body capped at `mkdirBodyLimit` (16 KiB). |
+| `POST` | `/api/probe` | Probe a URL with FFprobe; returns stream metadata as JSON. |
+| `POST` | `/api/convert-cmd` | Parse an FFmpeg CLI string; returns the equivalent pipeline JSON. |
+| `GET`  | `/api/encoders/{name}/options` | AVOptions for a named encoder. |
+| `GET`  | `/api/filters/{name}/options` | AVOptions (including expression-typed flags) for a named filter. |
+| `GET`  | `/api/filters/{name}/eval-expression` | Evaluate a libavutil expression with named variable bindings (powers the live expression preview). |
+| `POST` | `/api/validate` | Parse and structurally validate a pipeline config JSON; returns `{ok, inputs, outputs, nodes, edges}`. Body capped at `jobConfigBodyLimit` (1 MiB). |
+| `POST` | `/api/run` | Start a pipeline job; returns `{job_id}`. Body capped at `jobConfigBodyLimit`. |
+| `POST` | `/api/cancel/{jobId}` | Cancel a running job. |
+| `GET`  | `/api/events/{jobId}` | Server-Sent Events stream of job progress (frames, fps, errors, EOS). |
+
+#### 18.3 Job Model
+- Each `POST /api/run` spawns a `jobManager` entry. Jobs are identified by a UUID string.
+- Progress is streamed over SSE as typed JSON events: `progress` (frame count, fps per stream), `error`, `done`.
+- Node badges in the UI show live frame counts and fps; erroring nodes are outlined in red.
+- At most one run per job ID; cancellation is context-propagated through the pipeline.
+
+#### 18.4 Filter Expression Evaluation
+`GET /api/filters/{name}/eval-expression?expr=…&VAR=N` evaluates the given libavutil expression using a curated per-filter variable table (`filterExprVars` in `internal/gui/filter_eval.go`). Unknown filters fall back to the universal timeline set (`t`, `n`, `pos`, `w`, `h`). The endpoint returns `{ok, value}` on success or `{ok:false, error}` on a parse/eval failure — HTTP 200 in both cases so the frontend can display inline diagnostics without treating eval failures as transport errors.
+
+---
+
+### 19. Go Processor System (`mediamolder/processors`)
+
+Go processor nodes (`type: "go_processor"` in the pipeline config) let application code insert arbitrary Go logic into the frame pipeline — analysis, machine-learning inference, metadata emission — without modifying the core engine.
+
+#### 19.1 Interface
+
+```go
+type Processor interface {
+    Init(params map[string]any) error
+    Process(frame *av.Frame, ctx ProcessorContext) (*av.Frame, *Metadata, error)
+    Close() error
+}
+```
+
+- `Init` receives the node's `params` map from the JSON config; called once before the first frame.
+- `Process` receives each decoded frame and returns the (possibly modified) frame, optional metadata, and an error. Returning `nil` for the frame drops it from the pipeline.
+- `Close` is called when the pipeline shuts down.
+
+#### 19.2 Registry
+
+Processors are registered by name at init time:
+
+```go
+processors.Register("my_processor", func() Processor { return &MyProcessor{} })
+```
+
+The runtime resolves `NodeDef.Processor` against the registry at graph-build time; an unknown name fails validation. `mediamolder list-processors` enumerates all registered names.
+
+#### 19.3 Built-in Processors
+
+| Name | Description |
+|------|-------------|
+| `frame_info` | Emits per-frame metadata (PTS, duration, width, height, pixel format, key-frame flag) as JSON Lines to a configurable output file. Used for frame-extraction and inspection workflows. |
+| `scene_change` | Detects scene boundaries by computing inter-frame mean absolute difference. Emits `{scene_change: true, score: N}` metadata on cut frames. Configurable threshold. |
+| `frame_counter` | Counts frames passing through; emits count at EOS. Useful for testing and batch-size assertions. |
+| `metadata_writer` | Wraps an inner processor and writes its `Metadata` output as JSON Lines to a file or stdout, decoupling metadata I/O from frame processing logic. |
+| `null` | No-op pass-through. Used in tests. |
+| `yolo_v8` | YOLOv8 object detection via ONNX Runtime (build tag `with_onnx`). Emits bounding-box metadata per frame. Model path and confidence threshold are configurable via `params`. |
+
+#### 19.4 Metadata Events
+
+Processor metadata is surfaced in two ways:
+1. **CLI**: `mediamolder run --metadata-out=PATH` writes all `Metadata` events from every processor node as JSON Lines to `PATH` (use `-` for stdout).
+2. **GUI**: The SSE job-event stream includes processor metadata events so the frontend can display analysis results live.
+
+Metadata is a typed struct:
+```go
+type Metadata struct {
+    NodeID    string
+    PTS       int64
+    Timestamp time.Time
+    Custom    map[string]any
+}
+```

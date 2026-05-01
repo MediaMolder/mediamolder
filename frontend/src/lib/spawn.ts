@@ -36,7 +36,7 @@ export function uniqueId(base: string, existing: Iterable<string>): string {
     const candidate = `${base}${i}`;
     if (!taken.has(candidate)) return candidate;
   }
-  return `${base}_${Date.now()}`;
+  return `${base}_${crypto.randomUUID()}`;
 }
 
 /** Spawn a new FlowNode at the given canvas position from a palette entry. */
