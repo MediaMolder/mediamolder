@@ -12,10 +12,17 @@ import (
 	"github.com/MediaMolder/MediaMolder/pipeline"
 )
 
+// jobConfigBodyLimit caps the request body for POST /api/validate and
+// POST /api/run. 1 MiB comfortably covers typical pipelines with dozens of
+// nodes, embedded concat lists, and per-node option maps. Pipelines that
+// embed very large inline data (e.g. thousands of concat entries) may hit
+// this limit; raise the constant here and recompile.
+const jobConfigBodyLimit = 1 << 20 // 1 MiB
+
 // handleValidate parses + structurally validates a JobConfig posted as JSON.
 // Returns 200 with {ok:true,...} on success, 400 with {ok:false,error:"..."}.
 func handleValidate(w http.ResponseWriter, r *http.Request) {
-	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, jobConfigBodyLimit))
 	if err != nil {
 		writeJSONError(w, http.StatusBadRequest, fmt.Errorf("read body: %w", err))
 		return
@@ -44,7 +51,7 @@ func handleValidate(w http.ResponseWriter, r *http.Request) {
 // pipeline run via the job manager, and returns {job_id: "..."}.
 func makeRunHandler(jm *jobManager) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
+		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, jobConfigBodyLimit))
 		if err != nil {
 			writeJSONError(w, http.StatusBadRequest, fmt.Errorf("read body: %w", err))
 			return
