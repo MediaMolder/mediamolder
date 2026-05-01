@@ -35,6 +35,11 @@ Version 1.x should be considered experimental.
 - **Enable easy migration from the FFmpeg CLI** with a robust FFmpeg command to MediaMolder JSON converter and detailed migration guide (see [FFmpeg Migration Guide](docs/ffmpeg-migration-guide.md)).
 - **Manage the project openly and fairly** to attract and retain like-minded contributors who value clean APIs, reliability, and developer experience.
 
+### 3. Non-Goals
+- Competing with the FFmpeg project. 
+  - There is no intent or desire to fork or manage development of the media processing libraries that power FFmpeg. 
+- Rewriting existing codec or filter processing libraries in Go.
+
 #### How MediaMolder compares to FFmpeg when you need custom functionality in your media pipeline
 
 | Aspect                          | FFmpeg (traditional)                                                                 | MediaMolder                                                                 |
@@ -92,15 +97,6 @@ This opens the door to:
 - **Hardware-specific nodes** (GPU kernels, edge TPU, custom DSP)
 
 All while staying fully inside the same declarative JSON pipeline and benefiting from MediaMolder’s observability, resilience, and embeddability.
-
-This is the single biggest productivity leap over raw FFmpeg for teams building production media platforms.
-
-
-### 3. Non-Goals
-- Competing with the FFmpeg project. 
-  - There is no intent or desire to fork or manage development of the media processing libraries that power FFmpeg. 
-- Rewriting existing codec or filter processing libraries in Go.
-
 ---
 
 ## Prerequisites
@@ -113,38 +109,9 @@ This is the single biggest productivity leap over raw FFmpeg for teams building 
 
 ---
 
-## Installation
+## Build / Install
 
-### From source
-
-```sh
-git clone https://github.com/MediaMolder/mediamolder.git
-cd mediamolder
-```
-
-**Using system FFmpeg (via pkg-config):**
-```sh
-go build ./...
-```
-
-**Using a local FFmpeg source build (static linking):**
-
-Place your FFmpeg source tree as a sibling directory (i.e. `../ffmpeg` relative to the mediamolder checkout), then build with the `ffstatic` tag:
-```sh
-go build -tags=ffstatic ./...
-```
-
-**Install the CLI:**
-```sh
-go install ./cmd/mediamolder
-```
-
-**Build with the embedded visual editor (GUI):**
-```sh
-make build-gui    # bundles the React frontend into a single binary
-./mediamolder gui # opens http://127.0.0.1:8080
-```
-See [docs/gui.md](docs/gui.md) for the full GUI guide.
+See [Build & Packaging](docs/build_and_packaging.md) for detailed instructions
 
 ---
 
@@ -266,59 +233,7 @@ Register a processor, then reference it from JSON:
 
 See the [Go Processor Nodes](docs/go-processor-nodes.md) guide for the full API, built-in processors, and how to write your own.
 
-### Multi-input overlay example
-
-```json
-{
-  "schema_version": "1.0",
-  "inputs": [
-    { "id": "bg", "url": "background.mp4", "streams": [{"input_index": 0, "type": "video", "track": 0}] },
-    { "id": "fg", "url": "overlay.png", "streams": [{"input_index": 0, "type": "video", "track": 0}] }
-  ],
-  "graph": {
-    "nodes": [
-      { "id": "ov", "type": "filter", "filter": "overlay", "params": {"x": 10, "y": 10} }
-    ],
-    "edges": [
-      { "from": "bg:v:0", "to": "ov:default", "type": "video" },
-      { "from": "fg:v:0", "to": "ov:overlay", "type": "video" },
-      { "from": "ov:default", "to": "out:v", "type": "video" }
-    ]
-  },
-  "outputs": [
-    { "id": "out", "url": "composited.mp4", "codec_video": "libx264" }
-  ]
-}
-```
-
-### Multi-output (adaptive bitrate) example
-
-```json
-{
-  "schema_version": "1.0",
-  "inputs": [
-    { "id": "src", "url": "input.mp4", "streams": [{"input_index": 0, "type": "video", "track": 0}] }
-  ],
-  "graph": {
-    "nodes": [
-      { "id": "split", "type": "filter", "filter": "split" },
-      { "id": "hd", "type": "filter", "filter": "scale", "params": {"w": "1920", "h": "1080"} },
-      { "id": "sd", "type": "filter", "filter": "scale", "params": {"w": "640", "h": "480"} }
-    ],
-    "edges": [
-      { "from": "src:v:0", "to": "split:default", "type": "video" },
-      { "from": "split:out0", "to": "hd:default", "type": "video" },
-      { "from": "split:out1", "to": "sd:default", "type": "video" },
-      { "from": "hd:default", "to": "out_hd:v", "type": "video" },
-      { "from": "sd:default", "to": "out_sd:v", "type": "video" }
-    ]
-  },
-  "outputs": [
-    { "id": "out_hd", "url": "output_1080p.mp4", "codec_video": "libx264" },
-    { "id": "out_sd", "url": "output_480p.mp4", "codec_video": "libx264" }
-  ]
-}
-```
+See [Yolov8 Guide](docs/yolov8-guide.md) for instructions on adding a custom [Yolov8](https://yolov8.com/) (open source neural network object detection and classification) node to your pipeline
 
 ---
 
