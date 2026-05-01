@@ -35,73 +35,10 @@ Version 1.x should be considered experimental.
 - **Enable easy migration from the FFmpeg CLI** with a robust FFmpeg command to MediaMolder JSON converter and detailed migration guide (see [FFmpeg Migration Guide](docs/ffmpeg-migration-guide.md)).
 - **Manage the project openly and fairly** to attract and retain like-minded contributors who value clean APIs, reliability, and developer experience.
 
-#### How MediaMolder compares to FFmpeg when you need custom functionality in your media pipeline
-
-| Aspect                          | FFmpeg (traditional)                                                                 | MediaMolder                                                                 |
-|---------------------------------|--------------------------------------------------------------------------------------|-----------------------------------------------------------------------------|
-| Adding custom logic (AI, OpenCV, metadata enrichment, etc.) | Write a custom `AVFilter` in C, register it in libavfilter, then **rebuild FFmpeg from source** (including linking external libs like OpenCV or ONNX Runtime). | Write a pure-Go struct that implements a simple `Processor` interface. Register it once at startup. |
-| Integration effort              | High: C expertise, FFmpeg build system, dependency hell, custom configure flags (`--enable-libopencv`, etc.). | Low: Standard Go code + `go get`. Use existing Go libraries (GoCV, ONNX Runtime Go bindings, etc.). |
-| Distribution & maintenance      | You ship a custom FFmpeg binary (or static build). Versioning and updates become painful. | Your custom nodes are compiled directly into your Go application/binary. One artifact, trivial updates. |
-| Runtime flexibility             | Static. Custom filters are baked in at compile time. Runtime registration is not officially supported. | Fully dynamic: nodes can be enabled/disabled via JSON config. Live pipelines can swap or hot-reload logic. |
-| Performance                     | Excellent (native C), but the rebuild tax is heavy.                                      | Near-native: heavy lifting still happens in libav* bindings; your Go node sits in the orchestration layer. |
-
-#### What you actually have to do in FFmpeg today
-- Follow the official `doc/writing_filters.txt`.
-- Implement `AVFilter`, `AVFilterPad`, frame processing callbacks, etc.
-- Modify FFmpeg’s build scripts to link your external library (OpenCV, TensorFlow, etc.).
-- Recompile the entire libavfilter (or the whole FFmpeg suite).
-- For AI/OpenCV workflows, most teams end up maintaining a private fork or using external tools (e.g., piping frames to a separate Python process), which destroys performance and reliability.
-
-#### MediaMolder makes this trivial
-You simply implement something like:
-
-```go
-type CustomAINode struct {
-    ModelPath string
-    // ...
-}
-
-func (n *CustomAINode) Process(ctx context.Context, frame *av.Frame) (*av.Frame, error) {
-    // Run inference with your Go AI library, enrich metadata, draw overlays, etc.
-    return frame, nil
-}
-```
-
-Then register it once:
-
-```go
-mediamolder.RegisterProcessor("ai-inference", func() mediaprocessor.Processor { return &CustomAINode{} })
-```
-
-And declare it in your JSON pipeline exactly like any built-in node:
-
-```json
-{
-  "nodes": [
-    { "type": "decoder" },
-    { "type": "ai-inference", "model": "yolov8.onnx", "confidence": 0.6 },
-    { "type": "encoder" }
-  ]
-}
-```
-
-This opens the door to:
-- **AI / computer vision** (object detection, segmentation, pose estimation, super-resolution)
-- **Metadata enrichment** (scene classification, OCR, custom EXIF, ML-based quality scoring)
-- **Business logic** (watermarking with dynamic data, ad insertion, compliance checks)
-- **Hardware-specific nodes** (GPU kernels, edge TPU, custom DSP)
-
-All while staying fully inside the same declarative JSON pipeline and benefiting from MediaMolder’s observability, resilience, and embeddability.
-
-This is the single biggest productivity leap over raw FFmpeg for teams building production media platforms.
-
-
 ### 3. Non-Goals
 - Competing with the FFmpeg project. 
   - There is no intent or desire to fork or manage development of the media processing libraries that power FFmpeg. 
 - Rewriting existing codec or filter processing libraries in Go.
-
----
 
 ## Prerequisites
 
@@ -111,40 +48,96 @@ This is the single biggest productivity leap over raw FFmpeg for teams building 
 - **pkg-config** (if using system FFmpeg)
 - **Git LFS** (for the media test corpus, when available): `git lfs install`
 
+## Build / Install
+
+See [Build & Packaging](docs/build_and_packaging.md) for detailed instructions for MacOS, Windows and Linux
+
+## Documentation
+
+### Usage
+
+- [Graph Basics — Nodes, Edges, Sources, Sinks, and the FFmpeg CLI mapping](docs/graph-basics.md)
+- [FFmpeg Migration Guide](docs/ffmpeg-migration-guide.md)
+- [JSON Config Reference](docs/json-config-reference.md)
+- [Visual Editor (GUI)](docs/gui.md)
+- [Go Processor Nodes](docs/go-processor-nodes.md)
+- [Yolov8 object detection/classification](docs/yolov8-guide.md)
+
+### Code
+
+- [Architecture](docs/architecture/architecture.md)
+- [Pipeline State Machine](docs/pipeline-state-machine.md)
+- [Pipeline Instrumentation Roadmap](docs/pipeline-instrumentation-roadmap.md)
+- [Clock & Sync](docs/clock-and-sync.md)
+- [Event Bus](docs/event-bus.md)
+- [Error Handling](docs/error-handling.md)
+- [Hardware Acceleration](docs/hardware-acceleration.md)
+- [Observability](docs/observability.md)
+- [Graph Compilation](docs/graph-compilation.md)
+
+### Project
+
+- [Contribution & Governance](docs/contribution_and_governance.md)
+- [Project Specification](docs/specification.md)
+- [Licensing](LICENSING.md)
+
 ---
 
-## Installation
+## Architecture
 
-### From source
+### Processing Pipeline
 
-```sh
-git clone https://github.com/MediaMolder/mediamolder.git
-cd mediamolder
+See [Architecture](docs/architecture/architecture.md)
+A pipeline flows through five phases:
+
+1. **Build** — Parse JSON config into a validated DAG (`graph.Build`). Catches structural errors (missing nodes, cycles).
+2. **Compile** — Analyze the graph for stage grouping, dead-branch detection, disconnected-source warnings, and per-edge buffer sizing (`graph.Compile`). See [Graph Compilation](docs/graph-compilation.md).
+3. **Open resources** — Demuxers, decoders, filters, encoders, and muxers are created in topological order.
+4. **Execute** — The scheduler launches one goroutine per node, connected by buffered channels sized per-edge by the compiler. Each node processes frames independently.
+5. **Finalize** — Outputs are flushed and atomically renamed.
+
+### Performance Monitoring
+
+MediaMolder instruments the runtime to help identify bottlenecks:
+
+- **Channel backpressure monitoring** — A sampler goroutine periodically polls the fill level of every inter-node channel. High fill ratios indicate a downstream node can't keep up. Available via `Pipeline.EdgeStats()`.
+- **Per-node processing latency** — Every handler (source, filter, encoder, sink, Go processor) records per-frame latency. Available via `Pipeline.Metrics()` snapshots (`AvgLatency`, `MaxLatency`).
+- **Adaptive buffer sizing** — The compiler assigns per-edge channel buffer sizes based on node kinds (e.g., 16 after sources for burst absorption, 4 for encoder→sink). See [Graph Compilation](docs/graph-compilation.md).
+
+Both monitoring mechanisms add zero overhead to the data path — backpressure uses periodic sampling (not channel wrapping), and latency uses lock-free atomics.
+
+### Threading Controls
+
+Codec threading is configurable at three levels:
+
+- **Per-node** — Set `"threads"` and `"thread_type"` in a node's `params` to tune individual codecs.
+- **Global** — Set `global_options.threads` and `global_options.thread_type` to apply defaults across all codecs.
+- **Security cap** — `SecurityConfig.MaxThreads` clamps every codec's thread count, preventing resource exhaustion in multi-tenant deployments.
+
+Resolution follows a fallback hierarchy: per-node → global → FFmpeg auto-detect. See [Threading Architecture](docs/threading-architecture.md) for full details.
+
+```go
+// Identify the bottleneck edge:
+for _, es := range pipe.EdgeStats().Snapshot() {
+    if es.Fill > 0.8 {
+        fmt.Printf("backpressure: %s → %s (%.0f%% full, %d stalls)\n",
+            es.FromNode, es.ToNode, es.Fill*100, es.Stalls)
+    }
+}
+
+// Check per-node latency:
+for _, ns := range pipe.Metrics().Snapshot().Nodes {
+    fmt.Printf("%s: avg=%s max=%s\n", ns.NodeID, ns.AvgLatency, ns.MaxLatency)
+}
 ```
 
-**Using system FFmpeg (via pkg-config):**
-```sh
-go build ./...
-```
+See [Observability](docs/observability.md) for Prometheus metrics, OpenTelemetry tracing, and Grafana dashboard configuration.
 
-**Using a local FFmpeg source build (static linking):**
+---
 
-Place your FFmpeg source tree as a sibling directory (i.e. `../ffmpeg` relative to the mediamolder checkout), then build with the `ffstatic` tag:
-```sh
-go build -tags=ffstatic ./...
-```
+## License
 
-**Install the CLI:**
-```sh
-go install ./cmd/mediamolder
-```
-
-**Build with the embedded visual editor (GUI):**
-```sh
-make build-gui    # bundles the React frontend into a single binary
-./mediamolder gui # opens http://127.0.0.1:8080
-```
-See [docs/gui.md](docs/gui.md) for the full GUI guide.
+LGPL-2.1-or-later. See [LICENSE](LICENSE) and [LICENSING.md](LICENSING.md) for details.
 
 ---
 
@@ -233,7 +226,7 @@ mediamolder list-processors
 mediamolder list-codecs --json   # JSON output
 ```
 
-### Go processor node example
+## Go processor nodes
 
 Custom Go code can run as a first-class node in the processing graph.
 Register a processor, then reference it from JSON:
@@ -266,136 +259,64 @@ Register a processor, then reference it from JSON:
 
 See the [Go Processor Nodes](docs/go-processor-nodes.md) guide for the full API, built-in processors, and how to write your own.
 
-### Multi-input overlay example
-
-```json
-{
-  "schema_version": "1.0",
-  "inputs": [
-    { "id": "bg", "url": "background.mp4", "streams": [{"input_index": 0, "type": "video", "track": 0}] },
-    { "id": "fg", "url": "overlay.png", "streams": [{"input_index": 0, "type": "video", "track": 0}] }
-  ],
-  "graph": {
-    "nodes": [
-      { "id": "ov", "type": "filter", "filter": "overlay", "params": {"x": 10, "y": 10} }
-    ],
-    "edges": [
-      { "from": "bg:v:0", "to": "ov:default", "type": "video" },
-      { "from": "fg:v:0", "to": "ov:overlay", "type": "video" },
-      { "from": "ov:default", "to": "out:v", "type": "video" }
-    ]
-  },
-  "outputs": [
-    { "id": "out", "url": "composited.mp4", "codec_video": "libx264" }
-  ]
-}
-```
-
-### Multi-output (adaptive bitrate) example
-
-```json
-{
-  "schema_version": "1.0",
-  "inputs": [
-    { "id": "src", "url": "input.mp4", "streams": [{"input_index": 0, "type": "video", "track": 0}] }
-  ],
-  "graph": {
-    "nodes": [
-      { "id": "split", "type": "filter", "filter": "split" },
-      { "id": "hd", "type": "filter", "filter": "scale", "params": {"w": "1920", "h": "1080"} },
-      { "id": "sd", "type": "filter", "filter": "scale", "params": {"w": "640", "h": "480"} }
-    ],
-    "edges": [
-      { "from": "src:v:0", "to": "split:default", "type": "video" },
-      { "from": "split:out0", "to": "hd:default", "type": "video" },
-      { "from": "split:out1", "to": "sd:default", "type": "video" },
-      { "from": "hd:default", "to": "out_hd:v", "type": "video" },
-      { "from": "sd:default", "to": "out_sd:v", "type": "video" }
-    ]
-  },
-  "outputs": [
-    { "id": "out_hd", "url": "output_1080p.mp4", "codec_video": "libx264" },
-    { "id": "out_sd", "url": "output_480p.mp4", "codec_video": "libx264" }
-  ]
-}
-```
+See [Yolov8 Guide](docs/yolov8-guide.md) for instructions on adding a custom [Yolov8](https://yolov8.com/) (open source neural network object detection and classification) node to your pipeline
 
 ---
 
-## Documentation
+## How MediaMolder compares to FFmpeg when you need custom functionality in your media pipeline
 
-- [Graph Basics — Nodes, Edges, Sources, Sinks, and the FFmpeg CLI mapping](docs/graph-basics.md)
-- [FFmpeg Migration Guide](docs/ffmpeg-migration-guide.md)
-- [JSON Config Reference](docs/json-config-reference.md)
-- [Visual Editor (GUI)](docs/gui.md)
-- [Go Processor Nodes](docs/go-processor-nodes.md)
-- [Pipeline State Machine](docs/pipeline-state-machine.md)
-- [Clock & Sync](docs/clock-and-sync.md)
-- [Event Bus](docs/event-bus.md)
-- [Error Handling](docs/error-handling.md)
-- [Hardware Acceleration](docs/hardware-acceleration.md)
-- [Observability](docs/observability.md)
-- [Graph Compilation](docs/graph-compilation.md)
-- [Pipeline Instrumentation Roadmap](docs/pipeline-instrumentation-roadmap.md)
-- [Build & Packaging](docs/build_and_packaging.md)
-- [Contribution & Governance](docs/contribution_and_governance.md)
-- [Project Specification](docs/specification.md)
-- [Licensing](LICENSING.md)
+| Aspect                          | FFmpeg (traditional)                                                                 | MediaMolder                                                                 |
+|---------------------------------|--------------------------------------------------------------------------------------|-----------------------------------------------------------------------------|
+| Adding custom logic (AI, OpenCV, metadata enrichment, etc.) | Write a custom `AVFilter` in C, register it in libavfilter, then **rebuild FFmpeg from source** (including linking external libs like OpenCV or ONNX Runtime). | Write a pure-Go struct that implements a simple `Processor` interface. Register it once at startup. |
+| Integration effort              | High: C expertise, FFmpeg build system, dependency hell, custom configure flags (`--enable-libopencv`, etc.). | Low: Standard Go code + `go get`. Use existing Go libraries (GoCV, ONNX Runtime Go bindings, etc.). |
+| Distribution & maintenance      | You ship a custom FFmpeg binary (or static build). Versioning and updates become painful. | Your custom nodes are compiled directly into your Go application/binary. One artifact, trivial updates. |
+| Runtime flexibility             | Static. Custom filters are baked in at compile time. Runtime registration is not officially supported. | Fully dynamic: nodes can be enabled/disabled via JSON config. Live pipelines can swap or hot-reload logic. |
+| Performance                     | Excellent (native C), but the rebuild tax is heavy.                                      | Near-native: heavy lifting still happens in libav* bindings; your Go node sits in the orchestration layer. |
 
----
+#### What you actually have to do in FFmpeg today
+- Follow the official `doc/writing_filters.txt`.
+- Implement `AVFilter`, `AVFilterPad`, frame processing callbacks, etc.
+- Modify FFmpeg’s build scripts to link your external library (OpenCV, TensorFlow, etc.).
+- Recompile the entire libavfilter (or the whole FFmpeg suite).
+- For AI/OpenCV workflows, most teams end up maintaining a private fork or using external tools (e.g., piping frames to a separate Python process), which destroys performance and reliability.
 
-## Architecture
-
-### Processing Pipeline
-
-See [Architecture](docs/architecture/architecture.md)
-A pipeline flows through five phases:
-
-1. **Build** — Parse JSON config into a validated DAG (`graph.Build`). Catches structural errors (missing nodes, cycles).
-2. **Compile** — Analyze the graph for stage grouping, dead-branch detection, disconnected-source warnings, and per-edge buffer sizing (`graph.Compile`). See [Graph Compilation](docs/graph-compilation.md).
-3. **Open resources** — Demuxers, decoders, filters, encoders, and muxers are created in topological order.
-4. **Execute** — The scheduler launches one goroutine per node, connected by buffered channels sized per-edge by the compiler. Each node processes frames independently.
-5. **Finalize** — Outputs are flushed and atomically renamed.
-
-### Performance Monitoring
-
-MediaMolder instruments the runtime to help identify bottlenecks:
-
-- **Channel backpressure monitoring** — A sampler goroutine periodically polls the fill level of every inter-node channel. High fill ratios indicate a downstream node can't keep up. Available via `Pipeline.EdgeStats()`.
-- **Per-node processing latency** — Every handler (source, filter, encoder, sink, Go processor) records per-frame latency. Available via `Pipeline.Metrics()` snapshots (`AvgLatency`, `MaxLatency`).
-- **Adaptive buffer sizing** — The compiler assigns per-edge channel buffer sizes based on node kinds (e.g., 16 after sources for burst absorption, 4 for encoder→sink). See [Graph Compilation](docs/graph-compilation.md).
-
-Both monitoring mechanisms add zero overhead to the data path — backpressure uses periodic sampling (not channel wrapping), and latency uses lock-free atomics.
-
-### Threading Controls
-
-Codec threading is configurable at three levels:
-
-- **Per-node** — Set `"threads"` and `"thread_type"` in a node's `params` to tune individual codecs.
-- **Global** — Set `global_options.threads` and `global_options.thread_type` to apply defaults across all codecs.
-- **Security cap** — `SecurityConfig.MaxThreads` clamps every codec's thread count, preventing resource exhaustion in multi-tenant deployments.
-
-Resolution follows a fallback hierarchy: per-node → global → FFmpeg auto-detect. See [Threading Architecture](docs/threading-architecture.md) for full details.
+#### MediaMolder makes this trivial
+You simply implement something like:
 
 ```go
-// Identify the bottleneck edge:
-for _, es := range pipe.EdgeStats().Snapshot() {
-    if es.Fill > 0.8 {
-        fmt.Printf("backpressure: %s → %s (%.0f%% full, %d stalls)\n",
-            es.FromNode, es.ToNode, es.Fill*100, es.Stalls)
-    }
+type CustomAINode struct {
+    ModelPath string
+    // ...
 }
 
-// Check per-node latency:
-for _, ns := range pipe.Metrics().Snapshot().Nodes {
-    fmt.Printf("%s: avg=%s max=%s\n", ns.NodeID, ns.AvgLatency, ns.MaxLatency)
+func (n *CustomAINode) Process(ctx context.Context, frame *av.Frame) (*av.Frame, error) {
+    // Run inference with your Go AI library, enrich metadata, draw overlays, etc.
+    return frame, nil
 }
 ```
 
-See [Observability](docs/observability.md) for Prometheus metrics, OpenTelemetry tracing, and Grafana dashboard configuration.
+Then register it once:
 
----
+```go
+mediamolder.RegisterProcessor("ai-inference", func() mediaprocessor.Processor { return &CustomAINode{} })
+```
 
-## License
+And declare it in your JSON pipeline exactly like any built-in node:
 
-LGPL-2.1-or-later. See [LICENSE](LICENSE) and [LICENSING.md](LICENSING.md) for details.
+```json
+{
+  "nodes": [
+    { "type": "decoder" },
+    { "type": "ai-inference", "model": "yolov8.onnx", "confidence": 0.6 },
+    { "type": "encoder" }
+  ]
+}
+```
+
+This opens the door to:
+- **AI / computer vision** (object detection, segmentation, pose estimation, super-resolution)
+- **Metadata enrichment** (scene classification, OCR, custom EXIF, ML-based quality scoring)
+- **Business logic** (watermarking with dynamic data, ad insertion, compliance checks)
+- **Hardware-specific nodes** (GPU kernels, edge TPU, custom DSP)
+
+All while staying fully inside the same declarative JSON pipeline and benefiting from MediaMolder’s observability, resilience, and embeddability.
