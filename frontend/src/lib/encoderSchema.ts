@@ -104,14 +104,18 @@ export interface EncoderUiRoles {
   rc_cbr?: string;
   rc_crf?: string;            // enum constant that means "use CRF/CQ"
   rc_qp?: string;             // enum constant that means "use constant QP"
+  /** Default RC mode shown when no params are set. Defaults to 'bitrate'
+   *  when omitted for backward compat with generic encoders, but should be
+   *  set explicitly for any encoder whose library default is CRF/QP. */
+  default_rc?: 'bitrate' | 'crf' | 'qp';
 }
 
 export const ENCODER_UI_ROLES: Record<string, EncoderUiRoles> = {
-  libx264:   { preset: 'preset', bit_rate: 'b', crf: 'crf', qp: 'qp', keyframe_interval: 'g' },
-  libx265:   { preset: 'preset', bit_rate: 'b', crf: 'crf', qp: 'qp', keyframe_interval: 'g' },
-  libsvtav1: { preset: 'preset', bit_rate: 'b', crf: 'crf', qp: 'qp', keyframe_interval: 'g' },
-  libvpx_vp9:{ preset: 'deadline', bit_rate: 'b', crf: 'crf', qp: 'qp', keyframe_interval: 'g' },
-  libaom_av1:{ preset: 'cpu-used', bit_rate: 'b', crf: 'crf', qp: 'qp', keyframe_interval: 'g' },
+  libx264:   { preset: 'preset', bit_rate: 'b', crf: 'crf', qp: 'qp', keyframe_interval: 'g', default_rc: 'crf' },
+  libx265:   { preset: 'preset', bit_rate: 'b', crf: 'crf', qp: 'qp', keyframe_interval: 'g', default_rc: 'crf' },
+  libsvtav1: { preset: 'preset', bit_rate: 'b', crf: 'crf', qp: 'qp', keyframe_interval: 'g', default_rc: 'crf' },
+  libvpx_vp9:{ preset: 'deadline', bit_rate: 'b', crf: 'crf', qp: 'qp', keyframe_interval: 'g', default_rc: 'crf' },
+  libaom_av1:{ preset: 'cpu-used', bit_rate: 'b', crf: 'crf', qp: 'qp', keyframe_interval: 'g', default_rc: 'crf' },
   h264_nvenc:{
     preset: 'preset', bit_rate: 'b', crf: 'cq', qp: 'qp', keyframe_interval: 'g',
     rc_enum: 'rc', rc_vbr: 'vbr', rc_cbr: 'cbr', rc_crf: 'vbr', rc_qp: 'constqp',
@@ -269,9 +273,35 @@ const X264_X265_PRESETS: OptionChoiceList = {
   ],
 };
 
+/** H.264 (x264) profile choices. Overrides all conflicting settings when set.
+ *  Profiles narrow the allowed feature set; choose the least restrictive
+ *  profile your target decoder supports. */
+const X264_PROFILES: OptionChoiceList = {
+  default: 'main',
+  choices: [
+    { value: 'baseline', label: 'Baseline — no B-frames, no CABAC, progressive only' },
+    { value: 'main',     label: 'Main — no 8×8 DCT, no lossless' },
+    { value: 'high',     label: 'High — no lossless' },
+    { value: 'high10',   label: 'High 10 — 8–10-bit depth, no lossless' },
+    { value: 'high422',  label: 'High 4:2:2 — 8–10-bit, 4:2:0 or 4:2:2, no lossless' },
+    { value: 'high444',  label: 'High 4:4:4 — 8–10-bit, 4:2:0 / 4:2:2 / 4:4:4' },
+  ],
+};
+
+/** H.265 (x265) profile choices.
+ *  Note: only applied when encoding 8-bit frames (libavcodec limitation). */
+const X265_PROFILES: OptionChoiceList = {
+  default: 'main',
+  choices: [
+    { value: 'main',             label: 'Main — 8-bit, 4:2:0' },
+    { value: 'main10',           label: 'Main 10 — 8–10-bit, 4:2:0' },
+    { value: 'mainstillpicture', label: 'Main Still Picture — single still image' },
+  ],
+};
+
 export const ENCODER_OPTION_CHOICES: Record<string, Record<string, OptionChoiceList>> = {
-  libx264: { preset: X264_X265_PRESETS },
-  libx265: { preset: X264_X265_PRESETS },
+  libx264: { preset: X264_X265_PRESETS, profile: X264_PROFILES },
+  libx265: { preset: X264_X265_PRESETS, profile: X265_PROFILES },
   libvpx_vp9: {
     deadline: {
       default: 'good',
@@ -287,6 +317,117 @@ export const ENCODER_OPTION_CHOICES: Record<string, Record<string, OptionChoiceL
 /** Return the choice list registered for `(codec, optionName)`, if any. */
 export function optionChoices(codec: string, optionName: string): OptionChoiceList | undefined {
   return ENCODER_OPTION_CHOICES[codec]?.[optionName];
+}
+
+/* -------------------------------------------------------------------------- *
+ * Preset / tune effective-value tables.
+ *
+ * libavcodec sets all preset-dependent options (refs, bf, sc_threshold,
+ * b_strategy, rc-lookahead, aq-mode, aq-strength, mbtree …) to -1 as a
+ * sentinel meaning "let the codec library decide after applying the preset".
+ * These tables record the actual value each option receives, derived directly
+ * from the encoder C source:
+ *   x264  —  common/base.c  x264_param_default  +  param_apply_preset/tune
+ *   x265  —  source/common/param.cpp  x265_param_default  +  equivalent fns
+ *
+ * Only options that are exposed as named AVOptions by libavcodec are listed;
+ * x265 parameters that can only be reached via x265-params are omitted.
+ * -------------------------------------------------------------------------- */
+type PresetRow    = Record<string, string>;
+type PresetMatrix = Record<string, PresetRow>;
+
+export const CODEC_PRESET_EFFECTIVE_VALUES: Record<string, PresetMatrix> = {
+  // x264 —— source: common/base.c
+  // Columns: refs  bf  sc_threshold  b_strategy  rc-lookahead  aq-mode  aq-strength  mbtree
+  // (b_strategy: 0=none, 1=fast, 2=trellis)  (aq-mode: 0=off, 1=variance, 2=autovariance)
+  libx264: {
+    ultrafast: { refs: '1',  bf: '0',  sc_threshold: '0',  b_strategy: '0', 'rc-lookahead': '0',  'aq-mode': '0', 'aq-strength': '0.0', mbtree: '0' },
+    superfast: { refs: '1',  bf: '3',  sc_threshold: '40', b_strategy: '1', 'rc-lookahead': '0',  'aq-mode': '1', 'aq-strength': '1.0', mbtree: '0' },
+    veryfast:  { refs: '1',  bf: '3',  sc_threshold: '40', b_strategy: '1', 'rc-lookahead': '10', 'aq-mode': '1', 'aq-strength': '1.0', mbtree: '1' },
+    faster:    { refs: '2',  bf: '3',  sc_threshold: '40', b_strategy: '1', 'rc-lookahead': '20', 'aq-mode': '1', 'aq-strength': '1.0', mbtree: '1' },
+    fast:      { refs: '2',  bf: '3',  sc_threshold: '40', b_strategy: '1', 'rc-lookahead': '30', 'aq-mode': '1', 'aq-strength': '1.0', mbtree: '1' },
+    medium:    { refs: '3',  bf: '3',  sc_threshold: '40', b_strategy: '1', 'rc-lookahead': '40', 'aq-mode': '1', 'aq-strength': '1.0', mbtree: '1' },
+    slow:      { refs: '5',  bf: '3',  sc_threshold: '40', b_strategy: '1', 'rc-lookahead': '50', 'aq-mode': '1', 'aq-strength': '1.0', mbtree: '1' },
+    slower:    { refs: '8',  bf: '3',  sc_threshold: '40', b_strategy: '2', 'rc-lookahead': '60', 'aq-mode': '1', 'aq-strength': '1.0', mbtree: '1' },
+    veryslow:  { refs: '16', bf: '8',  sc_threshold: '40', b_strategy: '2', 'rc-lookahead': '60', 'aq-mode': '1', 'aq-strength': '1.0', mbtree: '1' },
+    placebo:   { refs: '16', bf: '16', sc_threshold: '40', b_strategy: '2', 'rc-lookahead': '60', 'aq-mode': '1', 'aq-strength': '1.0', mbtree: '1' },
+  },
+  // x265 —— source: source/common/param.cpp
+  // Only refs (maxNumReferences) and bf (bframes) are exposed as generic
+  // lavc AVOptions that libavcodec wires through to x265.  All other preset-
+  // controlled parameters require x265-params.
+  libx265: {
+    ultrafast: { refs: '1', bf: '3' },
+    superfast: { refs: '1', bf: '3' },
+    veryfast:  { refs: '2', bf: '4' },
+    faster:    { refs: '2', bf: '4' },
+    fast:      { refs: '3', bf: '4' },
+    medium:    { refs: '3', bf: '4' },
+    slow:      { refs: '4', bf: '4' },
+    slower:    { refs: '5', bf: '8' },
+    veryslow:  { refs: '5', bf: '8' },
+    placebo:   { refs: '5', bf: '8' },
+  },
+};
+
+/** Codec-wide effective defaults for options whose AVOption `default` is a
+ *  sentinel (-1 or 12 from the generic AVCodecContext `g` option) but whose
+ *  actual encoder-library default is a well-defined, source-confirmed value
+ *  that does not vary by preset.  Checked as a last resort in
+ *  `effectivePresetDefault` when no preset-specific row matches.
+ *
+ *  Sources:
+ *   libx264 / libx265 — x264_param_default() / x265_param_default() in
+ *     common/base.c and source/common/param.cpp set i_keyint_max /
+ *     keyframeMax = 250; the wrapper FFCodecDefault { "g", "-1" } prevents
+ *     the generic AVOption default (12) from reaching the encoder.
+ *   libvpx-vp9 / libaom-av1 — the wrappers have FFCodecDefault { "g", "-1" };
+ *     with gop_size=-1 the condition `gop_size >= 0` in vpx_init / av1_init is
+ *     false, so kf_max_dist is left at the library default of 9999 (no forced
+ *     periodic keyframes — scene-cut-based only). */
+export const CODEC_STATIC_DEFAULTS: Record<string, PresetRow> = {
+  libx264:       { g: '250' },
+  libx265:       { g: '250' },
+  'libvpx-vp9':  { g: '9999' },
+  'libaom-av1':  { g: '9999' },
+};
+
+/** Per-tune overrides applied on top of the preset value.
+ *  Only includes deterministic overrides where the result is a fixed value
+ *  regardless of the preset (e.g. zerolatency forces bf=0).  Tunes that
+ *  multiply an existing value (e.g. x264 animation doubles refs) are omitted
+ *  because the result depends on the preset in a non-trivial way. */
+export const CODEC_TUNE_EFFECTIVE_VALUES: Record<string, Record<string, PresetRow>> = {
+  libx264: {
+    zerolatency: { bf: '0', 'rc-lookahead': '0', mbtree: '0' },
+    grain:       { 'aq-strength': '0.5' },
+    psnr:        { 'aq-mode': '0' },
+    ssim:        { 'aq-mode': '2' },
+  },
+  libx265: {
+    zerolatency: { bf: '0' },
+    psnr:        { 'aq-strength': '0.0' },
+  },
+};
+
+/** Returns the effective placeholder value an encoder will apply for
+ *  `optionName` given the current `preset` and `tune`, or `undefined` when
+ *  the codec/option combination is not in the table. */
+export function effectivePresetDefault(
+  codec: string,
+  optionName: string,
+  preset: string,
+  tune?: string,
+): string | undefined {
+  const matrix = CODEC_PRESET_EFFECTIVE_VALUES[codec];
+  // Fall back to 'medium' row when the preset name is absent (e.g. empty).
+  const row = matrix?.[preset] ?? matrix?.['medium'];
+  let val = row?.[optionName] ?? CODEC_STATIC_DEFAULTS[codec]?.[optionName];
+  if (tune) {
+    const tuneOverride = CODEC_TUNE_EFFECTIVE_VALUES[codec]?.[tune]?.[optionName];
+    if (tuneOverride !== undefined) val = tuneOverride;
+  }
+  return val;
 }
 
 const cache = new Map<string, Promise<EncoderInfo>>();

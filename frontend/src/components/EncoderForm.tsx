@@ -18,9 +18,10 @@
 // safest round-trip). Empty string ⇒ remove the key entirely so the
 // encoder uses libav's default.
 
-import { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import type { NodeDef } from '../lib/jobTypes';
 import {
+  effectivePresetDefault,
   fetchEncoderInfo,
   findOption,
   optionChoices,
@@ -38,6 +39,25 @@ interface Props {
   def: NodeDef;
   onChange: (next: NodeDef) => void;
 }
+
+// Options promoted to an always-visible "GOP & Frames" section above Advanced.
+// Listed in the preferred display order.
+const GOP_OPTION_NAMES: string[] = [
+  'bf',          // B Frames
+  'keyint_min',  // Min Keyframe Interval
+  'sc_threshold',// Scene Change Threshold
+  'refs',        // Reference Frames
+  'b_strategy',  // B-Frame Strategy
+  'intra-refresh',
+  'intra_refresh',
+];
+
+// Options promoted to an always-visible "Profile / Level" section above Advanced.
+const PROFILE_OPTION_NAMES: string[] = [
+  'profile',
+  'level',
+  'tier',
+];
 
 // Names of well-known param-string escape hatches surfaced as Raw options.
 const RAW_OPTION_NAMES = new Set([
@@ -126,7 +146,7 @@ export function EncoderForm({ def, onChange }: Props) {
   const keyint = findOption(info.options, roles.keyframe_interval);
   const rcEnum = findOption(info.options, roles.rc_enum);
 
-  // Build the set of primary option names to exclude from the Advanced view.
+  // Build the set of primary option names to exclude from all secondary views.
   // Includes everything driven by the rate-control group (b, crf, qp, rc,
   // and the maxrate/minrate hack used for CBR with libx264/libx265).
   const primaryNames = new Set<string>();
@@ -137,14 +157,40 @@ export function EncoderForm({ def, onChange }: Props) {
   primaryNames.add('minrate');
   primaryNames.add('bufsize');
 
-  // Split remaining options into Raw vs Advanced.
+  // Effective defaults implied by the current preset + tune (used as
+  // placeholder text so the user can see what x264/x265 will actually apply).
+  const presetVal = preset ? (getParam(preset.name) || 'medium') : 'medium';
+  const tuneOpt   = findOption(info.options, 'tune');
+  const tuneVal   = tuneOpt ? (getParam(tuneOpt.name) || undefined) : undefined;
+  const getEffectivePlaceholder = (optionName: string): string | undefined =>
+    effectivePresetDefault(codec, optionName, presetVal, tuneVal);
+
+  // Split remaining options into GOP, Profile, Raw, and Advanced.
+  // Profile options are deduplicated by name: when both a generic
+  // AVCodecContext option (e.g. avctx->profile, int -99) and a private
+  // codec option (e.g. x264/x265 string "profile") share the same name,
+  // keep only the private one — it is the functional setting for these
+  // encoders and has the correct string type.
+  const gopOptions: EncoderOption[] = [];
+  const profileMap = new Map<string, EncoderOption>();
   const raw: EncoderOption[] = [];
   const advanced: EncoderOption[] = [];
   for (const o of info.options) {
     if (primaryNames.has(o.name)) continue;
-    if (RAW_OPTION_NAMES.has(o.name)) raw.push(o);
-    else advanced.push(o);
+    if (RAW_OPTION_NAMES.has(o.name)) { raw.push(o); continue; }
+    if (GOP_OPTION_NAMES.includes(o.name)) { gopOptions.push(o); continue; }
+    if (PROFILE_OPTION_NAMES.includes(o.name)) {
+      const existing = profileMap.get(o.name);
+      if (!existing || (!existing.is_private && o.is_private)) {
+        profileMap.set(o.name, o);
+      }
+      continue;
+    }
+    advanced.push(o);
   }
+  const profileOptions = [...profileMap.values()]
+    .sort((a, b) => PROFILE_OPTION_NAMES.indexOf(a.name) - PROFILE_OPTION_NAMES.indexOf(b.name));
+  gopOptions.sort((a, b) => GOP_OPTION_NAMES.indexOf(a.name) - GOP_OPTION_NAMES.indexOf(b.name));
 
   // Advanced grouping. Cheap and stateless — recompute on every render.
   const groups = groupAdvanced(advanced);
@@ -185,6 +231,7 @@ export function EncoderForm({ def, onChange }: Props) {
           value={getParam(keyint.name)}
           onChange={(v) => setParam(keyint.name, v)}
           labelOverride="Keyframe interval (GOP size)"
+          effectivePlaceholder={getEffectivePlaceholder(keyint.name)}
         />
       )}
 
@@ -195,12 +242,44 @@ export function EncoderForm({ def, onChange }: Props) {
         </div>
       )}
 
+      {gopOptions.length > 0 && (
+        <PromotedSection title="GOP & Frames">
+          {gopOptions.map((o) => (
+            <PrimaryRow
+              key={o.name}
+              option={o}
+              value={getParam(o.name)}
+              onChange={(v) => setParam(o.name, v)}
+              labelOverride={prettyLabel(o.name)}
+              choices={optionChoices(codec, o.name)}
+              effectivePlaceholder={getEffectivePlaceholder(o.name)}
+            />
+          ))}
+        </PromotedSection>
+      )}
+
+      {profileOptions.length > 0 && (
+        <PromotedSection title="Profile / Level">
+          {profileOptions.map((o) => (
+            <PrimaryRow
+              key={o.name}
+              option={o}
+              value={getParam(o.name)}
+              onChange={(v) => setParam(o.name, v)}
+              labelOverride={prettyLabel(o.name)}
+              choices={optionChoices(codec, o.name)}
+              effectivePlaceholder={getEffectivePlaceholder(o.name)}
+            />
+          ))}
+        </PromotedSection>
+      )}
+
       {raw.length > 0 && (
         <RawOptions options={raw} getParam={getParam} setParam={setParam} />
       )}
 
       {advanced.length > 0 && (
-        <AdvancedSection groups={groups} getParam={getParam} setParam={setParam} />
+        <AdvancedSection groups={groups} getParam={getParam} setParam={setParam} getEffectivePlaceholder={getEffectivePlaceholder} />
       )}
     </>
   );
@@ -249,9 +328,9 @@ function RateControlGroup({
     }
     if (qp && qpVal !== '') return 'qp';
     if (crf && crfVal !== '') return 'crf';
-    if (bitRate) return 'bitrate';
-    if (crf) return 'crf';
-    return 'qp';
+    if (bitRate && bVal !== '') return 'bitrate';
+    // Nothing set — use the codec's declared default RC mode.
+    return roles.default_rc ?? (bitRate ? 'bitrate' : crf ? 'crf' : 'qp');
   };
   const [mode, setModeState] = useState<RateMode>(seedMode);
 
@@ -413,6 +492,33 @@ function kbpsInputToBps(input: string): string {
   return String(Math.round(n * 1000));
 }
 
+/* ---------- Promoted section (always visible, labelled group) ---------- */
+function PromotedSection({
+  title,
+  children,
+}: {
+  title: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="encoder-section" style={{ marginTop: 12 }}>
+      <div
+        style={{
+          fontSize: 11,
+          fontWeight: 600,
+          textTransform: 'uppercase',
+          letterSpacing: '0.06em',
+          color: 'var(--fg-muted, #888)',
+          marginBottom: 4,
+        }}
+      >
+        {title}
+      </div>
+      {children}
+    </div>
+  );
+}
+
 /* ---------- Raw options (param-string escape hatch) ---------- */
 function RawOptions({
   options,
@@ -457,10 +563,12 @@ function AdvancedSection({
   groups,
   getParam,
   setParam,
+  getEffectivePlaceholder,
 }: {
   groups: AdvancedGroup[];
   getParam: (k: string) => string;
   setParam: (k: string, v: string) => void;
+  getEffectivePlaceholder: (name: string) => string | undefined;
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
@@ -503,7 +611,7 @@ function AdvancedSection({
               <div className="empty" style={{ fontSize: 11 }}>No options match “{query}”.</div>
             ) : (
               filtered.map((o) => (
-                <AdvancedRow key={o.name} option={o} value={getParam(o.name)} onChange={(v) => setParam(o.name, v)} />
+                <AdvancedRow key={o.name} option={o} value={getParam(o.name)} onChange={(v) => setParam(o.name, v)} effectivePlaceholder={getEffectivePlaceholder(o.name)} />
               ))
             )
           ) : (
@@ -513,6 +621,7 @@ function AdvancedSection({
                 group={g}
                 getParam={getParam}
                 setParam={setParam}
+                getEffectivePlaceholder={getEffectivePlaceholder}
               />
             ))
           )}
@@ -526,10 +635,12 @@ function AdvancedGroupView({
   group,
   getParam,
   setParam,
+  getEffectivePlaceholder,
 }: {
   group: AdvancedGroup;
   getParam: (k: string) => string;
   setParam: (k: string, v: string) => void;
+  getEffectivePlaceholder: (name: string) => string | undefined;
 }) {
   const [open, setOpen] = useState(false);
   return (
@@ -542,7 +653,7 @@ function AdvancedGroupView({
         {open ? '▾' : '▸'} {group.name} ({group.options.length})
       </button>
       {open && group.options.map((o) => (
-        <AdvancedRow key={o.name} option={o} value={getParam(o.name)} onChange={(v) => setParam(o.name, v)} />
+        <AdvancedRow key={o.name} option={o} value={getParam(o.name)} onChange={(v) => setParam(o.name, v)} effectivePlaceholder={getEffectivePlaceholder(o.name)} />
       ))}
     </div>
   );
@@ -552,21 +663,37 @@ function AdvancedRow({
   option,
   value,
   onChange,
+  effectivePlaceholder,
 }: {
   option: EncoderOption;
   value: string;
   onChange: (next: string) => void;
+  effectivePlaceholder?: string;
 }) {
-  const def = defaultDisplay(option);
+  const def = effectivePlaceholder ?? defaultDisplay(option);
+  const friendly = prettyLabel(option.name);
+  const optForControl: EncoderOption = effectivePlaceholder
+    ? {
+        ...option,
+        default: option.type === 'float' || option.type === 'double'
+          ? { float: parseFloat(effectivePlaceholder) }
+          : option.type === 'string'
+          ? { string: effectivePlaceholder }
+          : { int: parseInt(effectivePlaceholder, 10) },
+      }
+    : option;
   return (
     <div style={{ marginTop: 4 }}>
-      <label title={option.help} style={{ fontSize: 11 }}>
-        {option.name}
+      <label title={option.help ?? option.name} style={{ fontSize: 11 }}>
+        {friendly}
+        {friendly !== option.name && (
+          <span className="empty" style={{ fontSize: 10, marginLeft: 4 }}>({option.name})</span>
+        )}
         <span className="empty" style={{ fontSize: 10, marginLeft: 4 }}>
           {option.type}{def ? ` · default ${def}` : ''}
         </span>
       </label>
-      <OptionControl option={option} value={value} onChange={onChange} />
+      <OptionControl option={optForControl} value={value} onChange={onChange} />
       {option.help && (
         <div className="empty" style={{ fontSize: 10, marginTop: 2, marginBottom: 4 }}>
           {option.help}
@@ -621,23 +748,35 @@ function PrimaryRow({
   onChange,
   labelOverride,
   choices,
+  effectivePlaceholder,
 }: {
   option: EncoderOption;
   value: string;
   onChange: (next: string) => void;
   labelOverride?: string;
   choices?: OptionChoiceList;
+  effectivePlaceholder?: string;
 }) {
   const label = labelOverride ?? prettyLabel(option.name);
-  const def = choices?.default ?? defaultDisplay(option);
+  const def = effectivePlaceholder ?? choices?.default ?? defaultDisplay(option);
+  const optForControl: EncoderOption = effectivePlaceholder
+    ? {
+        ...option,
+        default: option.type === 'float' || option.type === 'double'
+          ? { float: parseFloat(effectivePlaceholder) }
+          : option.type === 'string'
+          ? { string: effectivePlaceholder }
+          : { int: parseInt(effectivePlaceholder, 10) },
+      }
+    : option;
   return (
     <>
       <label title={option.help}>
         {label} <span className="empty" style={{ fontSize: 10 }}>({option.name}{def ? ` · default ${def}` : ''})</span>
       </label>
       {choices ? (
-        <select value={value} onChange={(e) => onChange(e.target.value)}>
-          <option value="">(default{choices.default ? ` — ${choices.default}` : ''})</option>
+        <select value={value || (choices.default ?? '')} onChange={(e) => onChange(e.target.value)}>
+          {!choices.default && <option value="">(default)</option>}
           {choices.choices.map((c) => (
             <option key={c.value} value={c.value}>
               {c.label ?? c.value}
@@ -645,7 +784,7 @@ function PrimaryRow({
           ))}
         </select>
       ) : (
-        <OptionControl option={option} value={value} onChange={onChange} />
+        <OptionControl option={optForControl} value={value} onChange={onChange} />
       )}
       {option.help && (
         <div className="empty" style={{ fontSize: 10, marginTop: 2, marginBottom: 6 }}>
@@ -691,18 +830,111 @@ function prettyCodecFormat(info: EncoderInfo, codec: string): string {
 }
 
 function prettyLabel(name: string): string {
-  // Map common cryptic libav option names to friendly labels.
+  // Map common cryptic libav / codec AVOption names to friendly labels.
   switch (name) {
-    case 'preset': return 'Preset';
-    case 'rc': return 'Rate control';
-    case 'b': return 'Bit rate';
-    case 'crf': return 'Quality (CRF)';
-    case 'cq': return 'Quality (CQ)';
-    case 'q': return 'Quality (Q)';
-    case 'g': return 'Keyframe interval (frames)';
-    case 'vbr': return 'VBR mode';
-    case 'cpu-used': return 'CPU usage preset';
-    case 'deadline': return 'Deadline';
+    // Primary controls
+    case 'preset':          return 'Preset';
+    case 'rc':              return 'Rate control';
+    case 'b':               return 'Bit rate';
+    case 'crf':             return 'Quality (CRF)';
+    case 'cq':              return 'Quality (CQ)';
+    case 'q':               return 'Quality (Q)';
+    case 'g':               return 'Keyframe interval (frames)';
+    case 'vbr':             return 'VBR mode';
+    case 'cpu-used':        return 'CPU usage preset';
+    case 'deadline':        return 'Deadline';
+    // GOP & Frames
+    case 'bf':              return 'B Frames';
+    case 'keyint_min':      return 'Min Keyframe Interval';
+    case 'sc_threshold':    return 'Scene Change Threshold';
+    case 'refs':            return 'Reference Frames';
+    case 'b_strategy':      return 'B-Frame Strategy';
+    case 'intra-refresh':
+    case 'intra_refresh':   return 'Periodic Intra Refresh';
+    // Profile / Level / Tier
+    case 'profile':         return 'Profile';
+    case 'level':           return 'Level';
+    case 'tier':            return 'Tier';
+    // Tuning
+    case 'tune':            return 'Tune';
+    case 'fastfirstpass':   return 'Fast First Pass';
+    case 'slow-firstpass':  return 'Slow First Pass';
+    // Rate control extras
+    case 'rc-lookahead':    return 'Rate Control Lookahead (frames)';
+    case 'mbtree':          return 'MB-Tree Rate Control';
+    case 'aq-mode':         return 'Adaptive Quantization Mode';
+    case 'aq-strength':     return 'Adaptive Quantization Strength';
+    case 'qmin':            return 'Min Quantizer';
+    case 'qmax':            return 'Max Quantizer';
+    case 'qcomp':           return 'QP Compression';
+    case 'qblur':           return 'QP Blur';
+    case 'qdiff':           return 'Max QP Step';
+    case 'crf_max':
+    case 'crf-max':         return 'Max CRF (CRF+VBV cap)';
+    case 'vbv-maxrate':     return 'VBV Max Rate (kbps)';
+    case 'vbv-bufsize':     return 'VBV Buffer Size (kbit)';
+    case 'vbv-init':        return 'VBV Initial Occupancy';
+    case 'ipratio':         return 'I/P Frame QP Ratio';
+    case 'pbratio':         return 'P/B Frame QP Ratio';
+    case 'chroma-qp-offset':
+    case 'chromaoffset':    return 'Chroma QP Offset';
+    // Psychovisual
+    case 'psy':             return 'Psychovisual Optimisation';
+    case 'psy-rd':          return 'Psychovisual Rate-Distortion';
+    case 'noise-reduction': return 'Noise Reduction';
+    // Prediction / Motion
+    case 'wpredp':          return 'Weighted Prediction (P-frames)';
+    case 'weightb':         return 'Weighted Prediction (B-frames)';
+    case 'mixed-refs':      return 'Mixed Reference Frames';
+    case 'fast-pskip':      return 'Fast P-Skip';
+    case 'b-adapt':
+    case 'b_adapt':         return 'Adaptive B-Frame Decision';
+    case 'b-bias':
+    case 'b_bias':          return 'B-Frame Bias';
+    case 'b-pyramid':
+    case 'b_pyramid':       return 'B-Frame Pyramid';
+    case 'direct-pred':
+    case 'directpred':      return 'Direct MV Prediction';
+    // Deblock
+    case 'deblock':         return 'Deblock Filter (alpha:beta)';
+    // Transform
+    case '8x8dct':          return '8×8 DCT Transform';
+    case 'dct-decimate':
+    case 'dct_decimate':    return 'DCT Decimate';
+    // Threading / slicing
+    case 'threads':         return 'Threads';
+    case 'thread_type':     return 'Thread Type';
+    case 'slices':          return 'Slices per Frame';
+    case 'slice-max-size':  return 'Max Slice Size (bytes)';
+    case 'slice-max-mbs':   return 'Max Slice Size (MBs)';
+    case 'slice-min-mbs':   return 'Min Slice Size (MBs)';
+    case 'sliced-threads':  return 'Sliced Threads';
+    // Colour
+    case 'pix_fmt':         return 'Pixel Format';
+    case 'colorspace':      return 'Colour Space';
+    case 'color_range':     return 'Colour Range';
+    case 'color_primaries': return 'Colour Primaries';
+    case 'color_trc':       return 'Transfer Characteristics';
+    // Misc
+    case 'aud':             return 'Access Unit Delimiters (Blu-ray)';
+    case 'udu_sei':         return 'User-Data Unregistered SEI';
+    case 'open-gop':        return 'Open GOP';
+    case 'constrained-intra': return 'Constrained Intra Prediction';
+    case 'cabac':           return 'CABAC Entropy Coding';
+    case 'ssim':            return 'SSIM Metric Logging';
+    case 'psnr':            return 'PSNR Metric Logging';
+    case 'partitions':      return 'Partitions';
+    case 'subme':           return 'Sub-Pixel Motion Estimation';
+    case 'me_range':
+    case 'merange':         return 'Motion Estimation Range';
+    case 'me_method':
+    case 'me':              return 'Motion Estimation Method';
+    case 'nr':              return 'Noise Reduction';
+    case 'trellis':         return 'Trellis Quantization';
+    case 'sync-lookahead':  return 'Sync Lookahead';
+    case 'rc-refcnt':
+    case 'rc_ref':          return 'Rate Control Reference';
+    case 'passlogfile':     return 'Two-Pass Logfile';
     default: return name;
   }
 }

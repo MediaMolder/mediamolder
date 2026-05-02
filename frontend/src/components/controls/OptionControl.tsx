@@ -97,12 +97,16 @@ export function OptionControl({ option, value, onChange, filter }: OptionControl
   );
 }
 
-/** Render an option's default value for placeholder text. */
+/** Render an option's default value for placeholder text.
+ *  Negative int defaults are FFmpeg sentinels (AV_PROFILE_UNKNOWN=-99,
+ *  AV_LEVEL_UNKNOWN=-99, or -1 meaning "let the encoder decide") and are
+ *  never useful to display — the effectivePresetDefault table supplies the
+ *  real value for preset-controlled options. */
 export function defaultDisplay(option: EncoderOption): string {
   const d = option.default;
   if (!d) return '';
   if (d.string !== undefined) return d.string;
-  if (d.int !== undefined) return String(d.int);
+  if (d.int !== undefined) return d.int < 0 ? '' : String(d.int);
   if (d.float !== undefined) return String(d.float);
   if (d.num_den) return `${d.num_den[0]}/${d.num_den[1]}`;
   return '';
