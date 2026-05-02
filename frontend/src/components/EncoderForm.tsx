@@ -166,20 +166,31 @@ export function EncoderForm({ def, onChange }: Props) {
     effectivePresetDefault(codec, optionName, presetVal, tuneVal);
 
   // Split remaining options into GOP, Profile, Raw, and Advanced.
+  // Profile options are deduplicated by name: when both a generic
+  // AVCodecContext option (e.g. avctx->profile, int -99) and a private
+  // codec option (e.g. x264/x265 string "profile") share the same name,
+  // keep only the private one — it is the functional setting for these
+  // encoders and has the correct string type.
   const gopOptions: EncoderOption[] = [];
-  const profileOptions: EncoderOption[] = [];
+  const profileMap = new Map<string, EncoderOption>();
   const raw: EncoderOption[] = [];
   const advanced: EncoderOption[] = [];
   for (const o of info.options) {
     if (primaryNames.has(o.name)) continue;
     if (RAW_OPTION_NAMES.has(o.name)) { raw.push(o); continue; }
     if (GOP_OPTION_NAMES.includes(o.name)) { gopOptions.push(o); continue; }
-    if (PROFILE_OPTION_NAMES.includes(o.name)) { profileOptions.push(o); continue; }
+    if (PROFILE_OPTION_NAMES.includes(o.name)) {
+      const existing = profileMap.get(o.name);
+      if (!existing || (!existing.is_private && o.is_private)) {
+        profileMap.set(o.name, o);
+      }
+      continue;
+    }
     advanced.push(o);
   }
-  // Preserve the preferred display order for promoted sections.
+  const profileOptions = [...profileMap.values()]
+    .sort((a, b) => PROFILE_OPTION_NAMES.indexOf(a.name) - PROFILE_OPTION_NAMES.indexOf(b.name));
   gopOptions.sort((a, b) => GOP_OPTION_NAMES.indexOf(a.name) - GOP_OPTION_NAMES.indexOf(b.name));
-  profileOptions.sort((a, b) => PROFILE_OPTION_NAMES.indexOf(a.name) - PROFILE_OPTION_NAMES.indexOf(b.name));
 
   // Advanced grouping. Cheap and stateless — recompute on every render.
   const groups = groupAdvanced(advanced);
@@ -317,9 +328,9 @@ function RateControlGroup({
     }
     if (qp && qpVal !== '') return 'qp';
     if (crf && crfVal !== '') return 'crf';
-    if (bitRate) return 'bitrate';
-    if (crf) return 'crf';
-    return 'qp';
+    if (bitRate && bVal !== '') return 'bitrate';
+    // Nothing set — use the codec's declared default RC mode.
+    return roles.default_rc ?? (bitRate ? 'bitrate' : crf ? 'crf' : 'qp');
   };
   const [mode, setModeState] = useState<RateMode>(seedMode);
 
@@ -764,8 +775,8 @@ function PrimaryRow({
         {label} <span className="empty" style={{ fontSize: 10 }}>({option.name}{def ? ` · default ${def}` : ''})</span>
       </label>
       {choices ? (
-        <select value={value} onChange={(e) => onChange(e.target.value)}>
-          <option value="">(default{choices.default ? ` — ${choices.default}` : ''})</option>
+        <select value={value || (choices.default ?? '')} onChange={(e) => onChange(e.target.value)}>
+          {!choices.default && <option value="">(default)</option>}
           {choices.choices.map((c) => (
             <option key={c.value} value={c.value}>
               {c.label ?? c.value}

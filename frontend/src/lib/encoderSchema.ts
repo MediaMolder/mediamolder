@@ -104,14 +104,18 @@ export interface EncoderUiRoles {
   rc_cbr?: string;
   rc_crf?: string;            // enum constant that means "use CRF/CQ"
   rc_qp?: string;             // enum constant that means "use constant QP"
+  /** Default RC mode shown when no params are set. Defaults to 'bitrate'
+   *  when omitted for backward compat with generic encoders, but should be
+   *  set explicitly for any encoder whose library default is CRF/QP. */
+  default_rc?: 'bitrate' | 'crf' | 'qp';
 }
 
 export const ENCODER_UI_ROLES: Record<string, EncoderUiRoles> = {
-  libx264:   { preset: 'preset', bit_rate: 'b', crf: 'crf', qp: 'qp', keyframe_interval: 'g' },
-  libx265:   { preset: 'preset', bit_rate: 'b', crf: 'crf', qp: 'qp', keyframe_interval: 'g' },
-  libsvtav1: { preset: 'preset', bit_rate: 'b', crf: 'crf', qp: 'qp', keyframe_interval: 'g' },
-  libvpx_vp9:{ preset: 'deadline', bit_rate: 'b', crf: 'crf', qp: 'qp', keyframe_interval: 'g' },
-  libaom_av1:{ preset: 'cpu-used', bit_rate: 'b', crf: 'crf', qp: 'qp', keyframe_interval: 'g' },
+  libx264:   { preset: 'preset', bit_rate: 'b', crf: 'crf', qp: 'qp', keyframe_interval: 'g', default_rc: 'crf' },
+  libx265:   { preset: 'preset', bit_rate: 'b', crf: 'crf', qp: 'qp', keyframe_interval: 'g', default_rc: 'crf' },
+  libsvtav1: { preset: 'preset', bit_rate: 'b', crf: 'crf', qp: 'qp', keyframe_interval: 'g', default_rc: 'crf' },
+  libvpx_vp9:{ preset: 'deadline', bit_rate: 'b', crf: 'crf', qp: 'qp', keyframe_interval: 'g', default_rc: 'crf' },
+  libaom_av1:{ preset: 'cpu-used', bit_rate: 'b', crf: 'crf', qp: 'qp', keyframe_interval: 'g', default_rc: 'crf' },
   h264_nvenc:{
     preset: 'preset', bit_rate: 'b', crf: 'cq', qp: 'qp', keyframe_interval: 'g',
     rc_enum: 'rc', rc_vbr: 'vbr', rc_cbr: 'cbr', rc_crf: 'vbr', rc_qp: 'constqp',
@@ -273,6 +277,7 @@ const X264_X265_PRESETS: OptionChoiceList = {
  *  Profiles narrow the allowed feature set; choose the least restrictive
  *  profile your target decoder supports. */
 const X264_PROFILES: OptionChoiceList = {
+  default: 'main',
   choices: [
     { value: 'baseline', label: 'Baseline — no B-frames, no CABAC, progressive only' },
     { value: 'main',     label: 'Main — no 8×8 DCT, no lossless' },
@@ -286,6 +291,7 @@ const X264_PROFILES: OptionChoiceList = {
 /** H.265 (x265) profile choices.
  *  Note: only applied when encoding 8-bit frames (libavcodec limitation). */
 const X265_PROFILES: OptionChoiceList = {
+  default: 'main',
   choices: [
     { value: 'main',             label: 'Main — 8-bit, 4:2:0' },
     { value: 'main10',           label: 'Main 10 — 8–10-bit, 4:2:0' },
