@@ -220,6 +220,7 @@ export function EncoderForm({ def, onChange }: Props) {
           value={getParam(keyint.name)}
           onChange={(v) => setParam(keyint.name, v)}
           labelOverride="Keyframe interval (GOP size)"
+          effectivePlaceholder={getEffectivePlaceholder(keyint.name)}
         />
       )}
 
