@@ -67,3 +67,6 @@ docs/images/Separate_audio_video.png
 testdata/sample.jpg
 testdata/sample.aac
 testdata/sample.yuv
+
+# Debug build log (make build-debug / make build-gui-debug)
+mediamolder-build.log

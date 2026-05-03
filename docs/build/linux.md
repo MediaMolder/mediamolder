@@ -202,7 +202,35 @@ make gui-dev
 Frontend edits reload instantly in your browser. Go code changes still
 require restarting terminal 2.
 
-## 6. Run the tests
+## 6. Debug builds — capturing a full build log
+
+If a build fails and the error isn't obvious, run the debug variant to
+capture a complete log of compiler flags, linker invocations, and
+environment details:
+
+```bash
+make build-debug          # headless binary + mediamolder-build.log
+# or, if you're building the GUI:
+make build-gui-debug
+```
+
+The log file includes:
+- `go env` output (GOARCH, GOOS, CGO_ENABLED, …)
+- `gcc` path and version
+- `pkg-config` cflags/libs for every FFmpeg library
+- `PKG_CONFIG_PATH`, `CGO_CFLAGS`, `CGO_LDFLAGS`, `FFMPEG_SRC`
+- Full `-v -x` Go build output (every compiler + linker invocation)
+
+You can customise the output path and add build tags:
+
+```bash
+make build-gui-debug LOG=/tmp/mediamolder.log
+make build-debug BUILD_TAGS=ffstatic LOG=/tmp/static.log
+```
+
+Upload `mediamolder-build.log` when [opening a bug report](https://github.com/MediaMolder/mediamolder/issues). The file is safe to share — it contains no passwords or private keys.
+
+## 7. Run the tests
 
 ```bash
 make test                       # Option A — default FFmpeg
