@@ -212,10 +212,18 @@ go test ./pipeline/...          # narrow to one package
 
 ## Troubleshooting
 
-- **`Package libavcodec was not found`** — install `libavcodec-dev` (Debian)
-  or `ffmpeg-devel` (Fedora). Check `pkg-config --modversion libavcodec`.
-- **Distro FFmpeg too old** — minimum supported is 8.1. Build FFmpeg from
-  source and use Option B1 (custom `PKG_CONFIG_PATH`) or B2 (`ffstatic`).
+- **`error: gcc not found`** or **`undefined: cmdGUI`** — `gcc` is missing.
+  Install `build-essential` (Debian/Ubuntu) or `gcc` (Fedora/RHEL).
+- **`error: FFmpeg development headers not found`** or **`Package libavcodec was not found`** —
+  install `libavcodec-dev` (Debian) or `ffmpeg-devel` (Fedora).
+  Check `pkg-config --modversion libavcodec`.
+- **`undefined: cmdGUI`** with no other errors visible — this is a cascading
+  error from a CGO compilation failure earlier in the output (scroll up).
+  The root cause is almost always missing or incompatible FFmpeg headers; see
+  the two entries above.
+- **Distro FFmpeg too old** — minimum supported is 8.1 (libavcodec 61).
+  Build FFmpeg from source and use Option B1 (custom `PKG_CONFIG_PATH`) or B2
+  (`ffstatic`).
 - **`/usr/bin/ld: cannot find -lavcodec` with `ffstatic`** — the
   `../ffmpeg/libav*/*.a` files don't exist. Re-run `make` in the FFmpeg
   source tree.
