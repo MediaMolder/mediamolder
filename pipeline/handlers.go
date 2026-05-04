@@ -96,9 +96,21 @@ func (s *sourceResources) Close() {
 	}
 }
 
+// muxWriter is the subset of *av.OutputFormatContext used by sinkWriter
+// and handleSink. The interface allows a fake muxer to be injected in
+// table-driven tests without requiring CGO.
+type muxWriter interface {
+	WritePacket(pkt *av.Packet) error
+	WriteTrailer() error
+	BytesWritten() int64
+	StreamTimeBase(idx int) [2]int
+	Abort()
+	Close() error
+}
+
 // sinkResources holds a muxer and the encoder(s) feeding it.
 type sinkResources struct {
-	muxer *av.OutputFormatContext
+	muxer muxWriter
 	cfg   Output
 	// streamRescale[i] describes the timestamp rescaling to apply to
 	// packets arriving on input channel i before WritePacket. Always
