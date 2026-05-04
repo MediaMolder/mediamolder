@@ -102,8 +102,8 @@ graph TD
     end
 
     Developer[Media Developer] -->|Browser| GUI
-    Developer -->|CLI `run` / JSON| Core
-    GoDev[Go Developer] -->|import "github.com/MediaMolder/MediaMolder"| Core
+    Developer -->|CLI run / JSON| Core
+    GoDev[Go Developer] -->|import go package| Core
     Core -->|Serves static + APIs| GUI
     Core -->|CGO calls| LibAV[FFmpeg libav* Libraries]
     Core -->|Read / Write| FS[(File System<br/>media files)]
@@ -208,7 +208,9 @@ graph TD
     Canvas <-->|sync| Store
     Inspector <-->|edit params| Store
     Toolbar -->|run / import| API
-    Store -->|render| Canvas & Inspector & Toolbar
+    Store -->|render| Canvas
+    Store -->|render| Inspector
+    Store -->|render| Toolbar
 ```
 
 ---
