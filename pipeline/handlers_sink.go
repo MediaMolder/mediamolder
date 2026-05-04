@@ -20,244 +20,243 @@ import (
 
 // ---------- Sink handler ----------
 
+// chanState tracks per-channel muxing bookkeeping inside handleSink.
+type chanState struct {
+	written   int
+	lastPTSus int64
+	lastPTSok bool
+}
+
+// ptsToMicros converts a PTS value (in tb units) to AV_TIME_BASE microseconds,
+// returning (us, true) on success or (0, false) when the PTS is unset or the
+// time_base is invalid. Mirrors the av_rescale_q(pts, tb, AV_TIME_BASE_Q) calls
+// scattered throughout fftools for cross-stream PTS comparison.
+func ptsToMicros(pts int64, tb [2]int) (int64, bool) {
+	if pts == math.MinInt64 || tb[0] <= 0 || tb[1] <= 0 {
+		return 0, false
+	}
+	return pts * 1_000_000 * int64(tb[0]) / int64(tb[1]), true
+}
+
+// shiftPTSus converts deltaUS microseconds into tb units and subtracts it from
+// pkt's PTS/DTS. Mirrors of_streamcopy's `pkt->pts -= ts_offset` after
+// rebasing the output to start at PTS 0.
+func shiftPTSus(pkt *av.Packet, deltaUS int64, tb [2]int) {
+	if deltaUS == 0 || tb[0] <= 0 || tb[1] <= 0 {
+		return
+	}
+	off := deltaUS * int64(tb[1]) / (1_000_000 * int64(tb[0]))
+	if off != 0 {
+		pkt.ShiftTS(-off)
+	}
+}
+
+// sinkWriter carries the per-output muxing state and implements the per-packet
+// and per-channel write operations for handleSink. Separating this type from
+// graphRunner makes processOne and writeOne independently testable.
+type sinkWriter struct {
+	sink    *sinkResources
+	node    *graph.Node
+	startUS int64       // output-side -ss in AV_TIME_BASE units; av.NoPTSValue = no trim
+	stopUS  int64       // output-side -t/-to; noLimitUS = no trim
+	shiftUS int64       // subtracted from kept packets so output anchors at PTS 0
+	mu      *sync.Mutex // nil for single-stream path; shared across goroutines otherwise
+	pipe    *Pipeline
+}
+
+// limitForChan returns the max-frames cap for input channel i (0 = unlimited).
+func (w *sinkWriter) limitForChan(i int) int {
+	if i >= len(w.node.Inbound) {
+		return 0
+	}
+	switch w.node.Inbound[i].Type {
+	case graph.PortVideo:
+		return w.sink.cfg.MaxFramesVideo
+	case graph.PortAudio:
+		return w.sink.cfg.MaxFramesAudio
+	}
+	return 0
+}
+
+// recordShortest updates the shared shortestPTSus to min(current, lastPTSus)
+// when the -shortest flag is active. Called on natural channel close.
+func (w *sinkWriter) recordShortest(lastPTSus int64, ok bool) {
+	if !w.sink.shortest || !ok {
+		return
+	}
+	w.sink.shortestMu.Lock()
+	if lastPTSus < w.sink.shortestPTSus {
+		w.sink.shortestPTSus = lastPTSus
+	}
+	w.sink.shortestMu.Unlock()
+}
+
+// shortestReached returns true when another channel has already closed and the
+// -shortest PTS cap has been reached for ptsUS.
+func (w *sinkWriter) shortestReached(ptsUS int64, ok bool) bool {
+	if !w.sink.shortest || !ok {
+		return false
+	}
+	w.sink.shortestMu.Lock()
+	bound := w.sink.shortestPTSus
+	w.sink.shortestMu.Unlock()
+	return bound != noLimitUS && ptsUS >= bound
+}
+
+// writeOne handles a single muxer-bound packet: max_file_size check,
+// WritePacket under w.mu (when non-nil), and per-channel bookkeeping.
+// Returns (wrote, stopAll, err).
+func (w *sinkWriter) writeOne(pkt *av.Packet, i int, dstTB [2]int, st *chanState) (bool, bool, error) {
+	frameStart := time.Now()
+	if w.mu != nil {
+		w.mu.Lock()
+	}
+	stopAllNow := false
+	if w.sink.maxFileSize > 0 {
+		if cur := w.sink.muxer.BytesWritten(); cur >= 0 && cur >= w.sink.maxFileSize {
+			stopAllNow = true
+		}
+	}
+	var wErr error
+	if !stopAllNow {
+		wErr = w.sink.muxer.WritePacket(pkt)
+	}
+	if w.mu != nil {
+		w.mu.Unlock()
+	}
+	if stopAllNow {
+		return false, true, nil
+	}
+	if wErr != nil {
+		return false, false, wErr
+	}
+	st.written++
+	if pPTS, hasP := ptsToMicros(pkt.PTS(), dstTB); hasP {
+		st.lastPTSus = pPTS
+		st.lastPTSok = true
+		ptsNs := time.Duration(pkt.PTS()) * time.Second *
+			time.Duration(dstTB[0]) / time.Duration(dstTB[1])
+		w.pipe.Metrics().Node(w.node.ID).AdvanceOutputPTS(ptsNs)
+	}
+	w.pipe.Metrics().Node(w.node.ID).RecordLatency(time.Since(frameStart))
+	return true, false, nil
+}
+
+// processOne runs the full per-packet pipeline for input channel i:
+// max-frames cap, output-side trim drop/stop, ts shift, rescale,
+// shortest cap, BSF chain, then writeOne.
+// Returns (wrote, stopAll, err); stopAll signals every channel to drain-and-drop.
+func (w *sinkWriter) processOne(i int, pkt *av.Packet, dstTB [2]int, rs *sinkRescale, st *chanState) (bool, bool, error) {
+	// Per-stream max frames (mirrors FFmpeg's `-frames:v` / `-frames:a`).
+	if lim := w.limitForChan(i); lim > 0 && st.written >= lim {
+		return false, false, nil
+	}
+	pkt.SetStreamIndex(i)
+	if rs != nil {
+		pkt.Rescale(rs.srcTB, rs.dstTB)
+	}
+	ptsUS, hasPTS := ptsToMicros(pkt.PTS(), dstTB)
+
+	// Output-side `-ss`: drop packets below the configured start.
+	// Mirrors of_streamcopy's `if (dts < of->start_time) return EAGAIN`.
+	if w.startUS != int64(av.NoPTSValue) && hasPTS && ptsUS < w.startUS {
+		return false, false, nil
+	}
+	// Output-side `-t`/`-to`: stop when any kept packet reaches the end.
+	// Mirrors `check_recording_time`'s `av_compare_ts >= 0` => stop.
+	if w.stopUS != noLimitUS && hasPTS && ptsUS >= w.stopUS {
+		return false, true, nil
+	}
+	// `-shortest`: stop once another channel has closed at a lower PTS.
+	if w.shortestReached(ptsUS, hasPTS) {
+		return false, false, nil
+	}
+
+	// Shift kept packets so the output file anchors at PTS 0
+	// (suppressed under -copyts).
+	shiftPTSus(pkt, w.shiftUS, dstTB)
+
+	// BSF chain: drive through av_bsf_send_packet / av_bsf_receive_packet
+	// and call writeOne for each output packet. Mirrors
+	// fftools/ffmpeg_mux.c::write_packet's BSF loop.
+	var bsf *av.BitstreamFilter
+	if i < len(w.sink.streamBSF) {
+		bsf = w.sink.streamBSF[i]
+	}
+	if bsf != nil {
+		outs, err := bsf.FilterPacket(pkt)
+		if err != nil {
+			return false, false, fmt.Errorf("bsf filter: %w", err)
+		}
+		var wroteAny bool
+		for _, op := range outs {
+			op.SetStreamIndex(i)
+			wrote, stopAll, werr := w.writeOne(op, i, dstTB, st)
+			op.Close()
+			wroteAny = wroteAny || wrote
+			if stopAll || werr != nil {
+				return wroteAny, stopAll, werr
+			}
+		}
+		return wroteAny, false, nil
+	}
+	return w.writeOne(pkt, i, dstTB, st)
+}
+
+// flushBSF drains residual packets buffered inside the BSF chain at
+// end-of-stream by sending a null packet (EOF signal), then writing the
+// drained output through WritePacket. Mirrors fftools/ffmpeg_mux.c::mux_thread
+// flushing the BSF before WriteTrailer.
+func (w *sinkWriter) flushBSF(i int, dstTB [2]int, st *chanState) error {
+	var bsf *av.BitstreamFilter
+	if i < len(w.sink.streamBSF) {
+		bsf = w.sink.streamBSF[i]
+	}
+	if bsf == nil {
+		return nil
+	}
+	outs, err := bsf.Flush()
+	if err != nil {
+		return fmt.Errorf("bsf flush: %w", err)
+	}
+	for _, op := range outs {
+		op.SetStreamIndex(i)
+		if w.mu != nil {
+			w.mu.Lock()
+		}
+		werr := w.sink.muxer.WritePacket(op)
+		if w.mu != nil {
+			w.mu.Unlock()
+		}
+		op.Close()
+		if werr != nil {
+			return werr
+		}
+		st.written++
+	}
+	return nil
+}
+
 func (r *graphRunner) handleSink(ctx context.Context, node *graph.Node, ins []<-chan any) error {
 	sink := r.sinks[node.ID]
 	if sink == nil {
 		return fmt.Errorf("sink handler: no resources for node %q", node.ID)
 	}
 
-	// Per-channel max-frames limit derived from Output.MaxFramesVideo /
-	// MaxFramesAudio and the inbound edge's media type. 0 = unlimited.
-	// Once written >= limit, subsequent packets on that channel are
-	// drained-and-dropped so upstream encoders/copy nodes never block;
-	// the muxer trailer is written when every channel closes naturally.
-	limitForChan := func(i int) int {
-		if i >= len(node.Inbound) {
-			return 0
-		}
-		switch node.Inbound[i].Type {
-		case graph.PortVideo:
-			return sink.cfg.MaxFramesVideo
-		case graph.PortAudio:
-			return sink.cfg.MaxFramesAudio
-		}
-		return 0
-	}
-
-	// ptsToMicros converts pkt PTS (in dstTB units) to AV_TIME_BASE
-	// (microseconds) for cross-stream PTS comparison, returning
-	// (us, true) on success or (0, false) when the PTS is unset or
-	// the time_base is invalid.
-	ptsToMicros := func(pts int64, dstTB [2]int) (int64, bool) {
-		if pts == math.MinInt64 || dstTB[0] <= 0 || dstTB[1] <= 0 {
-			return 0, false
-		}
-		return pts * 1_000_000 * int64(dstTB[0]) / int64(dstTB[1]), true
-	}
-
-	// shiftPTSus converts a microsecond offset into dstTB units and
-	// subtracts it from pkt's PTS/DTS. Mirrors of_streamcopy's
-	// `pkt->pts -= ts_offset` after rebasing the output to start at 0.
-	shiftPTSus := func(pkt *av.Packet, deltaUS int64, dstTB [2]int) {
-		if deltaUS == 0 || dstTB[0] <= 0 || dstTB[1] <= 0 {
-			return
-		}
-		off := deltaUS * int64(dstTB[1]) / (1_000_000 * int64(dstTB[0]))
-		if off != 0 {
-			pkt.ShiftTS(-off)
-		}
-	}
-
-	// Output-side trim window in AV_TIME_BASE units. NoPTSValue means
-	// "no -ss"; noLimitUS means "no -t/-to".
 	startUS := sink.timing.startTimestampUS()
 	stopUS := sink.timing.stopTimestampUS(sink.copyTS)
-
-	// shiftDownUS is the offset subtracted from kept packets so the
-	// muxed file anchors at 0 (mirrors of_streamcopy's ts_offset).
-	// Suppressed under -copyts.
 	var shiftDownUS int64
 	if !sink.copyTS && startUS != int64(av.NoPTSValue) {
 		shiftDownUS = startUS
 	}
 
-	// recordShortest is called when a per-channel goroutine exits
-	// naturally (channel closed). Updates the shared shortestPTSus
-	// to min(current, last_pts) so other channels can stop.
-	recordShortest := func(lastPTSus int64, ok bool) {
-		if !sink.shortest || !ok {
-			return
-		}
-		sink.shortestMu.Lock()
-		if lastPTSus < sink.shortestPTSus {
-			sink.shortestPTSus = lastPTSus
-		}
-		sink.shortestMu.Unlock()
-	}
-
-	// shortestReached returns true when the shortest cap has been
-	// reached for `ptsUS` (only consulted when shortest is true).
-	shortestReached := func(ptsUS int64, ok bool) bool {
-		if !sink.shortest || !ok {
-			return false
-		}
-		sink.shortestMu.Lock()
-		bound := sink.shortestPTSus
-		sink.shortestMu.Unlock()
-		return bound != noLimitUS && ptsUS >= bound
-	}
-
-	// processOne runs the full per-packet pipeline for input channel
-	// i: max-frames cap, output-side trim drop / stop, ts shift,
-	// rescale, max-file-size cap, shortest cap, then WritePacket.
-	// Returns (wrote, stopAll, err) where stopAll signals every
-	// channel of this output to drain-and-drop.
-	type chanState struct {
-		written   int
-		lastPTSus int64
-		lastPTSok bool
-	}
-	processOne := func(i int, pkt *av.Packet, dstTB [2]int, rs *sinkRescale, st *chanState, mu *sync.Mutex) (bool, bool, error) {
-		// Per-stream max frames (counts post-encoder packets, mirrors
-		// FFmpeg's `-frames:v` / `-frames:a`).
-		if lim := limitForChan(i); lim > 0 && st.written >= lim {
-			return false, false, nil
-		}
-		pkt.SetStreamIndex(i)
-		if rs != nil {
-			pkt.Rescale(rs.srcTB, rs.dstTB)
-		}
-		// Compute pts in AV_TIME_BASE units against the muxer's
-		// time_base for trim / shortest comparisons.
-		ptsUS, hasPTS := ptsToMicros(pkt.PTS(), dstTB)
-
-		// Output-side `-ss`: drop packets whose PTS is below the
-		// configured start. Mirrors of_streamcopy's
-		// `if (dts < of->start_time) return EAGAIN`.
-		if startUS != int64(av.NoPTSValue) && hasPTS && ptsUS < startUS {
-			return false, false, nil
-		}
-
-		// Output-side `-t` / `-to`: stop the entire output when any
-		// kept packet's PTS reaches the configured end. Mirrors
-		// `check_recording_time`'s `av_compare_ts >= 0` => stop.
-		if stopUS != noLimitUS && hasPTS && ptsUS >= stopUS {
-			return false, true, nil
-		}
-
-		// `-shortest`: stop this packet (and everything else on this
-		// output) once any other channel has finished and its end
-		// PTS is reached. Mirrors the per-output sync-queue cap in
-		// fftools/ffmpeg_mux_init.c.
-		if shortestReached(ptsUS, hasPTS) {
-			return false, false, nil
-		}
-
-		// Shift kept packets back by startUS so the file anchors at
-		// PTS 0 (suppressed under -copyts).
-		shiftPTSus(pkt, shiftDownUS, dstTB)
-
-		// writeOne handles a single muxer-bound packet: max_file_size
-		// check, WritePacket, and per-channel bookkeeping. Returns
-		// (wrote, stopAll, err).
-		writeOne := func(p *av.Packet) (bool, bool, error) {
-			frameStart := time.Now()
-			var wErr error
-			if mu != nil {
-				mu.Lock()
-			}
-			stopAllNow := false
-			if sink.maxFileSize > 0 {
-				if cur := sink.muxer.BytesWritten(); cur >= 0 && cur >= sink.maxFileSize {
-					stopAllNow = true
-				}
-			}
-			if !stopAllNow {
-				wErr = sink.muxer.WritePacket(p)
-			}
-			if mu != nil {
-				mu.Unlock()
-			}
-			if stopAllNow {
-				return false, true, nil
-			}
-			if wErr != nil {
-				return false, false, wErr
-			}
-			st.written++
-			if pPTS, hasP := ptsToMicros(p.PTS(), dstTB); hasP {
-				st.lastPTSus = pPTS
-				st.lastPTSok = true
-				ptsNs := time.Duration(p.PTS()) * time.Second *
-					time.Duration(dstTB[0]) / time.Duration(dstTB[1])
-				r.pipe.Metrics().Node(node.ID).AdvanceOutputPTS(ptsNs)
-			}
-			r.pipe.Metrics().Node(node.ID).RecordLatency(time.Since(frameStart))
-			return true, false, nil
-		}
-
-		// BSF chain (if any): drive the input packet through
-		// av_bsf_send_packet / av_bsf_receive_packet and call
-		// writeOne for each output packet. Mirrors
-		// fftools/ffmpeg_mux.c::write_packet's BSF loop.
-		var bsf *av.BitstreamFilter
-		if i < len(sink.streamBSF) {
-			bsf = sink.streamBSF[i]
-		}
-		if bsf != nil {
-			outs, err := bsf.FilterPacket(pkt)
-			if err != nil {
-				return false, false, fmt.Errorf("bsf filter: %w", err)
-			}
-			var wroteAny bool
-			for _, op := range outs {
-				op.SetStreamIndex(i)
-				wrote, stopAll, werr := writeOne(op)
-				op.Close()
-				wroteAny = wroteAny || wrote
-				if stopAll || werr != nil {
-					return wroteAny, stopAll, werr
-				}
-			}
-			return wroteAny, false, nil
-		}
-
-		return writeOne(pkt)
-	}
-
-	// flushBSF drains any residual packets buffered inside the BSF
-	// chain at end-of-stream by sending a null packet (EOF signal),
-	// then writing the drained output packets through the same
-	// per-channel write path. Mirrors fftools/ffmpeg_mux.c::mux_thread
-	// flushing the BSF before WriteTrailer.
-	flushBSF := func(i int, dstTB [2]int, st *chanState, mu *sync.Mutex) error {
-		var bsf *av.BitstreamFilter
-		if i < len(sink.streamBSF) {
-			bsf = sink.streamBSF[i]
-		}
-		if bsf == nil {
-			return nil
-		}
-		outs, err := bsf.Flush()
-		if err != nil {
-			return fmt.Errorf("bsf flush: %w", err)
-		}
-		for _, op := range outs {
-			op.SetStreamIndex(i)
-			if mu != nil {
-				mu.Lock()
-			}
-			werr := sink.muxer.WritePacket(op)
-			if mu != nil {
-				mu.Unlock()
-			}
-			op.Close()
-			if werr != nil {
-				return werr
-			}
-			st.written++
-		}
-		return nil
+	w := &sinkWriter{
+		sink:    sink,
+		node:    node,
+		startUS: startUS,
+		stopUS:  stopUS,
+		shiftUS: shiftDownUS,
+		pipe:    r.pipe,
 	}
 
 	if len(ins) == 1 {
@@ -265,10 +264,8 @@ func (r *graphRunner) handleSink(ctx context.Context, node *graph.Node, ins []<-
 		if len(sink.streamRescale) > 0 {
 			rs = sink.streamRescale[0]
 		}
-		// Use rs.dstTB (which equals the muxer's pre-WriteHeader
-		// stream TB for BSF streams, post-header otherwise) so PTS
-		// comparisons stay in the same units packets arrive in
-		// after rescale.
+		// Use rs.dstTB (pre-WriteHeader for BSF streams, post-header otherwise)
+		// so PTS comparisons stay in the same units packets arrive in after rescale.
 		dstTB := sink.muxer.StreamTimeBase(0)
 		if rs != nil {
 			dstTB = rs.dstTB
@@ -280,7 +277,7 @@ func (r *graphRunner) handleSink(ctx context.Context, node *graph.Node, ins []<-
 				pkt.Close()
 				continue
 			}
-			_, stopAll, err := processOne(0, pkt, dstTB, rs, st, nil)
+			_, stopAll, err := w.processOne(0, pkt, dstTB, rs, st)
 			if stopAll {
 				sink.stopAll.Store(true)
 			}
@@ -289,8 +286,8 @@ func (r *graphRunner) handleSink(ctx context.Context, node *graph.Node, ins []<-
 				return err
 			}
 		}
-		recordShortest(st.lastPTSus, st.lastPTSok)
-		if err := flushBSF(0, dstTB, st, nil); err != nil {
+		w.recordShortest(st.lastPTSus, st.lastPTSok)
+		if err := w.flushBSF(0, dstTB, st); err != nil {
 			return err
 		}
 		return sink.muxer.WriteTrailer()
@@ -299,6 +296,7 @@ func (r *graphRunner) handleSink(ctx context.Context, node *graph.Node, ins []<-
 	// Multiple input streams: interleave with per-stream goroutines.
 	eg, _ := errgroup.WithContext(ctx)
 	var mu sync.Mutex
+	w.mu = &mu
 
 	for i, in := range ins {
 		i, in := i, in
@@ -312,14 +310,14 @@ func (r *graphRunner) handleSink(ctx context.Context, node *graph.Node, ins []<-
 		}
 		st := &chanState{}
 		eg.Go(func() error {
-			defer recordShortest(st.lastPTSus, st.lastPTSok)
+			defer w.recordShortest(st.lastPTSus, st.lastPTSok)
 			for v := range in {
 				pkt := v.(*av.Packet)
 				if sink.stopAll.Load() {
 					pkt.Close()
 					continue
 				}
-				_, stopAll, err := processOne(i, pkt, dstTB, rs, st, &mu)
+				_, stopAll, err := w.processOne(i, pkt, dstTB, rs, st)
 				if stopAll {
 					sink.stopAll.Store(true)
 				}
@@ -328,7 +326,7 @@ func (r *graphRunner) handleSink(ctx context.Context, node *graph.Node, ins []<-
 					return err
 				}
 			}
-			return flushBSF(i, dstTB, st, &mu)
+			return w.flushBSF(i, dstTB, st)
 		})
 	}
 
