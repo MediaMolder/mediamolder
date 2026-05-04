@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/MediaMolder/MediaMolder/av"
@@ -372,6 +373,14 @@ func (r *graphRunner) createEncoder(dag *graph.Graph, node *graph.Node) (*av.Enc
 		prefix := paramString(node.Params, "__passlogfile")
 		if prefix == "" {
 			prefix = "ffmpeg2pass"
+		} else {
+			// filepath.Base strips any directory component to prevent path
+			// traversal. Pass-log files are always written in the process
+			// working directory.
+			prefix = filepath.Base(filepath.Clean(prefix))
+			if prefix == "." || prefix == "/" {
+				prefix = "ffmpeg2pass"
+			}
 		}
 		idx := paramInt(node.Params, "__pass_index")
 		logfile := fmt.Sprintf("%s-%d.log", prefix, idx)

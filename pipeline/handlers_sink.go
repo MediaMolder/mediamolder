@@ -10,6 +10,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -664,7 +665,17 @@ func (r *graphRunner) openSink(_ *graph.Graph, node *graph.Node) (*sinkResources
 	// codecpar->extradata. Mirrors fftools/ffmpeg_mux_init.c
 	// of_add_attachments.
 	for ai, att := range out.Attachments {
-		data, err := os.ReadFile(att.Path)
+		cleanPath := filepath.Clean(att.Path)
+		if strings.Contains(cleanPath, "..") {
+			muxer.Abort()
+			for _, b := range streamBSF {
+				if b != nil {
+					_ = b.Close()
+				}
+			}
+			return nil, fmt.Errorf("sink %q attachments[%d]: path traversal in %q", node.ID, ai, att.Path)
+		}
+		data, err := os.ReadFile(cleanPath)
 		if err != nil {
 			muxer.Abort()
 			for _, b := range streamBSF {
@@ -672,11 +683,11 @@ func (r *graphRunner) openSink(_ *graph.Graph, node *graph.Node) (*sinkResources
 					_ = b.Close()
 				}
 			}
-			return nil, fmt.Errorf("sink %q attachments[%d]: read %s: %w", node.ID, ai, att.Path, err)
+			return nil, fmt.Errorf("sink %q attachments[%d]: read %s: %w", node.ID, ai, cleanPath, err)
 		}
 		filename := att.Filename
 		if filename == "" {
-			filename = filepath.Base(att.Path)
+			filename = filepath.Base(cleanPath)
 		}
 		if _, err := muxer.AddAttachment(data, filename, att.MimeType); err != nil {
 			muxer.Abort()

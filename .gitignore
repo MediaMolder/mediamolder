@@ -1,5 +1,5 @@
 ﻿# Binaries
-mediamolder
+/mediamolder
 *.exe
 *.dll
 *.so
