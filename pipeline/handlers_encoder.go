@@ -15,21 +15,25 @@ import (
 
 // ---------- Encoder handler ----------
 
-func (r *graphRunner) handleEncoder(ctx context.Context, node *graph.Node, ins []<-chan any, outs []chan<- any) error {
-	enc := r.encoders[node.ID]
-	if enc == nil {
-		return fmt.Errorf("encoder handler: no encoder for node %q", node.ID)
-	}
-	if len(ins) != 1 || len(outs) < 1 {
-		return fmt.Errorf("encoder node %q: expected 1 input / >=1 output, got %d/%d", node.ID, len(ins), len(outs))
-	}
+// encoderSession holds the per-execution state for one encoder node run and
+// drives the frame-encode-drain loop. Separating it from graphRunner makes
+// sendOne, drain, and the CFR fill loop independently testable.
+type encoderSession struct {
+	enc     *av.EncoderContext
+	fpsRW   *fpsRewriter
+	forceKF *forceKeyFramesMatcher
+	// passLog is the open pass-1 stats file for generic codecs (mpeg2video,
+	// mpeg4, libxvid, ...). libx264 / libvvenc / libx265 manage their own
+	// stats via a codec AVOption; for them this field is nil.
+	passLog *os.File
+	outs    []chan<- any
+	nodeID  string
+	pipe    *Pipeline
+}
 
-	in := ins[0]
-
-	// Per-output frame-rate enforcement (Output.FPSMode → __fps_mode on the
-	// synthetic encoder node by expandImplicitEncoders). Only video frames
-	// flow through the rewriter; audio/subtitle encoders see an empty mode
-	// which degrades to passthrough.
+// newEncoderSession creates an encoderSession for the given encoder node,
+// resolving fpsRewriter and forceKeyFramesMatcher from node.Params.
+func (r *graphRunner) newEncoderSession(node *graph.Node, enc *av.EncoderContext, outs []chan<- any) (*encoderSession, error) {
 	var fpsRW *fpsRewriter
 	if enc.MediaType() == av.MediaTypeVideo {
 		mode := paramString(node.Params, "__fps_mode")
@@ -38,139 +42,131 @@ func (r *graphRunner) handleEncoder(ctx context.Context, node *graph.Node, ins [
 		}
 	}
 
-	// Per-output forced-keyframe spec (Output.ForceKeyFrames →
-	// __force_key_frames on the synthetic encoder node). Only video
-	// frames are eligible; audio/subtitle encoders see no marker.
-	// The matcher is consulted exactly once per frame (after any
-	// fpsRewriter rewrite resolves the final PTS) so its `n` /
-	// `n_forced` / `prev_forced_*` counters mirror the post-rewrite
-	// PTS stream the encoder actually sees.
 	var forceKF *forceKeyFramesMatcher
 	if enc.MediaType() == av.MediaTypeVideo {
 		if specStr := paramString(node.Params, "__force_key_frames"); specStr != "" {
 			spec, err := parseForceKeyFrames(specStr)
 			if err != nil {
-				return fmt.Errorf("encoder %q: %w", node.ID, err)
+				return nil, fmt.Errorf("encoder %q: %w", node.ID, err)
 			}
 			tb := enc.TimeBase()
 			m, err := newForceKeyFramesMatcher(spec, tb[0], tb[1])
 			if err != nil {
-				return fmt.Errorf("encoder %q: %w", node.ID, err)
+				return nil, fmt.Errorf("encoder %q: %w", node.ID, err)
 			}
 			forceKF = m
-			defer forceKF.Close()
 		}
 	}
 
-	// Fan out each encoded packet to every downstream channel. With one
-	// output the packet is forwarded as-is; with N outputs the packet is
-	// av_packet_clone'd N-1 times so each consumer (muxer) owns an
-	// independent reference and can mutate stream_index / time_base
-	// without racing the others.
-	sendPacket := func(p *av.Packet) error {
-		for i, out := range outs {
-			var pkt *av.Packet
-			if i == len(outs)-1 {
-				pkt = p
-			} else {
-				c, err := av.ClonePacket(p)
-				if err != nil {
-					p.Close()
-					return err
-				}
-				pkt = c
-			}
-			select {
-			case out <- pkt:
-			case <-ctx.Done():
-				pkt.Close()
-				return ctx.Err()
-			}
-		}
-		return nil
-	}
+	return &encoderSession{
+		enc:     enc,
+		fpsRW:   fpsRW,
+		forceKF: forceKF,
+		passLog: r.passLogFiles[node.ID],
+		outs:    outs,
+		nodeID:  node.ID,
+		pipe:    r.pipe,
+	}, nil
+}
 
-	// Pass-1 stats sink for the generic codec path (mpeg2video,
-	// mpeg4, libxvid, ...). libx264 / libvvenc / libx265 manage
-	// their own stats file via the codec's `stats` AVOption and
-	// leave AVCodecContext.stats_out empty, so the writer below
-	// stays a no-op for them.
-	passLog := r.passLogFiles[node.ID]
-
-	drainEncoder := func() error {
-		for {
-			p, err := av.AllocPacket()
+// sendPacket fans out an encoded packet to every downstream output channel.
+// With one output the packet is forwarded as-is; with N outputs it is cloned
+// N-1 times so each consumer owns an independent reference.
+func (s *encoderSession) sendPacket(ctx context.Context, p *av.Packet) error {
+	for i, out := range s.outs {
+		var pkt *av.Packet
+		if i == len(s.outs)-1 {
+			pkt = p
+		} else {
+			c, err := av.ClonePacket(p)
 			if err != nil {
-				return err
-			}
-			if err := enc.ReceivePacket(p); err != nil {
 				p.Close()
-				if av.IsEAgain(err) || av.IsEOF(err) {
-					return nil
-				}
 				return err
 			}
-			if passLog != nil {
-				if s := enc.StatsOut(); s != "" {
-					if _, werr := passLog.WriteString(s); werr != nil {
-						p.Close()
-						return fmt.Errorf("encoder %q: write pass-1 stats: %w", node.ID, werr)
-					}
-				}
-			}
-			if err := sendPacket(p); err != nil {
-				return err
-			}
+			pkt = c
+		}
+		select {
+		case out <- pkt:
+		case <-ctx.Done():
+			pkt.Close()
+			return ctx.Err()
 		}
 	}
+	return nil
+}
 
-	// sendOne pushes a single frame through the encoder and drains any
-	// resulting packets. Used by both the passthrough path and the CFR
-	// duplication loop.
-	sendOne := func(f *av.Frame) error {
-		// Forced-keyframe stamp: must happen on the exact frame
-		// instance handed to libavcodec (cloned duplicates from the
-		// CFR fill path each get their own check, mirroring FFmpeg's
-		// per-frame `forced_kf_apply` invocation in
-		// fftools/ffmpeg_enc.c::frame_encode line 798).
-		if forceKF != nil {
-			if forceKF.shouldForce(f.PTS(), f.PictType()) {
-				f.SetPictType(av.PictureTypeI)
-			}
-		}
-		if err := enc.SendFrame(f); err != nil {
+// drain receives all pending encoded packets from the encoder and forwards them
+// downstream via sendPacket. Mirrors fftools/ffmpeg_enc.c::reap_filters.
+func (s *encoderSession) drain(ctx context.Context) error {
+	for {
+		p, err := av.AllocPacket()
+		if err != nil {
 			return err
 		}
-		return drainEncoder()
+		if err := s.enc.ReceivePacket(p); err != nil {
+			p.Close()
+			if av.IsEAgain(err) || av.IsEOF(err) {
+				return nil
+			}
+			return err
+		}
+		if s.passLog != nil {
+			if st := s.enc.StatsOut(); st != "" {
+				if _, werr := s.passLog.WriteString(st); werr != nil {
+					p.Close()
+					return fmt.Errorf("encoder %q: write pass-1 stats: %w", s.nodeID, werr)
+				}
+			}
+		}
+		if err := s.sendPacket(ctx, p); err != nil {
+			return err
+		}
 	}
+}
 
+// sendOne encodes a single frame and drains the resulting packets.
+// It applies the forced-keyframe stamp before calling libavcodec; cloned
+// duplicates from the CFR fill path each get their own check, mirroring
+// FFmpeg's per-frame forced_kf_apply in fftools/ffmpeg_enc.c::frame_encode.
+func (s *encoderSession) sendOne(ctx context.Context, f *av.Frame) error {
+	if s.forceKF != nil && s.forceKF.shouldForce(f.PTS(), f.PictType()) {
+		f.SetPictType(av.PictureTypeI)
+	}
+	if err := s.enc.SendFrame(f); err != nil {
+		return err
+	}
+	return s.drain(ctx)
+}
+
+// run is the main frame-encode loop. It reads frames from in, applies the
+// fpsRewriter (CFR gap-fill / drop), calls sendOne for each output frame,
+// then flushes the encoder.
+func (s *encoderSession) run(ctx context.Context, in <-chan any) error {
 	for v := range in {
 		f := v.(*av.Frame)
 		frameStart := time.Now()
 
-		if fpsRW != nil {
-			emit, basePTS, drop := fpsRW.rewrite(f.PTS())
+		if s.fpsRW != nil {
+			emit, basePTS, drop := s.fpsRW.rewrite(f.PTS())
 			if drop || emit == 0 {
 				f.Close()
-				r.pipe.Metrics().Node(node.ID).RecordLatency(time.Since(frameStart))
+				s.pipe.Metrics().Node(s.nodeID).RecordLatency(time.Since(frameStart))
 				continue
 			}
 			// Fast path: single emission, no clone.
 			if emit == 1 {
 				f.SetPTS(basePTS)
-				if err := sendOne(f); err != nil {
+				if err := s.sendOne(ctx, f); err != nil {
 					f.Close()
 					return err
 				}
 				f.Close()
-				r.pipe.Metrics().Node(node.ID).RecordLatency(time.Since(frameStart))
+				s.pipe.Metrics().Node(s.nodeID).RecordLatency(time.Since(frameStart))
 				continue
 			}
 			// CFR forward-gap fill: emit `emit` copies at basePTS,
-			// basePTS+dur, basePTS+2*dur, ... The final copy reuses f
-			// (and is closed at the end); intermediate copies are
-			// av_frame_clone'd.
-			dur := fpsRW.frameDurTB
+			// basePTS+dur, basePTS+2*dur, ... The final copy reuses f.
+			dur := s.fpsRW.frameDurTB
 			for i := 0; i < emit-1; i++ {
 				dup, err := f.Clone()
 				if err != nil {
@@ -178,7 +174,7 @@ func (r *graphRunner) handleEncoder(ctx context.Context, node *graph.Node, ins [
 					return err
 				}
 				dup.SetPTS(basePTS + int64(i)*dur)
-				if err := sendOne(dup); err != nil {
+				if err := s.sendOne(ctx, dup); err != nil {
 					dup.Close()
 					f.Close()
 					return err
@@ -186,28 +182,45 @@ func (r *graphRunner) handleEncoder(ctx context.Context, node *graph.Node, ins [
 				dup.Close()
 			}
 			f.SetPTS(basePTS + int64(emit-1)*dur)
-			if err := sendOne(f); err != nil {
+			if err := s.sendOne(ctx, f); err != nil {
 				f.Close()
 				return err
 			}
 			f.Close()
-			r.pipe.Metrics().Node(node.ID).RecordLatency(time.Since(frameStart))
+			s.pipe.Metrics().Node(s.nodeID).RecordLatency(time.Since(frameStart))
 			continue
 		}
 
-		if err := sendOne(f); err != nil {
+		if err := s.sendOne(ctx, f); err != nil {
 			f.Close()
 			return err
 		}
 		f.Close()
-		r.pipe.Metrics().Node(node.ID).RecordLatency(time.Since(frameStart))
+		s.pipe.Metrics().Node(s.nodeID).RecordLatency(time.Since(frameStart))
 	}
 
-	// Flush.
-	if err := enc.Flush(); err != nil && !av.IsEOF(err) && !av.IsEAgain(err) {
+	if err := s.enc.Flush(); err != nil && !av.IsEOF(err) && !av.IsEAgain(err) {
 		return err
 	}
-	return drainEncoder()
+	return s.drain(ctx)
+}
+
+func (r *graphRunner) handleEncoder(ctx context.Context, node *graph.Node, ins []<-chan any, outs []chan<- any) error {
+	enc := r.encoders[node.ID]
+	if enc == nil {
+		return fmt.Errorf("encoder handler: no encoder for node %q", node.ID)
+	}
+	if len(ins) != 1 || len(outs) < 1 {
+		return fmt.Errorf("encoder node %q: expected 1 input / >=1 output, got %d/%d", node.ID, len(ins), len(outs))
+	}
+	s, err := r.newEncoderSession(node, enc, outs)
+	if err != nil {
+		return err
+	}
+	if s.forceKF != nil {
+		defer s.forceKF.Close()
+	}
+	return s.run(ctx, ins[0])
 }
 
 func (r *graphRunner) createEncoder(dag *graph.Graph, node *graph.Node) (*av.EncoderContext, error) {
