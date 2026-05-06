@@ -976,10 +976,12 @@ const HELP_OVERRIDES: Record<string, Record<string, string>> = {
   libx264: {
     'intra-refresh': "Creates partial Intra Frames at regular intervals. Don't use this unless you know you need it.",
     intra_refresh:   "Creates partial Intra Frames at regular intervals. Don't use this unless you know you need it.",
+    refs:            'Reference frames to consider for inter-frame prediction.',
   },
   libx265: {
     'intra-refresh': "Creates partial Intra Frames at regular intervals. Don't use this unless you know you need it.",
     intra_refresh:   "Creates partial Intra Frames at regular intervals. Don't use this unless you know you need it.",
+    refs:            'Reference frames to consider for inter-frame prediction.',
   },
 };
 
