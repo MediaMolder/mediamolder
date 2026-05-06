@@ -65,9 +65,14 @@ export function OptionControl({ option, value, onChange, filter }: OptionControl
   }
 
   if (isEnum(option)) {
+    const defConst =
+      option.default?.int !== undefined
+        ? option.constants!.find((c) => c.value === option.default!.int)?.name
+        : option.default?.string;
+    const emptyLabel = defConst ? `(default: ${defConst})` : '(not set)';
     return (
       <select value={value} onChange={(e) => onChange(e.target.value)}>
-        <option value="">(default)</option>
+        <option value="">{emptyLabel}</option>
         {option.constants!.map((c) => (
           <option key={c.name} value={c.name} title={c.help}>
             {c.name}
@@ -253,7 +258,19 @@ export function defaultDisplay(option: EncoderOption): string {
   const d = option.default;
   if (!d) return '';
   if (d.string !== undefined) return d.string;
-  if (d.int !== undefined) return d.int < 0 ? '' : String(d.int);
+  if (d.int !== undefined) {
+    // For enum options resolve the integer to the matching constant name.
+    if (Array.isArray(option.constants) && option.constants.length > 0) {
+      const c = option.constants.find((x) => x.value === d.int);
+      if (c) return c.name;
+    }
+    // For bool/implicit-bool convert 0/−1 → 'false', 1 → 'true'.
+    if (option.type === 'bool' || isImplicitBool(option)) {
+      if (d.int === 1) return 'true';
+      if (d.int === 0 || d.int === -1) return 'false';
+    }
+    return d.int < 0 ? '' : String(d.int);
+  }
   if (d.float !== undefined) return String(d.float);
   if (d.num_den) return `${d.num_den[0]}/${d.num_den[1]}`;
   return '';

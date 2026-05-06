@@ -795,7 +795,7 @@ function PrimaryRow({
       </label>
       {choices ? (
         <select value={value || (choices.default ?? '')} onChange={(e) => onChange(e.target.value)}>
-          {!choices.default && <option value="">(default)</option>}
+          {!choices.default && <option value="">(not set)</option>}
           {choices.choices.map((c) => (
             <option key={c.value} value={c.value}>
               {c.label ?? c.value}
