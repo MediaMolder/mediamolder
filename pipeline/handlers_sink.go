@@ -137,7 +137,10 @@ func (w *sinkWriter) writeOne(pkt *av.Packet, i int, dstTB [2]int, st *chanState
 		st.lastPTSok = true
 		ptsNs := time.Duration(pkt.PTS()) * time.Second *
 			time.Duration(dstTB[0]) / time.Duration(dstTB[1])
-		w.pipe.Metrics().Node(w.node.ID).AdvanceOutputPTS(ptsNs)
+		// Track per-stream so a fast AAC encoder doesn't push the
+		// node's reported OutputPTS to 100% while libx265 still has
+		// minutes left.
+		w.pipe.Metrics().Node(w.node.ID).AdvanceOutputPTSStream(i, ptsNs)
 	}
 	w.pipe.Metrics().Node(w.node.ID).RecordLatency(time.Since(frameStart))
 	return true, false, nil
