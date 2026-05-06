@@ -195,6 +195,7 @@ function InputForm({
       {probeError && <div className="probe-error">{probeError}</div>}
       {probed && <ProbedStreamsView streams={probed} />}
       <TimingFields
+        kind="input"
         options={def.options}
         onChange={(opts) => onChange({ ...def, options: opts })}
       />
@@ -368,6 +369,7 @@ function OutputForm({
         onChange={(v) => onChange({ ...def, codec_tag_subtitle: v || undefined })}
       />
       <TimingFields
+        kind="output"
         options={def.options}
         onChange={(opts) => onChange({ ...def, options: opts })}
       />
@@ -823,9 +825,11 @@ function ParamsEditor({
  * Mirroring `-t` and `-to` simultaneously is rejected by FFmpeg, so
  * the editor doesn't enforce that — it just surfaces all three. */
 function TimingFields({
+  kind,
   options,
   onChange,
 }: {
+  kind: 'input' | 'output';
   options: Record<string, unknown> | undefined;
   onChange: (next: Record<string, unknown> | undefined) => void;
 }) {
@@ -842,12 +846,15 @@ function TimingFields({
     }
     onChange(Object.keys(next).length === 0 ? undefined : next);
   };
+  const summary =
+    kind === 'input'
+      ? 'When to start or stop output from this node.'
+      : 'When to start or stop accepting input to this node.';
   return (
     <>
       <label style={{ marginTop: 12 }}>Timing</label>
       <div style={{ fontSize: 11, color: 'var(--text-dim)', marginBottom: 4 }}>
-        FFmpeg <code>-ss</code> / <code>-t</code> / <code>-to</code>. Accepts
-        seconds (<code>30</code>) or <code>HH:MM:SS[.ms]</code>.
+        {summary} Seconds (<code>30</code>) or <code>HH:MM:SS[.ms]</code>.
       </div>
       <Field label="Start (-ss)" value={get('ss')} onChange={(v) => set('ss', v)} />
       <Field label="Duration (-t)" value={get('t')} onChange={(v) => set('t', v)} />
