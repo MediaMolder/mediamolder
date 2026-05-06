@@ -69,10 +69,16 @@ export function OptionControl({ option, value, onChange, filter }: OptionControl
       option.default?.int !== undefined
         ? option.constants!.find((c) => c.value === option.default!.int)?.name
         : option.default?.string;
-    const emptyLabel = defConst ? `(default: ${defConst})` : '(not set)';
+    // When the default constant is known, display it as the selected entry
+    // rather than a separate "(default: X)" sentinel.  Round-trip: picking
+    // the default constant from the list emits "" (unset) so the pipeline
+    // keeps the encoder's built-in default.
+    const selectValue = (!value && defConst) ? defConst : value;
+    const handleChange = (next: string) =>
+      onChange(defConst && next === defConst ? '' : next);
     return (
-      <select value={value} onChange={(e) => onChange(e.target.value)}>
-        <option value="">{emptyLabel}</option>
+      <select value={selectValue} onChange={(e) => handleChange(e.target.value)}>
+        {!defConst && <option value="">(not set)</option>}
         {option.constants!.map((c) => (
           <option key={c.name} value={c.name} title={c.help}>
             {c.name}
