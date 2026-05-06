@@ -1144,11 +1144,21 @@ wave delivers every §2.8 / §3.5 GUI item that the schema can now back.
     `h264_metadata`, `dump_extra`, `extract_extradata`, `setts`, …),
     `↑`/`↓` reorder buttons, `×` remove, `+ add`, and a live
     monospace preview of the canonical chain spec.
-47. **Chapter / metadata editor** (§2.8, §3.5.4) — Table editor
+47. **Chapter / metadata editor** (§2.8, §3.5.4) ✅ Wave 8 — Table editor
     for `(start, end, title)` chapter entries; key/value editor
     for per-output and per-stream metadata; tabs per stream.
     Backs `Output.Chapters`, `Output.Metadata`, and
-    `Output.Streams[].Metadata`.
+    `Output.Streams[].Metadata`. New `MetadataEditor` (key/value
+    wrapper around the existing `ParamsEditor` that strips empty
+    keys on save) renders the per-output `Container metadata`
+    section in
+    [frontend/src/components/Inspector.tsx](../../frontend/src/components/Inspector.tsx);
+    new `ChaptersEditor` / `ChapterRow` / `NumericField` render a
+    sortable `(start, end, title)` table with `↑`/`↓` reorder, `×`
+    remove, `+ add` (auto-fills `start` from the previous row's
+    `end`), and a collapsible per-chapter metadata section. The
+    per-stream metadata surface remained as wired by Wave 8 #45's
+    `StreamSpecForm`.
 48. **HLS / DASH / Tee output wizards** (§2.8, §3.5.5) — Schema-
     driven forms for the typed `HLS` / `DASH` / `Tee*` blocks
     landed in Waves 1 #5 and 3 #12. Variant-stream picker for

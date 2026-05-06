@@ -510,6 +510,38 @@ The most common need is the MPEG-TS handoff:
 re-muxing an MP4 to TS — without it the muxer chokes on the AVCC-style
 NAL units. `aac_adtstoasc` is the dual: required when re-muxing TS to MP4.
 
+#### Output nodes — Container metadata and chapters
+
+Below the Bitstream-filter sections every Output form exposes a
+**Container metadata** key/value editor and a **Chapters** table.
+
+* **Container metadata** — backs `Output.metadata` and renders as
+  `key=value` rows. Mirrors FFmpeg `-metadata key=value`. Common
+  global tags include `title`, `artist`, `album`, `comment`, `genre`,
+  `date`, `encoded_by`, `language` (per-stream `language` lives on
+  the per-stream metadata editor instead). Container-specific tag
+  rewriting (matroska's `TITLE` / MP4's `©nam` / …) is handled by
+  libavformat's per-container metadata-conv tables, so the canonical
+  short keys here are correct regardless of the muxer.
+* **Chapters** — backs `Output.chapters` (matroska / mp4 / ogg /
+  ffmetadata containers). Each row carries:
+  * **Start (s)** / **End (s)** — chapter bounds in seconds. Free-text
+    decimal input parsed on blur; invalid input reverts to the prior
+    value.
+  * **Title** — chapter title (becomes the `TITLE` tag at mux time).
+  * **↑ / ↓** — reorder the chapter in the list.
+  * **×** — remove the chapter.
+  * **▸ Metadata** — collapsible per-chapter key/value editor for
+    additional chapter-scoped tags.
+
+  The **+ add** button pre-fills the new row's `Start` from the
+  previous row's `End`, matching the common authoring pattern of
+  contiguous chapters. Chapter tables defined here replace anything
+  mapped from inputs via `Input.map_chapters`.
+
+Per-stream metadata (e.g. `language=eng` on a specific audio track)
+remains on the per-stream tab inside the **Streams** section.
+
 ### Run panel
 
 ![MediaMolder GUI Running](images/ABR_running.png)

@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
+import type { ReactNode } from 'react';
 import type { FlowEdge, FlowNode } from '../lib/jsonAdapter';
 import { displayUrl, nodeDisplayLabel, nodeDisplaySublabel } from '../lib/jsonAdapter';
 import { displayName, lookupFriendlyName, useNamingMode } from '../lib/friendlyNames';
-import type { EncoderOverride, Input, NodeDef, Output, ProbeResponse, ProbedStream, StreamSpec } from '../lib/jobTypes';
+import type { Chapter, EncoderOverride, Input, NodeDef, Output, ProbeResponse, ProbedStream, StreamSpec } from '../lib/jobTypes';
 import { type BSFEntry, parseBSFChain, serializeBSFChain } from '../lib/bsf';
 import { MEDIA_FILE_EXTENSIONS } from '../lib/mediaExtensions';
 import { FileBrowser, type BrowseMode } from './FileBrowser';
@@ -387,6 +388,16 @@ function OutputForm({
         kind="subtitle"
         spec={def.bsf_subtitle}
         onChange={(s) => onChange({ ...def, bsf_subtitle: s })}
+      />
+      <MetadataEditor
+        label="Container metadata"
+        hint={<>Per-output container tags (<code>-metadata key=value</code>): <code>title</code>, <code>artist</code>, <code>comment</code>, <code>genre</code>, <code>date</code>, …</>}
+        metadata={def.metadata}
+        onChange={(m) => onChange({ ...def, metadata: m })}
+      />
+      <ChaptersEditor
+        chapters={def.chapters}
+        onChange={(c) => onChange({ ...def, chapters: c })}
       />
       <StreamsEditor
         streams={def.streams}
@@ -997,6 +1008,253 @@ function BSFEditor({
           </code>
         )}
       </div>
+    </>
+  );
+}
+
+/* ---------- Container metadata editor (Wave 8 #47) ----------
+ * Thin key/value wrapper over ParamsEditor that strips empty entries
+ * on save. Used both for `Output.metadata` (per-output container
+ * tags, e.g. `title`, `artist`, `comment`, `genre`, `date`,
+ * `encoded_by`) and for the per-stream `metadata` field surfaced
+ * via StreamSpecForm. */
+function MetadataEditor({
+  label,
+  hint,
+  metadata,
+  onChange,
+}: {
+  label: string;
+  hint?: ReactNode;
+  metadata: Record<string, string> | undefined;
+  onChange: (next: Record<string, string> | undefined) => void;
+}) {
+  const params = metadata ?? {};
+  return (
+    <>
+      <label style={{ marginTop: 12 }}>{label}</label>
+      {hint && (
+        <div style={{ fontSize: 11, color: 'var(--text-dim)', marginBottom: 4 }}>
+          {hint}
+        </div>
+      )}
+      <ParamsEditor
+        params={params}
+        onChange={(p) => {
+          const m: Record<string, string> = {};
+          for (const [k, v] of Object.entries(p)) {
+            if (k.trim() === '') continue;
+            m[k] = String(v ?? '');
+          }
+          onChange(Object.keys(m).length === 0 ? undefined : m);
+        }}
+      />
+    </>
+  );
+}
+
+/* ---------- Chapters editor (Wave 8 #47) ----------
+ * Table editor for `Output.chapters` — each row is `(start, end,
+ * title)` plus an expandable per-chapter metadata key/value section.
+ * Backs containers that support chapters (matroska, mp4, ogg,
+ * ffmetadata). FFmpeg expresses chapters as fractional seconds
+ * (start/end as float64) so the form takes free-text numeric input
+ * and round-trips through parseFloat — invalid input leaves the
+ * existing value untouched on commit. */
+function ChaptersEditor({
+  chapters,
+  onChange,
+}: {
+  chapters: Chapter[] | undefined;
+  onChange: (next: Chapter[] | undefined) => void;
+}) {
+  const list = chapters ?? [];
+  const commit = (next: Chapter[]) => onChange(next.length === 0 ? undefined : next);
+  const update = (i: number, patch: Partial<Chapter>) => {
+    commit(list.map((c, j) => (j === i ? { ...c, ...patch } : c)));
+  };
+  const remove = (i: number) => {
+    commit(list.filter((_, j) => j !== i));
+  };
+  const move = (i: number, dir: -1 | 1) => {
+    const j = i + dir;
+    if (j < 0 || j >= list.length) return;
+    const next = list.slice();
+    [next[i], next[j]] = [next[j], next[i]];
+    commit(next);
+  };
+  const add = () => {
+    const last = list[list.length - 1];
+    const start = last ? last.end : 0;
+    commit([...list, { start, end: start, title: '' }]);
+  };
+
+  return (
+    <>
+      <label style={{ marginTop: 12 }}>Chapters</label>
+      <div style={{ fontSize: 11, color: 'var(--text-dim)', marginBottom: 6 }}>
+        Container chapter table (matroska, mp4, ogg, ffmetadata).
+        Times in seconds (e.g. <code>30</code>, <code>125.5</code>).
+        Replaces any chapters mapped from inputs via <code>map_chapters</code>.
+      </div>
+      {list.length === 0 ? (
+        <div className="empty" style={{ marginTop: 4 }}>
+          No chapters. Click <strong>+ add</strong> to create one.
+        </div>
+      ) : (
+        list.map((c, i) => (
+          <ChapterRow
+            key={i}
+            chapter={c}
+            index={i}
+            isFirst={i === 0}
+            isLast={i === list.length - 1}
+            onChange={(patch) => update(i, patch)}
+            onRemove={() => remove(i)}
+            onMove={(dir) => move(i, dir)}
+          />
+        ))
+      )}
+      <button type="button" onClick={add} title="Add a chapter" style={{ marginTop: 4 }}>
+        + add
+      </button>
+    </>
+  );
+}
+
+function ChapterRow({
+  chapter,
+  index,
+  isFirst,
+  isLast,
+  onChange,
+  onRemove,
+  onMove,
+}: {
+  chapter: Chapter;
+  index: number;
+  isFirst: boolean;
+  isLast: boolean;
+  onChange: (patch: Partial<Chapter>) => void;
+  onRemove: () => void;
+  onMove: (dir: -1 | 1) => void;
+}) {
+  const [showMeta, setShowMeta] = useState(false);
+  const metaCount = Object.keys(chapter.metadata ?? {}).length;
+  return (
+    <div
+      style={{
+        border: '1px solid var(--border)',
+        borderRadius: 4,
+        padding: 6,
+        marginBottom: 6,
+        background: 'var(--panel-2)',
+      }}
+    >
+      <div style={{ display: 'flex', gap: 4, alignItems: 'flex-end' }}>
+        <div style={{ flex: '0 0 30px', color: 'var(--text-dim)', fontSize: 11, paddingBottom: 6 }}>
+          #{index + 1}
+        </div>
+        <div style={{ flex: '0 0 90px' }}>
+          <NumericField
+            label="Start (s)"
+            value={chapter.start}
+            onChange={(v) => onChange({ start: v })}
+          />
+        </div>
+        <div style={{ flex: '0 0 90px' }}>
+          <NumericField
+            label="End (s)"
+            value={chapter.end}
+            onChange={(v) => onChange({ end: v })}
+          />
+        </div>
+        <div style={{ flex: 1 }}>
+          <Field
+            label="Title"
+            value={chapter.title ?? ''}
+            onChange={(v) => onChange({ title: v || undefined })}
+          />
+        </div>
+        <button type="button" onClick={() => onMove(-1)} disabled={isFirst} title="Move up">
+          ↑
+        </button>
+        <button type="button" onClick={() => onMove(1)} disabled={isLast} title="Move down">
+          ↓
+        </button>
+        <button type="button" className="danger" onClick={onRemove} title="Remove chapter">
+          ×
+        </button>
+      </div>
+      <button
+        type="button"
+        onClick={() => setShowMeta((v) => !v)}
+        style={{
+          marginTop: 6,
+          background: 'transparent',
+          color: 'var(--text-dim)',
+          border: 'none',
+          padding: 0,
+          fontSize: 11,
+          cursor: 'pointer',
+        }}
+        title="Toggle per-chapter metadata"
+      >
+        {showMeta ? '▾' : '▸'} Metadata{metaCount > 0 ? ` (${metaCount})` : ''}
+      </button>
+      {showMeta && (
+        <ParamsEditor
+          params={chapter.metadata ?? {}}
+          onChange={(p) => {
+            const m: Record<string, string> = {};
+            for (const [k, v] of Object.entries(p)) {
+              if (k.trim() === '') continue;
+              m[k] = String(v ?? '');
+            }
+            onChange({ metadata: Object.keys(m).length === 0 ? undefined : m });
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+/* Numeric input that commits on blur and tolerates invalid input
+ * (leaves the prior value in place). Used for chapter start/end. */
+function NumericField({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: number;
+  onChange: (v: number) => void;
+}) {
+  const [local, setLocal] = useState(String(value));
+  useEffect(() => setLocal(String(value)), [value]);
+  return (
+    <>
+      <label>{label}</label>
+      <input
+        type="text"
+        inputMode="decimal"
+        value={local}
+        onChange={(e) => setLocal(e.target.value)}
+        onBlur={() => {
+          const n = parseFloat(local);
+          if (Number.isFinite(n) && n >= 0) onChange(n);
+          else setLocal(String(value));
+        }}
+        style={{
+          width: '100%',
+          background: 'var(--panel)',
+          color: 'var(--text)',
+          border: '1px solid var(--border)',
+          borderRadius: 4,
+          padding: '5px 7px',
+          fontSize: 12,
+        }}
+      />
     </>
   );
 }
