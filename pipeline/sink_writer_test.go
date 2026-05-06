@@ -38,10 +38,10 @@ func (f *fakeMuxer) WritePacket(pkt *av.Packet) error {
 	return nil
 }
 func (f *fakeMuxer) WriteTrailer() error       { return nil }
-func (f *fakeMuxer) BytesWritten() int64        { f.mu.Lock(); defer f.mu.Unlock(); return f.written }
-func (f *fakeMuxer) StreamTimeBase(int) [2]int  { return f.tb }
-func (f *fakeMuxer) Abort()                     {}
-func (f *fakeMuxer) Close() error               { return nil }
+func (f *fakeMuxer) BytesWritten() int64       { f.mu.Lock(); defer f.mu.Unlock(); return f.written }
+func (f *fakeMuxer) StreamTimeBase(int) [2]int { return f.tb }
+func (f *fakeMuxer) Abort()                    {}
+func (f *fakeMuxer) Close() error              { return nil }
 
 func (f *fakeMuxer) closeAll() {
 	for _, p := range f.packets {

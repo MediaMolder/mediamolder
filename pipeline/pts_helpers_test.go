@@ -163,11 +163,11 @@ func TestShiftPTSus_NoopCases(t *testing.T) {
 // number of ticks for well-known time bases.
 func TestShiftPTSus_KnownShift(t *testing.T) {
 	cases := []struct {
-		name     string
-		origPTS  int64
-		deltaUS  int64
-		tb       [2]int
-		wantPTS  int64
+		name    string
+		origPTS int64
+		deltaUS int64
+		tb      [2]int
+		wantPTS int64
 	}{
 		// Shift 1 s (1_000_000 µs) at 1/90000: off = 1_000_000 * 90000 / (1_000_000 * 1) = 90000
 		{"1s at 1/90000", 90000, 1_000_000, [2]int{1, 90000}, 0},
