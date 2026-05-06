@@ -205,6 +205,7 @@ export function EncoderForm({ def, onChange }: Props) {
 
       {preset && (
         <PrimaryRow
+          codec={codec}
           option={preset}
           value={getParam(preset.name)}
           onChange={(v) => setParam(preset.name, v)}
@@ -227,6 +228,7 @@ export function EncoderForm({ def, onChange }: Props) {
 
       {keyint && (
         <PrimaryRow
+          codec={codec}
           option={keyint}
           value={getParam(keyint.name)}
           onChange={(v) => setParam(keyint.name, v)}
@@ -247,6 +249,7 @@ export function EncoderForm({ def, onChange }: Props) {
           {gopOptions.map((o) => (
             <PrimaryRow
               key={o.name}
+              codec={codec}
               option={o}
               value={getParam(o.name)}
               onChange={(v) => setParam(o.name, v)}
@@ -263,6 +266,7 @@ export function EncoderForm({ def, onChange }: Props) {
           {profileOptions.map((o) => (
             <PrimaryRow
               key={o.name}
+              codec={codec}
               option={o}
               value={getParam(o.name)}
               onChange={(v) => setParam(o.name, v)}
@@ -279,7 +283,7 @@ export function EncoderForm({ def, onChange }: Props) {
       )}
 
       {advanced.length > 0 && (
-        <AdvancedSection groups={groups} getParam={getParam} setParam={setParam} getEffectivePlaceholder={getEffectivePlaceholder} />
+        <AdvancedSection codec={codec} groups={groups} getParam={getParam} setParam={setParam} getEffectivePlaceholder={getEffectivePlaceholder} />
       )}
     </>
   );
@@ -433,10 +437,11 @@ function RateControlGroup({
 
       {mode === 'crf' && crf && (() => {
         const meta = primaryMeta(codec, crf);
+        const display = codecNativeName(codec, crf.name) ?? crf.name;
         return (
           <>
             <label style={{ marginTop: 6 }} title={crf.help}>
-              CRF <span className="empty" style={{ fontSize: 10 }}>({crf.name}{meta.rangeHint})</span>
+              CRF <span className="empty" style={{ fontSize: 10 }}>({display}{meta.rangeHint})</span>
             </label>
             <input
               type="number"
@@ -453,10 +458,11 @@ function RateControlGroup({
 
       {mode === 'qp' && qp && (() => {
         const meta = primaryMeta(codec, qp);
+        const display = codecNativeName(codec, qp.name) ?? qp.name;
         return (
           <>
             <label style={{ marginTop: 6 }} title={qp.help}>
-              QP <span className="empty" style={{ fontSize: 10 }}>({qp.name}{meta.rangeHint})</span>
+              QP <span className="empty" style={{ fontSize: 10 }}>({display}{meta.rangeHint})</span>
             </label>
             <input
               type="number"
@@ -560,11 +566,13 @@ function RawOptions({
 
 /* ---------- Advanced section (collapsible, searchable, grouped) ---------- */
 function AdvancedSection({
+  codec,
   groups,
   getParam,
   setParam,
   getEffectivePlaceholder,
 }: {
+  codec: string;
   groups: AdvancedGroup[];
   getParam: (k: string) => string;
   setParam: (k: string, v: string) => void;
@@ -611,13 +619,14 @@ function AdvancedSection({
               <div className="empty" style={{ fontSize: 11 }}>No options match “{query}”.</div>
             ) : (
               filtered.map((o) => (
-                <AdvancedRow key={o.name} option={o} value={getParam(o.name)} onChange={(v) => setParam(o.name, v)} effectivePlaceholder={getEffectivePlaceholder(o.name)} />
+                <AdvancedRow key={o.name} codec={codec} option={o} value={getParam(o.name)} onChange={(v) => setParam(o.name, v)} effectivePlaceholder={getEffectivePlaceholder(o.name)} />
               ))
             )
           ) : (
             groups.map((g) => (
               <AdvancedGroupView
                 key={g.name}
+                codec={codec}
                 group={g}
                 getParam={getParam}
                 setParam={setParam}
@@ -632,11 +641,13 @@ function AdvancedSection({
 }
 
 function AdvancedGroupView({
+  codec,
   group,
   getParam,
   setParam,
   getEffectivePlaceholder,
 }: {
+  codec: string;
   group: AdvancedGroup;
   getParam: (k: string) => string;
   setParam: (k: string, v: string) => void;
@@ -653,18 +664,20 @@ function AdvancedGroupView({
         {open ? '▾' : '▸'} {group.name} ({group.options.length})
       </button>
       {open && group.options.map((o) => (
-        <AdvancedRow key={o.name} option={o} value={getParam(o.name)} onChange={(v) => setParam(o.name, v)} effectivePlaceholder={getEffectivePlaceholder(o.name)} />
+        <AdvancedRow key={o.name} codec={codec} option={o} value={getParam(o.name)} onChange={(v) => setParam(o.name, v)} effectivePlaceholder={getEffectivePlaceholder(o.name)} />
       ))}
     </div>
   );
 }
 
 function AdvancedRow({
+  codec,
   option,
   value,
   onChange,
   effectivePlaceholder,
 }: {
+  codec: string;
   option: EncoderOption;
   value: string;
   onChange: (next: string) => void;
@@ -672,6 +685,8 @@ function AdvancedRow({
 }) {
   const def = effectivePlaceholder ?? defaultDisplay(option);
   const friendly = prettyLabel(option.name);
+  const native = codecNativeName(codec, option.name);
+  const display = native ?? option.name;
   const optForControl: EncoderOption = effectivePlaceholder
     ? {
         ...option,
@@ -686,8 +701,8 @@ function AdvancedRow({
     <div style={{ marginTop: 4 }}>
       <label title={option.help ?? option.name} style={{ fontSize: 11 }}>
         {friendly}
-        {friendly !== option.name && (
-          <span className="empty" style={{ fontSize: 10, marginLeft: 4 }}>({option.name})</span>
+        {friendly !== display && (
+          <span className="empty" style={{ fontSize: 10, marginLeft: 4 }}>({display})</span>
         )}
         <span className="empty" style={{ fontSize: 10, marginLeft: 4 }}>
           {option.type}{def ? ` · default ${def}` : ''}
@@ -743,6 +758,7 @@ function bucketFor(o: EncoderOption): string {
 
 
 function PrimaryRow({
+  codec,
   option,
   value,
   onChange,
@@ -750,6 +766,7 @@ function PrimaryRow({
   choices,
   effectivePlaceholder,
 }: {
+  codec?: string;
   option: EncoderOption;
   value: string;
   onChange: (next: string) => void;
@@ -759,6 +776,8 @@ function PrimaryRow({
 }) {
   const label = labelOverride ?? prettyLabel(option.name);
   const def = effectivePlaceholder ?? choices?.default ?? defaultDisplay(option);
+  const native = codec ? codecNativeName(codec, option.name) : undefined;
+  const display = native ?? option.name;
   const optForControl: EncoderOption = effectivePlaceholder
     ? {
         ...option,
@@ -772,7 +791,7 @@ function PrimaryRow({
   return (
     <>
       <label title={option.help}>
-        {label} <span className="empty" style={{ fontSize: 10 }}>({option.name}{def ? ` · default ${def}` : ''})</span>
+        {label} <span className="empty" style={{ fontSize: 10 }}>({display}{def ? ` · default ${def}` : ''})</span>
       </label>
       {choices ? (
         <select value={value || (choices.default ?? '')} onChange={(e) => onChange(e.target.value)}>
@@ -938,3 +957,116 @@ function prettyLabel(name: string): string {
     default: return name;
   }
 }
+
+/**
+ * Translate FFmpeg's generic AVCodecContext / AVOption names into the
+ * codec-native CLI names that x264 / x265 / svt-av1 / etc. document, so
+ * the Inspector reads as if the user were invoking the encoder directly
+ * rather than via the FFmpeg CLI. Returns undefined when the option has
+ * no codec-native rename (in which case the caller falls back to the
+ * AVOption name unchanged). The serialised params dict is unaffected —
+ * we still write `b`, `g`, `bf`, ... as keys; only the user-visible
+ * label changes.
+ */
+function codecNativeName(codec: string, optionName: string): string | undefined {
+  const c = codec.toLowerCase();
+  if (c === 'libx264' || c === 'libx264rgb') {
+    const m = X264_NATIVE[optionName];
+    if (m) return m;
+  }
+  if (c === 'libx265') {
+    const m = X265_NATIVE[optionName];
+    if (m) return m;
+  }
+  return undefined;
+}
+
+// FFmpeg generic AVOption -> x264 CLI flag.
+// Source: x264 --fullhelp and libavcodec/libx264.c option mappings.
+const X264_NATIVE: Record<string, string> = {
+  b:              '--bitrate',
+  g:              '--keyint',
+  keyint_min:     '--min-keyint',
+  bf:             '--bframes',
+  refs:           '--ref',
+  b_strategy:     '--b-adapt',
+  sc_threshold:   '--scenecut',
+  qmin:           '--qpmin',
+  qmax:           '--qpmax',
+  qdiff:          '--qpstep',
+  qcomp:          '--qcomp',
+  qblur:          '--qblur',
+  crf:            '--crf',
+  qp:             '--qp',
+  maxrate:        '--vbv-maxrate',
+  bufsize:        '--vbv-bufsize',
+  level:          '--level',
+  profile:        '--profile',
+  'intra-refresh':'--intra-refresh',
+  intra_refresh:  '--intra-refresh',
+  trellis:        '--trellis',
+  partitions:     '--partitions',
+  me_method:      '--me',
+  me:             '--me',
+  me_range:       '--merange',
+  merange:        '--merange',
+  subq:           '--subme',
+  subme:          '--subme',
+  cabac:          '--cabac',
+  'aq-mode':      '--aq-mode',
+  'aq-strength':  '--aq-strength',
+  'rc-lookahead': '--rc-lookahead',
+  mbtree:         '--mbtree',
+  psy:            '--psy',
+  'psy-rd':       '--psy-rd',
+  weightb:        '--weightb',
+  wpredp:         '--weightp',
+  'mixed-refs':   '--mixed-refs',
+  'fast-pskip':   '--no-fast-pskip',
+  '8x8dct':       '--8x8dct',
+  'b-pyramid':    '--b-pyramid',
+  'b-bias':       '--b-bias',
+  'direct-pred':  '--direct',
+  deblock:        '--deblock',
+  slices:         '--slices',
+  'crf-max':      '--crf-max',
+  ipratio:        '--ipratio',
+  pbratio:        '--pbratio',
+  chromaoffset:   '--chroma-qp-offset',
+  'chroma-qp-offset': '--chroma-qp-offset',
+  threads:        '--threads',
+  'sliced-threads': '--sliced-threads',
+};
+
+// FFmpeg generic AVOption -> x265 CLI flag.
+// Source: x265 --help and libavcodec/libx265.c.
+const X265_NATIVE: Record<string, string> = {
+  b:              '--bitrate',
+  g:              '--keyint',
+  keyint_min:     '--min-keyint',
+  bf:             '--bframes',
+  refs:           '--ref',
+  b_strategy:     '--b-adapt',
+  sc_threshold:   '--scenecut',
+  qmin:           '--qpmin',
+  qmax:           '--qpmax',
+  qcomp:          '--qcomp',
+  crf:            '--crf',
+  qp:             '--qp',
+  maxrate:        '--vbv-maxrate',
+  bufsize:        '--vbv-bufsize',
+  level:          '--level-idc',
+  profile:        '--profile',
+  tier:           '--high-tier',
+  'rc-lookahead': '--rc-lookahead',
+  'aq-mode':      '--aq-mode',
+  'aq-strength':  '--aq-strength',
+  'crf-max':      '--crf-max',
+  ipratio:        '--ipratio',
+  pbratio:        '--pbratio',
+  ssim:           '--ssim',
+  psnr:           '--psnr',
+  'open-gop':     '--open-gop',
+  threads:        '--pools',
+  'no-scenecut':  '--no-scenecut',
+};
