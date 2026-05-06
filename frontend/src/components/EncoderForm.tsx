@@ -18,7 +18,7 @@
 // safest round-trip). Empty string ⇒ remove the key entirely so the
 // encoder uses libav's default.
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import type { NodeDef } from '../lib/jobTypes';
 import {
   effectivePresetDefault,
@@ -668,6 +668,28 @@ function AdvancedGroupView({
   );
 }
 
+/** Small square "?" button that opens a native <dialog> with extended help. */
+function ExtendedHelpButton({ label, text }: { label: string; text: string }) {
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  return (
+    <>
+      <button
+        type="button"
+        className="ext-help-btn"
+        title="Extended help"
+        onClick={() => dialogRef.current?.showModal()}
+      >
+        ?
+      </button>
+      <dialog ref={dialogRef} className="ext-help-dialog">
+        <h4>{label}</h4>
+        <p>{text}</p>
+        <button type="button" onClick={() => dialogRef.current?.close()}>Close</button>
+      </dialog>
+    </>
+  );
+}
+
 function AdvancedRow({
   codec,
   option,
@@ -706,6 +728,9 @@ function AdvancedRow({
         <span className="empty" style={{ fontSize: 10, marginLeft: 4 }}>
           {option.type}{def ? ` · default ${def}` : ''}
         </span>
+        {option.extended_help && (
+          <ExtendedHelpButton label={friendly} text={option.extended_help} />
+        )}
       </label>
       <OptionControl option={optForControl} value={value} onChange={onChange} />
       {help && (
@@ -792,6 +817,9 @@ function PrimaryRow({
     <>
       <label title={help}>
         {label} <span className="empty" style={{ fontSize: 10 }}>({display}{def ? ` · default ${def}` : ''})</span>
+        {option.extended_help && (
+          <ExtendedHelpButton label={label} text={option.extended_help} />
+        )}
       </label>
       {choices ? (
         <select

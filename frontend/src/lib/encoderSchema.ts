@@ -68,6 +68,11 @@ export interface EncoderOption {
   // identifiers the expression may reference.
   expression?: boolean;
   variables?: string[];
+
+  // Longer prose explanation injected from private_local/nodes.csv by
+  // the GUI handler (applyEncoderExtendedHelp). Shown behind a "?"
+  // button in the Inspector so the compact help line stays visible.
+  extended_help?: string;
 }
 
 export interface EncoderInfo {

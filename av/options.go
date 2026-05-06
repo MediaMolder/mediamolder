@@ -116,6 +116,12 @@ type EncoderOption struct {
 	// the expression may reference (e.g. `t`, `n`, `w`, `h`).
 	Expression bool     `json:"expression,omitempty"`
 	Variables  []string `json:"variables,omitempty"`
+
+	// ExtendedHelp is a longer prose explanation (multiple sentences)
+	// injected by the GUI layer from private_local/nodes.csv. Empty
+	// for options not covered by the CSV. The frontend renders it
+	// behind a small "?" button to avoid cluttering the Inspector.
+	ExtendedHelp string `json:"extended_help,omitempty"`
 }
 
 // EncoderOptionEnum is one named constant attached to an option's `unit`.

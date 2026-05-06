@@ -47,6 +47,7 @@ func handleEncoderOptions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	applyEncoderHelpOverrides(&info)
+	applyEncoderExtendedHelp(&info)
 	filterOptionsByMediaType(&info)
 
 	encoderOptionsCacheMu.Lock()
