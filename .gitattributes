@@ -10,6 +10,9 @@ testdata/**/*.ogg filter=lfs diff=lfs merge=lfs -text
 testdata/**/*.flac filter=lfs diff=lfs merge=lfs -text
 testdata/**/*.wav filter=lfs diff=lfs merge=lfs -text
 testdata/**/*.aac filter=lfs diff=lfs merge=lfs -text
+testdata/**/*.jpg filter=lfs diff=lfs merge=lfs -text
+testdata/**/*.jpeg filter=lfs diff=lfs merge=lfs -text
+testdata/**/*.png filter=lfs diff=lfs merge=lfs -text
 testdata/**/*.y4m filter=lfs diff=lfs merge=lfs -text
 testdata/**/*.yuv filter=lfs diff=lfs merge=lfs -text
 testdata/**/*.srt filter=lfs diff=lfs merge=lfs -text
