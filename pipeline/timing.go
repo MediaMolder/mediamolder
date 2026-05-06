@@ -177,11 +177,7 @@ func resolveOutputTiming(opts map[string]any, warn func(format string, args ...a
 	if err != nil {
 		return outputTiming{}, err
 	}
-	return outputTiming{
-		haveStart:   t.haveStart,
-		startUS:     t.startUS,
-		recordingUS: t.recordingUS,
-	}, nil
+	return outputTiming(t), nil
 }
 
 // stopTimestampUS returns the absolute packet PTS at or after which the

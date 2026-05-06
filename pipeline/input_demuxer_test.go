@@ -230,7 +230,3 @@ func TestMaterialiseConcatList_Roundtrip(t *testing.T) {
 	}
 }
 
-func readFile(p string) (string, error) {
-	b, err := os.ReadFile(p)
-	return string(b), err
-}

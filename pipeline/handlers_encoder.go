@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"time"
 
 	"github.com/MediaMolder/MediaMolder/av"
@@ -15,6 +16,13 @@ import (
 )
 
 // ---------- Encoder handler ----------
+
+// passlogfileSafe matches filenames that are safe to use as pass-log prefixes:
+// only alphanumeric characters, hyphens, underscores, and dots. This is used
+// to validate user-supplied __passlogfile values after path components have
+// been stripped by filepath.Base, preventing any residual path-traversal or
+// shell-injection risk.
+var passlogfileSafe = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 
 // encoderSession holds the per-execution state for one encoder node run and
 // drives the frame-encode-drain loop. Separating it from graphRunner makes
@@ -374,11 +382,11 @@ func (r *graphRunner) createEncoder(dag *graph.Graph, node *graph.Node) (*av.Enc
 		if prefix == "" {
 			prefix = "ffmpeg2pass"
 		} else {
-			// filepath.Base strips any directory component to prevent path
-			// traversal. Pass-log files are always written in the process
-			// working directory.
+			// Strip any directory component, then restrict to safe filename
+			// characters (alphanumeric, hyphen, underscore, dot) to prevent
+			// path-traversal and shell-injection via user-supplied values.
 			prefix = filepath.Base(filepath.Clean(prefix))
-			if prefix == "." || prefix == "/" {
+			if !passlogfileSafe.MatchString(prefix) {
 				prefix = "ffmpeg2pass"
 			}
 		}
