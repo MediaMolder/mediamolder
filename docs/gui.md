@@ -484,6 +484,32 @@ override) and multi-language muxes (one Output with one English
 audio + one Spanish audio, each carrying `language=…` metadata and a
 `default` / `forced` disposition).
 
+#### Output nodes — Bitstream-filter chains
+
+Below the Streams section every Output form exposes three **Bitstream
+filters** sections (video / audio / subtitle) backed by
+`Output.bsf_video` / `bsf_audio` / `bsf_subtitle`. Each section
+renders one card per chain entry with:
+
+* **Filter** — name input with per-kind autocomplete (`h264_mp4toannexb`,
+  `hevc_mp4toannexb`, `aac_adtstoasc`, `h264_metadata`, `dump_extra`,
+  `extract_extradata`, `setts`, …).
+* **↑ / ↓** — reorder the entry within the chain. Order matters:
+  packets flow through the filters left-to-right.
+* **×** — remove the entry.
+* **Params** — key/value rows mapped to the filter's AVOptions
+  (e.g. `video_full_range_flag=1`, `level=4`).
+
+The serialised chain (e.g. `h264_mp4toannexb,h264_metadata=video_full_range_flag=1`)
+is shown live in monospace beside the **+ add** button, in the exact
+form passed to libavcodec's `av_bsf_list_parse_str`. Empty chains are
+elided from the saved JSON.
+
+The most common need is the MPEG-TS handoff:
+`h264_mp4toannexb` (or `hevc_mp4toannexb`) on the video chain when
+re-muxing an MP4 to TS — without it the muxer chokes on the AVCC-style
+NAL units. `aac_adtstoasc` is the dual: required when re-muxing TS to MP4.
+
 ### Run panel
 
 ![MediaMolder GUI Running](images/ABR_running.png)

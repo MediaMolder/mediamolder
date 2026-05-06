@@ -3,6 +3,7 @@ import type { FlowEdge, FlowNode } from '../lib/jsonAdapter';
 import { displayUrl, nodeDisplayLabel, nodeDisplaySublabel } from '../lib/jsonAdapter';
 import { displayName, lookupFriendlyName, useNamingMode } from '../lib/friendlyNames';
 import type { EncoderOverride, Input, NodeDef, Output, ProbeResponse, ProbedStream, StreamSpec } from '../lib/jobTypes';
+import { type BSFEntry, parseBSFChain, serializeBSFChain } from '../lib/bsf';
 import { MEDIA_FILE_EXTENSIONS } from '../lib/mediaExtensions';
 import { FileBrowser, type BrowseMode } from './FileBrowser';
 import { EncoderForm } from './EncoderForm';
@@ -368,6 +369,24 @@ function OutputForm({
       <TimingFields
         options={def.options}
         onChange={(opts) => onChange({ ...def, options: opts })}
+      />
+      <BSFEditor
+        label="Bitstream filters (video)"
+        kind="video"
+        spec={def.bsf_video}
+        onChange={(s) => onChange({ ...def, bsf_video: s })}
+      />
+      <BSFEditor
+        label="Bitstream filters (audio)"
+        kind="audio"
+        spec={def.bsf_audio}
+        onChange={(s) => onChange({ ...def, bsf_audio: s })}
+      />
+      <BSFEditor
+        label="Bitstream filters (subtitle)"
+        kind="subtitle"
+        spec={def.bsf_subtitle}
+        onChange={(s) => onChange({ ...def, bsf_subtitle: s })}
       />
       <StreamsEditor
         streams={def.streams}
@@ -794,6 +813,191 @@ function OutputTabs({
         </button>
       ))}
     </div>
+  );
+}
+
+/* ---------- BSF chain editor (Wave 8 #46) ----------
+ * Sortable list with add/remove/reorder of (name, params) entries
+ * for `Output.bsf_video` / `bsf_audio` / `bsf_subtitle`. Replaces the
+ * single-field text input that previously forced the user to know
+ * libavcodec's `f1=k=v:k=v,f2` chain syntax. The serialised string is
+ * shown live as a read-only preview so power users can confirm the
+ * exact spec being sent through `av_bsf_list_parse_str`. */
+const BSF_PRESETS: Record<'video' | 'audio' | 'subtitle', string[]> = {
+  video: [
+    'h264_mp4toannexb',
+    'hevc_mp4toannexb',
+    'h264_metadata',
+    'hevc_metadata',
+    'av1_metadata',
+    'h264_redundant_pps',
+    'dump_extra',
+    'extract_extradata',
+    'filter_units',
+    'noise',
+    'null',
+    'setts',
+    'trace_headers',
+  ],
+  audio: [
+    'aac_adtstoasc',
+    'mp3decomp',
+    'opus_metadata',
+    'noise',
+    'null',
+    'setts',
+  ],
+  subtitle: [
+    'mov2textsub',
+    'text2movsub',
+    'null',
+  ],
+};
+
+function BSFEditor({
+  label,
+  kind,
+  spec,
+  onChange,
+}: {
+  label: string;
+  kind: 'video' | 'audio' | 'subtitle';
+  spec: string | undefined;
+  onChange: (next: string | undefined) => void;
+}) {
+  // Parse the canonical chain spec on every render so external edits
+  // (load file, undo, etc.) flow through. Local edits round-trip
+  // through serializeBSFChain so the textual preview stays canonical.
+  const entries: BSFEntry[] = parseBSFChain(spec ?? '');
+  const presets = BSF_PRESETS[kind];
+
+  const commit = (next: BSFEntry[]) => {
+    const s = serializeBSFChain(next);
+    onChange(s === '' ? undefined : s);
+  };
+  const update = (i: number, patch: Partial<BSFEntry>) => {
+    commit(entries.map((e, j) => (j === i ? { ...e, ...patch } : e)));
+  };
+  const remove = (i: number) => {
+    commit(entries.filter((_, j) => j !== i));
+  };
+  const move = (i: number, dir: -1 | 1) => {
+    const j = i + dir;
+    if (j < 0 || j >= entries.length) return;
+    const next = entries.slice();
+    [next[i], next[j]] = [next[j], next[i]];
+    commit(next);
+  };
+  const add = () => {
+    commit([...entries, { name: presets[0] ?? '', params: {} }]);
+  };
+  const preview = serializeBSFChain(entries);
+
+  return (
+    <>
+      <label style={{ marginTop: 12 }}>{label}</label>
+      <div style={{ fontSize: 11, color: 'var(--text-dim)', marginBottom: 6 }}>
+        Bitstream-filter chain. Syntax:{' '}
+        <code>f1[=k=v[:k=v]][,f2]</code> (libavcodec
+        <code> av_bsf_list_parse_str</code>).
+      </div>
+      {entries.length === 0 ? (
+        <div className="empty" style={{ marginTop: 4 }}>
+          No bitstream filters. Click <strong>+ add</strong> to build a chain.
+        </div>
+      ) : (
+        entries.map((e, i) => (
+          <div
+            key={i}
+            style={{
+              border: '1px solid var(--border)',
+              borderRadius: 4,
+              padding: 6,
+              marginBottom: 6,
+              background: 'var(--panel-2)',
+            }}
+          >
+            <div style={{ display: 'flex', gap: 4, alignItems: 'flex-end' }}>
+              <div style={{ flex: 1 }}>
+                <label style={{ marginTop: 0 }}>Filter</label>
+                <input
+                  list={`bsf-presets-${kind}`}
+                  value={e.name}
+                  onChange={(ev) => update(i, { name: ev.target.value })}
+                  style={{
+                    width: '100%',
+                    background: 'var(--panel)',
+                    color: 'var(--text)',
+                    border: '1px solid var(--border)',
+                    borderRadius: 4,
+                    padding: '5px 7px',
+                    fontSize: 12,
+                  }}
+                />
+              </div>
+              <button
+                type="button"
+                onClick={() => move(i, -1)}
+                disabled={i === 0}
+                title="Move up"
+              >
+                ↑
+              </button>
+              <button
+                type="button"
+                onClick={() => move(i, 1)}
+                disabled={i === entries.length - 1}
+                title="Move down"
+              >
+                ↓
+              </button>
+              <button
+                type="button"
+                className="danger"
+                onClick={() => remove(i)}
+                title="Remove this filter"
+              >
+                ×
+              </button>
+            </div>
+            <label style={{ marginTop: 8 }}>Params</label>
+            <ParamsEditor
+              params={e.params}
+              onChange={(p) => {
+                const params: Record<string, string> = {};
+                for (const [k, v] of Object.entries(p)) params[k] = String(v ?? '');
+                update(i, { params });
+              }}
+            />
+          </div>
+        ))
+      )}
+      <datalist id={`bsf-presets-${kind}`}>
+        {presets.map((p) => (
+          <option key={p} value={p} />
+        ))}
+      </datalist>
+      <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 4 }}>
+        <button type="button" onClick={add} title="Add a bitstream filter">
+          + add
+        </button>
+        {preview && (
+          <code
+            style={{
+              flex: 1,
+              fontSize: 11,
+              color: 'var(--text-dim)',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}
+            title={preview}
+          >
+            {preview}
+          </code>
+        )}
+      </div>
+    </>
   );
 }
 

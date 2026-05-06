@@ -1130,11 +1130,20 @@ wave delivers every §2.8 / §3.5 GUI item that the schema can now back.
     flag toggles (Wave 8 #52), the chapter/metadata table editor
     (Wave 8 #47), and the BSF chain editor (Wave 8 #46) layer on top
     of this surface in subsequent waves.
-46. **BSF chain editor** (§2.8, §3.5.3) — Sortable list with
-    add/remove/reorder of `(name, params)` entries; preview the
+46. **BSF chain editor** (§2.8, §3.5.3) ✅ Wave 8 — Sortable list with
+    add/remove/reorder of `(name, params)` entries; preview of the
     rendered `f1=k=v:k=v,f2` string. Replaces the single-field
     text input on `Output.BSFVideo` / `BSFAudio` / `BSFSubtitle`
-    (Wave 3 #13).
+    (Wave 3 #13). New `parseBSFChain` / `serializeBSFChain` in
+    [frontend/src/lib/bsf.ts](../../frontend/src/lib/bsf.ts) handles
+    the libavcodec `av_bsf_list_parse_str` syntax (comma-separated
+    chain, each entry `name[=k=v[:k=v]*]`); new `BSFEditor` in
+    [frontend/src/components/Inspector.tsx](../../frontend/src/components/Inspector.tsx)
+    renders one section per media type with per-entry datalist
+    presets (`h264_mp4toannexb`, `hevc_mp4toannexb`, `aac_adtstoasc`,
+    `h264_metadata`, `dump_extra`, `extract_extradata`, `setts`, …),
+    `↑`/`↓` reorder buttons, `×` remove, `+ add`, and a live
+    monospace preview of the canonical chain spec.
 47. **Chapter / metadata editor** (§2.8, §3.5.4) — Table editor
     for `(start, end, title)` chapter entries; key/value editor
     for per-output and per-stream metadata; tabs per stream.
