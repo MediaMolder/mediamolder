@@ -794,7 +794,10 @@ function PrimaryRow({
         {label} <span className="empty" style={{ fontSize: 10 }}>({display}{def ? ` · default ${def}` : ''})</span>
       </label>
       {choices ? (
-        <select value={value || (choices.default ?? '')} onChange={(e) => onChange(e.target.value)}>
+        <select
+          value={value || (choices.default ?? '')}
+          onChange={(e) => onChange(choices.default && e.target.value === choices.default ? '' : e.target.value)}
+        >
           {!choices.default && <option value="">(not set)</option>}
           {choices.choices.map((c) => (
             <option key={c.value} value={c.value}>
