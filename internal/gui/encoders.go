@@ -47,6 +47,7 @@ func handleEncoderOptions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	applyEncoderHelpOverrides(&info)
+	filterOptionsByMediaType(&info)
 
 	encoderOptionsCacheMu.Lock()
 	encoderOptionsCache[name] = info
@@ -58,4 +59,40 @@ func handleEncoderOptions(w http.ResponseWriter, r *http.Request) {
 func writeEncoderOptions(w http.ResponseWriter, info av.EncoderInfo) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(info)
+}
+
+// filterOptionsByMediaType removes generic AVCodecContext options that are
+// irrelevant to the encoder's media type: video-only options (IsVideoParam &&
+// !IsAudioParam) are dropped for audio encoders; audio-only options
+// (IsAudioParam && !IsVideoParam) are dropped for video encoders. Options with
+// neither flag set (flags==0) and no IsEncodingParam are "native access only"
+// internal fields (e.g. frame_number, has_b_frames) that should not be
+// surfaced to users. Private codec options are always kept.
+func filterOptionsByMediaType(info *av.EncoderInfo) {
+	if info.MediaType != "audio" && info.MediaType != "video" {
+		return
+	}
+	filtered := info.Options[:0]
+	for _, o := range info.Options {
+		if o.IsPrivate {
+			filtered = append(filtered, o)
+			continue
+		}
+		// Drop "native access only" fields that have no user-visible flags.
+		if o.Flags == 0 && !o.IsEncodingParam {
+			continue
+		}
+		switch info.MediaType {
+		case "audio":
+			if o.IsVideoParam && !o.IsAudioParam {
+				continue // video-only: skip for audio encoder
+			}
+		case "video":
+			if o.IsAudioParam && !o.IsVideoParam {
+				continue // audio-only: skip for video encoder
+			}
+		}
+		filtered = append(filtered, o)
+	}
+	info.Options = filtered
 }
