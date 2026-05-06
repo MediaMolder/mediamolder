@@ -46,6 +46,7 @@ func handleEncoderOptions(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusNotFound, err)
 		return
 	}
+	applyEncoderHelpOverrides(&info)
 
 	encoderOptionsCacheMu.Lock()
 	encoderOptionsCache[name] = info
