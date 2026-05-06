@@ -287,6 +287,12 @@ button.danger:hover { background: rgba(185, 74, 74, 0.15); }
   color: #fff;
   border-color: var(--accent, #3a82f7);
 }
+.bool-toggle-opt.active.default {
+  background: transparent;
+  color: var(--text);
+  border-color: var(--accent, #3a82f7);
+  border-style: dashed;
+}
 .bool-toggle-clear {
   margin-left: 6px;
   background: transparent;

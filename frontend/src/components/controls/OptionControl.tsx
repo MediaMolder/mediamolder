@@ -113,13 +113,21 @@ function BoolToggle({
 }) {
   const def = boolDefault(option);
   const norm = normaliseBool(value);
+  const effective = norm || def || '';
+  const isDefault = norm === '';
+  const cls = (which: 'true' | 'false') => {
+    let c = 'bool-toggle-opt';
+    if (effective === which) c += ' active';
+    if (effective === which && isDefault) c += ' default';
+    return c;
+  };
   return (
     <div className="bool-toggle" role="radiogroup" aria-label={option.name}>
       <button
         type="button"
         role="radio"
-        aria-checked={norm === 'true'}
-        className={`bool-toggle-opt${norm === 'true' ? ' active' : ''}`}
+        aria-checked={effective === 'true'}
+        className={cls('true')}
         onClick={() => onChange('true')}
         title={`Set ${option.name} = true`}
       >
@@ -128,8 +136,8 @@ function BoolToggle({
       <button
         type="button"
         role="radio"
-        aria-checked={norm === 'false'}
-        className={`bool-toggle-opt${norm === 'false' ? ' active' : ''}`}
+        aria-checked={effective === 'false'}
+        className={cls('false')}
         onClick={() => onChange('false')}
         title={`Set ${option.name} = false`}
       >
