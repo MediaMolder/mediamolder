@@ -206,6 +206,101 @@ button.danger:hover { background: rgba(185, 74, 74, 0.15); }
   padding: 1px 4px;
   border-radius: 3px;
 }
+
+/* ---------- Filter option row (FilterForm) ----------
+ * Per-AVOption row in the filter Inspector. Layout is:
+ *   NAME           ← label, uppercase
+ *   help text      ← row's primary descriptive line
+ *   [control] range← editable widget on the left, dim allowed-range
+ *                    badge tucked against the right edge.
+ * Range badge intentionally omits the type token — the formatting of
+ * the endpoints (decimal vs integer) conveys the AVOption type. */
+.filter-option-row {
+  margin-bottom: 12px;
+}
+.filter-option-name {
+  display: block;
+  font-size: 11px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  margin-bottom: 2px;
+}
+.filter-option-modified {
+  color: var(--accent, #3a82f7);
+  margin-right: 4px;
+}
+.filter-option-help {
+  font-size: 11px;
+  color: var(--text);
+  margin-bottom: 4px;
+  line-height: 1.4;
+}
+.filter-option-control-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.filter-option-control {
+  flex: 1;
+  min-width: 0;
+}
+.filter-option-control > input,
+.filter-option-control > select,
+.filter-option-control > .bool-toggle {
+  width: 100%;
+}
+.filter-option-range {
+  font-size: 10px;
+  color: var(--text-dim);
+  font-family: ui-monospace, monospace;
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+
+/* ---------- Boolean toggle (OptionControl) ----------
+ * Two pill buttons (true / false) plus a trailing ✕ that clears the
+ * override back to the libavfilter default. Never renders 0 / 1. */
+.bool-toggle {
+  display: inline-flex;
+  align-items: stretch;
+  gap: 0;
+}
+.bool-toggle-opt {
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  padding: 4px 12px;
+  font-size: 12px;
+  cursor: pointer;
+  margin: 0;
+}
+.bool-toggle-opt:nth-of-type(1) {
+  border-top-left-radius: 4px;
+  border-bottom-left-radius: 4px;
+}
+.bool-toggle-opt:nth-of-type(2) {
+  border-left: none;
+}
+.bool-toggle-opt.active {
+  background: var(--accent, #3a82f7);
+  color: #fff;
+  border-color: var(--accent, #3a82f7);
+}
+.bool-toggle-clear {
+  margin-left: 6px;
+  background: transparent;
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 8px;
+  font-size: 11px;
+  cursor: pointer;
+}
+.bool-toggle-clear:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
 .palette h3 {
   font-size: 11px;
   text-transform: uppercase;

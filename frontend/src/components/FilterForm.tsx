@@ -12,7 +12,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { NodeDef } from '../lib/jobTypes';
 import { fetchFilterInfo, type FilterOption, type FilterOptionsInfo } from '../lib/filterSchema';
-import { OptionControl, defaultDisplay } from './controls/OptionControl';
+import { OptionControl } from './controls/OptionControl';
 
 interface Props {
   def: NodeDef;
@@ -155,41 +155,66 @@ function OptionRow({
   value: string;
   onChange: (next: string) => void;
 }) {
-  const def = defaultDisplay(option);
   const range = rangeHint(option);
-  const meta = [option.type, def && `default ${def}`, range].filter(Boolean).join(' · ');
+  const isOverridden = value !== '' && value !== undefined;
   return (
-    <div style={{ marginBottom: 8 }}>
-      <label
-        style={{ display: 'block', marginBottom: 2 }}
-        title={option.help}
-      >
+    <div className="filter-option-row">
+      <div className="filter-option-name" title={option.name}>
+        {isOverridden && <span className="filter-option-modified" aria-label="modified">●</span>}
         {option.name}
-      </label>
-      <OptionControl filter={filter} option={option} value={value} onChange={onChange} />
-      {meta && (
-        <div className="empty" style={{ fontSize: 10, marginTop: 2 }}>
-          {meta}
+      </div>
+      {option.help && <div className="filter-option-help">{option.help}</div>}
+      <div className="filter-option-control-row">
+        <div className="filter-option-control">
+          <OptionControl filter={filter} option={option} value={value} onChange={onChange} />
         </div>
-      )}
-      {option.help && (
-        <div className="empty" style={{ fontSize: 10, marginTop: 2 }}>
-          {option.help}
-        </div>
-      )}
+        {range && <div className="filter-option-range" title="Allowed range">{range}</div>}
+      </div>
     </div>
   );
 }
 
 /** Format the option's numeric range for display, suppressing libav's
- * common -INF / +INF sentinels (INT_MIN, INT_MAX, FLT_MAX, ...). */
+ * common -INF / +INF sentinels (INT_MIN, INT_MAX, FLT_MAX, ...) and
+ * normalising endpoints by AVOption type so the formatting itself
+ * conveys the type:
+ *   - float / double / rational endpoints carry at least one decimal
+ *     place (so `0–1` reads as `0.0–1.0`); endpoints with an existing
+ *     fractional part are left intact and only the missing side is
+ *     normalised.
+ *   - integer-typed endpoints render as plain integers (no decimal),
+ *     even if libavutil happened to surface them as `1.0`.
+ *
+ * Returns `''` for enums (the <select> conveys both type and domain),
+ * for string-shaped options (no meaningful range), and for options
+ * whose min/max are both sentinels. */
 function rangeHint(option: FilterOption): string {
+  if (Array.isArray(option.constants) && option.constants.length > 0) return '';
+  if (
+    option.type === 'string' ||
+    option.type === 'binary' ||
+    option.type === 'dict' ||
+    option.type === 'unknown' ||
+    option.type === 'bool'
+  )
+    return '';
+
   const sane = (n: number | undefined): n is number =>
     typeof n === 'number' && Number.isFinite(n) && Math.abs(n) < 1e15;
   const lo = sane(option.min) ? option.min : undefined;
   const hi = sane(option.max) ? option.max : undefined;
-  if (lo !== undefined && hi !== undefined) return `${lo}–${hi}`;
-  if (hi !== undefined) return `≤ ${hi}`;
-  if (lo !== undefined) return `≥ ${lo}`;
+  if (lo === undefined && hi === undefined) return '';
+
+  const isFloat =
+    option.type === 'float' || option.type === 'double' || option.type === 'rational';
+  const fmt = (n: number): string => {
+    if (!isFloat) return String(Math.round(n));
+    const s = String(n);
+    return s.includes('.') || s.includes('e') || s.includes('E') ? s : `${s}.0`;
+  };
+
+  if (lo !== undefined && hi !== undefined) return `${fmt(lo)}–${fmt(hi)}`;
+  if (hi !== undefined) return `≤ ${fmt(hi)}`;
+  if (lo !== undefined) return `≥ ${fmt(lo)}`;
   return '';
 }

@@ -664,16 +664,17 @@ function TagField({
 
 /* ---------- Graph node form ---------- */
 function NodeForm({ def, onChange }: { def: NodeDef; onChange: (next: NodeDef) => void }) {
+  const isFilter =
+    def.type === 'filter' || def.type === 'filter_source' || def.type === 'filter_sink';
   return (
     <>
-      <Field label="ID" value={def.id} onChange={(v) => onChange({ ...def, id: v })} />
-      <Field label="Type" value={def.type} onChange={(v) => onChange({ ...def, type: v })} />
-      {(def.type === 'filter' || def.type === 'filter_source' || def.type === 'filter_sink') && (
-        <Field
-          label="Filter"
-          value={def.filter ?? ''}
-          onChange={(v) => onChange({ ...def, filter: v || undefined })}
-        />
+      {isFilter ? (
+        <FilterAdvanced def={def} onChange={onChange} />
+      ) : (
+        <>
+          <Field label="ID" value={def.id} onChange={(v) => onChange({ ...def, id: v })} />
+          <Field label="Type" value={def.type} onChange={(v) => onChange({ ...def, type: v })} />
+        </>
       )}
       {def.type === 'go_processor' && (
         <Field
@@ -683,13 +684,77 @@ function NodeForm({ def, onChange }: { def: NodeDef; onChange: (next: NodeDef) =
         />
       )}
       {def.type === 'encoder' && <EncoderForm def={def} onChange={onChange} />}
-      {(def.type === 'filter' || def.type === 'filter_source' || def.type === 'filter_sink') && (
-        <FilterForm def={def} onChange={onChange} />
-      )}
-      {def.type !== 'encoder' && def.type !== 'filter' && def.type !== 'filter_source' && def.type !== 'filter_sink' && (
+      {isFilter && <FilterForm def={def} onChange={onChange} />}
+      {def.type !== 'encoder' && !isFilter && (
         <ParamsEditor params={def.params ?? {}} onChange={(p) => onChange({ ...def, params: p })} />
       )}
     </>
+  );
+}
+
+/* ---------- Advanced collapsible for filter nodes ----------
+ * Filter, filter_source, and filter_sink graph nodes hide their three
+ * structural identifiers (id, type, filter) by default — those are
+ * properties *of* the node, not properties to edit. The collapse
+ * surfaces them when the user genuinely needs to rename, swap the
+ * underlying libavfilter, or read the raw type. Filter swap is
+ * destructive (resets every option) so it lives behind a confirm. */
+function FilterAdvanced({
+  def,
+  onChange,
+}: {
+  def: NodeDef;
+  onChange: (next: NodeDef) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div style={{ marginBottom: 12 }}>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        style={{
+          background: 'transparent',
+          color: 'var(--text-dim)',
+          border: 'none',
+          padding: 0,
+          fontSize: 11,
+          cursor: 'pointer',
+        }}
+        title="Show node id, type, and filter swap"
+      >
+        {open ? '▾' : '▸'} Advanced
+      </button>
+      {open && (
+        <div style={{ marginTop: 6, paddingLeft: 8, borderLeft: '1px solid var(--border)' }}>
+          <Field label="ID" value={def.id} onChange={(v) => onChange({ ...def, id: v })} />
+          <label>Type</label>
+          <div className="inspector-canonical" style={{ marginBottom: 8 }}>{def.type}</div>
+          <label>Filter</label>
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 4 }}>
+            <code style={{ flex: 1, fontSize: 12 }}>{def.filter ?? '(unset)'}</code>
+            <button
+              type="button"
+              onClick={() => {
+                const cur = def.filter ?? '';
+                const next = window.prompt(
+                  'Replace filter with another libavfilter name?\n\nNote: this discards every option you have set on this node.',
+                  cur,
+                );
+                if (next === null) return;
+                const trimmed = next.trim();
+                if (trimmed === '' || trimmed === cur) return;
+                onChange({ ...def, filter: trimmed, params: undefined });
+              }}
+            >
+              Replace…
+            </button>
+          </div>
+          <div style={{ fontSize: 11, color: 'var(--text-dim)' }}>
+            Replacing the filter clears every option on this node.
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 
