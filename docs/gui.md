@@ -453,6 +453,37 @@ Leave a field blank to omit it. The values round-trip through the
 `ffmpeg -ss 5 -t 30 -i in.mp4 -c copy out.mp4` lands in the editor with
 Start=5, Duration=30 already populated on the input node.
 
+#### Output nodes — Multi-output tabs and per-stream overrides
+
+When the graph contains more than one **Output** node, the Inspector
+renders a **tab strip** at the top of the Output form listing every
+output. Click a tab to flip the Inspector and the canvas selection to
+that output without going back to the canvas. Single-output graphs are
+visually unchanged.
+
+Below the Timing section every Output form exposes a **Streams**
+sub-tab strip backed by `Output.streams[]`. Use this to author the
+per-stream overrides that on the FFmpeg CLI look like
+`-metadata:s:v:0 …`, `-disposition:s:a:1 …`, `-c:v:1 libx264`, or
+`-b:v:1 5M`. Click **+ add** to create a new entry, then fill in:
+
+* **Type** — `v` (video), `a` (audio), `s` (subtitle), or `d` (data).
+* **Index** — 0-based stream index within the chosen media type.
+* **Disposition** — `+`-separated `AV_DISPOSITION_*` flags (e.g.
+  `default+forced`, `hearing_impaired`, `commentary`).
+* **Metadata** — key/value rows (e.g. `language=eng`, `title=Director's commentary`).
+* **Encoder override** — per-stream codec (e.g. `libx264`) plus a
+  key/value option editor (e.g. `b=5M`, `crf=18`). Empty leaves the
+  output-level codec / option in place.
+
+The Streams editor is the GUI surface for the backend per-stream
+metadata + disposition (Wave 1 #3) and per-stream encoder overrides
+(Wave 6 #30). It's commonly used together with ABR ladders (one Output
+with several video streams, each carrying a different bit-rate
+override) and multi-language muxes (one Output with one English
+audio + one Spanish audio, each carrying `language=…` metadata and a
+`default` / `forced` disposition).
+
 ### Run panel
 
 ![MediaMolder GUI Running](images/ABR_running.png)

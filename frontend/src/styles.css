@@ -285,6 +285,34 @@ button.danger:hover { background: rgba(185, 74, 74, 0.15); }
   line-height: 1;
 }
 
+/* Inspector tab strip — used by Wave 8 #45 for the multi-output
+ * tabs at the top of the OutputForm and for the per-stream sub-tabs
+ * inside the StreamsEditor. Wraps when there are too many tabs to
+ * fit on one row. */
+.inspector-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  border-bottom: 1px solid var(--border);
+  margin: 4px 0 10px;
+}
+.inspector-tab {
+  background: var(--panel-2);
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-bottom: none;
+  border-radius: 4px 4px 0 0;
+  padding: 4px 10px;
+  font-size: 11px;
+  cursor: pointer;
+  margin-bottom: -1px;
+}
+.inspector-tab.active {
+  background: var(--panel);
+  color: var(--text);
+  border-bottom: 1px solid var(--panel);
+}
+
 /* Custom node */
 .mm-node {
   background: var(--panel-2);

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import type { FlowEdge, FlowNode } from '../lib/jsonAdapter';
 import { displayUrl, nodeDisplayLabel, nodeDisplaySublabel } from '../lib/jsonAdapter';
 import { displayName, lookupFriendlyName, useNamingMode } from '../lib/friendlyNames';
-import type { Input, NodeDef, Output, ProbeResponse, ProbedStream } from '../lib/jobTypes';
+import type { EncoderOverride, Input, NodeDef, Output, ProbeResponse, ProbedStream, StreamSpec } from '../lib/jobTypes';
 import { MEDIA_FILE_EXTENSIONS } from '../lib/mediaExtensions';
 import { FileBrowser, type BrowseMode } from './FileBrowser';
 import { EncoderForm } from './EncoderForm';
@@ -17,9 +17,13 @@ interface Props {
   edges: FlowEdge[];
   onChange: (next: FlowNode) => void;
   onDelete: (id: string) => void;
+  /** Switch the canvas selection to a different node id. Used by the
+   *  Wave 8 #45 multi-output tab strip so the user can flip between
+   *  outputs without going back to the canvas. */
+  onSelectNode?: (id: string) => void;
 }
 
-export function Inspector({ node, nodes, edges, onChange, onDelete }: Props) {
+export function Inspector({ node, nodes, edges, onChange, onDelete, onSelectNode }: Props) {
   if (!node) {
     return (
       <div className="inspector">
@@ -82,11 +86,18 @@ export function Inspector({ node, nodes, edges, onChange, onDelete }: Props) {
         />
       )}
       {ref.kind === 'output' && (
-        <OutputForm
-          def={ref.def}
-          upstreamCodecs={resolveUpstreamCodecs(nodes, edges, node.id)}
-          onChange={(def) => onChange(updateRef(node, { kind: 'output', def }, def.id, displayUrl(def.url)))}
-        />
+        <>
+          <OutputTabs
+            nodes={nodes}
+            currentId={node.id}
+            onSelectNode={onSelectNode}
+          />
+          <OutputForm
+            def={ref.def}
+            upstreamCodecs={resolveUpstreamCodecs(nodes, edges, node.id)}
+            onChange={(def) => onChange(updateRef(node, { kind: 'output', def }, def.id, displayUrl(def.url)))}
+          />
+        </>
       )}
       {ref.kind === 'node' && (
         <NodeForm
@@ -357,6 +368,10 @@ function OutputForm({
       <TimingFields
         options={def.options}
         onChange={(opts) => onChange({ ...def, options: opts })}
+      />
+      <StreamsEditor
+        streams={def.streams}
+        onChange={(streams) => onChange({ ...def, streams })}
       />
     </>
   );
@@ -742,6 +757,235 @@ function TimingFields({
       <Field label="Start (-ss)" value={get('ss')} onChange={(v) => set('ss', v)} />
       <Field label="Duration (-t)" value={get('t')} onChange={(v) => set('t', v)} />
       <Field label="End (-to)" value={get('to')} onChange={(v) => set('to', v)} />
+    </>
+  );
+}
+
+/* ---------- Multi-output tab strip (Wave 8 #45) ----------
+ * Lets the user flip between every Output node in the current graph
+ * without going back to the canvas. Tabs are derived from the live
+ * node list so add / delete / rename keeps them in sync. Only renders
+ * when more than one output exists; a single-output graph is identical
+ * to the previous single-output form. */
+function OutputTabs({
+  nodes,
+  currentId,
+  onSelectNode,
+}: {
+  nodes: FlowNode[];
+  currentId: string;
+  onSelectNode?: (id: string) => void;
+}) {
+  const outputs = nodes.filter((n) => n.data.ref.kind === 'output' && !n.data.implicit);
+  if (outputs.length < 2 || !onSelectNode) return null;
+  return (
+    <div className="inspector-tabs" role="tablist" aria-label="Outputs">
+      {outputs.map((o) => (
+        <button
+          key={o.id}
+          type="button"
+          role="tab"
+          aria-selected={o.id === currentId}
+          className={'inspector-tab' + (o.id === currentId ? ' active' : '')}
+          onClick={() => onSelectNode(o.id)}
+          title={o.data.sublabel || o.id}
+        >
+          {o.data.label || o.id}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/* ---------- Per-stream editor (Wave 8 #45) ----------
+ * Surfaces Output.streams[]: per-stream metadata (Wave 1 #3),
+ * disposition (Wave 1 #3), and per-stream encoder overrides
+ * (Wave 6 #30). Renders a row of sub-tabs (one per declared stream
+ * spec) plus + add / × remove buttons. The full streams[] surface
+ * is data-model complete on the backend — until now there was no
+ * way to author it from the GUI. */
+function StreamsEditor({
+  streams,
+  onChange,
+}: {
+  streams: StreamSpec[] | undefined;
+  onChange: (next: StreamSpec[] | undefined) => void;
+}) {
+  const list = streams ?? [];
+  const [active, setActive] = useState(0);
+  // Clamp active when the list shrinks.
+  const idx = Math.min(active, Math.max(list.length - 1, 0));
+
+  const update = (i: number, patch: Partial<StreamSpec>) => {
+    const next = list.map((s, j) => (j === i ? { ...s, ...patch } : s));
+    onChange(next.length === 0 ? undefined : next);
+  };
+  const add = () => {
+    const next = [...list, { type: 'v' as const, index: list.length }];
+    onChange(next);
+    setActive(next.length - 1);
+  };
+  const remove = (i: number) => {
+    const next = list.filter((_, j) => j !== i);
+    onChange(next.length === 0 ? undefined : next);
+    if (active >= next.length) setActive(Math.max(next.length - 1, 0));
+  };
+
+  return (
+    <>
+      <label style={{ marginTop: 14 }}>Streams</label>
+      <div style={{ fontSize: 11, color: 'var(--text-dim)', marginBottom: 6 }}>
+        Per-stream metadata, disposition, and encoder overrides
+        (<code>-metadata:s:v:0</code>, <code>-disposition:s:a:1</code>,
+        <code>-c:v:1</code>, <code>-b:v:1</code>).
+      </div>
+      <div className="inspector-tabs" role="tablist" aria-label="Streams">
+        {list.map((s, i) => (
+          <button
+            key={i}
+            type="button"
+            role="tab"
+            aria-selected={i === idx}
+            className={'inspector-tab' + (i === idx ? ' active' : '')}
+            onClick={() => setActive(i)}
+            title={`Stream ${s.type}:${s.index}`}
+          >
+            {`${s.type}:${s.index}`}
+          </button>
+        ))}
+        <button
+          type="button"
+          className="inspector-tab"
+          onClick={add}
+          title="Add stream override"
+        >
+          + add
+        </button>
+      </div>
+      {list.length === 0 ? (
+        <div className="empty" style={{ marginTop: 6 }}>
+          No per-stream overrides. Click <strong>+ add</strong> to create one.
+        </div>
+      ) : (
+        <StreamSpecForm
+          spec={list[idx]}
+          onChange={(patch) => update(idx, patch)}
+          onRemove={() => remove(idx)}
+        />
+      )}
+    </>
+  );
+}
+
+function StreamSpecForm({
+  spec,
+  onChange,
+  onRemove,
+}: {
+  spec: StreamSpec;
+  onChange: (patch: Partial<StreamSpec>) => void;
+  onRemove: () => void;
+}) {
+  return (
+    <div style={{ marginTop: 6 }}>
+      <div style={{ display: 'flex', gap: 6, alignItems: 'flex-end' }}>
+        <div style={{ flex: '0 0 80px' }}>
+          <label>Type</label>
+          <select
+            value={spec.type}
+            onChange={(e) => onChange({ type: e.target.value as StreamSpec['type'] })}
+            style={{
+              width: '100%',
+              background: 'var(--panel-2)',
+              color: 'var(--text)',
+              border: '1px solid var(--border)',
+              borderRadius: 4,
+              padding: '5px 7px',
+              fontSize: 12,
+            }}
+          >
+            <option value="v">v (video)</option>
+            <option value="a">a (audio)</option>
+            <option value="s">s (subtitle)</option>
+            <option value="d">d (data)</option>
+          </select>
+        </div>
+        <div style={{ flex: '0 0 80px' }}>
+          <Field
+            label="Index"
+            value={String(spec.index)}
+            onChange={(v) => {
+              const n = parseInt(v, 10);
+              if (Number.isFinite(n) && n >= 0) onChange({ index: n });
+            }}
+          />
+        </div>
+        <button
+          type="button"
+          className="danger"
+          onClick={onRemove}
+          style={{ marginLeft: 'auto' }}
+          title="Remove this stream override"
+        >
+          Remove
+        </button>
+      </div>
+      <Field
+        label="Disposition"
+        value={spec.disposition ?? ''}
+        onChange={(v) => onChange({ disposition: v || undefined })}
+      />
+      <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: -4, marginBottom: 4 }}>
+        <code>+</code>-separated <code>AV_DISPOSITION_*</code> flags
+        (e.g. <code>default+forced</code>, <code>hearing_impaired</code>).
+      </div>
+      <label style={{ marginTop: 10 }}>Metadata</label>
+      <ParamsEditor
+        params={spec.metadata ?? {}}
+        onChange={(p) => {
+          const m: Record<string, string> = {};
+          for (const [k, v] of Object.entries(p)) m[k] = String(v ?? '');
+          onChange({ metadata: Object.keys(m).length === 0 ? undefined : m });
+        }}
+      />
+      <EncoderOverrideForm
+        override={spec.encoder}
+        onChange={(enc) => onChange({ encoder: enc })}
+      />
+    </div>
+  );
+}
+
+function EncoderOverrideForm({
+  override,
+  onChange,
+}: {
+  override: EncoderOverride | undefined;
+  onChange: (next: EncoderOverride | undefined) => void;
+}) {
+  const codec = override?.codec ?? '';
+  const opts = override?.options ?? {};
+  const set = (next: EncoderOverride) => {
+    const empty = !next.codec && Object.keys(next.options ?? {}).length === 0;
+    onChange(empty ? undefined : next);
+  };
+  return (
+    <>
+      <label style={{ marginTop: 10 }}>Encoder override</label>
+      <div style={{ fontSize: 11, color: 'var(--text-dim)', marginBottom: 4 }}>
+        Per-stream codec / option overrides (<code>-c:v:1 libx264</code>,
+        <code>-b:v:1 5M</code>). Empty leaves output-level codec in place.
+      </div>
+      <Field
+        label="Codec"
+        value={codec}
+        onChange={(v) => set({ codec: v || undefined, options: opts })}
+      />
+      <label>Options</label>
+      <ParamsEditor
+        params={opts}
+        onChange={(p) => set({ codec: codec || undefined, options: p })}
+      />
     </>
   );
 }
