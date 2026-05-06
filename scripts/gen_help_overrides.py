@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate internal/gui/help_overrides_gen.go from private_local/nodes.csv.
+"""Generate internal/gui/help_overrides_gen.go from docs/nodes.csv.
 
 Usage:
     python3 scripts/gen_help_overrides.py
@@ -15,7 +15,7 @@ import os
 import sys
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-CSV_PATH = os.path.join(REPO_ROOT, "private_local", "nodes.csv")
+CSV_PATH = os.path.join(REPO_ROOT, "docs", "nodes.csv")
 OUT_PATH = os.path.join(REPO_ROOT, "internal", "gui", "help_overrides_gen.go")
 
 

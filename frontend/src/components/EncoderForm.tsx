@@ -289,6 +289,20 @@ export function EncoderForm({ def, onChange }: Props) {
 
 /* ---------- Rate-control group (mode + per-mode controls) ---------- */
 
+const RATE_CONTROL_MODE_HELP =
+  'Selects whether the encoder targets a specified bit rate or a quality level.\n\n' +
+  'Bit rate: targets a specific average (VBR) or constant (CBR) output ' +
+  'bitrate. The encoder adjusts quality per-frame as needed to achieve and ' +
+  'maintain the target bit rate.\n\n' +
+  'CRF (Constant Rate Factor): targets a consistent perceptual quality ' +
+  'level; output bit rate varies with content complexity. Lower CRF values ' +
+  'produce higher quality and higher bit rate. Best for archiving and ' +
+  'general-purpose encodes.\n\n' +
+  'QP (Quantization Parameter): sets the constant that determines the ' +
+  'overall tradeoff of bit rate vs. distortion (for partioning, prediction ' +
+  'mode decision, quantizing and applying residual error transforms). This ' +
+  'is low-level control; prefer CRF for quality-targeted encoding.';
+
 type RateMode = 'bitrate' | 'crf' | 'qp';
 type BitrateSubMode = 'vbr' | 'cbr';
 
@@ -401,7 +415,7 @@ function RateControlGroup({
 
   return (
     <div className="rate-control-group">
-      <label>Rate control mode</label>
+      <label>Rate control mode <ExtendedHelpButton label="Rate control mode" text={RATE_CONTROL_MODE_HELP} /></label>
       <select value={mode} onChange={(e) => setMode(e.target.value as RateMode)}>
         {bitRate && <option value="bitrate">Bit rate</option>}
         {crf && <option value="crf">CRF</option>}
@@ -421,6 +435,7 @@ function RateControlGroup({
 
           <label style={{ marginTop: 6 }} title={bitRate.help}>
             Target bit rate <span className="empty" style={{ fontSize: 10 }}>(kbps)</span>
+            {bitRate.extended_help && <ExtendedHelpButton label="Target bit rate" text={bitRate.extended_help} />}
           </label>
           <input
             type="number"
@@ -440,6 +455,7 @@ function RateControlGroup({
           <>
             <label style={{ marginTop: 6 }} title={crf.help}>
               CRF <span className="empty" style={{ fontSize: 10 }}>({display}{meta.rangeHint})</span>
+              {crf.extended_help && <ExtendedHelpButton label="CRF" text={crf.extended_help} />}
             </label>
             <input
               type="number"
@@ -461,6 +477,7 @@ function RateControlGroup({
           <>
             <label style={{ marginTop: 6 }} title={qp.help}>
               QP <span className="empty" style={{ fontSize: 10 }}>({display}{meta.rangeHint})</span>
+              {qp.extended_help && <ExtendedHelpButton label="QP" text={qp.extended_help} />}
             </label>
             <input
               type="number"
