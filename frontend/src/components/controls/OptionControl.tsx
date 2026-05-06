@@ -177,7 +177,9 @@ function boolDefault(option: EncoderOption): 'true' | 'false' | undefined {
   }
   if (d.int !== undefined) {
     if (d.int === 1) return 'true';
-    if (d.int === 0) return 'false';
+    // 0 and the libavutil 'auto' sentinel -1 both behave as 'false'
+    // until the user explicitly opts in.
+    if (d.int === 0 || d.int === -1) return 'false';
   }
   return undefined;
 }

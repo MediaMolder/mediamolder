@@ -48,8 +48,6 @@ const GOP_OPTION_NAMES: string[] = [
   'sc_threshold',// Scene Change Threshold
   'refs',        // Reference Frames
   'b_strategy',  // B-Frame Strategy
-  'intra-refresh',
-  'intra_refresh',
 ];
 
 // Options promoted to an always-visible "Profile / Level" section above Advanced.
@@ -687,6 +685,7 @@ function AdvancedRow({
   const friendly = prettyLabel(option.name);
   const native = codecNativeName(codec, option.name);
   const display = native ?? option.name;
+  const help = helpOverride(codec, option.name) ?? option.help;
   const optForControl: EncoderOption = effectivePlaceholder
     ? {
         ...option,
@@ -699,7 +698,7 @@ function AdvancedRow({
     : option;
   return (
     <div style={{ marginTop: 4 }}>
-      <label title={option.help ?? option.name} style={{ fontSize: 11 }}>
+      <label title={help ?? option.name} style={{ fontSize: 11 }}>
         {friendly}
         {friendly !== display && (
           <span className="empty" style={{ fontSize: 10, marginLeft: 4 }}>({display})</span>
@@ -709,9 +708,9 @@ function AdvancedRow({
         </span>
       </label>
       <OptionControl option={optForControl} value={value} onChange={onChange} />
-      {option.help && (
+      {help && (
         <div className="empty" style={{ fontSize: 10, marginTop: 2, marginBottom: 4 }}>
-          {option.help}
+          {help}
         </div>
       )}
     </div>
@@ -752,7 +751,7 @@ function bucketFor(o: EncoderOption): string {
   if (n.includes('color') || n.includes('chroma') || n.includes('matrix') || n.includes('primaries') || n.includes('transfer') || n.includes('range') || n === 'pix_fmt') return 'Color';
   if (n.includes('mv') || n.includes('motion') || n.includes('me_') || n.startsWith('me') || n.includes('subq') || n.includes('refs')) return 'Motion';
   if (n.includes('profile') || n.includes('level') || n.includes('tier')) return 'Profile / Level';
-  if (n === 'g' || n.includes('keyint') || n.includes('gop') || n.includes('bf') || n === 'b_strategy' || n.includes('frames') || n.includes('refs')) return 'GOP & frames';
+  if (n === 'g' || n.includes('keyint') || n.includes('gop') || n.includes('bf') || n === 'b_strategy' || n.includes('frames') || n.includes('refs') || n.includes('intra-refresh') || n.includes('intra_refresh')) return 'GOP & frames';
   return 'Other';
 }
 
@@ -778,6 +777,7 @@ function PrimaryRow({
   const def = effectivePlaceholder ?? choices?.default ?? defaultDisplay(option);
   const native = codec ? codecNativeName(codec, option.name) : undefined;
   const display = native ?? option.name;
+  const help = codec ? helpOverride(codec, option.name) ?? option.help : option.help;
   const optForControl: EncoderOption = effectivePlaceholder
     ? {
         ...option,
@@ -790,7 +790,7 @@ function PrimaryRow({
     : option;
   return (
     <>
-      <label title={option.help}>
+      <label title={help}>
         {label} <span className="empty" style={{ fontSize: 10 }}>({display}{def ? ` · default ${def}` : ''})</span>
       </label>
       {choices ? (
@@ -805,9 +805,9 @@ function PrimaryRow({
       ) : (
         <OptionControl option={optForControl} value={value} onChange={onChange} />
       )}
-      {option.help && (
+      {help && (
         <div className="empty" style={{ fontSize: 10, marginTop: 2, marginBottom: 6 }}>
-          {option.help}
+          {help}
         </div>
       )}
     </>
@@ -957,6 +957,31 @@ function prettyLabel(name: string): string {
     default: return name;
   }
 }
+
+/**
+ * Override libavcodec's terse / FFmpeg-jargon AVOption help string with
+ * a clearer, user-facing description for specific (codec, option)
+ * pairs. Returns undefined when no override exists (the caller falls
+ * back to option.help unchanged). Keyed first by codec, then by the
+ * raw AVOption name (NOT the codec-native CLI flag), so the lookup
+ * matches what libavutil reports.
+ */
+function helpOverride(codec: string, optionName: string): string | undefined {
+  const c = codec.toLowerCase();
+  const map = HELP_OVERRIDES[c];
+  return map ? map[optionName] : undefined;
+}
+
+const HELP_OVERRIDES: Record<string, Record<string, string>> = {
+  libx264: {
+    'intra-refresh': "Creates partial Intra Frames at regular intervals. Don't use this unless you know you need it.",
+    intra_refresh:   "Creates partial Intra Frames at regular intervals. Don't use this unless you know you need it.",
+  },
+  libx265: {
+    'intra-refresh': "Creates partial Intra Frames at regular intervals. Don't use this unless you know you need it.",
+    intra_refresh:   "Creates partial Intra Frames at regular intervals. Don't use this unless you know you need it.",
+  },
+};
 
 /**
  * Translate FFmpeg's generic AVCodecContext / AVOption names into the
