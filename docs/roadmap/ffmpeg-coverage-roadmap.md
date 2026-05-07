@@ -130,7 +130,7 @@ Legend: ✅ supported · ⚠️ partial · ❌ missing
 | `arnndn` (RNNoise) and other model-file filters             | ⚠️    | Filter runs if model path is correct; no fixture story for filter-side data files |
 | `zscale` + `tonemap` (HDR)                                  | ✅    | Validator (`pipeline.validateFilterAvailability`) rejects unknown / unbuilt filters with an actionable hint (`zscale` → `--enable-libzimg`, `tonemap_opencl` → `--enable-opencl`, …) instead of waiting for a runtime "filter not found". Palette (`/api/nodes`) only lists filters reported by `av.ListFilters()`, so unbuilt entries are absent automatically. (Wave 7 #42) |
 | `minterpolate` (motion-compensated interpolation)           | ✅    | Frame-rate / time-base plumbing done in §5 #1; the AVOption miner (§4 #19) exposes `mi_mode` / `mc_mode` / `me_mode` / `me` (and `vsbmc`) as typed `int` options carrying their named constants — the GUI Inspector renders them as enum dropdowns. (Wave 7 #43) |
-| Audio channel manipulation: `pan`, `channelsplit`, `channelmap`, `join`, `amerge`, `amix=weights` | ✅ | Backend works (Wave 7 #41 fixtures: `pan`, `channelmap`, `amix=weights`); GUI matrix view deferred to Wave 8 |
+| Audio channel manipulation: `pan`, `channelsplit`, `channelmap`, `join`, `amerge`, `amix=weights` | ✅ | Backend works (Wave 7 #41); GUI channel-routing matrix done (Wave 8 #49): `PanForm` gain matrix, `ChannelMapForm` source dropdowns, `ChannelSplitForm` layout selector, `JoinForm` stream+channel pickers, `AMergeForm` input count, `AMixForm` weighted mix |
 
 ### 2.4 Encoders
 
@@ -306,7 +306,7 @@ once §3.1–§3.4 land:
    the entire schema and should be wired into the existing job-save flow as a "Show as ffmpeg command" panel.
 8. **Filter expression authoring**: monospace input with `t`/`n`/`tw`/ `th`/`text_w`/`text_h`/`w`/`h` autocomplete, live
    syntax-validation against the server-side `eval-expression` endpoint, and a small expression cookbook (scrolling text, fade gates, frame-stamp overlays).
-9. **Audio channel-routing UI**: a bus/matrix view for `pan`, `channelsplit`, `channelmap`, `join`, `amerge`. Today's free-form `params` dict is unusable for non-trivial routing.
+9. **Audio channel-routing UI**: a bus/matrix view for `pan`, `channelsplit`, `channelmap`, `join`, `amerge`, `amix`. ✅ Wave 8 #49 — done. `AudioChannelForm` replaces the free-form params dict with a 2-D gain matrix (pan), per-output-channel source dropdowns (channelmap), layout selector (channelsplit), stream+channel pickers (join), input-count spinner (amerge/amix), and per-input weight fields (amix).
 10. **Asset/model-file manager**: shared by the YOLO processor and by filters such as `arnndn`, `subtitles=…:fontsdir=…`. Pipelines
     should reference assets by symbolic name, with the GUI managing paths and the runtime resolving them from a search list.
 
@@ -1189,11 +1189,17 @@ wave delivers every §2.8 / §3.5 GUI item that the schema can now back.
     conditionally shows URL/format/codec/BSF fields only for non-tee
     outputs, and mounts `HLSForm` / `DASHForm` / `TeeForm` based on
     `output.format` or `output.kind`.
-49. **Audio channel-routing UI** (§2.8, §3.5.9) — Bus / matrix
-    view for `pan`, `channelsplit`, `channelmap`, `join`,
-    `amerge` (backend lands in Wave 7 #41). Free-form `params`
-    dict is unusable for non-trivial routing; replace with a
-    drag-from-input-channel-to-output-channel matrix.
+49. **Audio channel-routing UI** (§2.8, §3.5.9) ✅ — `AudioChannelForm`
+    replaces the free-form params dict for six audio channel filters:
+    `PanForm` renders a 2-D gain matrix (output channels × input channels)
+    backed by `params._pos0`; `ChannelMapForm` offers per-output-channel
+    source dropdowns backed by `params.map` + `params.channel_layout`;
+    `ChannelSplitForm` exposes a single layout selector; `JoinForm`
+    provides stream-index + channel pickers for each output channel;
+    `AMergeForm` exposes an input-count spinner; `AMixForm` adds
+    per-input weight fields plus `duration`, `normalize`, and
+    `dropout_transition` options. All forms include a live spec-preview
+    row so the final filter string is always visible. (Wave 8 #49)
 50. **Filter expression authoring polish** (§3.5.8) — Wave 4 #20
     delivered the core control; this item ships the residual
     polish: variable autocomplete dropdown (currently typed

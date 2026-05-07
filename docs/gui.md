@@ -644,6 +644,74 @@ Click **+ add target** to append a new (empty, collapsed) row.
 The `×` button on each row removes it. Reorder by drag is not
 currently supported; remove and re-add to change order.
 
+### Filter nodes — audio channel-routing matrix
+
+For the six audio channel-routing filters (`pan`, `channelmap`,
+`channelsplit`, `join`, `amerge`, `amix`) the generic AVOption form is
+replaced by a purpose-built `AudioChannelForm` that presents structured
+controls instead of a free-form `params` dict.  All sub-forms include a
+**live spec preview** row at the bottom that shows the exact filter
+argument string as it will appear in the pipeline.
+
+#### `pan` — gain matrix
+
+Two **Layout** selectors at the top control the column set (input
+channels) and the row set (output channels) of the matrix.  Both accept
+the name of any standard FFmpeg layout preset (`mono`, `stereo`, `5.1`,
+`7.1`, …) with autocomplete, and the channel list is shown as a
+monospace hint to the right.
+
+The **gain matrix** renders as a CSS grid: rows are output channels,
+columns are input channels.  Each cell accepts a floating-point gain
+coefficient (empty or `0` = muted, `1` = full level, `0.5` = −6 dB,
+etc.).  Non-zero cells are highlighted with an accent border and
+background tint for quick visual reference.  The underlying
+`params._pos0` string (the `pan=` positional argument) is updated on
+every keystroke.
+
+> **Note.** If `params._pos0` already contains positional channel names
+> (`c0`, `c1`, …) from a machine-generated spec, the form translates them
+> to named channels using the output-layout as the reference.
+
+#### `channelmap` — per-output source dropdowns
+
+Exposes a **Output layout** selector and a source row for each output
+channel.  Each row shows a `←` arrow and a dropdown listing all
+well-known FFmpeg channel names.  The serialised form is written to
+`params.map` as `IN_CH-OUT_CH` pairs separated by `|`.
+
+#### `channelsplit` — layout selector
+
+Shows a single **Input layout** selector and a notice listing the output
+pads that will be produced.  `channelsplit` creates one output pad per
+channel in the layout; connect each pad to a separate downstream filter
+or encoder.  No mapping parameters are required.
+
+#### `join` — stream + channel pickers
+
+Shows an **Input streams** count, an **Output layout** selector, and a
+source row for each output channel.  Each row provides a stream-index
+dropdown (`#0`, `#1`, …) and a channel-name dropdown.  The serialised
+form is written to `params.map` as `STREAM.IN_CH-OUT_CH` triplets
+separated by `|`.
+
+#### `amerge` — input count spinner
+
+Shows a single **Input streams to merge** number input.  A notice
+reminds that each input stream must have a distinct channel layout (e.g.
+two mono streams → stereo; stereo + stereo → quad).
+
+#### `amix` — weighted mix with options
+
+Shows an **Input streams** spinner, a column of per-input **weight**
+fields, and three option controls:
+
+| Field | Default | Description |
+|---|---|---|
+| **Duration policy** | `longest` | `longest` / `shortest` / `first` — when mixed streams have different lengths |
+| **Normalize** | `true` | Rescale so the sum of weights equals 1 |
+| **Dropout transition (s)** | `2.0` | Fade-out time applied when an input stream ends early |
+
 ### Run panel
 
 ![MediaMolder GUI Running](images/ABR_running.png)

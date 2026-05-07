@@ -13,6 +13,7 @@ import { useEffect, useMemo, useState } from 'react';
 import type { NodeDef } from '../lib/jobTypes';
 import { fetchFilterInfo, type FilterOption, type FilterOptionsInfo } from '../lib/filterSchema';
 import { OptionControl } from './controls/OptionControl';
+import { AudioChannelForm, AUDIO_ROUTING_FILTERS } from './AudioChannelForm';
 
 interface Props {
   def: NodeDef;
@@ -27,7 +28,8 @@ export function FilterForm({ def, onChange }: Props) {
   const [search, setSearch] = useState('');
 
   useEffect(() => {
-    if (!filter) {
+    // Audio routing filters are handled by AudioChannelForm — no AVOptions needed.
+    if (!filter || AUDIO_ROUTING_FILTERS.has(filter)) {
       setInfo(null);
       setError(null);
       return;
@@ -83,6 +85,9 @@ export function FilterForm({ def, onChange }: Props) {
         (e.g. <code>scale</code>, <code>trim</code>).
       </div>
     );
+  }
+  if (AUDIO_ROUTING_FILTERS.has(filter)) {
+    return <AudioChannelForm def={def} onChange={onChange} />;
   }
   if (loading) {
     return <div className="empty">Loading {filter} options…</div>;
