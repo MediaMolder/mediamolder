@@ -81,7 +81,7 @@ jobs:
       - name: Install FFmpeg build deps (macOS)
         if: runner.os == 'macOS'
         run: |
-          brew install libass freetype fontconfig fribidi harfbuzz opus libvpx pkg-config nasm
+          brew install x264 x265 libass freetype fontconfig fribidi harfbuzz opus libvpx pkg-config nasm
 
       - name: Cache FFmpeg (macOS)
         if: runner.os == 'macOS'
@@ -93,6 +93,8 @@ jobs:
 
       - name: Build FFmpeg from source (macOS)
         if: runner.os == 'macOS' && steps.cache-ffmpeg-macos.outputs.cache-hit != 'true'
+        env:
+          PKG_CONFIG_PATH: /opt/homebrew/lib/pkgconfig
         run: |
           curl -fsSL https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.xz | tar xJ
           cd ffmpeg-${FFMPEG_VERSION}
@@ -117,7 +119,7 @@ jobs:
 
       - name: Set PKG_CONFIG_PATH (macOS)
         if: runner.os == 'macOS'
-        run: echo "PKG_CONFIG_PATH=/usr/local/ffmpeg/lib/pkgconfig" >> "$GITHUB_ENV"
+        run: echo "PKG_CONFIG_PATH=/usr/local/ffmpeg/lib/pkgconfig:/opt/homebrew/lib/pkgconfig" >> "$GITHUB_ENV"
 
       - name: Build
         run: go build ./...
