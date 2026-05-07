@@ -92,6 +92,11 @@ type NodeDef struct {
 	// output type cannot be inferred from the inbound edge type. Build
 	// rejects any outbound edge whose Type does not match. (Wave 7 #37)
 	OutputMediaType PortType
+	// Internal carries typed lowering output produced by
+	// pipeline.NormalizeConfig (Milestone B). It is the typed
+	// replacement for the historical __* sentinel keys in Params.
+	// See internal_fields.go.
+	Internal Internal `json:"internal,omitempty"`
 }
 
 // OutputDef describes an output sink.
@@ -119,6 +124,10 @@ type Node struct {
 	// filters (e.g. showwavespic: audio in, video out). Empty when the
 	// downstream type matches the upstream type. (Wave 7 #37)
 	OutputMediaType PortType
+	// Internal carries typed lowering output. Forwarded verbatim
+	// from NodeDef.Internal by Build. See internal_fields.go and
+	// pipeline.NormalizeConfig.
+	Internal Internal
 
 	Inbound  []*Edge
 	Outbound []*Edge
@@ -173,6 +182,7 @@ func Build(def *Def) (*Graph, error) {
 		if err := g.addNode(nd.ID, kind, nd.Filter, nd.Processor, nd.Params); err != nil {
 			return nil, err
 		}
+		g.Nodes[nd.ID].Internal = nd.Internal
 		if nd.OutputMediaType != "" {
 			if kind != KindFilter {
 				return nil, fmt.Errorf("node %q: output_media_type only valid on filter nodes", nd.ID)

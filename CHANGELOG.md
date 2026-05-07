@@ -26,6 +26,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   `"hello"`).
 
  `compat/ffcli.ParseFull`
+- **Typed `graph.NodeDef.Internal` lowering bag.** Adds an
+  `Internal` field to `graph.NodeDef` and `graph.Node` carrying
+  per-kind sub-structs (`EncoderInternal`, `FilterInternal`) plus a
+  `Generated {By, From, Reason}` provenance record for synthesised
+  nodes. The struct is the typed replacement for the historical
+  `__*` sentinel keys in `Params`; this commit lands the types and
+  plumbs them through `graph.Build` but does not yet write or read
+  them — that follows in Milestone B.4/B.5/B.6. See
+  [graph/internal_fields.go](graph/internal_fields.go) and
+  [docs/field-ownership.md](docs/field-ownership.md).
 - **`pipeline.NormalizeConfig` boundary.** New
   `pipeline.NormalizeConfig(cfg) (*graph.Def, []NormalizeWarning, error)`
   is the single, deterministic entry point for lowering an authoring
