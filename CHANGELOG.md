@@ -26,6 +26,43 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   `"hello"`).
 
  `compat/ffcli.ParseFull`
+- **Milestone C — strip runtime reads of authoring shorthand.**
+  Three slices land the architectural promise that runtime code
+  never reads `Output.CodecVideo / CodecAudio / CodecSubtitle /
+  EncoderParams* / FPSMode / AudioSync / Pass / PassLogFile /
+  ForceKeyFrames / SAR / DAR / EncoderTimeBase / FieldOrder /
+  InterlacedEncode` after `NormalizeConfig` has run.
+  - **C.1 — Ambiguity warnings.** `NormalizeConfig` now emits
+    `compat.output_encoder_shorthand_ignored` warnings (routed
+    through the existing `EventBus` `ErrorEvent` path in
+    [pipeline/engine.go](pipeline/engine.go)) whenever an `Output`
+    carries authoring shorthand alongside an explicit encoder or
+    `copy` node that already feeds the same edge. The explicit
+    node wins; the warning makes the silently-dropped shorthand
+    visible. Synthetic encoders inserted by
+    `expandImplicitEncoders` are skipped via
+    `Internal.Generated.By` provenance — they ARE the lowered
+    shorthand. Five regression tests in
+    [pipeline/normalize_warnings_test.go](pipeline/normalize_warnings_test.go).
+  - **C.2 — Invariant test + linear-mode exemption.**
+    [pipeline/normalize_invariant_test.go](pipeline/normalize_invariant_test.go)
+    asserts that a representative shorthand-heavy `Config`
+    produces a `*graph.Def` whose encoders / filters / synthetic
+    nodes carry typed `Internal.Encoder` / `Internal.Filter` /
+    `Internal.Generated` — i.e. shorthand has been *fully* lowered
+    onto node-local state. Clearing all shorthand on a clone
+    produces zero ambiguity warnings. The legacy `runLinear` path
+    is documented as the single intentional exemption (it bypasses
+    `NormalizeConfig`; retire-or-keep tracked as F7 in the
+    followups roadmap).
+  - **C.3 — Drop runtime fallback.** `graphRunner.createEncoder`
+    no longer falls back to scanning sinks for `Output.CodecVideo
+    / CodecAudio` when `node.Params["codec"]` is empty; it fails
+    fast. After Milestone B every synthesised encoder node has
+    `codec` in `Params`, so the fallback was dead code that also
+    violated the C invariant. Audit grep for `out.CodecVideo /
+    out.FPSMode / ...` across `pipeline/`, `runtime/`, `graph/`
+    now shows only the two documented `runLinear` exemptions.
 - **Migrated `__*` sentinel `Params` keys to typed
   `graph.NodeDef.Internal` (Milestone B.4–B.6).** The lowering
   helpers in [pipeline/handlers_graph_build.go](pipeline/handlers_graph_build.go)
