@@ -14,6 +14,15 @@ import (
 	"github.com/MediaMolder/MediaMolder/graph"
 )
 
+// isOptionalFilterMissing reports whether err is a filter-availability error
+// for a filter that requires an optional FFmpeg build dependency (e.g. libass,
+// libfreetype). When true the calling test should Skip rather than Fail so
+// that partial FFmpeg builds (e.g. the Homebrew bottle on macOS) don't produce
+// spurious failures for features the operator hasn't enabled.
+func isOptionalFilterMissing(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "not built into this libavfilter")
+}
+
 // TestExamplesAllSinksHaveEncoder loads every JobConfig in
 // testdata/examples and asserts that, after configToGraphDef (which
 // runs expandImplicitEncoders), the inbound side of every sink is
@@ -65,6 +74,9 @@ func TestExamplesAllSinksHaveEncoder(t *testing.T) {
 				}
 			}
 			if err := validate(&cfg); err != nil {
+				if isOptionalFilterMissing(err) {
+					t.Skipf("skipping: %v", err)
+				}
 				t.Fatalf("validate: %v", err)
 			}
 

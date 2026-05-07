@@ -68,6 +68,11 @@ export interface EncoderOption {
   // identifiers the expression may reference.
   expression?: boolean;
   variables?: string[];
+
+  // Longer prose explanation injected from private_local/nodes.csv by
+  // the GUI handler (applyEncoderExtendedHelp). Shown behind a "?"
+  // button in the Inspector so the compact help line stays visible.
+  extended_help?: string;
 }
 
 export interface EncoderInfo {
@@ -299,9 +304,54 @@ const X265_PROFILES: OptionChoiceList = {
   ],
 };
 
+/** H.264 (x264) level choices. Values are the integer encoding FFmpeg uses
+ *  internally (10 = Level 1, 31 = Level 3.1, …). */
+const H264_LEVELS: OptionChoiceList = {
+  choices: [
+    { value: '10', label: '1'   },
+    { value: '11', label: '1.1' },
+    { value: '12', label: '1.2' },
+    { value: '13', label: '1.3' },
+    { value: '20', label: '2'   },
+    { value: '21', label: '2.1' },
+    { value: '22', label: '2.2' },
+    { value: '30', label: '3'   },
+    { value: '31', label: '3.1' },
+    { value: '32', label: '3.2' },
+    { value: '40', label: '4'   },
+    { value: '41', label: '4.1' },
+    { value: '42', label: '4.2' },
+    { value: '50', label: '5'   },
+    { value: '51', label: '5.1' },
+    { value: '52', label: '5.2' },
+    { value: '60', label: '6'   },
+    { value: '61', label: '6.1' },
+    { value: '62', label: '6.2' },
+  ],
+};
+
+/** H.265 (x265) level choices. Uses the same integer-encoding convention. */
+const H265_LEVELS: OptionChoiceList = {
+  choices: [
+    { value: '10', label: '1'   },
+    { value: '20', label: '2'   },
+    { value: '21', label: '2.1' },
+    { value: '30', label: '3'   },
+    { value: '31', label: '3.1' },
+    { value: '40', label: '4'   },
+    { value: '41', label: '4.1' },
+    { value: '50', label: '5'   },
+    { value: '51', label: '5.1' },
+    { value: '52', label: '5.2' },
+    { value: '60', label: '6'   },
+    { value: '61', label: '6.1' },
+    { value: '62', label: '6.2' },
+  ],
+};
+
 export const ENCODER_OPTION_CHOICES: Record<string, Record<string, OptionChoiceList>> = {
-  libx264: { preset: X264_X265_PRESETS, profile: X264_PROFILES },
-  libx265: { preset: X264_X265_PRESETS, profile: X265_PROFILES },
+  libx264: { preset: X264_X265_PRESETS, profile: X264_PROFILES, level: H264_LEVELS },
+  libx265: { preset: X264_X265_PRESETS, profile: X265_PROFILES, level: H265_LEVELS },
   libvpx_vp9: {
     deadline: {
       default: 'good',

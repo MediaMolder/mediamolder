@@ -37,7 +37,9 @@ jobs:
           sudo apt-get update -y
           sudo apt-get install -y \
             build-essential nasm pkg-config \
-            libx264-dev libx265-dev libvpx-dev libopus-dev
+            libx264-dev libx265-dev libvpx-dev libopus-dev \
+            libass-dev libfreetype6-dev libfontconfig1-dev \
+            libharfbuzz-dev libfribidi-dev libmp3lame-dev
 
       - name: Cache FFmpeg (Linux)
         if: runner.os == 'Linux'
@@ -45,7 +47,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: /usr/local
-          key: ffmpeg-${{ env.FFMPEG_VERSION }}-${{ runner.os }}
+          key: ffmpeg-${{ env.FFMPEG_VERSION }}-libass-lame-${{ runner.os }}
 
       - name: Build FFmpeg from source (Linux)
         if: runner.os == 'Linux' && steps.cache-ffmpeg.outputs.cache-hit != 'true'
@@ -61,6 +63,12 @@ jobs:
             --enable-libx265 \
             --enable-libvpx \
             --enable-libopus \
+            --enable-libmp3lame \
+            --enable-libass \
+            --enable-libfreetype \
+            --enable-libfontconfig \
+            --enable-libfribidi \
+            --enable-libharfbuzz \
             --disable-doc \
             --disable-programs
           make -j$(nproc)
@@ -70,18 +78,61 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo ldconfig
 
-      - name: Install FFmpeg (macOS)
+      - name: Install FFmpeg build deps (macOS)
         if: runner.os == 'macOS'
-        run: brew install ffmpeg pkg-config
+        run: |
+          brew install x264 x265 libass freetype fontconfig fribidi harfbuzz opus libvpx pkg-config nasm
+
+      - name: Cache FFmpeg (macOS)
+        if: runner.os == 'macOS'
+        id: cache-ffmpeg-macos
+        uses: actions/cache@v4
+        with:
+          path: /usr/local/ffmpeg
+          key: ffmpeg-${{ env.FFMPEG_VERSION }}-libvpx-macos
+
+      - name: Build FFmpeg from source (macOS)
+        if: runner.os == 'macOS' && steps.cache-ffmpeg-macos.outputs.cache-hit != 'true'
+        env:
+          PKG_CONFIG_PATH: /opt/homebrew/lib/pkgconfig
+        run: |
+          curl -fsSL https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.xz | tar xJ
+          cd ffmpeg-${FFMPEG_VERSION}
+          ./configure \
+            --prefix=/usr/local/ffmpeg \
+            --enable-shared \
+            --disable-static \
+            --enable-gpl \
+            --enable-libx264 \
+            --enable-libx265 \
+            --enable-libvpx \
+            --enable-libopus \
+            --enable-libass \
+            --enable-libfreetype \
+            --enable-libfontconfig \
+            --enable-libfribidi \
+            --enable-libharfbuzz \
+            --disable-doc \
+            --disable-programs
+          make -j$(sysctl -n hw.logicalcpu)
+          sudo make install
+
+      - name: Set PKG_CONFIG_PATH (macOS)
+        if: runner.os == 'macOS'
+        run: echo "PKG_CONFIG_PATH=/usr/local/ffmpeg/lib/pkgconfig:/opt/homebrew/lib/pkgconfig" >> "$GITHUB_ENV"
 
       - name: Build
         run: go build ./...
 
       - name: Test
-        run: go test -race -count=1 -timeout 300s ./...
+        run: go test -race -count=1 -timeout 300s -short ./...
+
+      - name: Test (community scripts)
+        if: runner.os == 'Linux'
+        run: go test -count=1 -timeout 1800s -run "TestExamplesRun|TestCommunityScriptsRun" ./pipeline/...
 
       - name: Bench (smoke)
-        run: go test -bench=. -benchtime=1x ./...
+        run: go test -short -bench=. -benchtime=1x -timeout 120s ./...
 
   asan:
     name: ASan (Linux)
@@ -101,14 +152,16 @@ jobs:
           sudo apt-get update -y
           sudo apt-get install -y \
             build-essential nasm pkg-config clang \
-            libx264-dev libx265-dev libvpx-dev libopus-dev
+            libx264-dev libx265-dev libvpx-dev libopus-dev \
+            libass-dev libfreetype6-dev libfontconfig1-dev \
+            libharfbuzz-dev libfribidi-dev libmp3lame-dev
 
       - name: Cache FFmpeg
         id: cache-ffmpeg-asan
         uses: actions/cache@v4
         with:
           path: /usr/local
-          key: ffmpeg-${{ env.FFMPEG_VERSION }}-asan
+          key: ffmpeg-${{ env.FFMPEG_VERSION }}-libass-lame-asan
 
       - name: Build FFmpeg from source
         if: steps.cache-ffmpeg-asan.outputs.cache-hit != 'true'
@@ -124,6 +177,12 @@ jobs:
             --enable-libx265 \
             --enable-libvpx \
             --enable-libopus \
+            --enable-libmp3lame \
+            --enable-libass \
+            --enable-libfreetype \
+            --enable-libfontconfig \
+            --enable-libfribidi \
+            --enable-libharfbuzz \
             --disable-doc \
             --disable-programs
           make -j$(nproc)
@@ -137,7 +196,7 @@ jobs:
         # ASAN_OPTIONS=detect_leaks=1 enables LSan (included in ASan on Linux).
         env:
           ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
-        run: go test -asan ./...
+        run: go test -asan -short ./...
 
   lint:
     name: Lint
@@ -155,14 +214,16 @@ jobs:
           sudo apt-get update -y
           sudo apt-get install -y \
             build-essential nasm pkg-config \
-            libx264-dev libx265-dev libvpx-dev libopus-dev
+            libx264-dev libx265-dev libvpx-dev libopus-dev \
+            libass-dev libfreetype6-dev libfontconfig1-dev \
+            libharfbuzz-dev libfribidi-dev
 
       - name: Cache FFmpeg
         id: cache-ffmpeg-lint
         uses: actions/cache@v4
         with:
           path: /usr/local
-          key: ffmpeg-${{ env.FFMPEG_VERSION }}-lint
+          key: ffmpeg-${{ env.FFMPEG_VERSION }}-libass-lint
 
       - name: Build FFmpeg from source
         if: steps.cache-ffmpeg-lint.outputs.cache-hit != 'true'
@@ -178,6 +239,11 @@ jobs:
             --enable-libx265 \
             --enable-libvpx \
             --enable-libopus \
+            --enable-libass \
+            --enable-libfreetype \
+            --enable-libfontconfig \
+            --enable-libfribidi \
+            --enable-libharfbuzz \
             --disable-doc \
             --disable-programs
           make -j$(nproc)
@@ -218,14 +284,16 @@ jobs:
           sudo apt-get update -y
           sudo apt-get install -y \
             build-essential nasm pkg-config \
-            libx264-dev libx265-dev libvpx-dev libopus-dev
+            libx264-dev libx265-dev libvpx-dev libopus-dev \
+            libass-dev libfreetype6-dev libfontconfig1-dev \
+            libharfbuzz-dev libfribidi-dev
 
       - name: Cache FFmpeg
         id: cache-ffmpeg-gui
         uses: actions/cache@v4
         with:
           path: /usr/local
-          key: ffmpeg-${{ env.FFMPEG_VERSION }}-gui
+          key: ffmpeg-${{ env.FFMPEG_VERSION }}-libass-gui
 
       - name: Build FFmpeg from source
         if: steps.cache-ffmpeg-gui.outputs.cache-hit != 'true'
@@ -241,6 +309,11 @@ jobs:
             --enable-libx265 \
             --enable-libvpx \
             --enable-libopus \
+            --enable-libass \
+            --enable-libfreetype \
+            --enable-libfontconfig \
+            --enable-libfribidi \
+            --enable-libharfbuzz \
             --disable-doc \
             --disable-programs
           make -j$(nproc)

@@ -1,0 +1,787 @@
+// Copyright (C) 2026 Thomas Vaughan
+// SPDX-License-Identifier: LGPL-2.1-or-later
+
+package pipeline
+
+import (
+	"context"
+	"fmt"
+	"log"
+	"math"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/MediaMolder/MediaMolder/av"
+	"github.com/MediaMolder/MediaMolder/graph"
+)
+
+// ---------- Source handler ----------
+
+func (r *graphRunner) handleSource(ctx context.Context, node *graph.Node, outs []chan<- any) error {
+	src := r.sources[node.ID]
+	if src == nil {
+		return fmt.Errorf("source handler: no resources for node %q", node.ID)
+	}
+	// Publish the input's known duration once so the GUI can compute
+	// percent-complete / ETA. Stays 0 for live or unknown-duration
+	// inputs; the GUI hides the progress bar in that case and shows
+	// only elapsed-time and processed-media-time.
+	r.pipe.Metrics().Node(node.ID).SetMediaDuration(src.mediaDuration)
+
+	// Map edge type → output channel indices, split between "frame"
+	// outs (decode → av.Frame) and "copy" outs (raw demuxer packets
+	// forwarded to a downstream copy node).
+	type typeOuts struct{ frame, copy []int }
+	byType := map[graph.PortType]*typeOuts{
+		graph.PortVideo:    {},
+		graph.PortAudio:    {},
+		graph.PortSubtitle: {},
+		graph.PortData:     {},
+	}
+	for i, e := range node.Outbound {
+		bucket := byType[e.Type]
+		if bucket == nil {
+			continue
+		}
+		if e.To != nil && e.To.Kind == graph.KindCopy {
+			bucket.copy = append(bucket.copy, i)
+		} else {
+			bucket.frame = append(bucket.frame, i)
+		}
+	}
+
+	sendFrame := func(f *av.Frame, indices []int) error {
+		for _, idx := range indices {
+			select {
+			case outs[idx] <- f:
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+		return nil
+	}
+
+	// sendPacketCopies clones the demuxer packet once per copy-out and
+	// forwards each clone. Cloning is necessary because the source
+	// reuses a single AVPacket across the demux loop (Unref before
+	// each ReadPacket); without a clone the downstream copy node would
+	// see freed buffers.
+	sendPacketCopies := func(pkt *av.Packet, indices []int) error {
+		for _, idx := range indices {
+			c, err := av.ClonePacket(pkt)
+			if err != nil {
+				return err
+			}
+			select {
+			case outs[idx] <- c:
+			case <-ctx.Done():
+				c.Close()
+				return ctx.Err()
+			}
+		}
+		return nil
+	}
+
+	// rescaleAudioPTS converts an audio frame's pts from the input stream's
+	// time_base to (1, sample_rate) units. The downstream audio filter
+	// graph (abuffer source) is configured at (1, sample_rate) granularity
+	// to keep sample-accurate timing through filters like asetnsamples.
+	// Many container/codec combinations (e.g. MP3 in AVI, where the stream
+	// time_base is 1/(sample_rate/1152)) deliver decoded frames whose pts
+	// would otherwise be misinterpreted as one sample apart.
+	rescaleAudioPTS := func(f *av.Frame, si av.StreamInfo) {
+		pts := f.PTS()
+		if pts == math.MinInt64 || si.TimeBase[1] <= 0 || si.SampleRate <= 0 {
+			return
+		}
+		// new_pts = pts * tb_num * sample_rate / tb_den
+		// Use big-int-style ordering to minimise overflow risk.
+		f.SetPTS(pts * int64(si.TimeBase[0]) * int64(si.SampleRate) / int64(si.TimeBase[1]))
+	}
+
+	receiveAll := func(dec *av.DecoderContext, si av.StreamInfo) error {
+		var indices []int
+		switch si.Type {
+		case av.MediaTypeVideo:
+			indices = byType[graph.PortVideo].frame
+		case av.MediaTypeAudio:
+			indices = byType[graph.PortAudio].frame
+		}
+		if len(indices) == 0 {
+			return nil
+		}
+		for {
+			f, err := av.AllocFrame()
+			if err != nil {
+				return err
+			}
+			if err := dec.ReceiveFrame(f); err != nil {
+				f.Close()
+				if av.IsEAgain(err) || av.IsEOF(err) {
+					return nil
+				}
+				return err
+			}
+			if si.Type == av.MediaTypeAudio {
+				rescaleAudioPTS(f, si)
+			}
+			if err := sendFrame(f, indices); err != nil {
+				f.Close()
+				return err
+			}
+		}
+	}
+
+	// Demux + decode loop.
+	pkt, err := av.AllocPacket()
+	if err != nil {
+		return err
+	}
+	defer pkt.Close()
+
+	// Per-loop-iteration min/max packet PTS (in AV_TIME_BASE
+	// microseconds) — used by the `-stream_loop` rewind path to
+	// compute the cycle's media duration so post-rewind packets can
+	// be PTS-shifted by the right amount. Mirrors `Demuxer.min_pts`
+	// / `Demuxer.max_pts` in fftools/ffmpeg_demux.c::ts_fixup.
+	// Reset at every successful seek_to_start.
+	var iterMinPTSus, iterMaxPTSus int64 = math.MaxInt64, math.MinInt64
+
+	for {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		pkt.Unref()
+		frameStart := time.Now()
+		if err := src.input.ReadPacket(pkt); err != nil {
+			if av.IsEOF(err) {
+				// `-stream_loop` semantics. Mirrors
+				// fftools/ffmpeg_demux.c::seek_to_start:
+				// rewind, accumulate the cycle's media
+				// duration into loopOffsetUS, decrement the
+				// remaining-loops counter (unless it is -1,
+				// which means infinite), and continue
+				// reading. On seek failure we fall through
+				// to the normal EOF break (matches FFmpeg's
+				// behaviour: any failure inside seek_to_start
+				// terminates the input).
+				if src.streamLoopRemaining != 0 && iterMaxPTSus > math.MinInt64 {
+					seekTo := src.input.StartTime()
+					if seekTo == av.NoPTSValue {
+						seekTo = 0
+					}
+					if serr := src.input.SeekFile(seekTo); serr == nil {
+						minPTSus := iterMinPTSus
+						if minPTSus == math.MaxInt64 {
+							minPTSus = 0
+						}
+						src.loopOffsetUS += iterMaxPTSus - minPTSus
+						iterMinPTSus = math.MaxInt64
+						iterMaxPTSus = math.MinInt64
+						if src.streamLoopRemaining > 0 {
+							src.streamLoopRemaining--
+						}
+						continue
+					}
+				}
+				break
+			}
+			return err
+		}
+		dec := src.decoders[pkt.StreamIndex()]
+		subDec := src.subDecoders[pkt.StreamIndex()]
+		si, known := src.streams[pkt.StreamIndex()]
+		if dec == nil && subDec == nil && !known {
+			continue
+		}
+
+		// Honour per-input -t / -to: stop demuxing once any selected
+		// stream's packet PTS reaches the absolute stop point computed
+		// from the input's recording_time. Mirrors
+		// fftools/ffmpeg_demux.c::input_packet_process()'s `dts >=
+		// recording_time + start_time` check (with FFmpeg's default
+		// non-copy_ts start_time of 0; we apply the seek timestamp via
+		// stopPTSus instead of via per-packet ts_offset). Skips packets
+		// without a valid PTS so we don't bail out on a probe-only
+		// header. The check runs against the raw PTS (before ts_offset)
+		// so the comparison stays in source coordinates.
+		if src.stopPTSus != noLimitUS {
+			if pts := pkt.PTS(); pts != math.MinInt64 && si.TimeBase[1] > 0 {
+				// Convert pkt PTS (in stream time_base units) to
+				// AV_TIME_BASE units (microseconds).
+				ptsUS := pts * 1_000_000 * int64(si.TimeBase[0]) / int64(si.TimeBase[1])
+				if ptsUS >= src.stopPTSus {
+					break
+				}
+			}
+		}
+
+		// Apply ts_offset: rebase every packet's PTS/DTS so the
+		// pipeline starts at 0 even when -ss seeked into the middle of
+		// the source. Mirrors fftools/ffmpeg_demux.c::ts_fixup() in
+		// non-copy_ts mode. Rescales the AV_TIME_BASE-unit ts_offset
+		// into the packet's stream time_base before adding.
+		if src.tsOffsetUS != 0 && si.TimeBase[1] > 0 {
+			offsetTB := src.tsOffsetUS * int64(si.TimeBase[1]) /
+				(1_000_000 * int64(si.TimeBase[0]))
+			pkt.ShiftTS(offsetTB)
+		}
+
+		// Apply the per-iteration loop offset for `-stream_loop`.
+		// loopOffsetUS is the cumulative duration (in AV_TIME_BASE
+		// microseconds) of all completed iterations; adding it
+		// keeps post-rewind PTS monotone. Mirrors `pkt->pts +=
+		// duration` in fftools/ffmpeg_demux.c::ts_fixup. Tracked
+		// separately from tsOffsetUS so the cycle-duration
+		// arithmetic doesn't entangle with the `-ss` /
+		// `-itsoffset` shift.
+		if src.loopOffsetUS != 0 && si.TimeBase[1] > 0 {
+			loopTB := src.loopOffsetUS * int64(si.TimeBase[1]) /
+				(1_000_000 * int64(si.TimeBase[0]))
+			pkt.ShiftTS(loopTB)
+		}
+
+		// Track per-iteration min/max packet PTS in AV_TIME_BASE
+		// microseconds so the loop rewind path (above) can compute
+		// `max - min` as the cycle's media duration. Done in
+		// post-shift coordinates, exactly as
+		// fftools/ffmpeg_demux.c::ts_fixup updates `Demuxer.min_pts`
+		// / `Demuxer.max_pts` after the offset additions.
+		if src.streamLoopRemaining != 0 {
+			if pts := pkt.PTS(); pts != math.MinInt64 && si.TimeBase[1] > 0 {
+				ptsUSshifted := pts * 1_000_000 * int64(si.TimeBase[0]) / int64(si.TimeBase[1])
+				if ptsUSshifted < iterMinPTSus {
+					iterMinPTSus = ptsUSshifted
+				}
+				dur := pkt.Duration()
+				endUS := ptsUSshifted
+				if dur > 0 {
+					endUS += dur * 1_000_000 * int64(si.TimeBase[0]) / int64(si.TimeBase[1])
+				}
+				if endUS > iterMaxPTSus {
+					iterMaxPTSus = endUS
+				}
+			}
+		}
+
+		// Pace the demux loop when the user requested
+		// `-readrate` / `-re`. Done after PTS shifts so the
+		// pacer compares wallclock-elapsed against the
+		// post-offset packet PTS — matches
+		// fftools/ffmpeg_demux.c::readrate_sleep, which uses
+		// `ds->dts` *after* `ts_fixup` has finished.
+		if src.pacer != nil {
+			if pts := pkt.PTS(); pts != math.MinInt64 && si.TimeBase[1] > 0 {
+				ptsUS := pts * 1_000_000 * int64(si.TimeBase[0]) / int64(si.TimeBase[1])
+				src.pacer.maybeSleep(ctx, ptsUS)
+			}
+		}
+
+		// Publish media-time progress so the GUI can compute
+		// percent-complete / ETA. Skip packets without a valid PTS
+		// (AV_NOPTS_VALUE == math.MinInt64) and streams without a
+		// known timebase.
+		if pts := pkt.PTS(); pts != math.MinInt64 && si.TimeBase[1] > 0 {
+			ptsNs := time.Duration(pts) * time.Second *
+				time.Duration(si.TimeBase[0]) / time.Duration(si.TimeBase[1])
+			r.pipe.Metrics().Node(node.ID).AdvanceMediaPTS(ptsNs)
+		}
+
+		// Route to copy outs first (per stream type).
+		var portType graph.PortType
+		switch si.Type {
+		case av.MediaTypeVideo:
+			portType = graph.PortVideo
+		case av.MediaTypeAudio:
+			portType = graph.PortAudio
+		case av.MediaTypeSubtitle:
+			portType = graph.PortSubtitle
+		case av.MediaTypeData:
+			portType = graph.PortData
+		}
+		if bucket := byType[portType]; bucket != nil && len(bucket.copy) > 0 {
+			if err := sendPacketCopies(pkt, bucket.copy); err != nil {
+				return err
+			}
+		}
+
+		// Handle subtitle streams via subtitle decoder.
+		if subDec != nil && len(byType[graph.PortSubtitle].frame) > 0 {
+			sub, got, err := subDec.Decode(pkt)
+			if err != nil {
+				return err
+			}
+			if got {
+				for _, idx := range byType[graph.PortSubtitle].frame {
+					select {
+					case outs[idx] <- sub:
+					case <-ctx.Done():
+						sub.Close()
+						return ctx.Err()
+					}
+				}
+			}
+			r.pipe.Metrics().Node(node.ID).RecordLatency(time.Since(frameStart))
+			continue
+		}
+
+		if dec == nil {
+			// Copy-only or data-only stream: nothing to decode.
+			r.pipe.Metrics().Node(node.ID).RecordLatency(time.Since(frameStart))
+			continue
+		}
+		// If no downstream node consumes decoded frames of this
+		// stream type, skip the decoder entirely. Otherwise packets
+		// pile up in the decoder's internal queue until SendPacket
+		// returns EAGAIN and the source aborts with averror(-35).
+		// (A copy-only consumer was already serviced above via
+		// sendPacketCopies.)
+		if bucket := byType[portType]; bucket == nil || len(bucket.frame) == 0 {
+			r.pipe.Metrics().Node(node.ID).RecordLatency(time.Since(frameStart))
+			continue
+		}
+		if err := dec.SendPacket(pkt); err != nil {
+			return err
+		}
+		if err := receiveAll(dec, si); err != nil {
+			return err
+		}
+		r.pipe.Metrics().Node(node.ID).RecordLatency(time.Since(frameStart))
+	}
+
+	// Flush every decoder that actually had packets pushed through it
+	// (i.e. has at least one downstream frame consumer).
+	for idx, dec := range src.decoders {
+		si := src.streams[idx]
+		var portType graph.PortType
+		switch si.Type {
+		case av.MediaTypeVideo:
+			portType = graph.PortVideo
+		case av.MediaTypeAudio:
+			portType = graph.PortAudio
+		case av.MediaTypeSubtitle:
+			portType = graph.PortSubtitle
+		case av.MediaTypeData:
+			portType = graph.PortData
+		}
+		if bucket := byType[portType]; bucket == nil || len(bucket.frame) == 0 {
+			continue
+		}
+		if err := dec.Flush(); err != nil && !av.IsEOF(err) && !av.IsEAgain(err) {
+			return err
+		}
+		// Drain remaining decoded frames.
+		for {
+			f, err := av.AllocFrame()
+			if err != nil {
+				return err
+			}
+			if err := dec.ReceiveFrame(f); err != nil {
+				f.Close()
+				if av.IsEOF(err) || av.IsEAgain(err) {
+					break
+				}
+				return err
+			}
+			switch si.Type {
+			case av.MediaTypeVideo:
+				if err := sendFrame(f, byType[graph.PortVideo].frame); err != nil {
+					f.Close()
+					return err
+				}
+			case av.MediaTypeAudio:
+				rescaleAudioPTS(f, si)
+				if err := sendFrame(f, byType[graph.PortAudio].frame); err != nil {
+					f.Close()
+					return err
+				}
+			default:
+				f.Close()
+			}
+		}
+	}
+	return nil
+}
+
+// ---------- Copy handler ----------
+//
+// A copy node is a verbatim demuxer-packet-to-muxer pipeline: it neither
+// decodes nor encodes. The source emits raw AVPackets in the input
+// stream's time_base; the sink rescales to the output stream's time_base
+// at write time. handleCopy is therefore a thin passthrough; it exists as
+// a distinct kind so the graph can express stream-copy intent and so the
+// muxer can be configured via AddStreamFromInput rather than from an
+// encoder context.
+func (r *graphRunner) handleCopy(ctx context.Context, node *graph.Node, ins []<-chan any, outs []chan<- any) error {
+	if len(ins) != 1 || len(outs) < 1 {
+		return fmt.Errorf("copy node %q: expected 1 input / >=1 output, got %d/%d", node.ID, len(ins), len(outs))
+	}
+	in := ins[0]
+	for v := range in {
+		pkt, ok := v.(*av.Packet)
+		if !ok {
+			return fmt.Errorf("copy node %q: expected *av.Packet, got %T", node.ID, v)
+		}
+		frameStart := time.Now()
+		// Fan out to each downstream channel (clone for all but the last
+		// so each muxer owns an independent ref and can rescale/set the
+		// stream index without racing the others).
+		var sendErr error
+		for i, out := range outs {
+			var p *av.Packet
+			if i == len(outs)-1 {
+				p = pkt
+			} else {
+				c, err := av.ClonePacket(pkt)
+				if err != nil {
+					pkt.Close()
+					sendErr = err
+					break
+				}
+				p = c
+			}
+			select {
+			case out <- p:
+			case <-ctx.Done():
+				p.Close()
+				sendErr = ctx.Err()
+			}
+			if sendErr != nil {
+				break
+			}
+		}
+		if sendErr != nil {
+			return sendErr
+		}
+		r.pipe.Metrics().Node(node.ID).RecordLatency(time.Since(frameStart))
+	}
+	return nil
+}
+
+// ---------- Resource pre-opening ----------
+
+func (r *graphRunner) openSource(cfg Input, srcNode *graph.Node, decOpts av.DecoderOptions) (*sourceResources, error) {
+	var inputOpts map[string]string
+	if len(cfg.Options) > 0 {
+		inputOpts = make(map[string]string, len(cfg.Options))
+		for k, v := range cfg.Options {
+			inputOpts[k] = fmt.Sprintf("%v", v)
+		}
+	}
+
+	// Per-input timing flags (FFmpeg's `-ss` / `-t` / `-to`). These
+	// are not AVOptions consumed by avformat_open_input — the runtime
+	// enforces them itself, mirroring the logic in
+	// fftools/ffmpeg_demux.c::ist_add_input_file(). Strip them from
+	// the dictionary so libav doesn't see leftover unknown options.
+	timing, err := resolveInputTiming(cfg.Options, func(format string, args ...any) {
+		log.Printf("input %q: "+format, append([]any{cfg.URL}, args...)...)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("input %q timing: %w", cfg.URL, err)
+	}
+	delete(inputOpts, "ss")
+	delete(inputOpts, "t")
+	delete(inputOpts, "to")
+
+	// Map Input.Kind onto a libavformat input-format name. Empty Kind (or
+	// "file") falls through to OpenInput's URL-probing behaviour. "lavfi"
+	// routes through libavformat's lavfi virtual demuxer so the URL is
+	// interpreted as a filtergraph spec (anullsrc, color, sine, testsrc, …).
+	var formatName string
+	switch cfg.Kind {
+	case "", "file":
+		// default file probing; honour explicit Format override
+		formatName = cfg.Format
+	case "lavfi":
+		formatName = "lavfi"
+	case "raw":
+		// kind="raw" requires Format to name the rawvideo / PCM
+		// demuxer (validated upstream by validateInputDemuxerFields).
+		formatName = cfg.Format
+	case "concat":
+		// kind="concat" pins the demuxer; if ConcatList was supplied
+		// the runtime serialises it to a temp listfile (handled
+		// below); otherwise URL points at an existing listfile.
+		formatName = "concat"
+	default:
+		return nil, fmt.Errorf("input %q: unsupported kind %q (want \"file\", \"lavfi\", \"raw\" or \"concat\")", cfg.ID, cfg.Kind)
+	}
+
+	// Promote the typed demuxer fields (Wave 5 #23-#28) into the
+	// AVDictionary the demuxer actually consumes. Each field maps to
+	// the canonical AVOption name documented on the libavformat
+	// demuxer that recognises it; collisions with cfg.Options leave
+	// the typed field as the winner so the schema layer is the
+	// source of truth.
+	openURL := cfg.URL
+	var concatCleanup func()
+	defer func() {
+		if concatCleanup != nil {
+			// On failure between materialisation and successful return.
+			concatCleanup()
+		}
+	}()
+	if cfg.Kind == "concat" && len(cfg.ConcatList) > 0 {
+		path, cleanup, err := materialiseConcatList(cfg.ConcatList)
+		if err != nil {
+			return nil, fmt.Errorf("input %q: materialise concat list: %w", cfg.ID, err)
+		}
+		openURL = path
+		concatCleanup = cleanup
+	}
+	if inputOpts == nil {
+		inputOpts = map[string]string{}
+	}
+	if cfg.FrameRate > 0 {
+		inputOpts["framerate"] = strconv.FormatFloat(cfg.FrameRate, 'f', -1, 64)
+	}
+	if cfg.PixelFormat != "" {
+		inputOpts["pixel_format"] = cfg.PixelFormat
+	}
+	if cfg.VideoSize != "" {
+		inputOpts["video_size"] = cfg.VideoSize
+	}
+	if cfg.SampleRate > 0 {
+		inputOpts["sample_rate"] = strconv.Itoa(cfg.SampleRate)
+	}
+	if cfg.Channels > 0 {
+		inputOpts["channels"] = strconv.Itoa(cfg.Channels)
+	}
+	if cfg.SampleFormat != "" {
+		inputOpts["sample_fmt"] = cfg.SampleFormat
+	}
+	if cfg.ThreadQueueSize > 0 {
+		inputOpts["thread_queue_size"] = strconv.Itoa(cfg.ThreadQueueSize)
+	}
+	if len(cfg.ProtocolWhitelist) > 0 {
+		inputOpts["protocol_whitelist"] = strings.Join(cfg.ProtocolWhitelist, ",")
+	}
+	if cfg.PatternType != "" {
+		inputOpts["pattern_type"] = cfg.PatternType
+	}
+	if cfg.SeekTimestamp {
+		inputOpts["seek_timestamp"] = "1"
+	}
+	// AccurateSeek: only emit when explicitly false (FFmpeg default
+	// is true). Mapped to "noaccurate_seek" in the runtime via
+	// dropping the +start_time addition below; we still pass
+	// through so any future libavformat consumer sees it.
+	if cfg.AccurateSeek != nil && !*cfg.AccurateSeek {
+		inputOpts["accurate_seek"] = "0"
+	}
+	if len(inputOpts) == 0 {
+		inputOpts = nil
+	}
+
+	input, err := av.OpenInputWithFormat(openURL, formatName, inputOpts)
+	if err != nil {
+		return nil, fmt.Errorf("open input %q: %w", cfg.URL, err)
+	}
+
+	// Mirror fftools/ffmpeg_demux.c: compute the seek target and apply
+	// avformat_seek_file. Uses AV_TIME_BASE units (microseconds). The
+	// container's reported start_time is added in to align with FFmpeg
+	// for formats whose first PTS is non-zero (e.g. MPEG-TS). Skipped
+	// for lavfi inputs — virtual sources don't support seeking and
+	// always start at zero, so any -ss value is converted to the
+	// per-packet stop check via timing's recording_time path.
+	if timing.haveStart && formatName != "lavfi" {
+		targetUS := timing.seekTimestampUS(input.StartTime())
+		if err := input.SeekFile(targetUS); err != nil {
+			input.Close()
+			return nil, fmt.Errorf("seek input %q to %d us: %w", cfg.URL, targetUS, err)
+		}
+	}
+
+	allStreams, err := input.AllStreams()
+	if err != nil {
+		input.Close()
+		return nil, fmt.Errorf("enumerate streams %q: %w", cfg.URL, err)
+	}
+
+	// Determine which stream types feed *only* copy nodes (no decoder
+	// needed) versus types that have at least one decoded consumer.
+	// Streams whose type appears only on copy edges skip decoder open.
+	copyOnly := map[string]bool{}
+	if srcNode != nil {
+		seenAny := map[string]bool{}
+		seenNonCopy := map[string]bool{}
+		for _, e := range srcNode.Outbound {
+			t := string(e.Type)
+			seenAny[t] = true
+			if e.To == nil || e.To.Kind != graph.KindCopy {
+				seenNonCopy[t] = true
+			}
+		}
+		for t := range seenAny {
+			if !seenNonCopy[t] {
+				copyOnly[t] = true
+			}
+		}
+	}
+
+	decoders := make(map[int]*av.DecoderContext)
+	subDecoders := make(map[int]*av.SubtitleDecoderContext)
+	streams := make(map[int]av.StreamInfo)
+
+	// Resolve the selector list (handles All / Optional / Negate /
+	// Program — Wave 2 #9 + #10) into the concrete set of input
+	// stream indices to demux. Selectors are walked in declaration
+	// order; Negate selectors subtract from the running set; missing
+	// non-Optional matches fail fast (the previous silent-skip
+	// behaviour produced confusing downstream graph errors).
+	selectedIdx, err := resolveStreamSelection(cfg.Streams, allStreams, input.Programs())
+	if err != nil {
+		input.Close()
+		return nil, fmt.Errorf("input %q: %w", cfg.URL, err)
+	}
+	streamByIdx := make(map[int]av.StreamInfo, len(allStreams))
+	for _, si := range allStreams {
+		streamByIdx[si.Index] = si
+	}
+	for _, idx := range selectedIdx {
+		si := streamByIdx[idx]
+		typ := si.Type.String()
+		switch {
+		case copyOnly[typ]:
+			// Stream-copy only: don't open a decoder.
+		case typ == "subtitle":
+			subDec, err := av.OpenSubtitleDecoderWithOptions(input, si.Index, av.SubtitleDecoderOptions{
+				Charenc: cfg.SubtitleCharenc,
+			})
+			if err != nil {
+				for _, d := range decoders {
+					d.Close()
+				}
+				for _, d := range subDecoders {
+					d.Close()
+				}
+				input.Close()
+				return nil, fmt.Errorf("open subtitle decoder for stream %d: %w", si.Index, err)
+			}
+			subDecoders[si.Index] = subDec
+		default:
+			dec, err := av.OpenDecoderWithOptions(input, si.Index, decOpts)
+			if err != nil {
+				for _, d := range decoders {
+					d.Close()
+				}
+				for _, d := range subDecoders {
+					d.Close()
+				}
+				input.Close()
+				return nil, fmt.Errorf("open decoder for %s stream %d: %w", typ, si.Index, err)
+			}
+			decoders[si.Index] = dec
+		}
+		streams[si.Index] = si
+	}
+
+	// Compute longest selected stream duration for progress reporting.
+	// Skips streams the user didn't pick (e.g. unselected audio
+	// tracks), so a video-only job reports against the video duration
+	// rather than a longer audio stream.
+	var mediaDuration time.Duration
+	for _, si := range streams {
+		if si.Duration <= 0 || si.TimeBase[1] <= 0 {
+			continue
+		}
+		d := time.Duration(si.Duration) * time.Second *
+			time.Duration(si.TimeBase[0]) / time.Duration(si.TimeBase[1])
+		if d > mediaDuration {
+			mediaDuration = d
+		}
+	}
+
+	// Compute ts_offset only when -ss actually triggered a seek.
+	// FFmpeg additionally compensates for the container's reported
+	// start_time even without -ss, but doing so unconditionally would
+	// alter PTS for every existing job (e.g. MPEG-TS captures whose
+	// first PTS is non-zero); restricting it to seeked jobs preserves
+	// backward compatibility while still mirroring FFmpeg for the
+	// trim use case the user is exercising.
+	//
+	// When Config.CopyTS is true the shift is suppressed so the
+	// original demuxer PTS reach downstream nodes intact — mirrors
+	// FFmpeg's global `-copyts` flag, which sets `ifile->ts_offset`
+	// to 0 (or to `input_ts_offset`, which we don't model) instead
+	// of `-timestamp` in fftools/ffmpeg_demux.c.
+	//
+	// `Config.StartAtZero` re-enables the shift even under CopyTS so
+	// the first kept packet still anchors at PTS 0 (mirrors the
+	// `start_at_zero ? 0 : f->start_time_effective` branch at
+	// fftools/ffmpeg_demux.c L486 — `-start_at_zero` overrides the
+	// `-copyts` suppression).
+	var tsOffsetUS int64
+	if timing.haveStart && (!(r.cfg != nil && r.cfg.CopyTS) || (r.cfg != nil && r.cfg.StartAtZero)) {
+		tsOffsetUS = -timing.seekTimestampUS(input.StartTime())
+	}
+
+	// Compose `-itsoffset` additively with the seek compensation.
+	// FFmpeg's fftools/ffmpeg_demux.c does the same:
+	//   `f->ts_offset = o->input_ts_offset - timestamp;`
+	// (where `timestamp` is the value passed to avformat_seek_file).
+	// `Input.ITSOffset` is in seconds; convert to AV_TIME_BASE
+	// microseconds before adding.
+	if cfg.ITSOffset != 0 {
+		tsOffsetUS += int64(cfg.ITSOffset * 1_000_000)
+	}
+
+	// Build the read-rate pacer when the user enabled pacing.
+	// Mirrors fftools/ffmpeg_demux.c's `Demuxer.readrate` /
+	// `readrate_initial_burst` / `readrate_catchup` defaults: when
+	// burst is unset it falls back to 0.5s, and catchup falls back
+	// to readrate × 1.05.
+	var pacer *readRatePacer
+	if cfg.ReadRate > 0 {
+		burst := cfg.ReadRateInitialBurst
+		if burst == 0 {
+			burst = 0.5
+		}
+		catchup := cfg.ReadRateCatchup
+		if catchup == 0 {
+			catchup = cfg.ReadRate * 1.05
+		}
+		pacer = newReadRatePacer(cfg.ReadRate, burst, catchup)
+	}
+
+	res := &sourceResources{
+		input:               input,
+		decoders:            decoders,
+		subDecoders:         subDecoders,
+		streams:             streams,
+		cfg:                 cfg,
+		mediaDuration:       mediaDuration,
+		stopPTSus:           timing.stopTimestampUS(input.StartTime()),
+		tsOffsetUS:          tsOffsetUS,
+		streamLoopRemaining: cfg.StreamLoop,
+		pacer:               pacer,
+		concatCleanup:       concatCleanup,
+	}
+	concatCleanup = nil // ownership transferred to res.Close()
+	return res, nil
+}
+
+func (r *graphRunner) copySourceFor(copyNode *graph.Node) (*av.InputFormatContext, int, [2]int, error) {
+	if len(copyNode.Inbound) != 1 {
+		return nil, 0, [2]int{}, fmt.Errorf("copy node %q must have exactly 1 inbound edge, got %d", copyNode.ID, len(copyNode.Inbound))
+	}
+	in := copyNode.Inbound[0]
+	from := in.From
+	if from.Kind != graph.KindSource {
+		return nil, 0, [2]int{}, fmt.Errorf("copy node %q: upstream %q (kind=%v) must be a source", copyNode.ID, from.ID, from.Kind)
+	}
+	src := r.sources[from.ID]
+	if src == nil {
+		return nil, 0, [2]int{}, fmt.Errorf("copy node %q: source %q has no resources", copyNode.ID, from.ID)
+	}
+	mt := portTypeToAVMediaType(in.Type)
+	for idx, si := range src.streams {
+		if si.Type == mt {
+			return src.input, idx, si.TimeBase, nil
+		}
+	}
+	return nil, 0, [2]int{}, fmt.Errorf("copy node %q: source %q has no %v stream", copyNode.ID, from.ID, in.Type)
+}

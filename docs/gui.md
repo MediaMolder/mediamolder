@@ -453,6 +453,95 @@ Leave a field blank to omit it. The values round-trip through the
 `ffmpeg -ss 5 -t 30 -i in.mp4 -c copy out.mp4` lands in the editor with
 Start=5, Duration=30 already populated on the input node.
 
+#### Output nodes — Multi-output tabs and per-stream overrides
+
+When the graph contains more than one **Output** node, the Inspector
+renders a **tab strip** at the top of the Output form listing every
+output. Click a tab to flip the Inspector and the canvas selection to
+that output without going back to the canvas. Single-output graphs are
+visually unchanged.
+
+Below the Timing section every Output form exposes a **Streams**
+sub-tab strip backed by `Output.streams[]`. Use this to author the
+per-stream overrides that on the FFmpeg CLI look like
+`-metadata:s:v:0 …`, `-disposition:s:a:1 …`, `-c:v:1 libx264`, or
+`-b:v:1 5M`. Click **+ add** to create a new entry, then fill in:
+
+* **Type** — `v` (video), `a` (audio), `s` (subtitle), or `d` (data).
+* **Index** — 0-based stream index within the chosen media type.
+* **Disposition** — `+`-separated `AV_DISPOSITION_*` flags (e.g.
+  `default+forced`, `hearing_impaired`, `commentary`).
+* **Metadata** — key/value rows (e.g. `language=eng`, `title=Director's commentary`).
+* **Encoder override** — per-stream codec (e.g. `libx264`) plus a
+  key/value option editor (e.g. `b=5M`, `crf=18`). Empty leaves the
+  output-level codec / option in place.
+
+The Streams editor is the GUI surface for the backend per-stream
+metadata + disposition (Wave 1 #3) and per-stream encoder overrides
+(Wave 6 #30). It's commonly used together with ABR ladders (one Output
+with several video streams, each carrying a different bit-rate
+override) and multi-language muxes (one Output with one English
+audio + one Spanish audio, each carrying `language=…` metadata and a
+`default` / `forced` disposition).
+
+#### Output nodes — Bitstream-filter chains
+
+Below the Streams section every Output form exposes three **Bitstream
+filters** sections (video / audio / subtitle) backed by
+`Output.bsf_video` / `bsf_audio` / `bsf_subtitle`. Each section
+renders one card per chain entry with:
+
+* **Filter** — name input with per-kind autocomplete (`h264_mp4toannexb`,
+  `hevc_mp4toannexb`, `aac_adtstoasc`, `h264_metadata`, `dump_extra`,
+  `extract_extradata`, `setts`, …).
+* **↑ / ↓** — reorder the entry within the chain. Order matters:
+  packets flow through the filters left-to-right.
+* **×** — remove the entry.
+* **Params** — key/value rows mapped to the filter's AVOptions
+  (e.g. `video_full_range_flag=1`, `level=4`).
+
+The serialised chain (e.g. `h264_mp4toannexb,h264_metadata=video_full_range_flag=1`)
+is shown live in monospace beside the **+ add** button, in the exact
+form passed to libavcodec's `av_bsf_list_parse_str`. Empty chains are
+elided from the saved JSON.
+
+The most common need is the MPEG-TS handoff:
+`h264_mp4toannexb` (or `hevc_mp4toannexb`) on the video chain when
+re-muxing an MP4 to TS — without it the muxer chokes on the AVCC-style
+NAL units. `aac_adtstoasc` is the dual: required when re-muxing TS to MP4.
+
+#### Output nodes — Container metadata and chapters
+
+Below the Bitstream-filter sections every Output form exposes a
+**Container metadata** key/value editor and a **Chapters** table.
+
+* **Container metadata** — backs `Output.metadata` and renders as
+  `key=value` rows. Mirrors FFmpeg `-metadata key=value`. Common
+  global tags include `title`, `artist`, `album`, `comment`, `genre`,
+  `date`, `encoded_by`, `language` (per-stream `language` lives on
+  the per-stream metadata editor instead). Container-specific tag
+  rewriting (matroska's `TITLE` / MP4's `©nam` / …) is handled by
+  libavformat's per-container metadata-conv tables, so the canonical
+  short keys here are correct regardless of the muxer.
+* **Chapters** — backs `Output.chapters` (matroska / mp4 / ogg /
+  ffmetadata containers). Each row carries:
+  * **Start (s)** / **End (s)** — chapter bounds in seconds. Free-text
+    decimal input parsed on blur; invalid input reverts to the prior
+    value.
+  * **Title** — chapter title (becomes the `TITLE` tag at mux time).
+  * **↑ / ↓** — reorder the chapter in the list.
+  * **×** — remove the chapter.
+  * **▸ Metadata** — collapsible per-chapter key/value editor for
+    additional chapter-scoped tags.
+
+  The **+ add** button pre-fills the new row's `Start` from the
+  previous row's `End`, matching the common authoring pattern of
+  contiguous chapters. Chapter tables defined here replace anything
+  mapped from inputs via `Input.map_chapters`.
+
+Per-stream metadata (e.g. `language=eng` on a specific audio track)
+remains on the per-stream tab inside the **Streams** section.
+
 ### Run panel
 
 ![MediaMolder GUI Running](images/ABR_running.png)
