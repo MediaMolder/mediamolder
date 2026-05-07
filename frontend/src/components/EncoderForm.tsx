@@ -259,7 +259,7 @@ export function EncoderForm({ def, onChange }: Props) {
         </PromotedSection>
       )}
 
-      {profileOptions.length > 0 && (
+      {profileOptions.length > 0 && info.media_type !== 'audio' && (
         <PromotedSection title="Profile / Level">
           {profileOptions.map((o) => (
             <PrimaryRow
