@@ -46,6 +46,7 @@ func TestSchemaSyncWithGoStructs(t *testing.T) {
 		{"Output", reflect.TypeOf(Output{}), "output", false},
 		{"Options", reflect.TypeOf(Options{}), "global_options", false},
 		{"ErrorPolicy", reflect.TypeOf(ErrorPolicy{}), "error_policy", false},
+		{"AssetRef", reflect.TypeOf(AssetRef{}), "asset_ref", false},
 	}
 
 	for _, c := range checks {

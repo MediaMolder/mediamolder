@@ -24,6 +24,7 @@ import { RunPanel } from './components/RunPanel';
 import { RunDock } from './components/RunDock';
 import { HelpDialog } from './components/HelpDialog';
 import { ImportFFmpegDialog } from './components/ImportFFmpegDialog';
+import { AssetManager } from './components/AssetManager';
 import { Legend } from './components/Legend';
 import {
   configToFlow,
@@ -346,6 +347,7 @@ function Editor() {
       edges,
       job.description,
       job.global_options,
+      job.assets,
     );
     return JSON.stringify(out, null, 2);
   }, [job, nodes, edges]);
@@ -511,6 +513,7 @@ function Editor() {
       edges,
       job.description,
       job.global_options,
+      job.assets,
     );
   };
   const run = useJobRun(() => buildJobRef.current?.() ?? null);
@@ -565,6 +568,7 @@ function Editor() {
   /* ---------- Help dialog ---------- */
   const [helpOpen, setHelpOpen] = useState(false);
   const [importFFmpegOpen, setImportFFmpegOpen] = useState(false);
+  const [showAssetManager, setShowAssetManager] = useState(false);
 
   /* Merge live metrics + errors into node data so MMNode can render badges. */
   const runByNode = useMemo(() => {
@@ -736,6 +740,14 @@ function Editor() {
           {showRunPanel ? 'Hide log' : 'Show log'}
         </button>
         <button onClick={() => setHelpOpen(true)} title="Open help (or press ?)">Help</button>
+        <button
+          onClick={() => setShowAssetManager(true)}
+          title="Manage the asset registry (fonts, ML models, LUTs)"
+        >
+          Assets{job.assets && Object.keys(job.assets).length > 0 && (
+            <span className="toolbar-badge">{Object.keys(job.assets).length}</span>
+          )}
+        </button>
       </div>
 
       {showPalette && <Palette />}
@@ -820,6 +832,15 @@ function Editor() {
         onClose={() => setImportFFmpegOpen(false)}
         onImported={(cfg) => loadJob(cfg)}
       />
+      {showAssetManager && (
+        <AssetManager
+          assets={job.assets ?? {}}
+          onChange={(a) =>
+            setJob((j) => ({ ...j, assets: Object.keys(a).length > 0 ? a : undefined }))
+          }
+          onClose={() => setShowAssetManager(false)}
+        />
+      )}
     </div>
   );
 }

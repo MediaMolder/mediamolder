@@ -825,6 +825,58 @@ fields, and three option controls:
 | **Normalize** | `true` | Rescale so the sum of weights equals 1 |
 | **Dropout transition (s)** | `2.0` | Fade-out time applied when an input stream ends early |
 
+### Asset registry
+
+The **Assets** toolbar button opens the Asset Registry — a named table of media files (fonts, ML model weights, LUT files, or any other path) that filter params can reference by symbolic name instead of a hard-coded absolute path.  This keeps pipeline JSON machine-agnostic: fonts, RNNoise models, and LUT cubes live at different absolute paths on each workstation.
+
+#### Using assets in a filter
+
+In any filter node's **params**, set an option value to `$asset:<name>` where `<name>` is the key in the registry:
+
+```
+fontfile = $asset:heading
+model    = $asset:cb_rnnn
+filename = $asset:filmLUT
+```
+
+The runtime substitutes the resolved absolute path before constructing the libavfilter graph.  If the name is absent from the registry, the job fails validation.
+
+#### Path resolution
+
+1. If the stored path is absolute and the file exists, it is used as-is.
+2. If the path is relative, the runtime searches left-to-right:
+   - the current working directory, then
+   - each directory listed in the `MEDIAMOLDER_ASSET_PATH` environment variable (colon-separated on POSIX, semicolon-separated on Windows).
+
+Set `MEDIAMOLDER_ASSET_PATH` in the server's environment to point at a shared assets directory (e.g. `/opt/media/assets`).
+
+#### Registry management
+
+| Column | Notes |
+|--------|-------|
+| **Name** | Symbolic identifier.  Must start with a letter or underscore, then letters, digits, underscores, or hyphens (no spaces). |
+| **Kind** | `font` (TTF/OTF for `drawtext=`/`subtitles=`), `model` (ML model file for `arnndn=` / YOLO), `lut` (.cube/.3dl/.m3d for `lut3d=`/`haldclut=`), `other`. |
+| **Path** | Absolute or relative path.  Use **Browse…** to pick from the server filesystem via the file browser. |
+| **Description** | Optional free-text label (GUI only; no runtime effect). |
+
+Click **Add** to create a new entry, **Edit** to modify an existing one, or **Remove** to delete it.  The toolbar **Assets** button shows a count badge when the registry is non-empty.
+
+#### Schema field
+
+The registry is serialised as the top-level `assets` field in the job JSON:
+
+```json
+{
+  "schema_version": "1.2",
+  "assets": {
+    "heading": { "path": "/opt/fonts/OpenSans-Bold.ttf", "kind": "font" },
+    "cb_rnnn": { "path": "models/cb.rnnn", "kind": "model", "desc": "RNNoise Canonical Baseline" },
+    "filmLUT":  { "path": "luts/film.cube", "kind": "lut" }
+  },
+  ...
+}
+```
+
 ### Run panel
 
 ![MediaMolder GUI Running](images/ABR_running.png)

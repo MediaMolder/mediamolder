@@ -309,6 +309,8 @@ once §3.1–§3.4 land:
 9. **Audio channel-routing UI**: a bus/matrix view for `pan`, `channelsplit`, `channelmap`, `join`, `amerge`, `amix`. ✅ Wave 8 #49 — done. `AudioChannelForm` replaces the free-form params dict with a 2-D gain matrix (pan), per-output-channel source dropdowns (channelmap), layout selector (channelsplit), stream+channel pickers (join), input-count spinner (amerge/amix), and per-input weight fields (amix).
 10. **Asset/model-file manager**: shared by the YOLO processor and by filters such as `arnndn`, `subtitles=…:fontsdir=…`. Pipelines
     should reference assets by symbolic name, with the GUI managing paths and the runtime resolving them from a search list.
+    ✅ Wave 8 #51 — done. `Config.Assets map[string]AssetRef`; runtime resolves `$asset:<name>` refs in filter params via
+    `MEDIAMOLDER_ASSET_PATH` search; `AssetManager` GUI panel manages the registry.
 
 ### 3.6 Phase F — proof of universality
 
@@ -1222,11 +1224,15 @@ wave delivers every §2.8 / §3.5 GUI item that the schema can now back.
     `select` keyframes and every-N-th-frame, `zoompan` Ken Burns.
     **Backend filter registry** expanded from 10 → 16 filters:
     `select`, `aselect`, `hue`, `geq`, `trim`, `atrim`. (Wave 8 #50)
-51. **Asset / model-file manager** (§3.5.10, formerly Wave 6 #22) —
+51. **Asset / model-file manager** (§3.5.10, formerly Wave 6 #22) ✅ Wave 8 —
     Symbolic asset references (fonts for `subtitles=`, RNNoise
     models for `arnndn=`, YOLO weights, ASS `fontsdir=`). Schema
     field `Pipeline.Assets map[string]AssetRef`; runtime resolves
-    from a search-path list; GUI manages the registry.
+    `$asset:<name>` params via cwd + `MEDIAMOLDER_ASSET_PATH` env
+    var; `AssetManager` GUI modal manages the registry with
+    add/edit/remove and file-browser integration. Schema v1.0/v1.1
+    updated; `TestSchemaSyncWithGoStructs` extended to cover
+    `AssetRef`.
 52. **Subtitle GUI affordances** (§2.8) — Forced / HI flag
     toggles wired to per-stream disposition (backend done by
     Wave 6 #34); `-sub_charenc` picker on text-subtitle inputs;

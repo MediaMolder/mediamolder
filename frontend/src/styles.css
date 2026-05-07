@@ -75,6 +75,21 @@ button.danger:hover { background: rgba(185, 74, 74, 0.15); }
 }
 .toolbar .title { font-weight: 600; margin-right: 16px; }
 .toolbar .spacer { flex: 1; }
+.toolbar-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--accent);
+  color: #fff;
+  border-radius: 8px;
+  font-size: 10px;
+  font-weight: 700;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  margin-left: 4px;
+  vertical-align: middle;
+}
 .toolbar select {
   background: var(--panel-2);
   color: var(--text);

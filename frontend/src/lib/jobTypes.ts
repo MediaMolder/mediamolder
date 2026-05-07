@@ -551,6 +551,25 @@ export interface JobConfig {
    *  `AVFilterGraph.nb_threads`. 0 leaves libavfilter's default in place.
    *  Per-node `threads` overrides this. */
   filter_complex_threads?: number;
+  /** Named asset registry (Wave 8 #51). Each key is a symbolic name
+   *  referenced in filter params as `"$asset:<name>"`; the runtime
+   *  substitutes the resolved filesystem path before building the
+   *  libavfilter graph. */
+  assets?: Record<string, AssetRef>;
+}
+
+/** A named media-asset entry in `JobConfig.assets`. The symbolic name
+ *  (the map key) is embedded in filter params as `"$asset:<name>"` and
+ *  the runtime resolves it to an absolute filesystem path before
+ *  constructing the libavfilter graph. */
+export interface AssetRef {
+  /** Filesystem path (absolute or relative to working directory /
+   *  MEDIAMOLDER_ASSET_PATH). Required; must be non-empty. */
+  path: string;
+  /** Asset type for GUI classification and validation. */
+  kind: 'font' | 'model' | 'lut' | 'other';
+  /** Optional human-readable label shown in the GUI asset registry. */
+  desc?: string;
 }
 
 /**

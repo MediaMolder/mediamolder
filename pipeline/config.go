@@ -56,6 +56,13 @@ type Config struct {
 	// libavfilter's default in place (typically `nproc`). Per-node
 	// overrides via `NodeDef.Threads` win when set. (Wave 7 #38)
 	FilterComplexThreads int `json:"filter_complex_threads,omitempty"`
+	// Assets is the named asset registry. Each key is a symbolic asset
+	// name; filter params may embed "$asset:<name>" as an option value
+	// and the runtime substitutes the resolved filesystem path before
+	// constructing the libavfilter graph. Typical use-cases: fonts for
+	// drawtext= / subtitles=, RNNoise models for arnndn=, LUT files for
+	// lut3d= / haldclut=. (Wave 8 #51)
+	Assets map[string]AssetRef `json:"assets,omitempty"`
 }
 
 // Input describes a single input source.
@@ -1162,6 +1169,29 @@ type ErrorPolicy struct {
 	FallbackNode string `json:"fallback_node,omitempty"`
 }
 
+// AssetRef is a named media-asset entry in Config.Assets. The map key
+// is a symbolic name used in filter params as "$asset:<name>"; the
+// runtime resolves it to an absolute filesystem path before building
+// the libavfilter graph. This keeps pipeline JSON machine-agnostic:
+// fonts, ML model files, and LUTs live at different absolute paths on
+// each workstation.
+type AssetRef struct {
+	// Path is the filesystem path of the asset file (absolute or
+	// relative). Relative paths are resolved left-to-right against the
+	// working directory and then against each directory listed in the
+	// MEDIAMOLDER_ASSET_PATH environment variable (colon-separated on
+	// POSIX, semicolon-separated on Windows). Required; must be
+	// non-empty.
+	Path string `json:"path"`
+	// Kind classifies the asset for GUI presentation.
+	// Accepted values: "font" (TrueType/OpenType for drawtext=/
+	// subtitles=), "model" (ML model file for arnndn=, YOLO …),
+	// "lut" (.cube/.3dl/.m3d for lut3d=/haldclut=), "other".
+	Kind string `json:"kind"`
+	// Desc is an optional human-readable label shown in the GUI.
+	Desc string `json:"desc,omitempty"`
+}
+
 // ParseConfig parses and validates a JSON pipeline config from raw bytes.
 // Unknown fields are rejected (strict mode).
 func ParseConfig(data []byte) (*Config, error) {
@@ -1515,6 +1545,19 @@ func validate(cfg *Config) error {
 			if sec := paramStringConfig(node.Params, "section"); sec != "" && sec != "global" && sec != "chapters" {
 				return fmt.Errorf("node[%d] %q: metadata_writer params.section must be \"global\" or \"chapters\" (got %q)", i, node.ID, sec)
 			}
+		}
+	}
+	// Validate assets.
+	validKinds := map[string]bool{"font": true, "model": true, "lut": true, "other": true}
+	for name, ref := range cfg.Assets {
+		if name == "" {
+			return fmt.Errorf("assets: empty key is not allowed")
+		}
+		if ref.Path == "" {
+			return fmt.Errorf("assets[%q]: path must not be empty", name)
+		}
+		if !validKinds[ref.Kind] {
+			return fmt.Errorf("assets[%q]: kind %q is not valid; must be \"font\", \"model\", \"lut\", or \"other\"", name, ref.Kind)
 		}
 	}
 	return nil
