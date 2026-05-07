@@ -41,7 +41,7 @@ answer before they can be reclassified.
 | `GlobalOptions` | mixed — see [§GlobalOptions](#globaloptions) | per-row | The single biggest source of "global parameters." |
 | `CopyTS` | true global | `graph.Def.TimestampPolicy.CopyTS` | Affects both source-side `ts_offset` and sink-side `-ss`/`-to` semantics in correlated ways. Splitting per-node would re-create the coupling. Promote to a `TimestampPolicy` struct rather than a loose bool. |
 | `StartAtZero` | true global | `graph.Def.TimestampPolicy.StartAtZero` | Modulator on `CopyTS`; same justification. |
-| `FilterComplexThreads` | authoring shorthand | filter-node `Internal.Threads` (default) | Default for `AVFilterGraph.nb_threads`. Per-node `NodeDef.Threads` already wins. Normalization stamps the default onto every filter node lacking an explicit value. After Milestone C, runtime reads filter-node `Internal.Threads`, never `Config.FilterComplexThreads`. |
+| `FilterComplexThreads` | authoring shorthand | filter-node `Internal.Filter.Threads` (default) | **DONE** (B.4-B.5). Default for `AVFilterGraph.nb_threads`; per-node `NodeDef.Threads` wins. Normalization stamps the resolved value onto every filter node. |
 | `Assets` | true global | `graph.Def.Assets` | Name-keyed lookup table referenced by ID from filter nodes. The table itself is global by definition. |
 
 ## GlobalOptions
@@ -97,19 +97,19 @@ sink node; everything else is lowered into encoder/filter nodes by
 | Field | Class | Owner / Lowered to | Notes |
 |---|---|---|---|
 | `CodecVideo` / `CodecAudio` / `CodecSubtitle` | authoring shorthand | encoder node `Internal.Codec` | Lowered today by `expandImplicitEncoders`. After Milestone C, runtime never reads these. |
-| `EncoderParamsVideo` / `EncoderParamsAudio` / `EncoderParamsSubtitle` | authoring shorthand | encoder node `Params` (AVOptions) + `Internal.*` (typed fields) | Today flattened into `NodeDef.Params` at lowering. After Milestone B, the `__*` sentinels disappear; typed fields go to `Internal`, real AVOptions stay in `Params`. |
-| `FPSMode` | authoring shorthand | encoder node `Internal.FPSMode` | Currently lowered as `Params["__fps_mode"]`. Replace with typed `Internal.FPSMode` in Milestone B. |
+| `EncoderParamsVideo` / `EncoderParamsAudio` / `EncoderParamsSubtitle` | authoring shorthand | encoder node `Params` (AVOptions) + `Internal.Encoder.*` (typed fields) | Lowered by `expandImplicitEncoders`. Milestone B (B.4-B.6) **DONE**: `__*` sentinels replaced by typed fields on `NodeDef.Internal.Encoder`; real AVOptions stay in `Params`. |
+| `FPSMode` | authoring shorthand | encoder node `Internal.Encoder.FPSMode` | **DONE** (B.4-B.5). |
 | `AudioSync` | authoring shorthand | generated `aresample` filter node | Already lowered by `spliceAudioSyncForOutputs`. After Milestone C, sinks/encoders never read `Output.AudioSync`. |
-| `Pass` | authoring shorthand | encoder node `Internal.Pass` | Currently `Params["__pass"]`. |
-| `PassLogFile` | authoring shorthand | encoder node `Internal.PassLogFile` | Currently `Params["__pass_log_file"]`. |
-| `LoudnormPass` | authoring shorthand | loudnorm filter node `Internal.LoudnormPass` | Currently stamped onto loudnorm filter node by `applyLoudnormShuttle`. |
-| `LoudnormStatsFile` | authoring shorthand | loudnorm filter node `Internal.LoudnormStatsFile` | Same path as `LoudnormPass`. |
-| `ForceKeyFrames` | authoring shorthand | encoder node `Internal.ForceKeyFrames` | Currently `Params["__force_key_frames"]`. |
-| `SAR` | authoring shorthand | encoder node `Internal.SAR` | Currently `Params["__sar"]`. |
-| `DAR` | authoring shorthand | encoder node `Internal.DAR` | Currently `Params["__dar"]`. Mutually exclusive with `SAR` (validator). |
-| `EncoderTimeBase` | authoring shorthand | encoder node `Internal.EncoderTimeBase` | Currently `Params["__enc_time_base"]`. |
-| `FieldOrder` | authoring shorthand | encoder node `Internal.FieldOrder` | Currently `Params["__field_order"]`. |
-| `InterlacedEncode` | authoring shorthand | encoder node `Internal.Interlaced` | Currently `Params["__interlaced"]`. |
+| `Pass` | authoring shorthand | encoder node `Internal.Encoder.Pass` | **DONE** (B.4-B.5). |
+| `PassLogFile` | authoring shorthand | encoder node `Internal.Encoder.PassLogFile` | **DONE** (B.4-B.5). `Internal.Encoder.PassIndex` carries the per-pass output index. |
+| `LoudnormPass` | authoring shorthand | loudnorm filter node `Internal.Filter.LoudnormPass` | **DONE** (B.4-B.5). |
+| `LoudnormStatsFile` | authoring shorthand | loudnorm filter node `Internal.Filter.LoudnormStatsFile` | **DONE** (B.4-B.5). |
+| `ForceKeyFrames` | authoring shorthand | encoder node `Internal.Encoder.ForceKeyFrames` | **DONE** (B.4-B.5). |
+| `SAR` | authoring shorthand | encoder node `Internal.Encoder.SAR` | **DONE** (B.4-B.5). |
+| `DAR` | authoring shorthand | encoder node `Internal.Encoder.DAR` | **DONE** (B.4-B.5). Mutually exclusive with `SAR` (validator). |
+| `EncoderTimeBase` | authoring shorthand | encoder node `Internal.Encoder.EncoderTimeBase` | **DONE** (B.4-B.5). |
+| `FieldOrder` | authoring shorthand | encoder node `Internal.Encoder.FieldOrder` | **DONE** (B.4-B.5). |
+| `InterlacedEncode` | authoring shorthand | encoder node `Internal.Encoder.Interlaced` | **DONE** (B.4-B.5). |
 | `Color` | node-local (encoder) | encoder node `Internal.Color` | ColorMetadata is stamped onto the encoder's codecpar before WriteHeader. Move from sink to encoder node ownership during lowering. |
 | `HDR` | node-local (encoder) | encoder node `Internal.HDR` | Same justification as `Color` — written to coded_side_data on the encoded stream. |
 
@@ -162,7 +162,7 @@ config after normalization.
 | `Params` | node-local | node | After Milestone B, `Params` contains **only** real AVOptions / user filter args. The `__*` sentinel keys move to `NodeDef.Internal`. `encoderReservedParams` filtering disappears. |
 | `Internal` (new) | node-local | node | Typed sub-struct introduced in Milestone B. Per-kind variants (encoder, filter, source, sink) hold the lowered shorthand fields and the `Generated` provenance metadata. |
 | `ErrorPolicy` | node-local | node | Already correctly scoped. |
-| `Threads` | node-local | filter node | Already correctly scoped; wins over `Config.FilterComplexThreads`. After Milestone B, the default lives in `Internal.Threads`, set by normalization. |
+| `Threads` | node-local | filter node `Internal.Filter.Threads` | **DONE** (B.4-B.5). Already correctly scoped; wins over `Config.FilterComplexThreads`. |
 | `OutputMediaType` | node-local | node | Already correctly scoped. |
 
 ---

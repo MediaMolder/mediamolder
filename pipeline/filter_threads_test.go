@@ -3,11 +3,15 @@
 
 package pipeline
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/MediaMolder/MediaMolder/graph"
+)
 
 // Wave 7 #38: per-graph thread cap propagation. Per-node `Threads`
 // wins over the pipeline-wide `FilterComplexThreads`, both surface
-// as the `__filter_threads` sentinel in graph.NodeDef.Params, and
+// on graph.NodeDef.Internal.Filter.Threads (Milestone B), and
 // non-filter node types are not annotated.
 func TestConfigToGraphDef_FilterThreadsPropagation(t *testing.T) {
 	cfg := &Config{
@@ -31,22 +35,22 @@ func TestConfigToGraphDef_FilterThreadsPropagation(t *testing.T) {
 
 	def := configToGraphDef(cfg)
 
-	byID := make(map[string]map[string]any)
+	byID := make(map[string]graph.NodeDef)
 	for _, n := range def.Nodes {
-		byID[n.ID] = n.Params
+		byID[n.ID] = n
 	}
 
 	// scale: pipeline-wide cap → 3
-	if v, _ := byID["scale"]["__filter_threads"].(int); v != 3 {
-		t.Errorf("scale __filter_threads = %v, want 3", byID["scale"]["__filter_threads"])
+	if fi := byID["scale"].Internal.Filter; fi == nil || fi.Threads != 3 {
+		t.Errorf("scale Internal.Filter = %+v, want Threads=3", fi)
 	}
 	// crop: per-node override → 8
-	if v, _ := byID["crop"]["__filter_threads"].(int); v != 8 {
-		t.Errorf("crop __filter_threads = %v, want 8", byID["crop"]["__filter_threads"])
+	if fi := byID["crop"].Internal.Filter; fi == nil || fi.Threads != 8 {
+		t.Errorf("crop Internal.Filter = %+v, want Threads=8", fi)
 	}
 	// encoder: must NOT be annotated
-	if _, ok := byID["enc"]["__filter_threads"]; ok {
-		t.Errorf("encoder node should not carry __filter_threads, got %v", byID["enc"])
+	if fi := byID["enc"].Internal.Filter; fi != nil {
+		t.Errorf("encoder node should not carry Internal.Filter, got %+v", fi)
 	}
 }
 
@@ -68,8 +72,8 @@ func TestConfigToGraphDef_FilterThreadsAbsent(t *testing.T) {
 
 	def := configToGraphDef(cfg)
 	for _, n := range def.Nodes {
-		if _, ok := n.Params["__filter_threads"]; ok {
-			t.Errorf("node %q should not carry __filter_threads, got %v", n.ID, n.Params)
+		if n.Internal.Filter != nil && n.Internal.Filter.Threads != 0 {
+			t.Errorf("node %q should not carry Internal.Filter.Threads, got %d", n.ID, n.Internal.Filter.Threads)
 		}
 	}
 }
