@@ -9,6 +9,15 @@ This document applies the **C4 Model** (Context, Containers, Components, Code) �
 > field as node-local, authoring shorthand, muxer-owned, true global, or
 > deferred. Drives the normalization boundary work tracked in
 > `private_local/normalization_plan_revised.md`.
+>
+> **Normalization boundary:** `pipeline.NormalizeConfig(cfg) → (*graph.Def, []NormalizeWarning, error)`
+> is the single entry point that lowers an authoring `pipeline.Config`
+> into the executable `graph.Def` consumed by `graph.Build` →
+> `graph.Compile` → `runtime.Scheduler`. `runGraph` calls it in
+> `pipeline/engine.go` and surfaces warnings on the existing pipeline
+> events channel. The function is currently a thin wrapper around
+> `configToGraphDef`; subsequent commits move all `__*` sentinel
+> lowering behind it.
 
 ---
 

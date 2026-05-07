@@ -886,8 +886,21 @@ func (p *Pipeline) runGraph(ctx context.Context) (runErr error) {
 		return fmt.Errorf("resolve assets: %w", err)
 	}
 
-	// 1. Convert pipeline config → graph definition → validated DAG.
-	def := configToGraphDef(cfg)
+	// 1. Normalize: lower the authoring config to an executable
+	// graph.Def. NormalizeConfig is the single boundary between
+	// FFmpeg-style shorthand on Config (codec_video, audio_sync,
+	// pass, force_key_frames, ...) and the node-local executable
+	// graph the runtime consumes. See docs/field-ownership.md.
+	def, warnings, err := NormalizeConfig(cfg)
+	if err != nil {
+		return fmt.Errorf("normalize config: %w", err)
+	}
+	for _, w := range warnings {
+		p.events.Post(ErrorEvent{
+			Err:  fmt.Errorf("normalize warning [%s] %s: %s", w.Code, w.Path, w.Message),
+			Time: time.Now(),
+		})
+	}
 	dag, err := graph.Build(def)
 	if err != nil {
 		return fmt.Errorf("build graph: %w", err)

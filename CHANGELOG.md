@@ -6,6 +6,19 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 ## [Unreleased]
 
 ### Added
+- **`pipeline.NormalizeConfig` boundary.** New
+  `pipeline.NormalizeConfig(cfg) (*graph.Def, []NormalizeWarning, error)`
+  is the single, deterministic entry point for lowering an authoring
+  `pipeline.Config` into the executable `graph.Def` the runtime
+  consumes. `runGraph` now goes through it and surfaces any returned
+  warnings as `ErrorEvent`s on the existing pipeline events channel.
+  Today the function is a thin wrapper around `configToGraphDef`;
+  subsequent commits move the `__*` sentinel-key lowering behind it
+  and replace the sentinels with a typed `NodeDef.Internal` sub-struct
+  (Milestone B of `private_local/normalization_plan_revised.md`).
+  Three regression tests in
+  [pipeline/normalize_test.go](pipeline/normalize_test.go) gate the
+  no-mutation, determinism, and shorthand-coverage contracts.
 - **Field ownership classification.** New
   [docs/field-ownership.md](docs/field-ownership.md) classifies every
   `Config` / `GlobalOptions` / `Output` / `Input` field as node-local,
