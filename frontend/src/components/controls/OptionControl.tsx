@@ -108,6 +108,12 @@ export function OptionControl({ option, value, onChange, filter, padHints }: Opt
       value={value}
       placeholder={defaultDisplay(option)}
       onChange={(e) => onChange(e.target.value)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          (e.currentTarget as HTMLInputElement).blur();
+        }
+      }}
     />
   );
 }

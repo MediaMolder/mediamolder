@@ -444,6 +444,7 @@ function RateControlGroup({
             value={bpsToKbpsInput(bVal)}
             placeholder={bpsToKbpsInput(defaultDisplay(bitRate)) || '5000'}
             onChange={(e) => setBitRateValue(kbpsInputToBps(e.target.value))}
+            onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); (e.currentTarget as HTMLInputElement).blur(); } }}
           />
         </>
       )}
@@ -465,6 +466,7 @@ function RateControlGroup({
               value={crfVal}
               placeholder={meta.default}
               onChange={(e) => setParam(crf.name, e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); (e.currentTarget as HTMLInputElement).blur(); } }}
             />
           </>
         );
@@ -487,6 +489,7 @@ function RateControlGroup({
               value={qpVal}
               placeholder={meta.default}
               onChange={(e) => setParam(qp.name, e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); (e.currentTarget as HTMLInputElement).blur(); } }}
             />
           </>
         );
