@@ -4,6 +4,12 @@
 
 This document applies the **C4 Model** (Context, Containers, Components, Code) — a lightweight, hierarchical approach to software architecture documentation created by Simon Brown. It is ideal for this project because the codebase is well-structured into clear layers (CLI, HTTP, graph, runtime, processors, AV bindings, frontend).
 
+> **See also:** [field-ownership.md](../field-ownership.md) — authoritative
+> classification of every `Config` / `Output` / `GlobalOptions` / `Input`
+> field as node-local, authoring shorthand, muxer-owned, true global, or
+> deferred. Drives the normalization boundary work tracked in
+> `private_local/normalization_plan_revised.md`.
+
 ---
 
 ## Level 1: System Context Diagram
