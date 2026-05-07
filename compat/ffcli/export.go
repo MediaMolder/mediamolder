@@ -443,14 +443,23 @@ func (e *exporter) buildOutput(out pipeline.Output) {
 		e.add("-dn")
 	}
 
-	// Codec selection.
-	if out.CodecVideo != "" {
+	// Codec selection — explicit graph nodes (encoder or copy) take
+	// precedence over the Output-level codec fields, which may be
+	// stale when the user rewires the graph in the GUI.
+	gc := e.graphCodecs(out.ID)
+	if v := gc["v"]; v != "" {
+		e.add("-c:v", v)
+	} else if out.CodecVideo != "" {
 		e.add("-c:v", out.CodecVideo)
 	}
-	if out.CodecAudio != "" {
+	if v := gc["a"]; v != "" {
+		e.add("-c:a", v)
+	} else if out.CodecAudio != "" {
 		e.add("-c:a", out.CodecAudio)
 	}
-	if out.CodecSubtitle != "" {
+	if v := gc["s"]; v != "" {
+		e.add("-c:s", v)
+	} else if out.CodecSubtitle != "" {
 		e.add("-c:s", out.CodecSubtitle)
 	}
 
@@ -469,6 +478,11 @@ func (e *exporter) buildOutput(out pipeline.Output) {
 	e.buildEncoderParams("v", out.EncoderParamsVideo)
 	e.buildEncoderParams("a", out.EncoderParamsAudio)
 	e.buildEncoderParams("s", out.EncoderParamsSubtitle)
+
+	// Explicit encoder nodes authored in the GUI store codec + AVOptions
+	// on the node itself rather than on Output.EncoderParams*.  Emit them
+	// here so the CLI round-trip is complete.
+	e.buildEncoderNodes(out)
 
 	// Per-stream stream specs (metadata + disposition + encoder overrides).
 	for _, ss := range out.Streams {
@@ -769,6 +783,101 @@ func (e *exporter) buildEncoderParams(stream string, params map[string]any) {
 		v := params[k]
 		flag := fmt.Sprintf("-%s:%s", k, stream)
 		e.add(flag, fmt.Sprint(v))
+	}
+}
+
+// graphCodecs returns a map from stream-type letter ("v","a","s") to the
+// codec string that an explicit graph node (encoder or copy) wired to
+// outID dictates.  Copy nodes always map to "copy"; encoder nodes read
+// from node.Params["codec"].  Returns nil when no explicit nodes exist.
+func (e *exporter) graphCodecs(outID string) map[string]string {
+	if len(e.cfg.Graph.Nodes) == 0 {
+		return nil
+	}
+	nodeByID := make(map[string]pipeline.NodeDef, len(e.cfg.Graph.Nodes))
+	for _, n := range e.cfg.Graph.Nodes {
+		nodeByID[n.ID] = n
+	}
+	result := make(map[string]string)
+	for _, edge := range e.cfg.Graph.Edges {
+		if portNode(edge.To) != outID {
+			continue
+		}
+		n, ok := nodeByID[portNode(edge.From)]
+		if !ok {
+			continue
+		}
+		typ := portType(edge.To, edge.Type)
+		switch n.Type {
+		case "copy":
+			result[typ] = "copy"
+		case "encoder":
+			if codec, _ := n.Params["codec"].(string); codec != "" {
+				result[typ] = codec
+			}
+		}
+	}
+	if len(result) == 0 {
+		return nil
+	}
+	return result
+}
+
+// buildEncoderNodes emits AVOption flags sourced from explicit encoder nodes
+// that are wired into out's sink in the graph.  Codec flags are handled
+// separately by graphCodecs / the codec-selection block in buildOutput.
+// Copy nodes have no params to emit, so they are skipped here.
+func (e *exporter) buildEncoderNodes(out pipeline.Output) {
+	if len(e.cfg.Graph.Nodes) == 0 {
+		return
+	}
+	nodeByID := make(map[string]pipeline.NodeDef, len(e.cfg.Graph.Nodes))
+	for _, n := range e.cfg.Graph.Nodes {
+		nodeByID[n.ID] = n
+	}
+	for _, edge := range e.cfg.Graph.Edges {
+		if portNode(edge.To) != out.ID {
+			continue
+		}
+		n, ok := nodeByID[portNode(edge.From)]
+		if !ok || n.Type != "encoder" {
+			continue
+		}
+		typ := portType(edge.To, edge.Type)
+		e.buildEncoderNodeParams(typ, n.Params)
+	}
+}
+
+// buildEncoderNodeParams emits per-stream AVOption flags from an encoder
+// node's Params map.  Keys that are consumed internally by the runtime
+// (codec, width, height, bitrate, threads, thread_type, and any
+// __-prefixed sentinel) are skipped.
+func (e *exporter) buildEncoderNodeParams(stream string, params map[string]any) {
+	if len(params) == 0 {
+		return
+	}
+	keys := make([]string, 0, len(params))
+	for k := range params {
+		if k == "codec" || strings.HasPrefix(k, "__") {
+			continue
+		}
+		switch k {
+		case "width", "height", "bitrate", "threads", "thread_type":
+			continue
+		}
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		v := params[k]
+		if v == nil {
+			continue
+		}
+		s := fmt.Sprint(v)
+		if s == "" {
+			continue
+		}
+		e.add(fmt.Sprintf("-%s:%s", k, stream), s)
 	}
 }
 

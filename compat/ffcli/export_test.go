@@ -526,3 +526,134 @@ func TestExport_FormatOutput(t *testing.T) {
 	r := mustExport(t, cfg)
 	requireArg(t, r.Command, "-f", "mpegts")
 }
+
+// TestExport_ExplicitEncoderNodeParams verifies that AVOption flags set on an
+// explicit encoder graph node (e.g. crf, preset) are included in the exported
+// command even when Output.EncoderParamsVideo is not populated.
+func TestExport_ExplicitEncoderNodeParams(t *testing.T) {
+	cfg := &pipeline.Config{
+		SchemaVersion: "1.2",
+		Inputs:        []pipeline.Input{{ID: "in0", URL: "input.mp4"}},
+		Graph: pipeline.GraphDef{
+			Nodes: []pipeline.NodeDef{
+				{
+					ID:   "enc0",
+					Type: "encoder",
+					Params: map[string]any{
+						"codec":       "libx264",
+						"crf":         "22",
+						"preset":      "slow",
+						"__fps_mode":  "vfr",  // internal sentinel — must NOT appear
+						"bitrate":     "0",    // reserved — must NOT appear
+						"threads":     "4",    // reserved — must NOT appear
+						"thread_type": "auto", // reserved — must NOT appear
+					},
+				},
+			},
+			Edges: []pipeline.EdgeDef{
+				{From: "in0:v:0", To: "enc0:in:0", Type: "video"},
+				{From: "enc0:v", To: "out0:v", Type: "video"},
+			},
+		},
+		Outputs: []pipeline.Output{{ID: "out0", URL: "out.mp4"}},
+	}
+	r := mustExport(t, cfg)
+
+	requireArg(t, r.Command, "-c:v", "libx264")
+	requireArg(t, r.Command, "-crf:v", "22")
+	requireArg(t, r.Command, "-preset:v", "slow")
+
+	// Reserved / internal keys must be absent.
+	requireNoFlag(t, r.Command, "-__fps_mode:v")
+	requireNoFlag(t, r.Command, "-bitrate:v")
+	requireNoFlag(t, r.Command, "-threads:v")
+	requireNoFlag(t, r.Command, "-thread_type:v")
+	requireNoFlag(t, r.Command, "-codec:v")
+}
+
+// TestExport_ExplicitEncoderNode_CodecAlreadyOnOutput verifies that when
+// Output.CodecVideo is already set (e.g. an imported CLI job), the codec from
+// the encoder node does not produce a duplicate -c:v flag.
+func TestExport_ExplicitEncoderNode_CodecAlreadyOnOutput(t *testing.T) {
+	cfg := &pipeline.Config{
+		SchemaVersion: "1.2",
+		Inputs:        []pipeline.Input{{ID: "in0", URL: "input.mp4"}},
+		Graph: pipeline.GraphDef{
+			Nodes: []pipeline.NodeDef{
+				{
+					ID:   "enc0",
+					Type: "encoder",
+					Params: map[string]any{
+						"codec":  "libx264",
+						"preset": "medium",
+					},
+				},
+			},
+			Edges: []pipeline.EdgeDef{
+				{From: "enc0:v", To: "out0:v", Type: "video"},
+			},
+		},
+		Outputs: []pipeline.Output{{ID: "out0", URL: "out.mp4", CodecVideo: "libx264"}},
+	}
+	r := mustExport(t, cfg)
+
+	// -c:v should appear exactly once.
+	count := strings.Count(r.Command, "-c:v")
+	if count != 1 {
+		t.Errorf("expected exactly one -c:v flag; got %d in %q", count, r.Command)
+	}
+	requireArg(t, r.Command, "-preset:v", "medium")
+}
+
+// TestExport_CopyNode_Video verifies that an explicit copy node wired to a
+// video output produces -c:v copy, even when out.CodecVideo is stale.
+func TestExport_CopyNode_Video(t *testing.T) {
+	cfg := &pipeline.Config{
+		SchemaVersion: "1.2",
+		Inputs:        []pipeline.Input{{ID: "in0", URL: "input.mp4"}},
+		Graph: pipeline.GraphDef{
+			Nodes: []pipeline.NodeDef{
+				{ID: "copy_video", Type: "copy"},
+			},
+			Edges: []pipeline.EdgeDef{
+				{From: "in0:v:0", To: "copy_video", Type: "video"},
+				{From: "copy_video:v", To: "out0:v", Type: "video"},
+			},
+		},
+		// Stale codec from a previous encoder node — must be overridden by copy.
+		Outputs: []pipeline.Output{{ID: "out0", URL: "out.mp4", CodecVideo: "libx264"}},
+	}
+	r := mustExport(t, cfg)
+
+	requireArg(t, r.Command, "-c:v", "copy")
+	// The stale -c:v libx264 must NOT appear.
+	if strings.Contains(r.Command, "libx264") {
+		t.Errorf("stale codec libx264 should not appear in %q", r.Command)
+	}
+}
+
+// TestExport_CopyNode_VideoAudio verifies mixed: copy video + explicit AAC encoder.
+func TestExport_CopyNode_VideoAudio(t *testing.T) {
+	cfg := &pipeline.Config{
+		SchemaVersion: "1.2",
+		Inputs:        []pipeline.Input{{ID: "in0", URL: "input.mp4"}},
+		Graph: pipeline.GraphDef{
+			Nodes: []pipeline.NodeDef{
+				{ID: "copy_video", Type: "copy"},
+				{ID: "enc_audio", Type: "encoder", Params: map[string]any{"codec": "aac"}},
+			},
+			Edges: []pipeline.EdgeDef{
+				{From: "in0:v:0", To: "copy_video", Type: "video"},
+				{From: "copy_video:v", To: "out0:v", Type: "video"},
+				{From: "in0:a:0", To: "enc_audio:in:0", Type: "audio"},
+				{From: "enc_audio:a", To: "out0:a", Type: "audio"},
+			},
+		},
+		Outputs: []pipeline.Output{{ID: "out0", URL: "out.mp4"}},
+	}
+	r := mustExport(t, cfg)
+
+	requireArg(t, r.Command, "-c:v", "copy")
+	requireArg(t, r.Command, "-c:a", "aac")
+}
+
