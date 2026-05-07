@@ -261,8 +261,45 @@ fields, and `encoderReservedParams` disappears.
 
 ## What changes in Milestone C
 
-The invariant test clears every "authoring shorthand" field on the
-executable copy of `Output` and asserts byte-identical output. The
-grep audit ensures runtime code (`graphRunner`, `createEncoder`, sink
-open) reads only "muxer-owned" fields from `Output` and only
-"node-local" fields from graph nodes.
+**Status: DONE.** Three slices land the architectural promise that
+runtime code never reads authoring shorthand off `Output`.
+
+- **C.1 — Ambiguity warnings.** `NormalizeConfig` emits
+  `compat.output_encoder_shorthand_ignored` whenever an `Output`
+  carries any of the "authoring shorthand" rows above alongside an
+  explicit encoder or `copy` node that already feeds the same edge.
+  The explicit node wins; the warning surfaces the silently-dropped
+  shorthand. Synthetic encoders inserted by `expandImplicitEncoders`
+  are skipped via `Internal.Generated.By` provenance. Path is the
+  JSON pointer of the offending field (e.g.
+  `outputs[0].codec_video`, `outputs[0].streams[1].encoder`).
+  Warnings flow to the GUI via the existing `EventBus` `ErrorEvent`
+  path in [pipeline/engine.go](../pipeline/engine.go) `runGraph`.
+- **C.2 — Invariant.**
+  [pipeline/normalize_invariant_test.go](../pipeline/normalize_invariant_test.go)
+  exercises every shorthand row, verifies the resulting `*graph.Def`
+  carries typed `Internal.Encoder` / `Internal.Filter` /
+  `Internal.Generated`, and runs a control with all shorthand
+  cleared (zero ambiguity warnings expected). The legacy
+  `pipeline/engine.go::runLinear` is the **single intentional
+  exemption**: it bypasses `NormalizeConfig` and reads
+  `Output.CodecVideo` / `GlobalOptions.Threads` directly. The
+  retire-or-keep decision is tracked as F7 in the followups
+  roadmap.
+- **C.3 — Drop runtime fallback + grep audit.**
+  `graphRunner.createEncoder` no longer falls back to scanning
+  sinks for `Output.CodecVideo / CodecAudio` when
+  `node.Params["codec"]` is empty; it fails fast. After Milestone B
+  every synthesised encoder node has `codec` in `Params`. The
+  audit grep
+  ```
+  grep -rn -E '\bout\.(CodecVideo|CodecAudio|CodecSubtitle|EncoderParams[A-Z]\w+|FPSMode|AudioSync|ForceKeyFrames|PassLogFile|EncoderTimeBase|FieldOrder|InterlacedEncode)\b|outCfg\.(CodecVideo|CodecAudio|FPSMode)' \
+    pipeline/ runtime/ graph/ | grep -v _test.go
+  ```
+  shows only the two documented `runLinear` exemptions in
+  [pipeline/engine.go](../pipeline/engine.go). Validation helpers
+  in [pipeline/encoder_timing.go](../pipeline/encoder_timing.go)
+  and [pipeline/color_hdr.go](../pipeline/color_hdr.go) also read
+  these fields, but they run at config-parse time, before
+  `NormalizeConfig`, so they are not runtime reads.
+
