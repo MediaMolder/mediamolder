@@ -657,3 +657,44 @@ func TestExport_CopyNode_VideoAudio(t *testing.T) {
 	requireArg(t, r.Command, "-c:a", "aac")
 }
 
+// TestExport_GraphMaps_MultiInput verifies that -map flags are derived from
+// the graph edges when inputs differ per stream type.  In the scenario below,
+// video comes from a video-only Y4M source (in0) and audio comes from a
+// separate AVI (in1).  The correct command must emit -map 0:v:0 and
+// -map 1:a:0 — not a cross-product of both inputs × both stream types.
+func TestExport_GraphMaps_MultiInput(t *testing.T) {
+	cfg := &pipeline.Config{
+		SchemaVersion: "1.2",
+		Inputs: []pipeline.Input{
+			{ID: "in0", URL: "video.y4m"},
+			{ID: "in1", URL: "audio.avi"},
+		},
+		Graph: pipeline.GraphDef{
+			Nodes: []pipeline.NodeDef{
+				{ID: "enc_video", Type: "encoder", Params: map[string]any{"codec": "libx264"}},
+				{ID: "enc_audio", Type: "encoder", Params: map[string]any{"codec": "aac"}},
+			},
+			Edges: []pipeline.EdgeDef{
+				{From: "in0:v:0", To: "enc_video:in:0", Type: "video"},
+				{From: "enc_video:v", To: "out0:v", Type: "video"},
+				{From: "in1:a:0", To: "enc_audio:in:0", Type: "audio"},
+				{From: "enc_audio:a", To: "out0:a", Type: "audio"},
+			},
+		},
+		Outputs: []pipeline.Output{{ID: "out0", URL: "out.mp4"}},
+	}
+	r := mustExport(t, cfg)
+
+	requireArg(t, r.Command, "-map", "0:v:0")
+	requireArg(t, r.Command, "-map", "1:a:0")
+	// Must NOT map the unconnected streams.
+	if strings.Contains(r.Command, "0:a:") {
+		t.Errorf("unexpected -map for in0 audio in %q", r.Command)
+	}
+	if strings.Contains(r.Command, "1:v:") {
+		t.Errorf("unexpected -map for in1 video in %q", r.Command)
+	}
+	requireArg(t, r.Command, "-c:v", "libx264")
+	requireArg(t, r.Command, "-c:a", "aac")
+}
+

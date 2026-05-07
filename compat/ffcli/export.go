@@ -717,6 +717,11 @@ func (e *exporter) buildOutput(out pipeline.Output) {
 // be recovered from the Config (the data structure stores mappings
 // globally, not per output), so we skip -map args and rely on FFmpeg's
 // implicit stream selection, noting the limitation once.
+//
+// When the config contains a processing graph the routing is derived by
+// walking graph edges backward from the output node; this is more
+// accurate than Input.Streams selects because the graph edges encode
+// exactly which stream type of which input feeds the output.
 func (e *exporter) buildMaps(out pipeline.Output) {
 	// Only emit maps for single-output configs; multi-output mapping is
 	// not recoverable from the Config.
@@ -742,6 +747,13 @@ func (e *exporter) buildMaps(out pipeline.Output) {
 		}
 		return
 	}
+	// Prefer graph-derived maps when the config has a processing graph.
+	if args := e.graphMaps(out.ID); args != nil {
+		for _, arg := range args {
+			e.add("-map", arg)
+		}
+		return
+	}
 	// Single output: emit explicit selects only (Optional=false means
 	// they came from explicit -map args, not the parser defaults).
 	for iIdx, in := range e.cfg.Inputs {
@@ -764,6 +776,64 @@ func (e *exporter) buildMaps(out pipeline.Output) {
 			e.add("-map", arg)
 		}
 	}
+}
+
+// graphMaps walks the processing graph backward from outID and returns the
+// -map argument strings (e.g. "0:v:0", "1:a:0") for every input stream that
+// actually feeds the output.  The returned slice is sorted for deterministic
+// output (by input index, then stream type letter, then track index).
+// Returns nil when no graph edges are present so the caller can fall back to
+// the Input.Streams-based path.
+func (e *exporter) graphMaps(outID string) []string {
+	if len(e.cfg.Graph.Edges) == 0 {
+		return nil
+	}
+	// Build input ID → index map.
+	inputIdx := make(map[string]int, len(e.cfg.Inputs))
+	for i, in := range e.cfg.Inputs {
+		inputIdx[in.ID] = i
+	}
+	// Build reverse adjacency: nodeID → edges whose To-node is that ID.
+	reverse := make(map[string][]pipeline.EdgeDef, len(e.cfg.Graph.Edges))
+	for _, edge := range e.cfg.Graph.Edges {
+		toNode := portNode(edge.To)
+		reverse[toNode] = append(reverse[toNode], edge)
+	}
+	// BFS backward from the output node.
+	visited := make(map[string]bool)
+	queue := []string{outID}
+	seen := make(map[string]bool)
+	var args []string
+	for len(queue) > 0 {
+		cur := queue[0]
+		queue = queue[1:]
+		if visited[cur] {
+			continue
+		}
+		visited[cur] = true
+		for _, edge := range reverse[cur] {
+			fromNode := portNode(edge.From)
+			if idx, isInput := inputIdx[fromNode]; isInput {
+				// From format: "inputID:typeLetter:trackIndex"
+				parts := strings.SplitN(edge.From, ":", 3)
+				if len(parts) != 3 {
+					continue
+				}
+				arg := fmt.Sprintf("%d:%s:%s", idx, parts[1], parts[2])
+				if !seen[arg] {
+					seen[arg] = true
+					args = append(args, arg)
+				}
+			} else if !visited[fromNode] {
+				queue = append(queue, fromNode)
+			}
+		}
+	}
+	if len(args) == 0 {
+		return nil
+	}
+	sort.Strings(args)
+	return args
 }
 
 // buildEncoderParams flattens the encoder params map into per-stream flags.

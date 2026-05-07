@@ -26,9 +26,13 @@ interface Props {
    *  Wave 8 #45 multi-output tab strip so the user can flip between
    *  outputs without going back to the canvas. */
   onSelectNode?: (id: string) => void;
+  /** Called when probe results arrive for an input node.  Kept separate from
+   *  onChange so the caller can use a functional setNodes update and avoid
+   *  overwriting concurrent URL changes made by the same event batch. */
+  onProbedData: (nodeId: string, probed: ProbedStream[] | undefined) => void;
 }
 
-export function Inspector({ node, nodes, edges, onChange, onDelete, onSelectNode }: Props) {
+export function Inspector({ node, nodes, edges, onChange, onDelete, onSelectNode, onProbedData }: Props) {
   if (!node) {
     return (
       <div className="inspector">
@@ -85,18 +89,7 @@ export function Inspector({ node, nodes, edges, onChange, onDelete, onSelectNode
           def={ref.def}
           probed={node.data.probed}
           onChange={(def) => onChange(updateRef(node, { kind: 'input', def }, def.id, displayUrl(def.url)))}
-          onProbed={(probed) =>
-            onChange({
-              ...node,
-              data: {
-                ...node.data,
-                probed,
-                streams: probed
-                  ? [...new Set(probed.map((s) => s.type as string))]
-                  : undefined,
-              },
-            } as FlowNode)
-          }
+          onProbed={(probed) => onProbedData(node.id, probed)}
         />
       )}
       {ref.kind === 'output' && (

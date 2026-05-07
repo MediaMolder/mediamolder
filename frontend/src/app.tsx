@@ -39,7 +39,7 @@ import { spawnNodeFrom, type PaletteEntry } from './lib/spawn';
 import { useJobRun } from './lib/useJobRun';
 import { inferEdgeAttributes, summariseAttributes } from './lib/streamAttrs';
 import { fetchCatalog, indexStreams } from './lib/nodeCatalog';
-import type { JobConfig, StreamType } from './lib/jobTypes';
+import type { JobConfig, ProbedStream, StreamType } from './lib/jobTypes';
 
 const NODE_TYPES = { mmNode: MMNode };
 const EDGE_TYPES = { mmEdge: MMEdge };
@@ -295,6 +295,32 @@ function Editor() {
     setNodes((ns) => ns.map((n) => (n.id === next.id ? next : n)));
     markDirty();
     // markDirty is stable (no deps), so leaving it out of deps is fine
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const onProbedData = useCallback((nodeId: string, probed: ProbedStream[] | undefined) => {
+    const streams = probed
+      ? [...new Set(probed.map((s) => s.type as string))]
+      : undefined;
+    setNodes((ns) => ns.map((n) => {
+      if (n.id !== nodeId) return n;
+      return {
+        ...n,
+        data: {
+          ...n.data,
+          probed,
+          streams,
+        },
+      };
+    }));
+    // Remove edges whose sourceHandle is no longer in the probed stream set.
+    // (streams === undefined means unrestricted — keep all edges.)
+    if (streams !== undefined) {
+      setEdges((es) =>
+        es.filter((e) => e.source !== nodeId || e.sourceHandle == null || streams.includes(e.sourceHandle)),
+      );
+    }
+    markDirty();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -830,7 +856,7 @@ function Editor() {
       </div>
 
       {showInspector && (
-      <Inspector node={selectedNode} nodes={nodes} edges={edges} onChange={onNodeUpdate} onDelete={onNodeDelete} onSelectNode={setSelectedId} />
+      <Inspector node={selectedNode} nodes={nodes} edges={edges} onChange={onNodeUpdate} onDelete={onNodeDelete} onSelectNode={setSelectedId} onProbedData={onProbedData} />
       )}
       <RunDock visible={showRunPanel}>
         <RunPanel run={run} nodeKinds={nodeKinds} onClose={() => setShowRunPanel(false)} />
