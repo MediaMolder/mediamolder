@@ -192,11 +192,8 @@ func (e *exporter) buildInput(idx int, in pipeline.Input) {
 	if v, ok := in.Options["to"]; ok {
 		e.add("-to", fmt.Sprint(v))
 	}
-	if in.MapMetadata {
-		// -map_metadata is per-output in FFmpeg; we approximate it as
-		// a note on the first matching output. No CLI flag before -i.
-		// It is handled when building outputs.
-	}
+	// -map_metadata is per-output in FFmpeg; it is emitted when building
+	// outputs (addOutputFlags), not before -i.
 	e.add("-i", in.URL)
 }
 
@@ -237,7 +234,6 @@ func graphToFilterComplex(cfg *pipeline.Config) (string, []string) {
 	}
 
 	// Build adjacency: which edges feed into each node (by node ID).
-	type edgeKey struct{ from, to string }
 	inEdges := map[string][]pipeline.EdgeDef{}
 	outEdges := map[string][]pipeline.EdgeDef{}
 	for _, edge := range edges {
