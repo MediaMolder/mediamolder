@@ -48,11 +48,15 @@ func TestResolveParamAssets_UnknownAsset(t *testing.T) {
 	}
 }
 
-// TestResolveParamAssets_AbsolutePath verifies that an existing absolute
-// path asset is resolved correctly.
+// TestResolveParamAssets_AbsolutePath verifies that an absolute-path asset
+// that resides within MEDIAMOLDER_ASSET_PATH is resolved correctly.
 func TestResolveParamAssets_AbsolutePath(t *testing.T) {
-	// Create a temporary file so os.Stat succeeds.
-	f, err := os.CreateTemp(t.TempDir(), "asset*.ttf")
+	// Place the asset in a temp dir and expose that dir via the search path
+	// so the containment check passes for absolute paths.
+	dir := t.TempDir()
+	t.Setenv("MEDIAMOLDER_ASSET_PATH", dir)
+
+	f, err := os.CreateTemp(dir, "asset*.ttf")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -142,7 +146,10 @@ func TestResolveConfigAssets_NoAssets(t *testing.T) {
 // TestResolveConfigAssets_Substitution verifies params are resolved in
 // a returned copy of cfg, leaving the original untouched.
 func TestResolveConfigAssets_Substitution(t *testing.T) {
-	f, err := os.CreateTemp(t.TempDir(), "font*.ttf")
+	dir := t.TempDir()
+	t.Setenv("MEDIAMOLDER_ASSET_PATH", dir)
+
+	f, err := os.CreateTemp(dir, "font*.ttf")
 	if err != nil {
 		t.Fatal(err)
 	}

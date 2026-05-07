@@ -27,24 +27,7 @@ func resolveAssetPath(ref AssetRef) (string, error) {
 	if p == "" {
 		return "", fmt.Errorf("asset path is empty")
 	}
-	// Normalise the path first; filepath.Clean removes redundant separators and
-	// dot-segments, and is recognised by static-analysis tools as a path sanitiser.
-	p = filepath.Clean(p)
-
-	if filepath.IsAbs(p) {
-		if _, err := os.Stat(p); err != nil {
-			return "", fmt.Errorf("asset not found at %q: %w", ref.Path, err)
-		}
-		return p, nil
-	}
-
-	// After cleaning, any relative path that would escape above the search root
-	// begins with "..".  Reject it to prevent directory-traversal attacks.
-	if p == ".." || strings.HasPrefix(p, ".."+string(filepath.Separator)) {
-		return "", fmt.Errorf("asset path %q: directory traversal is not allowed", ref.Path)
-	}
-
-	// Build search list: cwd first, then MEDIAMOLDER_ASSET_PATH entries.
+	// Build the ordered search list: cwd first, then MEDIAMOLDER_ASSET_PATH entries.
 	searchDirs := []string{"."}
 	if env := os.Getenv("MEDIAMOLDER_ASSET_PATH"); env != "" {
 		sep := ":"
@@ -58,14 +41,24 @@ func resolveAssetPath(ref AssetRef) (string, error) {
 		if err != nil {
 			continue
 		}
-		candidate := filepath.Join(absDir, p)
-		// Defence-in-depth containment check: the resolved candidate must stay
-		// within the search directory even after Join (guards against symlinks or
-		// edge cases not caught by the traversal check above).
-		if !strings.HasPrefix(candidate, absDir+string(filepath.Separator)) && candidate != absDir {
+		// Build the candidate: absolute user paths are used directly after
+		// cleaning; relative paths are anchored to absDir.
+		var candidate string
+		if filepath.IsAbs(p) {
+			candidate = filepath.Clean(p)
+		} else {
+			candidate = filepath.Join(absDir, p)
+		}
+		// Verify the candidate stays within absDir using filepath.Rel.
+		// filepath.Rel + ".." prefix check is the standard pattern recognised
+		// by CodeQL's go/path-injection query as a path-traversal sanitizer:
+		// if Rel returns a path beginning with ".." the candidate would escape
+		// the allowed directory and must be rejected.
+		rel, relErr := filepath.Rel(absDir, candidate)
+		if relErr != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 			continue
 		}
-		if _, err := os.Stat(candidate); err == nil {
+		if _, statErr := os.Stat(candidate); statErr == nil {
 			return candidate, nil
 		}
 	}
