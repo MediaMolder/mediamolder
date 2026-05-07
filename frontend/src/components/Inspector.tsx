@@ -9,6 +9,9 @@ import { MEDIA_FILE_EXTENSIONS } from '../lib/mediaExtensions';
 import { FileBrowser, type BrowseMode } from './FileBrowser';
 import { EncoderForm } from './EncoderForm';
 import { FilterForm } from './FilterForm';
+import { HLSForm } from './HLSForm';
+import { DASHForm } from './DASHForm';
+import { TeeForm } from './TeeForm';
 import { describeKind } from './MMNode';
 
 interface Props {
@@ -318,79 +321,126 @@ function OutputForm({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [effVideo, def.codec_tag_video]);
 
+  const isTee = def.kind === 'tee';
+
   return (
     <>
       <Field label="ID" value={def.id} onChange={(v) => onChange({ ...def, id: v })} />
-      <FileField
-        label="URL"
-        value={def.url}
-        mode="save"
-        defaultFilename="output.mp4"
-        onChange={(v) => onChange({ ...def, url: v })}
-      />
-      <Field label="Format" value={def.format ?? ''} onChange={(v) => onChange({ ...def, format: v || undefined })} />
-      <CodecRow
-        label="Codec (video)"
-        upstream={upstreamCodecs.video}
-        explicit={def.codec_video}
-        onClear={() => onChange({ ...def, codec_video: undefined })}
-        onEdit={(v) => onChange({ ...def, codec_video: v || undefined })}
-      />
-      <CodecRow
-        label="Codec (audio)"
-        upstream={upstreamCodecs.audio}
-        explicit={def.codec_audio}
-        onClear={() => onChange({ ...def, codec_audio: undefined })}
-        onEdit={(v) => onChange({ ...def, codec_audio: v || undefined })}
-      />
-      <CodecRow
-        label="Codec (subtitle)"
-        upstream={upstreamCodecs.subtitle}
-        explicit={def.codec_subtitle}
-        onClear={() => onChange({ ...def, codec_subtitle: undefined })}
-        onEdit={(v) => onChange({ ...def, codec_subtitle: v || undefined })}
-      />
-      <TagField
-        label="Codec tag (video)"
-        value={def.codec_tag_video ?? ''}
-        suggestions={tagsForVideo(effVideo)}
-        onChange={(v) => onChange({ ...def, codec_tag_video: v || undefined })}
-      />
-      <TagField
-        label="Codec tag (audio)"
-        value={def.codec_tag_audio ?? ''}
-        suggestions={tagsForAudio(effAudio)}
-        onChange={(v) => onChange({ ...def, codec_tag_audio: v || undefined })}
-      />
-      <TagField
-        label="Codec tag (subtitle)"
-        value={def.codec_tag_subtitle ?? ''}
-        suggestions={tagsForSubtitle(effSubtitle)}
-        onChange={(v) => onChange({ ...def, codec_tag_subtitle: v || undefined })}
-      />
-      <TimingFields
-        kind="output"
-        options={def.options}
-        onChange={(opts) => onChange({ ...def, options: opts })}
-      />
-      <BSFEditor
-        label="Bitstream filters (video)"
-        kind="video"
-        spec={def.bsf_video}
-        onChange={(s) => onChange({ ...def, bsf_video: s })}
-      />
-      <BSFEditor
-        label="Bitstream filters (audio)"
-        kind="audio"
-        spec={def.bsf_audio}
-        onChange={(s) => onChange({ ...def, bsf_audio: s })}
-      />
-      <BSFEditor
-        label="Bitstream filters (subtitle)"
-        kind="subtitle"
-        spec={def.bsf_subtitle}
-        onChange={(s) => onChange({ ...def, bsf_subtitle: s })}
-      />
+
+      {/* Output kind: file (default) or tee (multi-target) */}
+      <label>Output kind</label>
+      <select
+        value={def.kind ?? ''}
+        onChange={(e) => {
+          const k = e.target.value as Output['kind'];
+          onChange({ ...def, kind: k || undefined });
+        }}
+      >
+        <option value="">(default — file)</option>
+        <option value="file">file</option>
+        <option value="tee">tee (multi-output)</option>
+      </select>
+
+      {/* Regular file output: URL, format, codecs, timing, BSFs */}
+      {!isTee && (
+        <>
+          <FileField
+            label="URL"
+            value={def.url}
+            mode="save"
+            defaultFilename="output.mp4"
+            onChange={(v) => onChange({ ...def, url: v })}
+          />
+          <Field label="Format" value={def.format ?? ''} onChange={(v) => onChange({ ...def, format: v || undefined })} />
+          <CodecRow
+            label="Codec (video)"
+            upstream={upstreamCodecs.video}
+            explicit={def.codec_video}
+            onClear={() => onChange({ ...def, codec_video: undefined })}
+            onEdit={(v) => onChange({ ...def, codec_video: v || undefined })}
+          />
+          <CodecRow
+            label="Codec (audio)"
+            upstream={upstreamCodecs.audio}
+            explicit={def.codec_audio}
+            onClear={() => onChange({ ...def, codec_audio: undefined })}
+            onEdit={(v) => onChange({ ...def, codec_audio: v || undefined })}
+          />
+          <CodecRow
+            label="Codec (subtitle)"
+            upstream={upstreamCodecs.subtitle}
+            explicit={def.codec_subtitle}
+            onClear={() => onChange({ ...def, codec_subtitle: undefined })}
+            onEdit={(v) => onChange({ ...def, codec_subtitle: v || undefined })}
+          />
+          <TagField
+            label="Codec tag (video)"
+            value={def.codec_tag_video ?? ''}
+            suggestions={tagsForVideo(effVideo)}
+            onChange={(v) => onChange({ ...def, codec_tag_video: v || undefined })}
+          />
+          <TagField
+            label="Codec tag (audio)"
+            value={def.codec_tag_audio ?? ''}
+            suggestions={tagsForAudio(effAudio)}
+            onChange={(v) => onChange({ ...def, codec_tag_audio: v || undefined })}
+          />
+          <TagField
+            label="Codec tag (subtitle)"
+            value={def.codec_tag_subtitle ?? ''}
+            suggestions={tagsForSubtitle(effSubtitle)}
+            onChange={(v) => onChange({ ...def, codec_tag_subtitle: v || undefined })}
+          />
+          <TimingFields
+            kind="output"
+            options={def.options}
+            onChange={(opts) => onChange({ ...def, options: opts })}
+          />
+          <BSFEditor
+            label="Bitstream filters (video)"
+            kind="video"
+            spec={def.bsf_video}
+            onChange={(s) => onChange({ ...def, bsf_video: s })}
+          />
+          <BSFEditor
+            label="Bitstream filters (audio)"
+            kind="audio"
+            spec={def.bsf_audio}
+            onChange={(s) => onChange({ ...def, bsf_audio: s })}
+          />
+          <BSFEditor
+            label="Bitstream filters (subtitle)"
+            kind="subtitle"
+            spec={def.bsf_subtitle}
+            onChange={(s) => onChange({ ...def, bsf_subtitle: s })}
+          />
+        </>
+      )}
+
+      {/* HLS wizard — shown when format is hls */}
+      {!isTee && def.format === 'hls' && (
+        <HLSForm
+          hls={def.hls ?? {}}
+          onChange={(h) => onChange({ ...def, hls: h })}
+        />
+      )}
+
+      {/* DASH wizard — shown when format is dash */}
+      {!isTee && def.format === 'dash' && (
+        <DASHForm
+          dash={def.dash ?? {}}
+          onChange={(d) => onChange({ ...def, dash: d })}
+        />
+      )}
+
+      {/* Tee multi-output target list */}
+      {isTee && (
+        <TeeForm
+          targets={def.targets ?? []}
+          onChange={(t) => onChange({ ...def, targets: t })}
+        />
+      )}
+
       <MetadataEditor
         label="Container metadata"
         hint={<>Per-output container tags (<code>-metadata key=value</code>): <code>title</code>, <code>artist</code>, <code>comment</code>, <code>genre</code>, <code>date</code>, …</>}
