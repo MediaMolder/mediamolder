@@ -877,6 +877,85 @@ The registry is serialised as the top-level `assets` field in the job JSON:
 }
 ```
 
+### Subtitle affordances
+
+Three subtitle-specific controls are surfaced in the Inspector (Wave 8 #52).
+
+#### Input nodes — subtitle charset
+
+The **Subtitle charset** field in the Input inspector maps to the FFmpeg
+`-sub_charenc CODE` option.  Leave it empty for the default (UTF-8).
+Use the built-in picker to choose a common encoding:
+
+| Value | Use case |
+|---|---|
+| `UTF-8` | Default for most modern subtitle files |
+| `Windows-1250` / `Windows-1251` | Central/Eastern European and Cyrillic SRT files |
+| `ISO-8859-1` | Older Western European subtitles |
+| `Shift_JIS` / `GB18030` / `Big5` | CJK subtitles |
+| `KOI8-R` | Russian legacy encoding |
+
+The option is silently ignored by FFmpeg for bitmap subtitle codecs (PGS,
+DVB) because they carry timing and layout information rather than character
+data — no `sub_charenc_mode` is applied.
+
+#### Per-stream stream overrides — Forced and HI flags
+
+When editing a `StreamSpec` with **type = s (subtitle)** inside the
+**Streams** sub-panel of an Output node, the **Subtitle flags** section
+replaces the raw disposition text field with two dedicated checkboxes:
+
+| Checkbox | AV_DISPOSITION_* flag | Effect |
+|---|---|---|
+| **Forced** | `forced` | Player always renders this track regardless of user preference (e.g. foreign-language inserts) |
+| **Hearing impaired (HI)** | `hearing_impaired` | Marks the track as carrying transcriptions of speech and sound effects |
+
+An **Other disposition flags** text field below the checkboxes accepts any
+additional `+`-separated `AV_DISPOSITION_*` tokens (e.g. `default`,
+`comment`) that are not covered by dedicated controls.
+
+For all non-subtitle stream types (video, audio, data) the existing
+free-text **Disposition** field is shown unchanged.
+
+#### Output nodes — Subtitle rendering mode
+
+The **Subtitle rendering** selector in the Output inspector appears above
+the subtitle codec row and lets you indicate how subtitles will be
+delivered:
+
+| Mode | Description |
+|---|---|
+| **Soft-mux** (default) | A separate subtitle stream is written to the container alongside the video and audio streams.  The subtitle codec, codec tag, and bitstream-filter chain fields are shown. |
+| **Burn-in** | Subtitles are rendered directly into the video pixels via a filter.  The codec/tag/BSF fields are hidden; a guidance banner explains how to add a `subtitles=` or `ass=` filter node to the graph. |
+
+This is a GUI-level advisory control — switching to burn-in mode does not
+automatically add a filter node.  Add the appropriate filter manually:
+
+- `subtitles=filename='subs.srt'` — SRT / ASS soft-rendered via libass
+- `ass=filename='subs.ass'` — Styled ASS with full override capability
+
+**Codec-container compatibility warning.** In soft-mux mode, if the
+selected subtitle codec is known to be incompatible with the output
+container format, an amber inline warning is shown directly below the
+codec row:
+
+```
+⚠ "mov_text" may not be compatible with "mkv" containers. Compatible: mp4, mov, m4a, m4v, ipod.
+```
+
+Validated pairs (non-exhaustive):
+
+| Subtitle codec | Compatible containers |
+|---|---|
+| `mov_text` | `mp4`, `mov` |
+| `webvtt` | `webm`, `mkv`, `mp4`, `hls` |
+| `ass` / `ssa` | `mkv` |
+| `srt` / `subrip` | `mkv` |
+| `dvd_subtitle` | `mp4`, `mkv`, `vob` |
+| `hdmv_pgs_subtitle` | `mkv` |
+
+Unknown codecs or missing format fields produce no warning (no opinion).
+
 ### Run panel
 
 ![MediaMolder GUI Running](images/ABR_running.png)

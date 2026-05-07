@@ -6,6 +6,29 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 ## [Unreleased]
 
 ### Added
+- **Wave 8 #52: Subtitle GUI affordances.** Three Inspector-level
+  controls surface the subtitle backend that has been complete since
+  Wave 6 #34:
+  - **Forced / Hearing-impaired flag toggles**: `StreamSpecForm` detects
+    `spec.type === 's'` and renders dedicated **Forced** and **Hearing
+    impaired (HI)** checkboxes backed by new `hasDispFlag` /
+    `toggleDispFlag` helpers.  An **Other disposition flags** text field
+    handles any remaining `AV_DISPOSITION_*` tokens.  For non-subtitle
+    streams the existing free-text Disposition field is shown unchanged.
+  - **`-sub_charenc` picker**: `InputForm` gains a datalist-enhanced
+    text input (14 common encodings: UTF-8, UTF-16, ISO-8859-1/2/5/15,
+    Windows-1250/1251/1252/1254, Shift_JIS, GB18030, GBK, Big5,
+    KOI8-R/U, EUC-JP/KR) mapping directly to `Input.SubtitleCharenc`.
+  - **Subtitle rendering mode selector + codec-container compatibility
+    warning**: `OutputForm` shows a **Subtitle rendering** dropdown
+    (`soft-mux` / `burn-in`).  In burn-in mode the subtitle codec/tag/BSF
+    fields are hidden and a guidance banner directs users to add a
+    `subtitles=` or `ass=` filter node to the graph.  In soft-mux mode
+    an amber inline warning fires when the subtitle codec is known to be
+    incompatible with the output container format (covered codecs:
+    `mov_text`, `webvtt`, `ass`/`ssa`, `srt`/`subrip`, `dvd_subtitle`,
+    `hdmv_pgs_subtitle`).  New CSS classes: `.subtitle-burnin-hint`,
+    `.subtitle-compat-warn`.
 - **Wave 8 #51: Asset / model-file manager.** Symbolic asset references keep pipeline JSON machine-agnostic — fonts, RNNoise models, LUT cubes, and other file references are stored in a named registry (`Config.Assets map[string]AssetRef`) and embedded in filter params as `"$asset:<name>"`. The runtime resolves each reference to an absolute filesystem path before constructing the libavfilter graph: absolute paths are checked directly; relative paths are searched left-to-right against the working directory then against each directory in the `MEDIAMOLDER_ASSET_PATH` environment variable (colon-separated on POSIX, semicolon-separated on Windows). New backend files:
   - [pipeline/assets.go](pipeline/assets.go) — `resolveAssetPath`, `resolveParamAssets`, `resolveConfigAssets`.
   - [pipeline/assets_test.go](pipeline/assets_test.go) — 12 regression tests covering no-op paths, absolute path resolution, `MEDIAMOLDER_ASSET_PATH` search, unknown-asset errors, missing-file errors, shallow-copy guarantee, and `validate()` rejection of bad kind/empty path.

@@ -90,6 +90,27 @@ button.danger:hover { background: rgba(185, 74, 74, 0.15); }
   margin-left: 4px;
   vertical-align: middle;
 }
+/* Subtitle rendering section (Wave 8 #52) */
+.subtitle-burnin-hint {
+  margin: 4px 0 8px;
+  padding: 8px 10px;
+  background: var(--panel-2);
+  border-left: 3px solid var(--accent);
+  border-radius: 0 4px 4px 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-dim);
+}
+.subtitle-compat-warn {
+  margin: 2px 0 6px;
+  padding: 6px 10px;
+  background: color-mix(in srgb, #d97706 12%, var(--panel-2));
+  border-left: 3px solid #d97706;
+  border-radius: 0 4px 4px 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text);
+}
 .toolbar select {
   background: var(--panel-2);
   color: var(--text);

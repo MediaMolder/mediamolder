@@ -186,9 +186,9 @@ Legend: ✅ supported · ⚠️ partial · ❌ missing
 |-------------------------------------------------------------------|:------:|------|
 | Passthrough (text and bitmap)                                     | ✅    | Demonstrated by `18_subtitle_add` |
 | Burn-in via `subtitles=` filter                                   | ✅    | (works once libass is available in the build) |
-| Codec conversion (`mov_text` ↔ `srt` ↔ `ass` ↔ `webvtt`)          | ⚠️    | Works through encoder selection but not validated for incompatible pairs |
-| Subtitle charset (`-sub_charenc`)                                 | ✅    | `Input.SubtitleCharenc` (Wave 6 #34) |
-| Forced / hearing-impaired flags                                   | ✅    | `Output.Streams[].Disposition` carries `AV_DISPOSITION_FORCED` / `AV_DISPOSITION_HEARING_IMPAIRED` (Wave 1 #3); `compat/ffcli` parses `-disposition:s:v:0` (Wave 2 #9); GUI affordances deferred to Wave 8 #52. |
+| Codec conversion (`mov_text` ↔ `srt` ↔ `ass` ↔ `webvtt`)          | ⚠️    | Works through encoder selection; GUI now warns on known-incompatible codec+container pairs (Wave 8 #52) |
+| Subtitle charset (`-sub_charenc`)                                 | ✅    | `Input.SubtitleCharenc` (Wave 6 #34); charset picker in Input inspector (Wave 8 #52) |
+| Forced / hearing-impaired flags                                   | ✅    | `Output.Streams[].Disposition` carries `AV_DISPOSITION_FORCED` / `AV_DISPOSITION_HEARING_IMPAIRED` (Wave 1 #3); `compat/ffcli` parses `-disposition:s:v:0` (Wave 2 #9); dedicated Forced + HI checkboxes in `StreamSpecForm` for `type=s` streams (Wave 8 #52). |
 | Karaoke ASS effects, fontconfig integration                       | ⚠️    | Filter passes through; no GUI affordance |
 
 ### 2.7 Devices, networking, advanced
@@ -1233,11 +1233,32 @@ wave delivers every §2.8 / §3.5 GUI item that the schema can now back.
     add/edit/remove and file-browser integration. Schema v1.0/v1.1
     updated; `TestSchemaSyncWithGoStructs` extended to cover
     `AssetRef`.
-52. **Subtitle GUI affordances** (§2.8) — Forced / HI flag
+52. **Subtitle GUI affordances** (§2.8) ✅ Wave 8 — Forced / HI flag
     toggles wired to per-stream disposition (backend done by
     Wave 6 #34); `-sub_charenc` picker on text-subtitle inputs;
     burn-in vs. soft-mux selector with codec-pair validation
     surfaced inline.
+    - **Forced / HI checkboxes**: `StreamSpecForm` (Inspector.tsx) now
+      branches on `spec.type === 's'` and renders dedicated `Forced`
+      and `Hearing impaired (HI)` checkboxes backed by
+      `hasDispFlag` / `toggleDispFlag` helpers that parse the
+      `+`-separated `AV_DISPOSITION_*` string.  A free-text "Other
+      disposition flags" field handles any remaining flags.
+    - **`-sub_charenc` picker**: `InputForm` gains a datalist-enhanced
+      text input (14 common encodings: UTF-8, ISO-8859-*, Windows-12xx,
+      Shift_JIS, GB18030, etc.) mapping to `Input.SubtitleCharenc`.
+      Hint text clarifies it applies to SRT/ASS/SSA only.
+    - **Subtitle rendering selector + compat warning**: `OutputForm`
+      now shows a **Subtitle rendering** `<select>` (`soft-mux` /
+      `burn-in`) above the subtitle codec row.  In `burn-in` mode the
+      codec/tag/BSF fields are hidden and a guidance banner directs
+      users to add a `subtitles=` or `ass=` filter node.  In
+      `soft-mux` mode an amber inline warning appears when the
+      subtitle codec is known to be incompatible with the output
+      container format (`SUBTITLE_CODEC_FORMATS` map covers
+      `mov_text`, `webvtt`, `ass`/`ssa`, `srt`, `dvd_subtitle`,
+      `hdmv_pgs_subtitle`).  CSS: `.subtitle-burnin-hint` /
+      `.subtitle-compat-warn` added to `styles.css`.
 53. **Live FFmpeg-CLI export** (§2.8, §3.5.7) — Round-trip oracle:
     JSON → ffmpeg command, with explicit "no equivalent CLI"
     failure modes for mediamolder-only features. Wired into the

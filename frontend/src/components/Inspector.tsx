@@ -198,6 +198,21 @@ function InputForm({
       </div>
       {probeError && <div className="probe-error">{probeError}</div>}
       {probed && <ProbedStreamsView streams={probed} />}
+      <label style={{ marginTop: 12 }}>Subtitle charset</label>
+      <input
+        list="sub-charenc-list"
+        value={def.subtitle_charenc ?? ''}
+        onChange={(e) => onChange({ ...def, subtitle_charenc: e.target.value || undefined })}
+        placeholder="UTF-8 (default)"
+      />
+      <datalist id="sub-charenc-list">
+        {SUBTITLE_CHARSETS.map((c) => <option key={c} value={c} />)}
+      </datalist>
+      <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: -4, marginBottom: 4 }}>
+        Character encoding for text subtitle streams (<code>-sub_charenc</code>).
+        Leave empty for the UTF-8 default. Applies to SRT, ASS, SSA; ignored
+        for bitmap subtitles (PGS, DVB).
+      </div>
       <TimingFields
         kind="input"
         options={def.options}
@@ -323,6 +338,10 @@ function OutputForm({
   }, [effVideo, def.codec_tag_video]);
 
   const isTee = def.kind === 'tee';
+  const [subtitleMode, setSubtitleMode] = useState<'soft-mux' | 'burn-in'>('soft-mux');
+  const compatWarn = subtitleMode === 'soft-mux'
+    ? subtitleCompatWarning(effSubtitle, def.format)
+    : null;
 
   return (
     <>
@@ -367,13 +386,38 @@ function OutputForm({
             onClear={() => onChange({ ...def, codec_audio: undefined })}
             onEdit={(v) => onChange({ ...def, codec_audio: v || undefined })}
           />
-          <CodecRow
-            label="Codec (subtitle)"
-            upstream={upstreamCodecs.subtitle}
-            explicit={def.codec_subtitle}
-            onClear={() => onChange({ ...def, codec_subtitle: undefined })}
-            onEdit={(v) => onChange({ ...def, codec_subtitle: v || undefined })}
-          />
+          {/* Subtitle rendering mode --------------------------------------------------------- */}
+          <label style={{ marginTop: 10 }}>Subtitle rendering</label>
+          <select
+            value={subtitleMode}
+            onChange={(e) => setSubtitleMode(e.target.value as 'soft-mux' | 'burn-in')}
+            style={{ background: 'var(--panel-2)', color: 'var(--text)', border: '1px solid var(--border)', borderRadius: 4, padding: '5px 7px', fontSize: 12, width: '100%' }}
+          >
+            <option value="soft-mux">Soft-mux (subtitle stream in output)</option>
+            <option value="burn-in">Burn-in (rendered via filter into video)</option>
+          </select>
+          {subtitleMode === 'burn-in' && (
+            <div className="subtitle-burnin-hint">
+              Add a <code>subtitles=</code> (SRT / ASS) or <code>ass=</code>{' '}
+              (styled ASS) filter node to the graph and connect it to the video
+              stream. No separate subtitle stream is written to the output.
+            </div>
+          )}
+          {subtitleMode === 'soft-mux' && (
+            <>
+              <CodecRow
+                label="Codec (subtitle)"
+                upstream={upstreamCodecs.subtitle}
+                explicit={def.codec_subtitle}
+                onClear={() => onChange({ ...def, codec_subtitle: undefined })}
+                onEdit={(v) => onChange({ ...def, codec_subtitle: v || undefined })}
+              />
+              {compatWarn && (
+                <div className="subtitle-compat-warn">⚠ {compatWarn}</div>
+              )}
+            </>
+          )}
+          {/* ----------------------------------------------------------------------------- */}
           <TagField
             label="Codec tag (video)"
             value={def.codec_tag_video ?? ''}
@@ -386,12 +430,14 @@ function OutputForm({
             suggestions={tagsForAudio(effAudio)}
             onChange={(v) => onChange({ ...def, codec_tag_audio: v || undefined })}
           />
-          <TagField
-            label="Codec tag (subtitle)"
-            value={def.codec_tag_subtitle ?? ''}
-            suggestions={tagsForSubtitle(effSubtitle)}
-            onChange={(v) => onChange({ ...def, codec_tag_subtitle: v || undefined })}
-          />
+          {subtitleMode === 'soft-mux' && (
+            <TagField
+              label="Codec tag (subtitle)"
+              value={def.codec_tag_subtitle ?? ''}
+              suggestions={tagsForSubtitle(effSubtitle)}
+              onChange={(v) => onChange({ ...def, codec_tag_subtitle: v || undefined })}
+            />
+          )}
           <TimingFields
             kind="output"
             options={def.options}
@@ -409,12 +455,14 @@ function OutputForm({
             spec={def.bsf_audio}
             onChange={(s) => onChange({ ...def, bsf_audio: s })}
           />
-          <BSFEditor
-            label="Bitstream filters (subtitle)"
-            kind="subtitle"
-            spec={def.bsf_subtitle}
-            onChange={(s) => onChange({ ...def, bsf_subtitle: s })}
-          />
+          {subtitleMode === 'soft-mux' && (
+            <BSFEditor
+              label="Bitstream filters (subtitle)"
+              kind="subtitle"
+              spec={def.bsf_subtitle}
+              onChange={(s) => onChange({ ...def, bsf_subtitle: s })}
+            />
+          )}
         </>
       )}
 
@@ -704,6 +752,30 @@ const SUBTITLE_TAGS_BY_CODEC: Record<string, string[]> = {
   eia_708: ['c708'],
 };
 
+// Known-compatible subtitle codec ↔ container combinations.
+// Key = normalised codec name; value = format substrings that accept it.
+// Unlisted codecs are not validated.
+const SUBTITLE_CODEC_FORMATS: Record<string, string[]> = {
+  mov_text:          ['mp4', 'mov', 'm4a', 'm4v', 'ipod'],
+  webvtt:            ['webm', 'mkv', 'matroska', 'mp4', 'hls'],
+  ass:               ['mkv', 'matroska'],
+  ssa:               ['mkv', 'matroska'],
+  srt:               ['mkv', 'matroska'],
+  subrip:            ['mkv', 'matroska'],
+  dvd_subtitle:      ['mp4', 'mov', 'mkv', 'matroska', 'vob'],
+  dvdsub:            ['mp4', 'mov', 'mkv', 'matroska', 'vob'],
+  hdmv_pgs_subtitle: ['mkv', 'matroska'],
+};
+
+// Common character-encoding names for the subtitle_charenc picker.
+const SUBTITLE_CHARSETS = [
+  'UTF-8', 'UTF-16LE', 'UTF-16BE',
+  'ISO-8859-1', 'ISO-8859-2', 'ISO-8859-5', 'ISO-8859-15',
+  'Windows-1250', 'Windows-1251', 'Windows-1252', 'Windows-1254',
+  'Shift_JIS', 'GB18030', 'GBK', 'Big5',
+  'KOI8-R', 'KOI8-U', 'EUC-JP', 'EUC-KR',
+];
+
 function normalizeCodec(name: string | undefined | null): string {
   return (name ?? '').trim().toLowerCase().replace(/-/g, '_');
 }
@@ -734,6 +806,28 @@ function tagsForAudio(codec: string | undefined): string[] {
 }
 function tagsForSubtitle(codec: string | undefined): string[] {
   return lookupTags(SUBTITLE_TAGS_BY_CODEC, codec);
+}
+
+function subtitleCompatWarning(codec: string, format: string | undefined): string | null {
+  if (!codec || !format) return null;
+  const compat = SUBTITLE_CODEC_FORMATS[normalizeCodec(codec)];
+  if (!compat) return null;
+  const fmt = format.toLowerCase().trim();
+  if (compat.some((c) => fmt.includes(c) || c.includes(fmt))) return null;
+  return `"${codec}" may not be compatible with "${format}" containers. Compatible: ${compat.join(', ')}.`;
+}
+
+// Toggle a single AV_DISPOSITION_* flag in a '+'-separated disposition string.
+function hasDispFlag(disposition: string, flag: string): boolean {
+  return disposition.split('+').map((f) => f.trim()).includes(flag);
+}
+
+function toggleDispFlag(disposition: string, flag: string, on: boolean): string {
+  const flags = disposition.split('+').map((f) => f.trim()).filter(Boolean);
+  const idx = flags.indexOf(flag);
+  if (on && idx === -1) flags.push(flag);
+  if (!on && idx !== -1) flags.splice(idx, 1);
+  return flags.join('+');
 }
 
 /* ---------- 4-char FourCC field with datalist suggestions ---------- */
@@ -1582,15 +1676,58 @@ function StreamSpecForm({
           Remove
         </button>
       </div>
-      <Field
-        label="Disposition"
-        value={spec.disposition ?? ''}
-        onChange={(v) => onChange({ disposition: v || undefined })}
-      />
-      <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: -4, marginBottom: 4 }}>
-        <code>+</code>-separated <code>AV_DISPOSITION_*</code> flags
-        (e.g. <code>default+forced</code>, <code>hearing_impaired</code>).
-      </div>
+      {spec.type === 's' ? (
+        <>
+          <label style={{ marginTop: 6 }}>Subtitle flags</label>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 4 }}>
+            <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontWeight: 'normal', cursor: 'pointer' }}>
+              <input
+                type="checkbox"
+                checked={hasDispFlag(spec.disposition ?? '', 'forced')}
+                onChange={(e) =>
+                  onChange({ disposition: toggleDispFlag(spec.disposition ?? '', 'forced', e.target.checked) || undefined })
+                }
+              />
+              Forced — always displayed (e.g. foreign-language inserts)
+            </label>
+            <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontWeight: 'normal', cursor: 'pointer' }}>
+              <input
+                type="checkbox"
+                checked={hasDispFlag(spec.disposition ?? '', 'hearing_impaired')}
+                onChange={(e) =>
+                  onChange({ disposition: toggleDispFlag(spec.disposition ?? '', 'hearing_impaired', e.target.checked) || undefined })
+                }
+              />
+              Hearing impaired (HI) — includes sound descriptions
+            </label>
+          </div>
+          <Field
+            label="Other disposition flags"
+            value={(spec.disposition ?? '').split('+').filter((f) => f !== 'forced' && f !== 'hearing_impaired').join('+')}
+            onChange={(v) => {
+              const others = v.split('+').map((f) => f.trim()).filter(Boolean);
+              const base = (['forced', 'hearing_impaired'] as const).filter((f) => hasDispFlag(spec.disposition ?? '', f));
+              onChange({ disposition: [...base, ...others].join('+') || undefined });
+            }}
+          />
+          <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: -4, marginBottom: 4 }}>
+            Additional <code>+</code>-separated <code>AV_DISPOSITION_*</code> flags
+            (e.g. <code>default</code>, <code>comment</code>).
+          </div>
+        </>
+      ) : (
+        <>
+          <Field
+            label="Disposition"
+            value={spec.disposition ?? ''}
+            onChange={(v) => onChange({ disposition: v || undefined })}
+          />
+          <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: -4, marginBottom: 4 }}>
+            <code>+</code>-separated <code>AV_DISPOSITION_*</code> flags
+            (e.g. <code>default+forced</code>, <code>hearing_impaired</code>).
+          </div>
+        </>
+      )}
       <label style={{ marginTop: 10 }}>Metadata</label>
       <ParamsEditor
         params={spec.metadata ?? {}}
