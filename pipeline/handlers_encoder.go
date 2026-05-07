@@ -235,25 +235,16 @@ func (r *graphRunner) handleEncoder(ctx context.Context, node *graph.Node, ins [
 }
 
 func (r *graphRunner) createEncoder(dag *graph.Graph, node *graph.Node) (*av.EncoderContext, error) {
-	// Determine codec: first from node params, then from downstream output config.
+	// After NormalizeConfig the codec is always present in node.Params:
+	// expandImplicitEncoders stamps it from Output.CodecVideo /
+	// Output.CodecAudio / Output.Streams[i].Encoder.Codec, and
+	// hand-authored encoder nodes set it directly. Reading
+	// Output.CodecVideo here at runtime would violate the Milestone C
+	// invariant ("runtime never reads authoring shorthand"), so this
+	// path fails fast instead of falling back.
 	codecName := paramString(node.Params, "codec")
 	if codecName == "" {
-		for _, e := range node.Outbound {
-			if e.To.Kind == graph.KindSink {
-				out := r.findOutputConfig(e.To.ID)
-				if out != nil {
-					switch e.Type {
-					case graph.PortVideo:
-						codecName = out.CodecVideo
-					case graph.PortAudio:
-						codecName = out.CodecAudio
-					}
-				}
-			}
-		}
-	}
-	if codecName == "" {
-		return nil, fmt.Errorf("encoder node %q: no codec specified", node.ID)
+		return nil, fmt.Errorf("encoder node %q: no codec in node.Params (NormalizeConfig is required to populate it)", node.ID)
 	}
 
 	si, err := r.resolveStreamInfo(dag, node)
