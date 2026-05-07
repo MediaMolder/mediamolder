@@ -542,6 +542,108 @@ Below the Bitstream-filter sections every Output form exposes a
 Per-stream metadata (e.g. `language=eng` on a specific audio track)
 remains on the per-stream tab inside the **Streams** section.
 
+#### Output nodes — HLS / DASH / Tee wizards
+
+When an output's **kind** or **format** requires structured delivery
+options, the Inspector surfaces a dedicated wizard form below the
+standard URL / codec / tag / timing fields.
+
+##### Output kind selector
+
+A **Kind** select at the top of every Output form switches between:
+
+* `(default)` — plain file output; URL, format, codec, and all other
+  standard fields are shown.
+* `file` — same as default, explicit.
+* `tee` — hides the URL/format/codec/BSF fields and shows the **Tee
+  wizard** instead. The output becomes a single-pass multi-format fan-out
+  backed by `Output.kind = "tee"` and `Output.targets[]`.
+
+##### HLS wizard (`output.format = "hls"`)
+
+Shown automatically when the output format is `hls`. Fields:
+
+| Field | Backing key | Notes |
+|---|---|---|
+| **Segment duration (s)** | `hls_time` | Float, seconds |
+| **Init segment duration (s)** | `hls_init_time` | Float |
+| **Playlist size** | `hls_list_size` | 0 = unlimited (VOD) |
+| **Start number** | `hls_start_number` | Integer |
+| **Playlist type** | `playlist_type` | `''` / `event` / `vod` |
+| **Segment type** | `segment_type` | `''` / `mpegts` / `fmp4` |
+| **Segment filename** | `segment_filename` | e.g. `seg_%03d.ts` |
+| **fMP4 init filename** | `fmp4_init_filename` | Shown only when `segment_type = fmp4` |
+| **Master playlist name** | `master_pl_name` | For multi-variant ABR |
+| **Variant stream map** | `var_stream_map` | Structured ABR builder (see below) |
+| **HLS flags** | `hls_flags` | Multi-checkbox (see below) |
+
+**Variant stream map builder** — Each row specifies one rendition
+group. Columns are: stream types (`v:`, `a:`, `s:`) with their
+0-based stream-group index, and an optional `agroup:` / `sgroup:`
+association name. The builder serialises the table to the
+space-separated `a:0,v:0 a:1,v:1` token format that `hlsenc` expects
+for `var_stream_map`.
+
+**HLS flags checkboxes** — `delete_segments`, `append_list`,
+`round_durations`, `discont_start`, `split_by_time`,
+`program_date_time`, `second_level_segment_index`,
+`second_level_segment_duration`, `second_level_segment_size`,
+`temp_file`, `independent_segments`, `iframes_only`, `single_file`.
+
+##### DASH wizard (`output.format = "dash"`)
+
+Shown automatically when the output format is `dash`. Fields:
+
+| Field | Backing key | Notes |
+|---|---|---|
+| **Segment duration (s)** | `seg_duration` | Float |
+| **Fragment duration (s)** | `frag_duration` | Float; `0` = one fragment per segment |
+| **Window size** | `window_size` | Segments in live manifest; `0` = unlimited |
+| **Extra window size** | `extra_window_size` | Keep N extra segments for clients |
+| **Init segment name** | `init_seg_name` | Filename template |
+| **Media segment name** | `media_seg_name` | Filename template |
+| **Adaptation sets** | `adaptation_sets` | `id=0,streams=v id=1,streams=a` |
+| **Use SegmentTemplate** | `use_template` | Tri-state: unset / true / false |
+| **Use SegmentTimeline** | `use_timeline` | Tri-state: unset / true / false |
+| **Streaming mode** | `streaming` | Bool; enable chunked HTTP output |
+| **Low-latency DASH (LDASH)** | `ldash` | Bool |
+| **HLS playlist (CMAF)** | `hls_playlist` | Bool; emit HLS alongside DASH |
+| **Single file** | `single_file` | Bool |
+| **DASH flags** | `dash_flags` | Multi-checkbox (see below) |
+
+The **tri-state toggles** for `use_template` and `use_timeline` let
+you leave the value as "unset" (libavformat default), force it on, or
+force it off — matching the three-way semantics that LL-DASH workflows
+require.
+
+**DASH flags checkboxes** — `default_base_url_override`,
+`round_durations`, `single_file_name`, `global_sidx`, `write_prft`,
+`allow_media_loss`.
+
+##### Tee wizard (`output.kind = "tee"`)
+
+Shown when the Output kind is `tee`. Renders one collapsible row per
+`TeeTarget` entry in `output.targets[]`. The first row is open by
+default; subsequent rows are collapsed with a `▸ Target N — <url>`
+header.
+
+Per-target fields:
+
+| Field | Backing key | Notes |
+|---|---|---|
+| **URL** * | `url` | Required; red asterisk + outline when empty |
+| **Format** | `format` | e.g. `mp4`, `hls`; empty = auto-detect |
+| **Select** | `select` | Stream-type selector: `v` / `a` / `s` |
+| **BSFs** | `bsfs` | Bitstream-filter chain (same syntax as output BSF) |
+| **On fail** | `onfail` | `''` / `abort` / `ignore` |
+| **Use FIFO** | `use_fifo` | Tri-state: default / true / false |
+| **FIFO options** | `fifo_options` | Shown only when `use_fifo = true` |
+| **Extra options** | `options` | Key/value editor for target-level AVOptions |
+
+Click **+ add target** to append a new (empty, collapsed) row.
+The `×` button on each row removes it. Reorder by drag is not
+currently supported; remove and re-add to change order.
+
 ### Run panel
 
 ![MediaMolder GUI Running](images/ABR_running.png)

@@ -214,7 +214,7 @@ filled, the GUI also needs:
 - A **multi-output inspector** that shows all `Output` entries in one pane, with per-stream encoder tabs.
 - **BSF chain editor** (sortable list, not single field).
 - **Chapter / metadata editor** at the output level (table of `(start, end, title)` for chapters; key/value table for metadata, with per-stream tabs).
-- **HLS / DASH / Tee output wizards** with structured fields (segment duration, playlist type, variants, …).
+- ✅ **HLS / DASH / Tee output wizards** — `HLSForm` (segment timing, playlist type, mpegts/fmp4 segment type, filename templates, `var_stream_map` ABR builder, `hls_flags` checkboxes), `DASHForm` (segment/fragment durations, SegmentTemplate/SegmentTimeline tri-state toggles, LL-DASH booleans, `dash_flags`), `TeeForm` (collapsible per-target rows with URL, format, stream-select, BSF chain, `onfail`, FIFO options, key/value overrides) — Wave 8 #48 ✅.
 - **Hardware filter mapping indicator** that surfaces which filters will run on GPU once `hw_accel` is set, and warns when a software filter is forcing a hwdownload/hwupload round-trip.
 - **Live FFmpeg-CLI import** (`compat/ffcli`) extended to cover every flag the schema gains, with a clear "unsupported flag" report.
 - **Live FFmpeg-CLI export**: round-trip the JSON job back to a CLI command for users who want to copy/paste into ffmpeg directly. This
@@ -300,7 +300,7 @@ once §3.1–§3.4 land:
 2. Multi-output inspector with per-stream encoder tabs.
 3. BSF chain editor.
 4. Chapter / metadata editor.
-5. HLS / DASH / tee output wizards.
+5. HLS / DASH / tee output wizards. ✅ Wave 8 #48 — done.
 6. Hardware-filter mapping indicator + multi-device picker.
 7. Bidirectional FFmpeg-CLI conversion (existing `compat/ffcli` import + new export). The CLI export is the round-trip oracle for
    the entire schema and should be wired into the existing job-save flow as a "Show as ffmpeg command" panel.
@@ -1159,10 +1159,36 @@ wave delivers every §2.8 / §3.5 GUI item that the schema can now back.
     `end`), and a collapsible per-chapter metadata section. The
     per-stream metadata surface remained as wired by Wave 8 #45's
     `StreamSpecForm`.
-48. **HLS / DASH / Tee output wizards** (§2.8, §3.5.5) — Schema-
-    driven forms for the typed `HLS` / `DASH` / `Tee*` blocks
-    landed in Waves 1 #5 and 3 #12. Variant-stream picker for
-    HLS `var_stream_map`; per-target picker for tee slaves.
+48. **HLS / DASH / Tee output wizards** (§2.8, §3.5.5) ✅ Wave 8 —
+    Schema-driven Inspector forms for the typed `HLS` / `DASH` /
+    `Tee*` blocks landed in Waves 1 #5 and 3 #12. New
+    `HLSForm` covers `hls_time` / `hls_init_time` / `hls_list_size`
+    / `hls_start_number`, `playlist_type` (event/vod), `segment_type`
+    (mpegts/fmp4 — fMP4-only fields shown conditionally),
+    `segment_filename` / `fmp4_init_filename` / `master_pl_name`,
+    a drag-and-drop `var_stream_map` ABR variant builder (serialises
+    to the `a:N,v:N` space-separated token format), and a full
+    `hls_flags` multi-checkbox picker (delete_segments, append_list,
+    round_durations, discont_start, split_by_time, program_date_time,
+    second_level_segment_* sizes, temp_file, independent_segments,
+    iframes_only, single_file). New `DASHForm` covers `seg_duration`
+    / `frag_duration` / `window_size` / `extra_window_size`,
+    `init_seg_name` / `media_seg_name` / `adaptation_sets`, tri-state
+    toggles (unset / true / false) for `use_template` and
+    `use_timeline` (LL-DASH semantics), single-bit bool toggles for
+    `streaming`, `ldash`, `hls_playlist`, `single_file`, and a
+    `dash_flags` multi-checkbox picker (default_base_url_override,
+    round_durations, single_file_name, global_sidx, write_prft,
+    allow_media_loss). New `TeeForm` renders one collapsible row per
+    `TeeTarget` (first row open by default) covering `url` (required,
+    red asterisk when empty), `format`, `select`, `bsfs`, `onfail`
+    (abort/ignore), `use_fifo` (tri-state), `fifo_options` (shown
+    only when use_fifo=true), and a per-target `options` key/value
+    editor. `Inspector.tsx` now renders a kind selector
+    (`'' | 'file' | 'tee'`) at the top of every Output form,
+    conditionally shows URL/format/codec/BSF fields only for non-tee
+    outputs, and mounts `HLSForm` / `DASHForm` / `TeeForm` based on
+    `output.format` or `output.kind`.
 49. **Audio channel-routing UI** (§2.8, §3.5.9) — Bus / matrix
     view for `pan`, `channelsplit`, `channelmap`, `join`,
     `amerge` (backend lands in Wave 7 #41). Free-form `params`
