@@ -1028,7 +1028,7 @@ explicitly to `127.0.0.1` (the default) if untrusted users share the host.
 | `GET`  | `/api/examples`               | List of bundled example job JSONs.                    |
 | `GET`  | `/examples/{file}`            | Static serve of the examples directory.               |
 | `POST` | `/api/validate`               | Parse + structurally validate a posted JobConfig.     |
-| `POST` | `/api/convert-cmd`            | Parse an FFmpeg command line into a JobConfig. Body `{command: string}`; response `{config: JobConfig}` on success or `422 {error: string}` on parse failure. Backed by `compat/ffcli.Parse`. Used by the toolbar's **Import FFmpeg…** dialog. |
+| `POST` | `/api/convert-cmd`            | Parse an FFmpeg command line into a JobConfig. Body `{command: string}`; response `{config: JobConfig, unsupported?: string[]}` on success or `422 {error: string}` on parse failure. `unsupported` lists actionable notes for deprecated, out-of-scope, or Wave 5–7 schema-promoted flags. Backed by `compat/ffcli.ParseFull`. Used by the toolbar's **Import FFmpeg…** dialog. |
 | `POST` | `/api/export-cmd`             | Export the current JobConfig as an ffmpeg command line. Body `{config: JobConfig}`; response `{command: string, lines: []string, unsupported: []string}` on success or `422 {error: string}`. Backed by `compat/ffcli.Export`. Used by the toolbar's **Show CLI** dialog. |
 | `POST` | `/api/run`                    | Start a run; returns `{job_id}`.                      |
 | `POST` | `/api/cancel/{jobId}`         | Cancel an in-flight run.                              |

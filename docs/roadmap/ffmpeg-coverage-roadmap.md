@@ -1267,10 +1267,15 @@ wave delivers every §2.8 / §3.5 GUI item that the schema can now back.
     graphs, HLS/DASH/tee, BSF chains, stream dispositions, metadata,
     two-pass, and more. Unsupported features (Assets, go_processor,
     LoudnormPass) are listed in an amber warning section.
-54. **"Unsupported flag" import report** (§2.8) — Already partially
-    present; extend to surface every flag the schema gained in
-    Waves 5–7, with an actionable message ("This flag now maps to
-    `Output.MuxDelay`; rerun import").
+54. ✅ **"Unsupported flag" import report** (§2.8) — `ImportResult`
+    type returned by `ParseFull`/`ParseArgsFull`; `Unsupported []string`
+    surfaces actionable notes for every Wave 5–7 schema-promoted flag
+    (BSF, color, HDR/DoVi, attachments, muxdelay/preload, async, interlace,
+    enc_time_base, field_order, filter_complex_threads, itsoffset, re,
+    sub_charenc) and deprecated out-of-scope flags (`-deinterlace`,
+    `-target`, `-fpre`/`-vpre`/`-spre`, `-xerror`, `-stats`/`-nostats`,
+    `-dump`/`-hex`/`-debug_ts`). GUI `/api/convert-cmd` response now
+    includes `unsupported`; CLI `convert-cmd` prints notes to stderr.
 
 ### 6.9 Wave 9 — "the editorial round-trip" (Phase C.8)
 

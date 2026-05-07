@@ -6,6 +6,22 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 ## [Unreleased]
 
 ### Added
+- **Wave 8 #54: Unsupported-flag import report.** `compat/ffcli.ParseFull`
+  and `ParseArgsFull` return an `ImportResult{Config, Unsupported}` that
+  surfaces actionable notes for:
+  - Wave 5–7 schema-promoted flags: `-bsf:v`/`:a`/`:s`, `-muxdelay`,
+    `-muxpreload`, `-itsoffset`, `-re`/`-readrate`, color/HDR/DoVi metadata
+    flags, `-attach`, `-async`, `-force_key_frames`, `-enc_time_base`,
+    `-field_order`, `-flags +ildct+ilme`, `-filter_complex_threads`,
+    `-sub_charenc`.
+  - Deprecated / out-of-scope flags: `-deinterlace`, `-target`,
+    `-fpre`/`-vpre`/`-spre`, `-xerror`, `-stats`/`-nostats`/`-stats_period`,
+    `-dump`/`-hex`/`-debug_ts`.
+  `Parse`/`ParseArgs` remain unchanged for backward compatibility.
+  `POST /api/convert-cmd` now includes an `unsupported` array in its JSON
+  response.  `mediamolder convert-cmd` prints notes to stderr.
+  26 regression tests in `compat/ffcli/import_report_test.go`.
+
 - **Wave 8 #53: Live FFmpeg-CLI export.** `compat/ffcli.Export` converts a
   `pipeline.Config` back to a full `ffmpeg …` command line — the inverse of
   the existing importer. Coverage includes: all input flags (`-ss`, `-to`,
