@@ -177,6 +177,24 @@ func TestResolveConfigAssets_Substitution(t *testing.T) {
 	}
 }
 
+// TestResolveAssetPath_TraversalRejected verifies that relative asset paths
+// containing directory-traversal sequences are rejected before any filesystem
+// access.
+func TestResolveAssetPath_TraversalRejected(t *testing.T) {
+	cases := []string{
+		"../../etc/passwd",
+		"../secret",
+		"..",
+		"fonts/../../etc/shadow",
+	}
+	for _, p := range cases {
+		_, err := resolveAssetPath(AssetRef{Path: p, Kind: "font"})
+		if err == nil {
+			t.Errorf("expected error for traversal path %q, got nil", p)
+		}
+	}
+}
+
 // TestValidateAssets verifies that validate() catches bad asset entries.
 func TestValidateAssets(t *testing.T) {
 	base := func() *Config {

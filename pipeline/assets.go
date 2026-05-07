@@ -27,12 +27,23 @@ func resolveAssetPath(ref AssetRef) (string, error) {
 	if p == "" {
 		return "", fmt.Errorf("asset path is empty")
 	}
+	// Normalise the path first; filepath.Clean removes redundant separators and
+	// dot-segments, and is recognised by static-analysis tools as a path sanitiser.
+	p = filepath.Clean(p)
+
 	if filepath.IsAbs(p) {
 		if _, err := os.Stat(p); err != nil {
-			return "", fmt.Errorf("asset not found at %q: %w", p, err)
+			return "", fmt.Errorf("asset not found at %q: %w", ref.Path, err)
 		}
 		return p, nil
 	}
+
+	// After cleaning, any relative path that would escape above the search root
+	// begins with "..".  Reject it to prevent directory-traversal attacks.
+	if p == ".." || strings.HasPrefix(p, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("asset path %q: directory traversal is not allowed", ref.Path)
+	}
+
 	// Build search list: cwd first, then MEDIAMOLDER_ASSET_PATH entries.
 	searchDirs := []string{"."}
 	if env := os.Getenv("MEDIAMOLDER_ASSET_PATH"); env != "" {
@@ -43,16 +54,22 @@ func resolveAssetPath(ref AssetRef) (string, error) {
 		searchDirs = append(searchDirs, strings.Split(env, sep)...)
 	}
 	for _, dir := range searchDirs {
-		full := filepath.Join(dir, p)
-		if _, err := os.Stat(full); err == nil {
-			abs, absErr := filepath.Abs(full)
-			if absErr != nil {
-				return full, nil
-			}
-			return abs, nil
+		absDir, err := filepath.Abs(dir)
+		if err != nil {
+			continue
+		}
+		candidate := filepath.Join(absDir, p)
+		// Defence-in-depth containment check: the resolved candidate must stay
+		// within the search directory even after Join (guards against symlinks or
+		// edge cases not caught by the traversal check above).
+		if !strings.HasPrefix(candidate, absDir+string(filepath.Separator)) && candidate != absDir {
+			continue
+		}
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate, nil
 		}
 	}
-	return "", fmt.Errorf("asset %q not found in search path (tried cwd + MEDIAMOLDER_ASSET_PATH)", p)
+	return "", fmt.Errorf("asset %q not found in search path (tried cwd + MEDIAMOLDER_ASSET_PATH)", ref.Path)
 }
 
 // resolveParamAssets walks params and replaces any string value that
