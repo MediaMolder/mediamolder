@@ -644,6 +644,119 @@ Click **+ add target** to append a new (empty, collapsed) row.
 The `×` button on each row removes it. Reorder by drag is not
 currently supported; remove and re-add to change order.
 
+### Filter nodes — expression editor
+
+For AVOptions whose value is parsed by libavutil's expression evaluator
+(e.g. `drawtext.x`, `crop.w`, `overlay.enable`, `setpts.expr`,
+`select.expr`) the Inspector renders a syntax-highlighted, live-validating
+`ExpressionInput` control instead of a plain text field.
+
+#### Syntax highlighting
+
+The expression textarea overlays a transparent `<pre>` with coloured
+tokens:
+
+| Colour | Token class |
+|---|---|
+| Purple | libavutil built-in functions (`between`, `if`, `mod`, `min`, …) |
+| Teal | Filter-specific variable names (`t`, `n`, `tw`, `main_w`, …) |
+| Green | Numeric literals |
+| Dim grey | Operators and punctuation |
+| Red wavy underline | Unknown identifiers (not in the variable or function set) |
+
+#### Live eval preview
+
+The expression is evaluated via `GET /api/filters/{filter}/eval-expression`
+with a 250 ms debounce. The result appears inline as:
+
+* `= X (from context)` — when upstream pad hints are available (see below)
+* `= X (vars=0)` — all variables default to 0 (libavfilter "before-frame"
+  semantics)
+* Red error message — when libavutil rejects the expression
+
+#### Variable autocomplete
+
+While typing an identifier, a floating completion list appears beneath
+the text area listing all matching variable names and function names.
+Variables appear teal; functions appear purple, matching the
+syntax-highlight colours.
+
+Navigation:
+- `↓` / `↑` — move highlight
+- `Tab` or `Enter` — accept the highlighted completion (replaces the
+  partial word at cursor)
+- `Esc` or continue typing — dismiss
+
+#### Context-aware eval (upstream pad hints)
+
+When the filter node has an upstream input node whose file has been
+probed (via the **Get properties** button on the Input form), the
+Inspector extracts the first video stream's `{width, height, frame_rate,
+sar}` and the first audio stream's `{sample_rate, channels}` and injects
+them as variable bindings in the eval request. Variable names populated
+this way include `w`, `h`, `iw`, `ih`, `in_w`, `in_h`, `main_w`,
+`main_h`, `W`, `H`, `r`, `FR`, `sar`, `sr`, `nb_channels`. The preview
+then shows realistic values — for example `(main_w-tw)/2` evaluates to
+`880` for a 1920 px wide source rather than `0`.
+
+#### Pattern cookbook
+
+The **Insert pattern…** dropdown below the textarea contains 19
+ready-to-use expression snippets:
+
+| Pattern | Expression | Typical use |
+|---|---|---|
+| Timeline gate | `between(t,1,8)` | `enable=` on any filter |
+| Enable after timestamp | `gt(t,30)` | `enable=` |
+| Disable in range | `not(between(t,2,5))` | `enable=` |
+| 2× speed | `0.5*PTS` | `setpts.expr` |
+| 0.5× slow-mo | `2*PTS` | `setpts.expr` |
+| drawtext center X | `(main_w-tw)/2` | `drawtext.x` |
+| drawtext bottom-center Y | `main_h-line_h-10` | `drawtext.y` |
+| drawtext top-right X | `main_w-tw-10` | `drawtext.x` |
+| drawtext scrolling marquee | `w-mod(40*t,w+tw)` | `drawtext.x` |
+| Force key every 2 s | `expr:gte(t,n_forced*2)` | `Output.ForceKeyFrames` |
+| overlay center X | `(main_w-overlay_w)/2` | `overlay.x` |
+| overlay center Y | `(main_h-overlay_h)/2` | `overlay.y` |
+| crop/pad center X | `(in_w-out_w)/2` | `crop.x`, `pad.x` |
+| crop/pad center Y | `(in_h-out_h)/2` | `crop.y`, `pad.y` |
+| Volume 3 s fade-in | `if(lt(t,3),t/3,1)` | `volume.volume` |
+| Volume/alpha fade in+out | `if(lt(t,1),t,if(lt(t,4),1,if(lt(t,5),5-t,0)))` | `volume.volume`, `drawtext.alpha` |
+| Select keyframes | `eq(pict_type,PICT_TYPE_I)` | `select.expr` |
+| Select every 5th frame | `if(eq(mod(n,5),0),1,0)` | `select.expr` |
+| Ken Burns slow zoom | `min(zoom+0.0015,1.5)` | `zoompan.zoom` |
+
+Selecting a pattern inserts it at the current cursor position,
+replacing any selected text.
+
+#### Supported filters
+
+The expression control is active for the following filters and their
+expression-typed options. The variable set listed is what the completion
+dropdown and eval endpoint use.
+
+| Filter | Expression options | Key variables |
+|---|---|---|
+| `drawtext` | `x`, `y`, `fontsize`, `alpha`, `enable` | `t`, `n`, `tw`, `th`, `main_w`, `main_h`, … |
+| `overlay` | `x`, `y`, `enable` | `main_w`, `main_h`, `overlay_w`, `overlay_h`, `t`, `n` |
+| `crop` | `x`, `y`, `w`, `h`, `enable` | `in_w`, `in_h`, `out_w`, `out_h`, `t`, `n` |
+| `scale` | `w`, `h` | `in_w`, `in_h`, `a`, `sar`, `dar` |
+| `pad` | `w`, `h`, `x`, `y`, `enable` | `in_w`, `in_h`, `out_w`, `out_h` |
+| `rotate` | `angle`, `out_w`, `out_h`, `enable` | `in_w`, `in_h`, `n`, `t` |
+| `zoompan` | `zoom`, `x`, `y`, `d`, `fps`, `enable` | `zoom`, `x`, `y`, `in_w`, `in_h` |
+| `setpts` | `expr` | `PTS`, `N`, `T`, `TB`, `STARTPTS`, `FR`, … |
+| `asetpts` | `expr` | `PTS`, `N`, `T`, `S`, `SR`, … |
+| `volume` | `volume`, `enable` | `n`, `t`, `nb_samples`, `sample_rate` |
+| `select` | `expr` | `n`, `pts`, `t`, `key`, `scene`, `pict_type`, `PICT_TYPE_I`, … |
+| `aselect` | `expr` | `n`, `pts`, `t`, `nb_samples`, `sample_rate` |
+| `hue` | `h`, `s`, `b`, `enable` | `n`, `pts`, `t`, `r`, `tb` |
+| `geq` | `lum_expr`, `cb_expr`, `cr_expr`, `r_expr`, `g_expr`, `b_expr`, `a_expr` | `X`, `Y`, `W`, `H`, `N`, `T`, `BYTES`, `lum`, `cb`, `cr` |
+| `trim` | `enable` | `t`, `n`, `pos` |
+| `atrim` | `enable` | `t`, `n`, `pos`, `s`, `sr` |
+
+All other filters fall back to the universal `{t, n, pos, w, h}` variable
+set for the `enable=` timeline expression surface.
+
 ### Filter nodes — audio channel-routing matrix
 
 For the six audio channel-routing filters (`pan`, `channelmap`,

@@ -107,6 +107,7 @@ export function Inspector({ node, nodes, edges, onChange, onDelete, onSelectNode
       {ref.kind === 'node' && (
         <NodeForm
           def={ref.def}
+          padHints={resolveUpstreamPad(nodes, edges, node.id)}
           onChange={(def) =>
             onChange(updateRef(node, { kind: 'node', def }, nodeDisplayLabel(def), nodeDisplaySublabel(def)))
           }
@@ -550,6 +551,73 @@ function resolveUpstreamCodecs(
   return result;
 }
 
+/** Walk the edge graph upstream from a filter node and extract numeric
+ * pad hints from the first input node whose probed metadata is available.
+ * These are forwarded to the expression eval endpoint as variable bindings
+ * so previews show context-aware (not all-zero) results. */
+function resolveUpstreamPad(
+  nodes: FlowNode[],
+  edges: FlowEdge[],
+  filterId: string,
+): Record<string, number> {
+  const nodeById = new Map(nodes.map((n) => [n.id, n]));
+  let currentId = filterId;
+  const visited = new Set<string>();
+  for (let hops = 0; hops < 32; hops++) {
+    if (visited.has(currentId)) break;
+    visited.add(currentId);
+    const incoming = edges.find((e) => e.target === currentId);
+    if (!incoming) break;
+    const src = nodeById.get(incoming.source);
+    if (!src) break;
+    if (src.data.ref.kind === 'input' && src.data.probed && src.data.probed.length > 0) {
+      const hints: Record<string, number> = {};
+      const video = src.data.probed.find((s) => s.type === 'video');
+      if (video) {
+        if (video.width) {
+          hints.w = video.width; hints.iw = video.width;
+          hints.in_w = video.width; hints.main_w = video.width; hints.W = video.width;
+        }
+        if (video.height) {
+          hints.h = video.height; hints.ih = video.height;
+          hints.in_h = video.height; hints.main_h = video.height; hints.H = video.height;
+        }
+        if (video.frame_rate) {
+          const fps = parsePadFps(video.frame_rate);
+          if (fps !== null) { hints.r = fps; hints.FR = fps; }
+        }
+        if (video.sar) {
+          const sarVal = parsePadRatio(video.sar);
+          if (sarVal !== null) hints.sar = sarVal;
+        }
+      }
+      const audio = src.data.probed.find((s) => s.type === 'audio');
+      if (audio) {
+        if (audio.sample_rate) hints.sr = audio.sample_rate;
+        if (audio.channels) hints.nb_channels = audio.channels;
+      }
+      if (Object.keys(hints).length > 0) return hints;
+    }
+    currentId = src.id;
+  }
+  return {};
+}
+
+function parsePadFps(fps: string): number | null {
+  const m = /^(\d+)(?:\/(\d+))?$/.exec(fps.trim());
+  if (!m) return null;
+  const n = parseInt(m[1]);
+  const d = m[2] ? parseInt(m[2]) : 1;
+  return d === 0 ? null : n / d;
+}
+
+function parsePadRatio(r: string): number | null {
+  const m = /^(\d+):(\d+)$/.exec(r.trim());
+  if (!m) return null;
+  const d = parseInt(m[2]);
+  return d === 0 ? null : parseInt(m[1]) / d;
+}
+
 // Curated FourCC suggestions for the muxer's per-stream codec_tag override.
 // Free text is still accepted; these only populate the datalist drop-down.
 // Values come from MOV/MP4's stsd tables in libavformat
@@ -715,7 +783,7 @@ function TagField({
 }
 
 /* ---------- Graph node form ---------- */
-function NodeForm({ def, onChange }: { def: NodeDef; onChange: (next: NodeDef) => void }) {
+function NodeForm({ def, onChange, padHints }: { def: NodeDef; onChange: (next: NodeDef) => void; padHints?: Record<string, number> }) {
   const isFilter =
     def.type === 'filter' || def.type === 'filter_source' || def.type === 'filter_sink';
   return (
@@ -736,7 +804,7 @@ function NodeForm({ def, onChange }: { def: NodeDef; onChange: (next: NodeDef) =
         />
       )}
       {def.type === 'encoder' && <EncoderForm def={def} onChange={onChange} />}
-      {isFilter && <FilterForm def={def} onChange={onChange} />}
+      {isFilter && <FilterForm def={def} onChange={onChange} padHints={padHints} />}
       {def.type !== 'encoder' && !isFilter && (
         <ParamsEditor params={def.params ?? {}} onChange={(p) => onChange({ ...def, params: p })} />
       )}

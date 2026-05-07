@@ -305,7 +305,7 @@ once §3.1–§3.4 land:
 7. Bidirectional FFmpeg-CLI conversion (existing `compat/ffcli` import + new export). The CLI export is the round-trip oracle for
    the entire schema and should be wired into the existing job-save flow as a "Show as ffmpeg command" panel.
 8. **Filter expression authoring**: monospace input with `t`/`n`/`tw`/ `th`/`text_w`/`text_h`/`w`/`h` autocomplete, live
-   syntax-validation against the server-side `eval-expression` endpoint, and a small expression cookbook (scrolling text, fade gates, frame-stamp overlays).
+   syntax-validation against the server-side `eval-expression` endpoint, and a small expression cookbook (scrolling text, fade gates, frame-stamp overlays). ✅ Wave 8 #50 — done. Variable autocomplete dropdown (↑/↓/Enter/Tab/Esc keyboard navigation, functions tinted purple, variables tinted teal), context-aware eval preview using upstream pad hints (width, height, fps, sample_rate extracted from the first probed input node upstream), and expanded cookbook (5 → 19 patterns: timeline gates, PTS speed controls, drawtext positioning, overlay centering, crop/pad centering, volume fades, `select` keyframes, `zoompan` Ken Burns). Backend registry expanded from 10 to 16 filters (`select`, `aselect`, `hue`, `geq`, `trim`, `atrim`).
 9. **Audio channel-routing UI**: a bus/matrix view for `pan`, `channelsplit`, `channelmap`, `join`, `amerge`, `amix`. ✅ Wave 8 #49 — done. `AudioChannelForm` replaces the free-form params dict with a 2-D gain matrix (pan), per-output-channel source dropdowns (channelmap), layout selector (channelsplit), stream+channel pickers (join), input-count spinner (amerge/amix), and per-input weight fields (amix).
 10. **Asset/model-file manager**: shared by the YOLO processor and by filters such as `arnndn`, `subtitles=…:fontsdir=…`. Pipelines
     should reference assets by symbolic name, with the GUI managing paths and the runtime resolving them from a search list.
@@ -1200,12 +1200,28 @@ wave delivers every §2.8 / §3.5 GUI item that the schema can now back.
     per-input weight fields plus `duration`, `normalize`, and
     `dropout_transition` options. All forms include a live spec-preview
     row so the final filter string is always visible. (Wave 8 #49)
-50. **Filter expression authoring polish** (§3.5.8) — Wave 4 #20
-    delivered the core control; this item ships the residual
-    polish: variable autocomplete dropdown (currently typed
-    free-form), context-aware variable-list refresh when the
-    upstream pad changes resolution / fps, and an expanded cookbook
-    sourced from the production-pattern corpus.
+50. **Filter expression authoring polish** (§3.5.8) ✅ — `ExpressionInput`
+    gains three capabilities. **Autocomplete dropdown**: while typing
+    in the expression textarea, a floating list of matching variable
+    names and libavutil function names appears beneath the cursor;
+    `↑`/`↓` navigate, `Tab`/`Enter` complete, `Esc` dismisses; clicking
+    an item completes without losing focus. Variables are tinted teal
+    (`tok-var`), functions purple (`tok-fn`), matching the existing
+    syntax-highlight scheme. **Context-aware eval preview**: `Inspector`
+    walks the graph edge list back from the selected filter node to the
+    first probed input and extracts `{w, h, iw, ih, in_w, in_h,
+    main_w, main_h, W, H, r, FR, sar, sr, nb_channels}` bindings;
+    these are forwarded as extra URL query params to the
+    `eval-expression` endpoint so the `= X` preview shows realistic
+    values (e.g. `(main_w-tw)/2 = 880` for a 1920×p source) instead
+    of the all-zero default; the status line reads `(from context)` vs
+    `(vars=0)`. **Expanded cookbook** (5 → 19 patterns): timeline
+    gates (`between`, `gt`, `not(between)`), PTS speed controls
+    (`0.5*PTS`, `2*PTS`), `drawtext` centering / scrolling, overlay
+    centering, crop/pad centering, volume fade-in and fade-in/out,
+    `select` keyframes and every-N-th-frame, `zoompan` Ken Burns.
+    **Backend filter registry** expanded from 10 → 16 filters:
+    `select`, `aselect`, `hue`, `geq`, `trim`, `atrim`. (Wave 8 #50)
 51. **Asset / model-file manager** (§3.5.10, formerly Wave 6 #22) —
     Symbolic asset references (fonts for `subtitles=`, RNNoise
     models for `arnndn=`, YOLO weights, ASS `fontsdir=`). Schema
