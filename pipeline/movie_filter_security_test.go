@@ -118,9 +118,6 @@ func TestMovieFilterParamsForSpec_LeavesExistingFormatOpts(t *testing.T) {
 	}
 	out := movieFilterParamsForSpec("movie", in)
 	// User opted in to raw format_opts — leave their map alone.
-	if &out == &in {
-		// pointer compare meaningless on map; just check no rewrite.
-	}
 	if out["format_opts"] != "user_value=1" {
 		t.Fatalf("format_opts overwritten: %v", out["format_opts"])
 	}

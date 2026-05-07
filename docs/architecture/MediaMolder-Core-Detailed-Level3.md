@@ -377,6 +377,78 @@ type Executor struct {
 - **State transitions** are atomic and emit events.
 - **Graceful shutdown**: Context cancellation → drain channels → flush encoders → close.
 
+#### `pipeline/` handler file layout
+
+The execution logic inside `pipeline/` is split into per-concern files to keep each file within a reviewable size:
+
+| File | Responsibility |
+|---|---|
+| `handlers.go` | `graphRunner` struct, `handle` dispatcher, `newGraphRunner`, `close`, `muxWriter` interface |
+| `handlers_graph_build.go` | `configToGraphDef`, `expandImplicitEncoders`, splicing helpers |
+| `handlers_source.go` | `handleSource`, `openSource`, stream copy |
+| `handlers_filter.go` | `handleFilter`, `handleSimpleFilter`, filter source/sink, `createFilter` |
+| `handlers_encoder.go` | `handleEncoder`, `encoderSession`, `createEncoder` |
+| `handlers_sink.go` | `handleSink`, `sinkWriter`, `openSink`, `ptsToMicros`, `shiftPTSus` |
+| `handlers_go_processor.go` | `handleGoProcessor` |
+
+#### `sinkWriter` (inside `handlers_sink.go`)
+
+`sinkWriter` encapsulates the per-output muxing logic that was previously nested inside `handleSink` as closures. Each `handleSink` invocation creates one `sinkWriter` and calls its methods for every incoming packet.
+
+```go
+type sinkWriter struct {
+    sink    *sinkResources   // muxer, BSF chains, rescale tables, timing
+    node    *graph.Node
+    startUS int64            // output -ss (AV_TIME_BASE units); NoPTSValue = disabled
+    stopUS  int64            // output -t/-to; noLimitUS = disabled
+    shiftUS int64            // ts-offset subtracted from kept packets
+    mu      *sync.Mutex      // nil on single-stream path; shared on multi-stream path
+    pipe    *Pipeline        // for Metrics() calls
+}
+
+func (w *sinkWriter) writeOne(pkt *av.Packet, i int, dstTB [2]int, st *chanState) (wrote, stopAll bool, err error)
+func (w *sinkWriter) processOne(i int, pkt *av.Packet, dstTB [2]int, rs *sinkRescale, st *chanState) (wrote, stopAll bool, err error)
+func (w *sinkWriter) flushBSF(i int, dstTB [2]int, st *chanState) error
+```
+
+`processOne` implements the full per-packet pipeline: max-frames cap → output-side `-ss` trim drop → output-side `-t`/`-to` stop → `-shortest` cap → PTS shift → BSF chain → `writeOne`. It is tested independently in `sink_writer_test.go` using a `fakeMuxer` (implements the `muxWriter` interface) with no CGO dependency.
+
+The `muxWriter` interface (`handlers.go`) is satisfied by `*av.OutputFormatContext` in production and by `fakeMuxer` in tests:
+
+```go
+type muxWriter interface {
+    WritePacket(pkt *av.Packet) error
+    WriteTrailer() error
+    BytesWritten() int64
+    StreamTimeBase(idx int) [2]int
+    Abort()
+    Close() error
+}
+```
+
+#### `encoderSession` (inside `handlers_encoder.go`)
+
+`encoderSession` encapsulates the per-encoder-node execution that was previously nested inside `handleEncoder` as closures. `handleEncoder` creates one `encoderSession` per node invocation via `newEncoderSession` and calls `s.run`.
+
+```go
+type encoderSession struct {
+    enc     *av.EncoderContext
+    fpsRW   *fpsRewriter           // CFR gap-fill / drop; nil for audio or passthrough
+    forceKF *forceKeyFramesMatcher // forced-keyframe spec; nil when unset
+    passLog *os.File               // pass-1 stats file for generic codecs; nil otherwise
+    outs    []chan<- any            // one per downstream sink (fan-out)
+    nodeID  string
+    pipe    *Pipeline
+}
+
+func (s *encoderSession) sendPacket(ctx context.Context, p *av.Packet) error
+func (s *encoderSession) drain(ctx context.Context) error
+func (s *encoderSession) sendOne(ctx context.Context, f *av.Frame) error
+func (s *encoderSession) run(ctx context.Context, in <-chan any) error
+```
+
+`run` → `sendOne` → `drain` mirrors the FFmpeg `frame_encode` → `reap_filters` call chain in `fftools/ffmpeg_enc.c`. The CFR gap-fill loop (emit N clones at regular intervals) lives entirely inside `run`, and the forced-keyframe stamp lives in `sendOne`, mirroring the per-frame `forced_kf_apply` invocation.
+
 ### Master Sequence Diagram: Full Job Lifecycle (Parse → Run → Finalize)
 
 ```mermaid

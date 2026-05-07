@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react';
+import type { ReactNode } from 'react';
 import type { FlowEdge, FlowNode } from '../lib/jsonAdapter';
 import { displayUrl, nodeDisplayLabel, nodeDisplaySublabel } from '../lib/jsonAdapter';
 import { displayName, lookupFriendlyName, useNamingMode } from '../lib/friendlyNames';
-import type { Input, NodeDef, Output, ProbeResponse, ProbedStream } from '../lib/jobTypes';
+import type { Chapter, EncoderOverride, Input, NodeDef, Output, ProbeResponse, ProbedStream, StreamSpec } from '../lib/jobTypes';
+import { type BSFEntry, parseBSFChain, serializeBSFChain } from '../lib/bsf';
 import { MEDIA_FILE_EXTENSIONS } from '../lib/mediaExtensions';
 import { FileBrowser, type BrowseMode } from './FileBrowser';
 import { EncoderForm } from './EncoderForm';
@@ -17,9 +19,13 @@ interface Props {
   edges: FlowEdge[];
   onChange: (next: FlowNode) => void;
   onDelete: (id: string) => void;
+  /** Switch the canvas selection to a different node id. Used by the
+   *  Wave 8 #45 multi-output tab strip so the user can flip between
+   *  outputs without going back to the canvas. */
+  onSelectNode?: (id: string) => void;
 }
 
-export function Inspector({ node, nodes, edges, onChange, onDelete }: Props) {
+export function Inspector({ node, nodes, edges, onChange, onDelete, onSelectNode }: Props) {
   if (!node) {
     return (
       <div className="inspector">
@@ -82,11 +88,18 @@ export function Inspector({ node, nodes, edges, onChange, onDelete }: Props) {
         />
       )}
       {ref.kind === 'output' && (
-        <OutputForm
-          def={ref.def}
-          upstreamCodecs={resolveUpstreamCodecs(nodes, edges, node.id)}
-          onChange={(def) => onChange(updateRef(node, { kind: 'output', def }, def.id, displayUrl(def.url)))}
-        />
+        <>
+          <OutputTabs
+            nodes={nodes}
+            currentId={node.id}
+            onSelectNode={onSelectNode}
+          />
+          <OutputForm
+            def={ref.def}
+            upstreamCodecs={resolveUpstreamCodecs(nodes, edges, node.id)}
+            onChange={(def) => onChange(updateRef(node, { kind: 'output', def }, def.id, displayUrl(def.url)))}
+          />
+        </>
       )}
       {ref.kind === 'node' && (
         <NodeForm
@@ -182,6 +195,7 @@ function InputForm({
       {probeError && <div className="probe-error">{probeError}</div>}
       {probed && <ProbedStreamsView streams={probed} />}
       <TimingFields
+        kind="input"
         options={def.options}
         onChange={(opts) => onChange({ ...def, options: opts })}
       />
@@ -355,8 +369,41 @@ function OutputForm({
         onChange={(v) => onChange({ ...def, codec_tag_subtitle: v || undefined })}
       />
       <TimingFields
+        kind="output"
         options={def.options}
         onChange={(opts) => onChange({ ...def, options: opts })}
+      />
+      <BSFEditor
+        label="Bitstream filters (video)"
+        kind="video"
+        spec={def.bsf_video}
+        onChange={(s) => onChange({ ...def, bsf_video: s })}
+      />
+      <BSFEditor
+        label="Bitstream filters (audio)"
+        kind="audio"
+        spec={def.bsf_audio}
+        onChange={(s) => onChange({ ...def, bsf_audio: s })}
+      />
+      <BSFEditor
+        label="Bitstream filters (subtitle)"
+        kind="subtitle"
+        spec={def.bsf_subtitle}
+        onChange={(s) => onChange({ ...def, bsf_subtitle: s })}
+      />
+      <MetadataEditor
+        label="Container metadata"
+        hint={<>Per-output container tags (<code>-metadata key=value</code>): <code>title</code>, <code>artist</code>, <code>comment</code>, <code>genre</code>, <code>date</code>, …</>}
+        metadata={def.metadata}
+        onChange={(m) => onChange({ ...def, metadata: m })}
+      />
+      <ChaptersEditor
+        chapters={def.chapters}
+        onChange={(c) => onChange({ ...def, chapters: c })}
+      />
+      <StreamsEditor
+        streams={def.streams}
+        onChange={(streams) => onChange({ ...def, streams })}
       />
     </>
   );
@@ -619,16 +666,17 @@ function TagField({
 
 /* ---------- Graph node form ---------- */
 function NodeForm({ def, onChange }: { def: NodeDef; onChange: (next: NodeDef) => void }) {
+  const isFilter =
+    def.type === 'filter' || def.type === 'filter_source' || def.type === 'filter_sink';
   return (
     <>
-      <Field label="ID" value={def.id} onChange={(v) => onChange({ ...def, id: v })} />
-      <Field label="Type" value={def.type} onChange={(v) => onChange({ ...def, type: v })} />
-      {(def.type === 'filter' || def.type === 'filter_source' || def.type === 'filter_sink') && (
-        <Field
-          label="Filter"
-          value={def.filter ?? ''}
-          onChange={(v) => onChange({ ...def, filter: v || undefined })}
-        />
+      {isFilter ? (
+        <FilterAdvanced def={def} onChange={onChange} />
+      ) : (
+        <>
+          <Field label="ID" value={def.id} onChange={(v) => onChange({ ...def, id: v })} />
+          <Field label="Type" value={def.type} onChange={(v) => onChange({ ...def, type: v })} />
+        </>
       )}
       {def.type === 'go_processor' && (
         <Field
@@ -638,13 +686,77 @@ function NodeForm({ def, onChange }: { def: NodeDef; onChange: (next: NodeDef) =
         />
       )}
       {def.type === 'encoder' && <EncoderForm def={def} onChange={onChange} />}
-      {(def.type === 'filter' || def.type === 'filter_source' || def.type === 'filter_sink') && (
-        <FilterForm def={def} onChange={onChange} />
-      )}
-      {def.type !== 'encoder' && def.type !== 'filter' && def.type !== 'filter_source' && def.type !== 'filter_sink' && (
+      {isFilter && <FilterForm def={def} onChange={onChange} />}
+      {def.type !== 'encoder' && !isFilter && (
         <ParamsEditor params={def.params ?? {}} onChange={(p) => onChange({ ...def, params: p })} />
       )}
     </>
+  );
+}
+
+/* ---------- Advanced collapsible for filter nodes ----------
+ * Filter, filter_source, and filter_sink graph nodes hide their three
+ * structural identifiers (id, type, filter) by default — those are
+ * properties *of* the node, not properties to edit. The collapse
+ * surfaces them when the user genuinely needs to rename, swap the
+ * underlying libavfilter, or read the raw type. Filter swap is
+ * destructive (resets every option) so it lives behind a confirm. */
+function FilterAdvanced({
+  def,
+  onChange,
+}: {
+  def: NodeDef;
+  onChange: (next: NodeDef) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div style={{ marginBottom: 12 }}>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        style={{
+          background: 'transparent',
+          color: 'var(--text-dim)',
+          border: 'none',
+          padding: 0,
+          fontSize: 11,
+          cursor: 'pointer',
+        }}
+        title="Show node id, type, and filter swap"
+      >
+        {open ? '▾' : '▸'} Advanced
+      </button>
+      {open && (
+        <div style={{ marginTop: 6, paddingLeft: 8, borderLeft: '1px solid var(--border)' }}>
+          <Field label="ID" value={def.id} onChange={(v) => onChange({ ...def, id: v })} />
+          <label>Type</label>
+          <div className="inspector-canonical" style={{ marginBottom: 8 }}>{def.type}</div>
+          <label>Filter</label>
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 4 }}>
+            <code style={{ flex: 1, fontSize: 12 }}>{def.filter ?? '(unset)'}</code>
+            <button
+              type="button"
+              onClick={() => {
+                const cur = def.filter ?? '';
+                const next = window.prompt(
+                  'Replace filter with another libavfilter name?\n\nNote: this discards every option you have set on this node.',
+                  cur,
+                );
+                if (next === null) return;
+                const trimmed = next.trim();
+                if (trimmed === '' || trimmed === cur) return;
+                onChange({ ...def, filter: trimmed, params: undefined });
+              }}
+            >
+              Replace…
+            </button>
+          </div>
+          <div style={{ fontSize: 11, color: 'var(--text-dim)' }}>
+            Replacing the filter clears every option on this node.
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -713,9 +825,11 @@ function ParamsEditor({
  * Mirroring `-t` and `-to` simultaneously is rejected by FFmpeg, so
  * the editor doesn't enforce that — it just surfaces all three. */
 function TimingFields({
+  kind,
   options,
   onChange,
 }: {
+  kind: 'input' | 'output';
   options: Record<string, unknown> | undefined;
   onChange: (next: Record<string, unknown> | undefined) => void;
 }) {
@@ -732,16 +846,680 @@ function TimingFields({
     }
     onChange(Object.keys(next).length === 0 ? undefined : next);
   };
+  const summary =
+    kind === 'input'
+      ? 'When to start or stop output from this node.'
+      : 'When to start or stop accepting input to this node.';
   return (
     <>
       <label style={{ marginTop: 12 }}>Timing</label>
       <div style={{ fontSize: 11, color: 'var(--text-dim)', marginBottom: 4 }}>
-        FFmpeg <code>-ss</code> / <code>-t</code> / <code>-to</code>. Accepts
-        seconds (<code>30</code>) or <code>HH:MM:SS[.ms]</code>.
+        {summary} Seconds (<code>30</code>) or <code>HH:MM:SS[.ms]</code>.
       </div>
       <Field label="Start (-ss)" value={get('ss')} onChange={(v) => set('ss', v)} />
       <Field label="Duration (-t)" value={get('t')} onChange={(v) => set('t', v)} />
       <Field label="End (-to)" value={get('to')} onChange={(v) => set('to', v)} />
+    </>
+  );
+}
+
+/* ---------- Multi-output tab strip (Wave 8 #45) ----------
+ * Lets the user flip between every Output node in the current graph
+ * without going back to the canvas. Tabs are derived from the live
+ * node list so add / delete / rename keeps them in sync. Only renders
+ * when more than one output exists; a single-output graph is identical
+ * to the previous single-output form. */
+function OutputTabs({
+  nodes,
+  currentId,
+  onSelectNode,
+}: {
+  nodes: FlowNode[];
+  currentId: string;
+  onSelectNode?: (id: string) => void;
+}) {
+  const outputs = nodes.filter((n) => n.data.ref.kind === 'output' && !n.data.implicit);
+  if (outputs.length < 2 || !onSelectNode) return null;
+  return (
+    <div className="inspector-tabs" role="tablist" aria-label="Outputs">
+      {outputs.map((o) => (
+        <button
+          key={o.id}
+          type="button"
+          role="tab"
+          aria-selected={o.id === currentId}
+          className={'inspector-tab' + (o.id === currentId ? ' active' : '')}
+          onClick={() => onSelectNode(o.id)}
+          title={o.data.sublabel || o.id}
+        >
+          {o.data.label || o.id}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/* ---------- BSF chain editor (Wave 8 #46) ----------
+ * Sortable list with add/remove/reorder of (name, params) entries
+ * for `Output.bsf_video` / `bsf_audio` / `bsf_subtitle`. Replaces the
+ * single-field text input that previously forced the user to know
+ * libavcodec's `f1=k=v:k=v,f2` chain syntax. The serialised string is
+ * shown live as a read-only preview so power users can confirm the
+ * exact spec being sent through `av_bsf_list_parse_str`. */
+const BSF_PRESETS: Record<'video' | 'audio' | 'subtitle', string[]> = {
+  video: [
+    'h264_mp4toannexb',
+    'hevc_mp4toannexb',
+    'h264_metadata',
+    'hevc_metadata',
+    'av1_metadata',
+    'h264_redundant_pps',
+    'dump_extra',
+    'extract_extradata',
+    'filter_units',
+    'noise',
+    'null',
+    'setts',
+    'trace_headers',
+  ],
+  audio: [
+    'aac_adtstoasc',
+    'mp3decomp',
+    'opus_metadata',
+    'noise',
+    'null',
+    'setts',
+  ],
+  subtitle: [
+    'mov2textsub',
+    'text2movsub',
+    'null',
+  ],
+};
+
+function BSFEditor({
+  label,
+  kind,
+  spec,
+  onChange,
+}: {
+  label: string;
+  kind: 'video' | 'audio' | 'subtitle';
+  spec: string | undefined;
+  onChange: (next: string | undefined) => void;
+}) {
+  // Parse the canonical chain spec on every render so external edits
+  // (load file, undo, etc.) flow through. Local edits round-trip
+  // through serializeBSFChain so the textual preview stays canonical.
+  const entries: BSFEntry[] = parseBSFChain(spec ?? '');
+  const presets = BSF_PRESETS[kind];
+
+  const commit = (next: BSFEntry[]) => {
+    const s = serializeBSFChain(next);
+    onChange(s === '' ? undefined : s);
+  };
+  const update = (i: number, patch: Partial<BSFEntry>) => {
+    commit(entries.map((e, j) => (j === i ? { ...e, ...patch } : e)));
+  };
+  const remove = (i: number) => {
+    commit(entries.filter((_, j) => j !== i));
+  };
+  const move = (i: number, dir: -1 | 1) => {
+    const j = i + dir;
+    if (j < 0 || j >= entries.length) return;
+    const next = entries.slice();
+    [next[i], next[j]] = [next[j], next[i]];
+    commit(next);
+  };
+  const add = () => {
+    commit([...entries, { name: presets[0] ?? '', params: {} }]);
+  };
+  const preview = serializeBSFChain(entries);
+
+  return (
+    <>
+      <label style={{ marginTop: 12 }}>{label}</label>
+      <div style={{ fontSize: 11, color: 'var(--text-dim)', marginBottom: 6 }}>
+        Bitstream-filter chain. Syntax:{' '}
+        <code>f1[=k=v[:k=v]][,f2]</code> (libavcodec
+        <code> av_bsf_list_parse_str</code>).
+      </div>
+      {entries.length === 0 ? (
+        <div className="empty" style={{ marginTop: 4 }}>
+          No bitstream filters. Click <strong>+ add</strong> to build a chain.
+        </div>
+      ) : (
+        entries.map((e, i) => (
+          <div
+            key={i}
+            style={{
+              border: '1px solid var(--border)',
+              borderRadius: 4,
+              padding: 6,
+              marginBottom: 6,
+              background: 'var(--panel-2)',
+            }}
+          >
+            <div style={{ display: 'flex', gap: 4, alignItems: 'flex-end' }}>
+              <div style={{ flex: 1 }}>
+                <label style={{ marginTop: 0 }}>Filter</label>
+                <input
+                  list={`bsf-presets-${kind}`}
+                  value={e.name}
+                  onChange={(ev) => update(i, { name: ev.target.value })}
+                  style={{
+                    width: '100%',
+                    background: 'var(--panel)',
+                    color: 'var(--text)',
+                    border: '1px solid var(--border)',
+                    borderRadius: 4,
+                    padding: '5px 7px',
+                    fontSize: 12,
+                  }}
+                />
+              </div>
+              <button
+                type="button"
+                onClick={() => move(i, -1)}
+                disabled={i === 0}
+                title="Move up"
+              >
+                ↑
+              </button>
+              <button
+                type="button"
+                onClick={() => move(i, 1)}
+                disabled={i === entries.length - 1}
+                title="Move down"
+              >
+                ↓
+              </button>
+              <button
+                type="button"
+                className="danger"
+                onClick={() => remove(i)}
+                title="Remove this filter"
+              >
+                ×
+              </button>
+            </div>
+            <label style={{ marginTop: 8 }}>Params</label>
+            <ParamsEditor
+              params={e.params}
+              onChange={(p) => {
+                const params: Record<string, string> = {};
+                for (const [k, v] of Object.entries(p)) params[k] = String(v ?? '');
+                update(i, { params });
+              }}
+            />
+          </div>
+        ))
+      )}
+      <datalist id={`bsf-presets-${kind}`}>
+        {presets.map((p) => (
+          <option key={p} value={p} />
+        ))}
+      </datalist>
+      <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 4 }}>
+        <button type="button" onClick={add} title="Add a bitstream filter">
+          + add
+        </button>
+        {preview && (
+          <code
+            style={{
+              flex: 1,
+              fontSize: 11,
+              color: 'var(--text-dim)',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}
+            title={preview}
+          >
+            {preview}
+          </code>
+        )}
+      </div>
+    </>
+  );
+}
+
+/* ---------- Container metadata editor (Wave 8 #47) ----------
+ * Thin key/value wrapper over ParamsEditor that strips empty entries
+ * on save. Used both for `Output.metadata` (per-output container
+ * tags, e.g. `title`, `artist`, `comment`, `genre`, `date`,
+ * `encoded_by`) and for the per-stream `metadata` field surfaced
+ * via StreamSpecForm. */
+function MetadataEditor({
+  label,
+  hint,
+  metadata,
+  onChange,
+}: {
+  label: string;
+  hint?: ReactNode;
+  metadata: Record<string, string> | undefined;
+  onChange: (next: Record<string, string> | undefined) => void;
+}) {
+  const params = metadata ?? {};
+  return (
+    <>
+      <label style={{ marginTop: 12 }}>{label}</label>
+      {hint && (
+        <div style={{ fontSize: 11, color: 'var(--text-dim)', marginBottom: 4 }}>
+          {hint}
+        </div>
+      )}
+      <ParamsEditor
+        params={params}
+        onChange={(p) => {
+          const m: Record<string, string> = {};
+          for (const [k, v] of Object.entries(p)) {
+            if (k.trim() === '') continue;
+            m[k] = String(v ?? '');
+          }
+          onChange(Object.keys(m).length === 0 ? undefined : m);
+        }}
+      />
+    </>
+  );
+}
+
+/* ---------- Chapters editor (Wave 8 #47) ----------
+ * Table editor for `Output.chapters` — each row is `(start, end,
+ * title)` plus an expandable per-chapter metadata key/value section.
+ * Backs containers that support chapters (matroska, mp4, ogg,
+ * ffmetadata). FFmpeg expresses chapters as fractional seconds
+ * (start/end as float64) so the form takes free-text numeric input
+ * and round-trips through parseFloat — invalid input leaves the
+ * existing value untouched on commit. */
+function ChaptersEditor({
+  chapters,
+  onChange,
+}: {
+  chapters: Chapter[] | undefined;
+  onChange: (next: Chapter[] | undefined) => void;
+}) {
+  const list = chapters ?? [];
+  const commit = (next: Chapter[]) => onChange(next.length === 0 ? undefined : next);
+  const update = (i: number, patch: Partial<Chapter>) => {
+    commit(list.map((c, j) => (j === i ? { ...c, ...patch } : c)));
+  };
+  const remove = (i: number) => {
+    commit(list.filter((_, j) => j !== i));
+  };
+  const move = (i: number, dir: -1 | 1) => {
+    const j = i + dir;
+    if (j < 0 || j >= list.length) return;
+    const next = list.slice();
+    [next[i], next[j]] = [next[j], next[i]];
+    commit(next);
+  };
+  const add = () => {
+    const last = list[list.length - 1];
+    const start = last ? last.end : 0;
+    commit([...list, { start, end: start, title: '' }]);
+  };
+
+  return (
+    <>
+      <label style={{ marginTop: 12 }}>Chapters</label>
+      <div style={{ fontSize: 11, color: 'var(--text-dim)', marginBottom: 6 }}>
+        Container chapter table (matroska, mp4, ogg, ffmetadata).
+        Times in seconds (e.g. <code>30</code>, <code>125.5</code>).
+        Replaces any chapters mapped from inputs via <code>map_chapters</code>.
+      </div>
+      {list.length === 0 ? (
+        <div className="empty" style={{ marginTop: 4 }}>
+          No chapters. Click <strong>+ add</strong> to create one.
+        </div>
+      ) : (
+        list.map((c, i) => (
+          <ChapterRow
+            key={i}
+            chapter={c}
+            index={i}
+            isFirst={i === 0}
+            isLast={i === list.length - 1}
+            onChange={(patch) => update(i, patch)}
+            onRemove={() => remove(i)}
+            onMove={(dir) => move(i, dir)}
+          />
+        ))
+      )}
+      <button type="button" onClick={add} title="Add a chapter" style={{ marginTop: 4 }}>
+        + add
+      </button>
+    </>
+  );
+}
+
+function ChapterRow({
+  chapter,
+  index,
+  isFirst,
+  isLast,
+  onChange,
+  onRemove,
+  onMove,
+}: {
+  chapter: Chapter;
+  index: number;
+  isFirst: boolean;
+  isLast: boolean;
+  onChange: (patch: Partial<Chapter>) => void;
+  onRemove: () => void;
+  onMove: (dir: -1 | 1) => void;
+}) {
+  const [showMeta, setShowMeta] = useState(false);
+  const metaCount = Object.keys(chapter.metadata ?? {}).length;
+  return (
+    <div
+      style={{
+        border: '1px solid var(--border)',
+        borderRadius: 4,
+        padding: 6,
+        marginBottom: 6,
+        background: 'var(--panel-2)',
+      }}
+    >
+      <div style={{ display: 'flex', gap: 4, alignItems: 'flex-end' }}>
+        <div style={{ flex: '0 0 30px', color: 'var(--text-dim)', fontSize: 11, paddingBottom: 6 }}>
+          #{index + 1}
+        </div>
+        <div style={{ flex: '0 0 90px' }}>
+          <NumericField
+            label="Start (s)"
+            value={chapter.start}
+            onChange={(v) => onChange({ start: v })}
+          />
+        </div>
+        <div style={{ flex: '0 0 90px' }}>
+          <NumericField
+            label="End (s)"
+            value={chapter.end}
+            onChange={(v) => onChange({ end: v })}
+          />
+        </div>
+        <div style={{ flex: 1 }}>
+          <Field
+            label="Title"
+            value={chapter.title ?? ''}
+            onChange={(v) => onChange({ title: v || undefined })}
+          />
+        </div>
+        <button type="button" onClick={() => onMove(-1)} disabled={isFirst} title="Move up">
+          ↑
+        </button>
+        <button type="button" onClick={() => onMove(1)} disabled={isLast} title="Move down">
+          ↓
+        </button>
+        <button type="button" className="danger" onClick={onRemove} title="Remove chapter">
+          ×
+        </button>
+      </div>
+      <button
+        type="button"
+        onClick={() => setShowMeta((v) => !v)}
+        style={{
+          marginTop: 6,
+          background: 'transparent',
+          color: 'var(--text-dim)',
+          border: 'none',
+          padding: 0,
+          fontSize: 11,
+          cursor: 'pointer',
+        }}
+        title="Toggle per-chapter metadata"
+      >
+        {showMeta ? '▾' : '▸'} Metadata{metaCount > 0 ? ` (${metaCount})` : ''}
+      </button>
+      {showMeta && (
+        <ParamsEditor
+          params={chapter.metadata ?? {}}
+          onChange={(p) => {
+            const m: Record<string, string> = {};
+            for (const [k, v] of Object.entries(p)) {
+              if (k.trim() === '') continue;
+              m[k] = String(v ?? '');
+            }
+            onChange({ metadata: Object.keys(m).length === 0 ? undefined : m });
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+/* Numeric input that commits on blur and tolerates invalid input
+ * (leaves the prior value in place). Used for chapter start/end. */
+function NumericField({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: number;
+  onChange: (v: number) => void;
+}) {
+  const [local, setLocal] = useState(String(value));
+  useEffect(() => setLocal(String(value)), [value]);
+  return (
+    <>
+      <label>{label}</label>
+      <input
+        type="text"
+        inputMode="decimal"
+        value={local}
+        onChange={(e) => setLocal(e.target.value)}
+        onBlur={() => {
+          const n = parseFloat(local);
+          if (Number.isFinite(n) && n >= 0) onChange(n);
+          else setLocal(String(value));
+        }}
+        style={{
+          width: '100%',
+          background: 'var(--panel)',
+          color: 'var(--text)',
+          border: '1px solid var(--border)',
+          borderRadius: 4,
+          padding: '5px 7px',
+          fontSize: 12,
+        }}
+      />
+    </>
+  );
+}
+
+/* ---------- Per-stream editor (Wave 8 #45) ----------
+ * Surfaces Output.streams[]: per-stream metadata (Wave 1 #3),
+ * disposition (Wave 1 #3), and per-stream encoder overrides
+ * (Wave 6 #30). Renders a row of sub-tabs (one per declared stream
+ * spec) plus + add / × remove buttons. The full streams[] surface
+ * is data-model complete on the backend — until now there was no
+ * way to author it from the GUI. */
+function StreamsEditor({
+  streams,
+  onChange,
+}: {
+  streams: StreamSpec[] | undefined;
+  onChange: (next: StreamSpec[] | undefined) => void;
+}) {
+  const list = streams ?? [];
+  const [active, setActive] = useState(0);
+  // Clamp active when the list shrinks.
+  const idx = Math.min(active, Math.max(list.length - 1, 0));
+
+  const update = (i: number, patch: Partial<StreamSpec>) => {
+    const next = list.map((s, j) => (j === i ? { ...s, ...patch } : s));
+    onChange(next.length === 0 ? undefined : next);
+  };
+  const add = () => {
+    const next = [...list, { type: 'v' as const, index: list.length }];
+    onChange(next);
+    setActive(next.length - 1);
+  };
+  const remove = (i: number) => {
+    const next = list.filter((_, j) => j !== i);
+    onChange(next.length === 0 ? undefined : next);
+    if (active >= next.length) setActive(Math.max(next.length - 1, 0));
+  };
+
+  return (
+    <>
+      <label style={{ marginTop: 14 }}>Streams</label>
+      <div style={{ fontSize: 11, color: 'var(--text-dim)', marginBottom: 6 }}>
+        Per-stream metadata, disposition, and encoder overrides
+        (<code>-metadata:s:v:0</code>, <code>-disposition:s:a:1</code>,
+        <code>-c:v:1</code>, <code>-b:v:1</code>).
+      </div>
+      <div className="inspector-tabs" role="tablist" aria-label="Streams">
+        {list.map((s, i) => (
+          <button
+            key={i}
+            type="button"
+            role="tab"
+            aria-selected={i === idx}
+            className={'inspector-tab' + (i === idx ? ' active' : '')}
+            onClick={() => setActive(i)}
+            title={`Stream ${s.type}:${s.index}`}
+          >
+            {`${s.type}:${s.index}`}
+          </button>
+        ))}
+        <button
+          type="button"
+          className="inspector-tab"
+          onClick={add}
+          title="Add stream override"
+        >
+          + add
+        </button>
+      </div>
+      {list.length === 0 ? (
+        <div className="empty" style={{ marginTop: 6 }}>
+          No per-stream overrides. Click <strong>+ add</strong> to create one.
+        </div>
+      ) : (
+        <StreamSpecForm
+          spec={list[idx]}
+          onChange={(patch) => update(idx, patch)}
+          onRemove={() => remove(idx)}
+        />
+      )}
+    </>
+  );
+}
+
+function StreamSpecForm({
+  spec,
+  onChange,
+  onRemove,
+}: {
+  spec: StreamSpec;
+  onChange: (patch: Partial<StreamSpec>) => void;
+  onRemove: () => void;
+}) {
+  return (
+    <div style={{ marginTop: 6 }}>
+      <div style={{ display: 'flex', gap: 6, alignItems: 'flex-end' }}>
+        <div style={{ flex: '0 0 80px' }}>
+          <label>Type</label>
+          <select
+            value={spec.type}
+            onChange={(e) => onChange({ type: e.target.value as StreamSpec['type'] })}
+            style={{
+              width: '100%',
+              background: 'var(--panel-2)',
+              color: 'var(--text)',
+              border: '1px solid var(--border)',
+              borderRadius: 4,
+              padding: '5px 7px',
+              fontSize: 12,
+            }}
+          >
+            <option value="v">v (video)</option>
+            <option value="a">a (audio)</option>
+            <option value="s">s (subtitle)</option>
+            <option value="d">d (data)</option>
+          </select>
+        </div>
+        <div style={{ flex: '0 0 80px' }}>
+          <Field
+            label="Index"
+            value={String(spec.index)}
+            onChange={(v) => {
+              const n = parseInt(v, 10);
+              if (Number.isFinite(n) && n >= 0) onChange({ index: n });
+            }}
+          />
+        </div>
+        <button
+          type="button"
+          className="danger"
+          onClick={onRemove}
+          style={{ marginLeft: 'auto' }}
+          title="Remove this stream override"
+        >
+          Remove
+        </button>
+      </div>
+      <Field
+        label="Disposition"
+        value={spec.disposition ?? ''}
+        onChange={(v) => onChange({ disposition: v || undefined })}
+      />
+      <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: -4, marginBottom: 4 }}>
+        <code>+</code>-separated <code>AV_DISPOSITION_*</code> flags
+        (e.g. <code>default+forced</code>, <code>hearing_impaired</code>).
+      </div>
+      <label style={{ marginTop: 10 }}>Metadata</label>
+      <ParamsEditor
+        params={spec.metadata ?? {}}
+        onChange={(p) => {
+          const m: Record<string, string> = {};
+          for (const [k, v] of Object.entries(p)) m[k] = String(v ?? '');
+          onChange({ metadata: Object.keys(m).length === 0 ? undefined : m });
+        }}
+      />
+      <EncoderOverrideForm
+        override={spec.encoder}
+        onChange={(enc) => onChange({ encoder: enc })}
+      />
+    </div>
+  );
+}
+
+function EncoderOverrideForm({
+  override,
+  onChange,
+}: {
+  override: EncoderOverride | undefined;
+  onChange: (next: EncoderOverride | undefined) => void;
+}) {
+  const codec = override?.codec ?? '';
+  const opts = override?.options ?? {};
+  const set = (next: EncoderOverride) => {
+    const empty = !next.codec && Object.keys(next.options ?? {}).length === 0;
+    onChange(empty ? undefined : next);
+  };
+  return (
+    <>
+      <label style={{ marginTop: 10 }}>Encoder override</label>
+      <div style={{ fontSize: 11, color: 'var(--text-dim)', marginBottom: 4 }}>
+        Per-stream codec / option overrides (<code>-c:v:1 libx264</code>,
+        <code>-b:v:1 5M</code>). Empty leaves output-level codec in place.
+      </div>
+      <Field
+        label="Codec"
+        value={codec}
+        onChange={(v) => set({ codec: v || undefined, options: opts })}
+      />
+      <label>Options</label>
+      <ParamsEditor
+        params={opts}
+        onChange={(p) => set({ codec: codec || undefined, options: p })}
+      />
     </>
   );
 }

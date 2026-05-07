@@ -809,7 +809,7 @@ function Editor() {
       </div>
 
       {showInspector && (
-      <Inspector node={selectedNode} nodes={nodes} edges={edges} onChange={onNodeUpdate} onDelete={onNodeDelete} />
+      <Inspector node={selectedNode} nodes={nodes} edges={edges} onChange={onNodeUpdate} onDelete={onNodeDelete} onSelectNode={setSelectedId} />
       )}
       <RunDock visible={showRunPanel}>
         <RunPanel run={run} nodeKinds={nodeKinds} onClose={() => setShowRunPanel(false)} />

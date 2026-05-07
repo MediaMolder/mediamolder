@@ -206,6 +206,163 @@ button.danger:hover { background: rgba(185, 74, 74, 0.15); }
   padding: 1px 4px;
   border-radius: 3px;
 }
+
+/* ---------- Filter option row (FilterForm) ----------
+ * Per-AVOption row in the filter Inspector. Layout is:
+ *   NAME           ← label, uppercase
+ *   help text      ← row's primary descriptive line
+ *   [control] range← editable widget on the left, dim allowed-range
+ *                    badge tucked against the right edge.
+ * Range badge intentionally omits the type token — the formatting of
+ * the endpoints (decimal vs integer) conveys the AVOption type. */
+.filter-option-row {
+  margin-bottom: 12px;
+}
+.filter-option-name {
+  display: block;
+  font-size: 11px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  margin-bottom: 2px;
+}
+.filter-option-modified {
+  color: var(--accent, #3a82f7);
+  margin-right: 4px;
+}
+.filter-option-help {
+  font-size: 11px;
+  color: var(--text);
+  margin-bottom: 4px;
+  line-height: 1.4;
+}
+.filter-option-control-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.filter-option-control {
+  flex: 1;
+  min-width: 0;
+}
+.filter-option-control > input,
+.filter-option-control > select,
+.filter-option-control > .bool-toggle {
+  width: 100%;
+}
+.filter-option-range {
+  font-size: 10px;
+  color: var(--text-dim);
+  font-family: ui-monospace, monospace;
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+
+/* ---------- Boolean toggle (OptionControl) ----------
+ * Two pill buttons (true / false) plus a trailing ✕ that clears the
+ * override back to the libavfilter default. Never renders 0 / 1. */
+.bool-toggle {
+  display: inline-flex;
+  align-items: stretch;
+  gap: 0;
+}
+.bool-toggle-opt {
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  padding: 4px 12px;
+  font-size: 12px;
+  cursor: pointer;
+  margin: 0;
+}
+.bool-toggle-opt:nth-of-type(1) {
+  border-top-left-radius: 4px;
+  border-bottom-left-radius: 4px;
+}
+.bool-toggle-opt:nth-of-type(2) {
+  border-left: none;
+}
+.bool-toggle-opt.active {
+  background: var(--accent, #3a82f7);
+  color: #fff;
+  border-color: var(--accent, #3a82f7);
+}
+.bool-toggle-opt.active.default {
+  background: transparent;
+  color: var(--text);
+  border-color: var(--accent, #3a82f7);
+  border-style: dashed;
+}
+.bool-toggle-clear {
+  margin-left: 6px;
+  background: transparent;
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 8px;
+  font-size: 11px;
+  cursor: pointer;
+}
+.bool-toggle-clear:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+/* ---------- Extended-help "?" button + dialog ---------- */
+.ext-help-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  margin-left: 5px;
+  padding: 0;
+  font-size: 10px;
+  font-weight: bold;
+  line-height: 1;
+  background: var(--panel-2);
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  cursor: pointer;
+  vertical-align: middle;
+  flex-shrink: 0;
+}
+.ext-help-btn:hover {
+  background: var(--accent, #4f8cff);
+  color: #fff;
+  border-color: var(--accent, #4f8cff);
+}
+.ext-help-dialog {
+  background: var(--panel-1, #1e1e1e);
+  color: var(--text, #d4d4d4);
+  border: 1px solid var(--border, #444);
+  border-radius: 8px;
+  padding: 20px 24px 16px;
+  max-width: 480px;
+  width: 90vw;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+}
+.ext-help-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.5);
+}
+.ext-help-dialog h4 {
+  margin: 0 0 10px;
+  font-size: 13px;
+  color: var(--text, #d4d4d4);
+}
+.ext-help-dialog p {
+  margin: 0 0 14px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-dim, #aaa);
+}
+.ext-help-dialog button {
+  float: right;
+  font-size: 12px;
+  padding: 4px 14px;
+}
+
 .palette h3 {
   font-size: 11px;
   text-transform: uppercase;
@@ -283,6 +440,34 @@ button.danger:hover { background: rgba(185, 74, 74, 0.15); }
 .param-row button {
   padding: 2px 6px;
   line-height: 1;
+}
+
+/* Inspector tab strip — used by Wave 8 #45 for the multi-output
+ * tabs at the top of the OutputForm and for the per-stream sub-tabs
+ * inside the StreamsEditor. Wraps when there are too many tabs to
+ * fit on one row. */
+.inspector-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  border-bottom: 1px solid var(--border);
+  margin: 4px 0 10px;
+}
+.inspector-tab {
+  background: var(--panel-2);
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-bottom: none;
+  border-radius: 4px 4px 0 0;
+  padding: 4px 10px;
+  font-size: 11px;
+  cursor: pointer;
+  margin-bottom: -1px;
+}
+.inspector-tab.active {
+  background: var(--panel);
+  color: var(--text);
+  border-bottom: 1px solid var(--panel);
 }
 
 /* Custom node */

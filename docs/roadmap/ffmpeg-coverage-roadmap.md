@@ -1109,20 +1109,56 @@ wave delivers every §2.8 / §3.5 GUI item that the schema can now back.
     #36a (typing) + #36c (runtime) + #36e (`movie` / `amovie` asset
     references).
 45. **Multi-output inspector with per-stream encoder tabs** (§2.8,
-    §3.5.2) — Replace the single-output form with a tabbed view
-    showing every `Output` entry; per-output sub-tabs for each
-    stream surface the per-stream metadata / disposition (Wave 1
-    #3) and per-stream encoder overrides (Wave 6 #30).
-46. **BSF chain editor** (§2.8, §3.5.3) — Sortable list with
-    add/remove/reorder of `(name, params)` entries; preview the
+    §3.5.2) ✅ Wave 8 — The Inspector now renders a tab strip listing
+    every non-implicit `Output` node in the current graph (when there
+    are at least two), so the user can flip between outputs without
+    going back to the canvas
+    ([frontend/src/components/Inspector.tsx](../../frontend/src/components/Inspector.tsx)
+    `OutputTabs`). Each output's form gains a new **Streams** sub-tab
+    strip backed by `Output.streams[]`: `+ add` creates a new
+    `StreamSpec{type:"v", index:N}`, the per-stream form edits
+    `disposition` (Wave 1 #3), `metadata` key/value pairs (Wave 1 #3),
+    and the `encoder` override codec + options (Wave 6 #30). All three
+    surfaces were data-model complete on the backend already; this
+    item is the GUI half. New `inspector-tabs` / `inspector-tab` /
+    `.active` CSS rules in
+    [frontend/src/styles.css](../../frontend/src/styles.css). Selection
+    threading: `Inspector` gained an `onSelectNode?: (id) => void`
+    prop wired in [frontend/src/app.tsx](../../frontend/src/app.tsx)
+    to `setSelectedId` so clicking an output tab repaints both the
+    inspector and the canvas selection halo. Subtitle disposition
+    flag toggles (Wave 8 #52), the chapter/metadata table editor
+    (Wave 8 #47), and the BSF chain editor (Wave 8 #46) layer on top
+    of this surface in subsequent waves.
+46. **BSF chain editor** (§2.8, §3.5.3) ✅ Wave 8 — Sortable list with
+    add/remove/reorder of `(name, params)` entries; preview of the
     rendered `f1=k=v:k=v,f2` string. Replaces the single-field
     text input on `Output.BSFVideo` / `BSFAudio` / `BSFSubtitle`
-    (Wave 3 #13).
-47. **Chapter / metadata editor** (§2.8, §3.5.4) — Table editor
+    (Wave 3 #13). New `parseBSFChain` / `serializeBSFChain` in
+    [frontend/src/lib/bsf.ts](../../frontend/src/lib/bsf.ts) handles
+    the libavcodec `av_bsf_list_parse_str` syntax (comma-separated
+    chain, each entry `name[=k=v[:k=v]*]`); new `BSFEditor` in
+    [frontend/src/components/Inspector.tsx](../../frontend/src/components/Inspector.tsx)
+    renders one section per media type with per-entry datalist
+    presets (`h264_mp4toannexb`, `hevc_mp4toannexb`, `aac_adtstoasc`,
+    `h264_metadata`, `dump_extra`, `extract_extradata`, `setts`, …),
+    `↑`/`↓` reorder buttons, `×` remove, `+ add`, and a live
+    monospace preview of the canonical chain spec.
+47. **Chapter / metadata editor** (§2.8, §3.5.4) ✅ Wave 8 — Table editor
     for `(start, end, title)` chapter entries; key/value editor
     for per-output and per-stream metadata; tabs per stream.
     Backs `Output.Chapters`, `Output.Metadata`, and
-    `Output.Streams[].Metadata`.
+    `Output.Streams[].Metadata`. New `MetadataEditor` (key/value
+    wrapper around the existing `ParamsEditor` that strips empty
+    keys on save) renders the per-output `Container metadata`
+    section in
+    [frontend/src/components/Inspector.tsx](../../frontend/src/components/Inspector.tsx);
+    new `ChaptersEditor` / `ChapterRow` / `NumericField` render a
+    sortable `(start, end, title)` table with `↑`/`↓` reorder, `×`
+    remove, `+ add` (auto-fills `start` from the previous row's
+    `end`), and a collapsible per-chapter metadata section. The
+    per-stream metadata surface remained as wired by Wave 8 #45's
+    `StreamSpecForm`.
 48. **HLS / DASH / Tee output wizards** (§2.8, §3.5.5) — Schema-
     driven forms for the typed `HLS` / `DASH` / `Tee*` blocks
     landed in Waves 1 #5 and 3 #12. Variant-stream picker for

@@ -1,5 +1,5 @@
 ﻿# Binaries
-mediamolder
+/mediamolder
 *.exe
 *.dll
 *.so
@@ -51,10 +51,6 @@ bench-*.txt
 # TypeScript incremental build cache
 frontend/tsconfig.tsbuildinfo
 
-# Large test media (not committed; fetched separately)
-testdata/BBB_10sec.mp4
-testdata/BBB_30sec.mp4
-
 # Stray pipeline / example processor output files when run from the repo root
 /frame_info.jsonl
 /scene_changes.jsonl
@@ -64,6 +60,8 @@ docs/images/1.png
 docs/images/2.png
 docs/images/ABR.png
 docs/images/Separate_audio_video.png
-testdata/sample.jpg
-testdata/sample.aac
-testdata/sample.yuv
+
+# Debug build log (make build-debug / make build-gui-debug)
+mediamolder-build.log
+pipeline/ffmpeg2pass-0.log
+pipeline/ffmpeg2pass-0.log.mbtree

@@ -50,12 +50,29 @@ The `Makefile` ships these top-level targets:
 | `make build-static` | `go build -tags=ffstatic ./...` | Static via `../ffmpeg` |
 | `make build-gui` | `mediamolder` with embedded GUI | Shared |
 | `make build-gui-static` | `mediamolder` with embedded GUI | Static |
+| `make build-debug` | `mediamolder` + `mediamolder-build.log` | Shared |
+| `make build-gui-debug` | `mediamolder` + `mediamolder-build.log` | Shared (+ frontend) |
+| `make check-deps` | Verify gcc + FFmpeg ≥ 8.1 headers | — |
 | `make test` / `make test-static` | Run the test suite | Shared / static |
 | `make frontend-install` | `npm install` in `frontend/` | — |
 | `make frontend-build` | Build React app + copy into `internal/gui/dist/` | — |
 | `make frontend-dev` | Vite dev server (hot reload) | — |
 | `make gui-dev` | Go backend in dev mode (proxies to Vite) | Shared |
 | `make clean` | `go clean` + remove `frontend/dist`, `internal/gui/dist` | — |
+
+The `build-debug` and `build-gui-debug` targets capture the full compiler and
+linker command log together with system environment details (Go version,
+`pkg-config` output for every FFmpeg library, gcc path and version, relevant
+`CGO_*` / `PKG_CONFIG_PATH` env vars) into `mediamolder-build.log`.  Share
+that file when reporting a build failure — it contains everything needed to
+reproduce the problem without back-and-forth.
+
+```bash
+make build-debug                   # headless build + log
+make build-gui-debug               # GUI build + log
+make build-gui-debug BUILD_TAGS=ffstatic   # static GUI build + log
+make build-debug LOG=/tmp/my.log   # write log to a custom path
+```
 
 Windows users run the equivalent commands by hand from PowerShell — see
 [build/windows.md](build/windows.md).

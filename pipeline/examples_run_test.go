@@ -19,6 +19,9 @@ import (
 // encoders, ONNX models, or Linux-only devices are skipped with an
 // explanatory message.
 func TestExamplesRun(t *testing.T) {
+	if testing.Short() {
+		t.Skip("example runs execute real encodes (~150 s); use -run TestExamplesRun to include")
+	}
 	// Use the 10-second Big Buck Bunny clip for fast test runs (VP9 and
 	// other slow encoders would time out against a longer source). Fall
 	// back to the 30-second clip if the 10-second one isn't present.

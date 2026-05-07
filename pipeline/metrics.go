@@ -32,14 +32,30 @@ type NodeMetrics struct {
 	mediaPTSNs      atomic.Int64
 	mediaDurationNs atomic.Int64
 
-	// outputPTSNs is set by sink nodes after each successfully
-	// written packet (max across streams). It tracks how far the
-	// pipeline output has actually advanced — i.e. how much media
-	// has been *encoded and muxed*, not just demuxed. This is the
-	// signal the GUI wants for progress/ETA/speed: the source
-	// demuxer typically races ahead of encoders, so source mediaPTS
-	// hits 100% long before the run is finished.
-	outputPTSNs atomic.Int64
+	// outputPTSNs tracks how far the pipeline output has actually
+	// advanced — i.e. how much media has been *encoded and muxed*,
+	// not just demuxed. The GUI uses this for progress/ETA/speed
+	// because the source demuxer typically races ahead of encoders
+	// and source mediaPTS hits 100% long before the run is finished.
+	//
+	// Within a single sink there can be several streams (e.g. video
+	// + audio) running at very different real-time speeds — a fast
+	// AAC encoder reaches output-end-of-file long before a slow
+	// libx265 encoder finishes minute one. Taking the max across
+	// streams pins the metric at the *fastest* stream and makes the
+	// progress bar jump to 100% prematurely. We therefore track each
+	// stream's monotonic-max output PTS separately in
+	// streamOutputPTS, and Snapshot reports the *min* of those values
+	// (over streams that have written at least one packet) so
+	// progress is bounded by the slowest stream — which is the only
+	// thing that determines when the run actually finishes.
+	//
+	// outputPTSNs is kept as the legacy aggregate for callers that
+	// don't know the stream index (AdvanceOutputPTS) and as a
+	// fallback when no per-stream entry exists yet.
+	outputPTSNs     atomic.Int64
+	streamOutputMu  sync.RWMutex
+	streamOutputPTS map[int]int64
 
 	mu sync.Mutex
 }
@@ -82,7 +98,10 @@ func (m *NodeMetrics) AdvanceMediaPTS(d time.Duration) {
 
 // AdvanceOutputPTS bumps the latest output-side media position for
 // this node (sink-side). Monotonic; out-of-order packet timestamps are
-// ignored.
+// ignored. Use AdvanceOutputPTSStream when the stream index is known
+// — the per-stream variant lets Snapshot report progress against the
+// slowest stream within a multi-stream sink, which is the only
+// signal that correctly tracks job completion.
 func (m *NodeMetrics) AdvanceOutputPTS(d time.Duration) {
 	ns := d.Nanoseconds()
 	for {
@@ -91,6 +110,27 @@ func (m *NodeMetrics) AdvanceOutputPTS(d time.Duration) {
 			return
 		}
 	}
+}
+
+// AdvanceOutputPTSStream records the latest written-packet PTS for a
+// specific stream within this sink. Per-stream values are monotonic
+// max; Snapshot aggregates across streams using min so the slowest
+// stream determines the sink's reported progress (a fast AAC encoder
+// can race minutes ahead of a slow libx265 encoder within the same
+// sink, and we don't want the progress bar to claim 100% while the
+// video encoder still has minutes left). Also feeds outputPTSNs so
+// snapshots that only inspect the legacy aggregate still see motion.
+func (m *NodeMetrics) AdvanceOutputPTSStream(streamIdx int, d time.Duration) {
+	ns := d.Nanoseconds()
+	m.streamOutputMu.Lock()
+	if m.streamOutputPTS == nil {
+		m.streamOutputPTS = make(map[int]int64)
+	}
+	if cur, ok := m.streamOutputPTS[streamIdx]; !ok || ns > cur {
+		m.streamOutputPTS[streamIdx] = ns
+	}
+	m.streamOutputMu.Unlock()
+	m.AdvanceOutputPTS(d)
 }
 
 // Snapshot returns a point-in-time copy of the metrics.
@@ -111,6 +151,32 @@ func (m *NodeMetrics) Snapshot() NodeMetricsSnapshot {
 		maxLatency = time.Duration(m.latencyMax.Load())
 	}
 
+	// Reported OutputPTS is the slowest stream within this sink (min
+	// across stream indices that have written at least one packet)
+	// so the metric advances at the rate of the slowest encoder. Fall
+	// back to the legacy aggregate when no per-stream entries have
+	// been recorded yet (e.g. handler that calls AdvanceOutputPTS
+	// without a stream index).
+	outputPTSns := m.outputPTSNs.Load()
+	m.streamOutputMu.RLock()
+	if len(m.streamOutputPTS) > 0 {
+		var minNs int64
+		saw := false
+		for _, ns := range m.streamOutputPTS {
+			if ns <= 0 {
+				continue
+			}
+			if !saw || ns < minNs {
+				minNs = ns
+				saw = true
+			}
+		}
+		if saw {
+			outputPTSns = minNs
+		}
+	}
+	m.streamOutputMu.RUnlock()
+
 	return NodeMetricsSnapshot{
 		NodeID:        m.NodeID,
 		Frames:        frames,
@@ -122,7 +188,7 @@ func (m *NodeMetrics) Snapshot() NodeMetricsSnapshot {
 		MaxLatency:    maxLatency,
 		MediaPTS:      time.Duration(m.mediaPTSNs.Load()),
 		MediaDuration: time.Duration(m.mediaDurationNs.Load()),
-		OutputPTS:     time.Duration(m.outputPTSNs.Load()),
+		OutputPTS:     time.Duration(outputPTSns),
 	}
 }
 

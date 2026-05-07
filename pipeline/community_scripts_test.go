@@ -33,6 +33,9 @@ import (
 // Tests that require unavailable encoders, filters, or go_processors are
 // skipped with an explanatory message.
 func TestCommunityScriptsRun(t *testing.T) {
+	if testing.Short() {
+		t.Skip("community scripts run real encodes (~140 s); use -run TestCommunityScriptsRun to include")
+	}
 	// --- Resolve primary video fixture ---
 	inputAbs, err := filepath.Abs(filepath.Join("..", "testdata", "BBB_10sec.mp4"))
 	if err != nil {

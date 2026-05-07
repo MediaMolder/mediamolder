@@ -1,0 +1,19 @@
+# 2026/05/04 13:36:03.871967 [TestPropertyPtsToMicros_Monotone] [rapid] draw tbNum: 16
+# 2026/05/04 13:36:03.871970 [TestPropertyPtsToMicros_Monotone] [rapid] draw tbDen: 1
+# 2026/05/04 13:36:03.871971 [TestPropertyPtsToMicros_Monotone] [rapid] draw a: 0
+# 2026/05/04 13:36:03.871972 [TestPropertyPtsToMicros_Monotone] [rapid] draw b: 576460752304
+# 2026/05/04 13:36:03.871972 [TestPropertyPtsToMicros_Monotone] ptsToMicros not monotone: pts 0→0µs > pts 576460752304→-9223372036845551616µs (tb [16 1])
+# 
+v0.4.8#12911282889334062477
+0x0
+0x9867f1f40f739
+0xf
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x1e546a53d78856
+0x8637bd05b0

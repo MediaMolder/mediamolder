@@ -1,6 +1,6 @@
 .PHONY: build build-static test test-static lint bench bench-static clean \
         frontend-install frontend-dev frontend-build gui gui-dev build-gui build-gui-static \
-        check-deps
+        check-deps build-debug build-gui-debug
 
 # Default: use system FFmpeg via pkg-config (no special flags needed).
 build: check-deps
@@ -48,6 +48,71 @@ check-deps:
 	   echo "  Install a newer FFmpeg or use 'make build-gui-static' with a local FFmpeg build."; \
 	   exit 1; \
 	 fi
+
+# ─── Debug builds (capture full environment + verbose compiler output) ───────
+#
+# Usage:
+#   make build-debug          # headless binary, writes mediamolder-build.log
+#   make build-gui-debug      # GUI binary (also runs frontend build), writes mediamolder-build.log
+#
+# The log file is safe to share: it contains compiler flags, library
+# versions, and verbose linker output but no passwords or private keys.
+# Upload it when reporting a build failure.
+
+LOG ?= mediamolder-build.log
+
+# Internal helper — collects environment info into $(LOG), then runs the
+# actual go build with CGO_CFLAGS_ALLOW / CGO_LDFLAGS_ALLOW verbose output.
+# Callers set BUILD_TAGS and BUILD_TARGET before including this recipe via
+# the two public debug targets below.
+_debug-preamble:
+	@printf '=== mediamolder build debug log ===\n' > $(LOG)
+	@printf 'date:         %s\n' "$$(date -u)" >> $(LOG)
+	@printf 'uname:        %s\n' "$$(uname -a)" >> $(LOG)
+	@printf 'go version:   %s\n' "$$(go version 2>&1)" >> $(LOG)
+	@printf 'go env:\n' >> $(LOG)
+	@go env >> $(LOG) 2>&1
+	@printf '\ngcc version:  %s\n' "$$(gcc --version 2>&1 | head -1)" >> $(LOG)
+	@printf 'cc path:      %s\n' "$$(command -v gcc 2>/dev/null || echo not found)" >> $(LOG)
+	@printf '\npkg-config:\n' >> $(LOG)
+	@for lib in libavcodec libavformat libavfilter libavutil libswscale libswresample; do \
+	  ver=$$(pkg-config --modversion $$lib 2>/dev/null || echo NOT FOUND); \
+	  cflags=$$(pkg-config --cflags $$lib 2>/dev/null || true); \
+	  libs=$$(pkg-config --libs $$lib 2>/dev/null || true); \
+	  printf '  %-22s %s\n    cflags: %s\n    libs:   %s\n' \
+	    "$$lib" "$$ver" "$$cflags" "$$libs" >> $(LOG); \
+	done
+	@printf '\nnode version: %s\n' "$$(node --version 2>/dev/null || echo not found)" >> $(LOG)
+	@printf 'npm version:  %s\n' "$$(npm --version 2>/dev/null || echo not found)" >> $(LOG)
+	@printf '\nPKG_CONFIG_PATH: %s\n' "$${PKG_CONFIG_PATH:-<empty>}" >> $(LOG)
+	@printf 'CGO_CFLAGS:      %s\n' "$${CGO_CFLAGS:-<empty>}" >> $(LOG)
+	@printf 'CGO_LDFLAGS:     %s\n' "$${CGO_LDFLAGS:-<empty>}" >> $(LOG)
+	@printf 'FFMPEG_SRC:      %s\n' "$${FFMPEG_SRC:-<empty>}" >> $(LOG)
+	@printf '\n=== go build output ===\n' >> $(LOG)
+
+build-debug: _debug-preamble
+	@echo "Debug build log → $(LOG)"
+	CGO_CFLAGS_ALLOW='.*' CGO_LDFLAGS_ALLOW='.*' \
+	  go build -v -x $(if $(BUILD_TAGS),-tags=$(BUILD_TAGS)) \
+	    -o mediamolder ./cmd/mediamolder >> $(LOG) 2>&1 && \
+	  echo "Build succeeded." >> $(LOG) || \
+	  { echo "Build FAILED — see $(LOG) for details"; exit 1; }
+	@echo "Done. Share $(LOG) when reporting a build issue."
+
+build-gui-debug: _debug-preamble
+	@echo "Debug build log → $(LOG)"
+	@printf '=== frontend build ===\n' >> $(LOG)
+	cd frontend && npm run build >> ../$(LOG) 2>&1 || \
+	  { echo "Frontend build FAILED — see $(LOG)"; exit 1; }
+	@rm -rf internal/gui/dist && mkdir -p internal/gui/dist
+	@cp -R frontend/dist/. internal/gui/dist/
+	@printf '\n=== go build output ===\n' >> $(LOG)
+	CGO_CFLAGS_ALLOW='.*' CGO_LDFLAGS_ALLOW='.*' \
+	  go build -v -x $(if $(BUILD_TAGS),-tags=$(BUILD_TAGS)) \
+	    -o mediamolder ./cmd/mediamolder >> $(LOG) 2>&1 && \
+	  echo "Build succeeded." >> $(LOG) || \
+	  { echo "Build FAILED — see $(LOG) for details"; exit 1; }
+	@echo "Done. Share $(LOG) when reporting a build issue."
 
 # ─── GUI / Frontend ─────────────────────────────────────────────────────────
 
