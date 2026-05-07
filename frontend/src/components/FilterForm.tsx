@@ -13,13 +13,16 @@ import { useEffect, useMemo, useState } from 'react';
 import type { NodeDef } from '../lib/jobTypes';
 import { fetchFilterInfo, type FilterOption, type FilterOptionsInfo } from '../lib/filterSchema';
 import { OptionControl } from './controls/OptionControl';
+import { AudioChannelForm, AUDIO_ROUTING_FILTERS } from './AudioChannelForm';
 
 interface Props {
   def: NodeDef;
   onChange: (next: NodeDef) => void;
+  /** Upstream-pad variable bindings forwarded to expression inputs. */
+  padHints?: Record<string, number>;
 }
 
-export function FilterForm({ def, onChange }: Props) {
+export function FilterForm({ def, onChange, padHints }: Props) {
   const filter = def.filter ?? '';
   const [info, setInfo] = useState<FilterOptionsInfo | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -27,7 +30,8 @@ export function FilterForm({ def, onChange }: Props) {
   const [search, setSearch] = useState('');
 
   useEffect(() => {
-    if (!filter) {
+    // Audio routing filters are handled by AudioChannelForm — no AVOptions needed.
+    if (!filter || AUDIO_ROUTING_FILTERS.has(filter)) {
       setInfo(null);
       setError(null);
       return;
@@ -84,6 +88,9 @@ export function FilterForm({ def, onChange }: Props) {
       </div>
     );
   }
+  if (AUDIO_ROUTING_FILTERS.has(filter)) {
+    return <AudioChannelForm def={def} onChange={onChange} />;
+  }
   if (loading) {
     return <div className="empty">Loading {filter} options…</div>;
   }
@@ -134,6 +141,7 @@ export function FilterForm({ def, onChange }: Props) {
               option={opt}
               value={getParam(opt.name)}
               onChange={(v) => setParam(opt.name, v)}
+              padHints={padHints}
             />
           ))}
         </>
@@ -149,11 +157,13 @@ function OptionRow({
   option,
   value,
   onChange,
+  padHints,
 }: {
   filter: string;
   option: FilterOption;
   value: string;
   onChange: (next: string) => void;
+  padHints?: Record<string, number>;
 }) {
   const range = rangeHint(option);
   const isOverridden = value !== '' && value !== undefined;
@@ -166,7 +176,7 @@ function OptionRow({
       {option.help && <div className="filter-option-help">{option.help}</div>}
       <div className="filter-option-control-row">
         <div className="filter-option-control">
-          <OptionControl filter={filter} option={option} value={value} onChange={onChange} />
+          <OptionControl filter={filter} option={option} value={value} onChange={onChange} padHints={padHints} />
         </div>
         {range && <div className="filter-option-range" title="Allowed range">{range}</div>}
       </div>

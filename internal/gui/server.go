@@ -44,6 +44,7 @@ func NewServer(opts Options) (*http.Server, error) {
 	mux.HandleFunc("POST /api/files/mkdir", handleMkdir)
 	mux.HandleFunc("POST /api/probe", handleProbe)
 	mux.HandleFunc("POST /api/convert-cmd", handleConvertCmd)
+	mux.HandleFunc("POST /api/export-cmd", handleExportCmd)
 	mux.HandleFunc("GET /api/encoders/{name}/options", handleEncoderOptions)
 	mux.HandleFunc("GET /api/filters/{name}/options", handleFilterOptions)
 	mux.HandleFunc("GET /api/filters/{name}/eval-expression", handleFilterEvalExpression)

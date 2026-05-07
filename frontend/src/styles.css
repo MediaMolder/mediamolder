@@ -75,6 +75,42 @@ button.danger:hover { background: rgba(185, 74, 74, 0.15); }
 }
 .toolbar .title { font-weight: 600; margin-right: 16px; }
 .toolbar .spacer { flex: 1; }
+.toolbar-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--accent);
+  color: #fff;
+  border-radius: 8px;
+  font-size: 10px;
+  font-weight: 700;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  margin-left: 4px;
+  vertical-align: middle;
+}
+/* Subtitle rendering section (Wave 8 #52) */
+.subtitle-burnin-hint {
+  margin: 4px 0 8px;
+  padding: 8px 10px;
+  background: var(--panel-2);
+  border-left: 3px solid var(--accent);
+  border-radius: 0 4px 4px 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-dim);
+}
+.subtitle-compat-warn {
+  margin: 2px 0 6px;
+  padding: 6px 10px;
+  background: color-mix(in srgb, #d97706 12%, var(--panel-2));
+  border-left: 3px solid #d97706;
+  border-radius: 0 4px 4px 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text);
+}
 .toolbar select {
   background: var(--panel-2);
   color: var(--text);
@@ -1185,3 +1221,199 @@ button.danger:hover { background: rgba(185, 74, 74, 0.15); }
   background: var(--panel-2);
 }
 .rate-control-group > label:first-child { margin-top: 0; }
+
+/* ---------- Audio channel routing form (AudioChannelForm) ----------
+ * Shared container, layout inputs, gain matrix, source-select lists,
+ * and spec preview for pan / channelmap / channelsplit / join / amerge / amix. */
+
+.ch-routing {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+/* Label + text-input row (layout selectors, input count, options) */
+.ch-routing-layout-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.ch-routing-layout-row > label {
+  font-size: 11px;
+  color: var(--text-dim);
+  white-space: nowrap;
+  min-width: 110px;
+}
+.ch-routing-layout-row > input[type='text'],
+.ch-routing-layout-row > input[type='number'],
+.ch-routing-layout-row > select {
+  flex: 1;
+  min-width: 0;
+}
+.ch-routing-chs-hint {
+  font-size: 10px;
+  font-family: ui-monospace, monospace;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+/* Section sub-headers (e.g. "Gain matrix", "Mix weights") */
+.ch-routing-section-label {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  margin-top: 4px;
+  margin-bottom: 0;
+}
+
+/* Informational notice box */
+.ch-routing-notice {
+  font-size: 11px;
+  color: var(--text-dim);
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 8px;
+  line-height: 1.4;
+}
+.ch-routing-notice code {
+  font-family: ui-monospace, monospace;
+  color: var(--text);
+  font-size: 10px;
+}
+
+/* ── Gain matrix (pan filter) ── */
+.ch-matrix-wrapper {
+  overflow-x: auto;
+}
+.ch-matrix {
+  display: grid;
+  gap: 2px;
+  min-width: min-content;
+}
+.ch-matrix-corner {
+  /* empty top-left cell */
+}
+.ch-matrix-header-cell {
+  text-align: center;
+  font-size: 10px;
+  font-family: ui-monospace, monospace;
+  color: var(--text-dim);
+  padding: 2px 0;
+}
+.ch-matrix-row-label {
+  font-size: 11px;
+  font-family: ui-monospace, monospace;
+  color: var(--text-dim);
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding-right: 4px;
+  white-space: nowrap;
+}
+.ch-matrix-cell {
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: var(--panel-2);
+  width: 52px;
+}
+.ch-matrix-cell input {
+  width: 100%;
+  text-align: center;
+  border: none;
+  background: transparent;
+  font-size: 11px;
+  font-family: ui-monospace, monospace;
+  padding: 3px 2px;
+  color: var(--text);
+}
+.ch-matrix-cell input:focus {
+  outline: none;
+}
+.ch-matrix-cell.ch-matrix-cell-active {
+  border-color: var(--accent, #3a82f7);
+  background: color-mix(in srgb, var(--accent, #3a82f7) 12%, var(--panel-2));
+}
+.ch-matrix-cell.ch-matrix-cell-active input {
+  color: var(--accent, #3a82f7);
+  font-weight: 600;
+}
+
+/* ── Source-select map list (channelmap / join) ── */
+.ch-routing-map-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.ch-routing-map-header {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  font-size: 10px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  padding-bottom: 2px;
+  border-bottom: 1px solid var(--border);
+}
+.ch-routing-map-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.ch-routing-map-ch {
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  color: var(--text);
+  min-width: 28px;
+  text-align: right;
+}
+.ch-routing-map-arrow {
+  font-size: 11px;
+  color: var(--text-dim);
+  flex-shrink: 0;
+}
+
+/* ── amix weight rows ── */
+.ch-routing-weights {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.ch-routing-weight-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.ch-routing-weight-row input {
+  width: 80px;
+}
+
+/* ── Live spec preview ── */
+.ch-routing-preview {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+  margin-top: 4px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
+  font-size: 11px;
+  overflow: hidden;
+}
+.ch-routing-preview-label {
+  color: var(--text-dim);
+  white-space: nowrap;
+  font-family: ui-monospace, monospace;
+  flex-shrink: 0;
+}
+.ch-routing-preview code {
+  font-family: ui-monospace, monospace;
+  font-size: 10px;
+  color: var(--text);
+  word-break: break-all;
+  min-width: 0;
+}

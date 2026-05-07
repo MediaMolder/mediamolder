@@ -427,6 +427,7 @@ export function flowToConfig(
   edges: FlowEdge[],
   description?: string,
   globalOptions?: JobConfig['global_options'],
+  assets?: JobConfig['assets'],
 ): JobConfig {
   // Drop ghost nodes / ghost edges synthesised by expandImplicitNodes —
   // they have no place in the persisted JobConfig. The originating
@@ -484,6 +485,7 @@ export function flowToConfig(
     graph: { nodes: graphNodes, edges: graphEdges, ui: { positions } },
     outputs,
     global_options: globalOptions,
+    assets,
   };
 }
 

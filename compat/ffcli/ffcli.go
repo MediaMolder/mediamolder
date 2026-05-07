@@ -12,23 +12,62 @@ import (
 	"github.com/MediaMolder/MediaMolder/pipeline"
 )
 
+// ImportResult holds the parsed pipeline configuration and any informational
+// notes produced during import. Notes cover:
+//   - Wave 5–7 schema-promoted flags ("This flag now maps to Output.MuxDelay;
+//     rerun import if you saved this job before Wave 5").
+//   - Deprecated or out-of-scope flags with actionable migration guidance.
+//
+// The Unsupported slice mirrors the ExportResult.Unsupported convention so
+// callers (GUI import panel, CLI convert-cmd) can display both in the same
+// warning panel.
+type ImportResult struct {
+	// Config is the parsed pipeline configuration.
+	Config *pipeline.Config
+	// Unsupported lists flags that are deprecated, out-of-scope, or that map
+	// to schema fields added in Waves 5–7.  Each entry is a human-readable
+	// sentence suitable for display in a warning panel.
+	Unsupported []string
+}
+
 // Parse converts an FFmpeg command-line string into a pipeline.Config.
 func Parse(cmdline string) (*pipeline.Config, error) {
-	return ParseArgs(tokenize(cmdline))
+	r, err := ParseFull(cmdline)
+	return r.Config, err
 }
 
 // ParseArgs converts FFmpeg-style arguments into a pipeline.Config.
 func ParseArgs(args []string) (*pipeline.Config, error) {
+	r, err := ParseArgsFull(args)
+	return r.Config, err
+}
+
+// ParseFull is like Parse but also returns informational notes about flags
+// that are deprecated, out-of-scope, or that map to schema fields introduced
+// in Waves 5–7.  Callers that want to surface import notes to the user (GUI
+// import panel, CLI convert-cmd) should use ParseFull.
+func ParseFull(cmdline string) (ImportResult, error) {
+	return ParseArgsFull(tokenize(cmdline))
+}
+
+// ParseArgsFull is like ParseArgs but returns a full ImportResult that
+// includes the parsed config and any import notes.
+func ParseArgsFull(args []string) (ImportResult, error) {
 	if len(args) > 0 && (args[0] == "ffmpeg" || strings.HasSuffix(args[0], "/ffmpeg")) {
 		args = args[1:]
 	}
 	p := &parser{args: args}
-	return p.parse()
+	cfg, err := p.parse()
+	if err != nil {
+		return ImportResult{}, err
+	}
+	return ImportResult{Config: cfg, Unsupported: p.warnings}, nil
 }
 
 type parser struct {
 	args            []string
 	pos             int
+	warnings        []string // import notes accumulated by warn()
 	inputs          []pipeline.Input
 	outputs         []pipeline.Output
 	nodes           []pipeline.NodeDef
@@ -163,6 +202,8 @@ func (p *parser) next() string {
 }
 
 func (p *parser) hasMore() bool { return p.pos < len(p.args) }
+
+func (p *parser) warn(msg string) { p.warnings = append(p.warnings, msg) }
 
 func (p *parser) parse() (*pipeline.Config, error) {
 	p.globalOpts = make(map[string]string)
@@ -396,22 +437,26 @@ func (p *parser) parse() (*pipeline.Config, error) {
 				return nil, fmt.Errorf("-bsf:v requires an argument")
 			}
 			p.bsfVideo = p.next()
+			p.warn(fmt.Sprintf("-bsf:v %q → Output.BSFVideo (schema field since Wave 5; if this command was previously imported, re-import for the typed field).", p.bsfVideo))
 		case arg == "-bsf:a":
 			if !p.hasMore() {
 				return nil, fmt.Errorf("-bsf:a requires an argument")
 			}
 			p.bsfAudio = p.next()
+			p.warn(fmt.Sprintf("-bsf:a %q → Output.BSFAudio (schema field since Wave 5; if this command was previously imported, re-import for the typed field).", p.bsfAudio))
 		case arg == "-bsf:s":
 			if !p.hasMore() {
 				return nil, fmt.Errorf("-bsf:s requires an argument")
 			}
 			p.bsfSubtitle = p.next()
+			p.warn(fmt.Sprintf("-bsf:s %q → Output.BSFSubtitle (schema field since Wave 5; if this command was previously imported, re-import for the typed field).", p.bsfSubtitle))
 		case arg == "-color_range":
 			if !p.hasMore() {
 				return nil, fmt.Errorf("-color_range requires an argument")
 			}
 			if p.pendingColor == nil {
 				p.pendingColor = &pipeline.ColorMetadata{}
+				p.warn("-color_range/-color_primaries/-color_trc/-colorspace/-chroma_sample_location → Output.Color.* (schema fields since Wave 5; if this command was previously imported, re-import for the typed fields).")
 			}
 			p.pendingColor.Range = p.next()
 		case arg == "-color_primaries":
@@ -420,6 +465,7 @@ func (p *parser) parse() (*pipeline.Config, error) {
 			}
 			if p.pendingColor == nil {
 				p.pendingColor = &pipeline.ColorMetadata{}
+				p.warn("-color_range/-color_primaries/-color_trc/-colorspace/-chroma_sample_location → Output.Color.* (schema fields since Wave 5; if this command was previously imported, re-import for the typed fields).")
 			}
 			p.pendingColor.Primaries = p.next()
 		case arg == "-color_trc":
@@ -428,6 +474,7 @@ func (p *parser) parse() (*pipeline.Config, error) {
 			}
 			if p.pendingColor == nil {
 				p.pendingColor = &pipeline.ColorMetadata{}
+				p.warn("-color_range/-color_primaries/-color_trc/-colorspace/-chroma_sample_location → Output.Color.* (schema fields since Wave 5; if this command was previously imported, re-import for the typed fields).")
 			}
 			p.pendingColor.Transfer = p.next()
 		case arg == "-colorspace":
@@ -436,6 +483,7 @@ func (p *parser) parse() (*pipeline.Config, error) {
 			}
 			if p.pendingColor == nil {
 				p.pendingColor = &pipeline.ColorMetadata{}
+				p.warn("-color_range/-color_primaries/-color_trc/-colorspace/-chroma_sample_location → Output.Color.* (schema fields since Wave 5; if this command was previously imported, re-import for the typed fields).")
 			}
 			p.pendingColor.Space = p.next()
 		case arg == "-chroma_sample_location":
@@ -444,6 +492,7 @@ func (p *parser) parse() (*pipeline.Config, error) {
 			}
 			if p.pendingColor == nil {
 				p.pendingColor = &pipeline.ColorMetadata{}
+				p.warn("-color_range/-color_primaries/-color_trc/-colorspace/-chroma_sample_location → Output.Color.* (schema fields since Wave 5; if this command was previously imported, re-import for the typed fields).")
 			}
 			p.pendingColor.ChromaLocation = p.next()
 		case arg == "-mastering_display_metadata" || arg == "-master_display":
@@ -461,6 +510,7 @@ func (p *parser) parse() (*pipeline.Config, error) {
 			}
 			if p.pendingHDR == nil {
 				p.pendingHDR = &pipeline.HDRMetadata{}
+				p.warn("-mastering_display_metadata/-master_display/-content_light_level/-max_cll → Output.HDR.MasteringDisplay/ContentLightLevel (schema fields since Wave 5; if this command was previously imported, re-import for the typed fields).")
 			}
 			p.pendingHDR.MasteringDisplay = md
 		case arg == "-content_light_level" || arg == "-max_cll":
@@ -476,6 +526,7 @@ func (p *parser) parse() (*pipeline.Config, error) {
 			}
 			if p.pendingHDR == nil {
 				p.pendingHDR = &pipeline.HDRMetadata{}
+				p.warn("-mastering_display_metadata/-master_display/-content_light_level/-max_cll → Output.HDR.MasteringDisplay/ContentLightLevel (schema fields since Wave 5; if this command was previously imported, re-import for the typed fields).")
 			}
 			p.pendingHDR.ContentLightLevel = cll
 		case arg == "-dovi_profile" || arg == "-dovi_level" ||
@@ -495,6 +546,7 @@ func (p *parser) parse() (*pipeline.Config, error) {
 			}
 			if p.pendingHDR.DoVi == nil {
 				p.pendingHDR.DoVi = &pipeline.DoViMetadata{}
+				p.warn("-dovi_profile/-dovi_level/-dovi_bl_compatibility_id/-dovi_rpu_present/-dovi_el_present/-dovi_bl_present → Output.HDR.DoVi.* (schema fields since Wave 6; if this command was previously imported, re-import for the typed fields).")
 			}
 			if err := setDoViField(p.pendingHDR.DoVi, arg, val); err != nil {
 				return nil, fmt.Errorf("%s: %w", arg, err)
@@ -509,8 +561,11 @@ func (p *parser) parse() (*pipeline.Config, error) {
 			if !p.hasMore() {
 				return nil, fmt.Errorf("-attach requires a FILE argument")
 			}
-			p.pendingAttachments = append(p.pendingAttachments,
-				pipeline.Attachment{Path: p.next()})
+			path := p.next()
+			p.pendingAttachments = append(p.pendingAttachments, pipeline.Attachment{Path: path})
+			if len(p.pendingAttachments) == 1 {
+				p.warn(fmt.Sprintf("-attach %q → Output.Attachments (schema field since Wave 6; if this command was previously imported, re-import for the typed field).", path))
+			}
 		case arg == "-async":
 			// Legacy FFmpeg audio-sync flag. The FFmpeg 8.0 CLI removed
 			// it in favour of `-af aresample=async=N`; we accept it for
@@ -527,6 +582,7 @@ func (p *parser) parse() (*pipeline.Config, error) {
 				return nil, fmt.Errorf("-async: invalid value %q (want non-negative integer)", v)
 			}
 			p.audioSync = n
+			p.warn(fmt.Sprintf("-async %d → Output.AudioSync (flag removed from FFmpeg 8.0 CLI; schema field since Wave 6; use -af aresample=async=%d for long-term compatibility).", n, n))
 		case arg == "-shortest":
 			// FFmpeg `-shortest` (per-output bool, OPT_OFFSET in
 			// fftools/ffmpeg_opt.c). Latched onto the next output URL.
@@ -570,6 +626,7 @@ func (p *parser) parse() (*pipeline.Config, error) {
 				return nil, fmt.Errorf("-filter_complex_threads: invalid value %q (want non-negative integer)", v)
 			}
 			p.filterCxThreads = n
+			p.warn(fmt.Sprintf("-filter_complex_threads %d → Config.FilterComplexThreads (schema field since Wave 7; if this command was previously imported, re-import for the typed field).", n))
 		case arg == "-muxdelay":
 			// FFmpeg `-muxdelay SECONDS` (per-output float OPT_OFFSET;
 			// fftools/ffmpeg_opt.c L2134). Latched onto the next output's
@@ -584,6 +641,7 @@ func (p *parser) parse() (*pipeline.Config, error) {
 				return nil, fmt.Errorf("-muxdelay: invalid value %q (want non-negative seconds)", v)
 			}
 			p.muxDelay = f
+			p.warn(fmt.Sprintf("-muxdelay %s → Output.MuxDelay (schema field since Wave 5; if this command was previously imported, re-import for the typed field).", v))
 		case arg == "-muxpreload":
 			// FFmpeg `-muxpreload SECONDS` (per-output float OPT_OFFSET;
 			// fftools/ffmpeg_opt.c L2137). Latched onto Output.MuxPreload;
@@ -598,6 +656,7 @@ func (p *parser) parse() (*pipeline.Config, error) {
 				return nil, fmt.Errorf("-muxpreload: invalid value %q (want non-negative seconds)", v)
 			}
 			p.muxPreload = f
+			p.warn(fmt.Sprintf("-muxpreload %s → Output.MuxPreload (schema field since Wave 5; if this command was previously imported, re-import for the typed field).", v))
 		case arg == "-avoid_negative_ts":
 			// FFmpeg `-avoid_negative_ts MODE` (AVFormatContext AVOption;
 			// libavformat/options_table.h L95-99). Validated here so
@@ -649,6 +708,7 @@ func (p *parser) parse() (*pipeline.Config, error) {
 				return nil, fmt.Errorf("-force_key_frames requires an argument")
 			}
 			p.forceKeyFrames = p.next()
+			p.warn(fmt.Sprintf("-force_key_frames %q → Output.ForceKeyFrames (schema field since Wave 6; if this command was previously imported, re-import for the typed field).", p.forceKeyFrames))
 		case arg == "-aspect":
 			// Legacy `-aspect <ratio>` (DAR). Importer rewrites to
 			// Output.DAR per §6.8 of docs/ffmpeg-coverage-roadmap.md.
@@ -676,6 +736,7 @@ func (p *parser) parse() (*pipeline.Config, error) {
 				return nil, fmt.Errorf("-enc_time_base requires an argument")
 			}
 			p.pendingEncTimeBase = p.next()
+			p.warn(fmt.Sprintf("-enc_time_base %q → Output.EncoderTimeBase (schema field since Wave 6; if this command was previously imported, re-import for the typed field).", p.pendingEncTimeBase))
 		case arg == "-field_order":
 			// FFmpeg per-stream OPT_TYPE_STRING (encoder side):
 			// AVCodecContext.field_order via av_opt_set on the
@@ -684,6 +745,7 @@ func (p *parser) parse() (*pipeline.Config, error) {
 				return nil, fmt.Errorf("-field_order requires an argument")
 			}
 			p.pendingFieldOrder = p.next()
+			p.warn(fmt.Sprintf("-field_order %q → Output.FieldOrder (schema field since Wave 6; if this command was previously imported, re-import for the typed field).", p.pendingFieldOrder))
 		case arg == "-flags":
 			// We only translate the broadcast-grade interlaced bits
 			// (`+ildct+ilme` / `+ilme+ildct`) here; the rest of
@@ -696,6 +758,7 @@ func (p *parser) parse() (*pipeline.Config, error) {
 			v := p.next()
 			if strings.Contains(v, "ildct") || strings.Contains(v, "ilme") {
 				p.pendingInterlaced = true
+				p.warn(fmt.Sprintf("-flags %q sets interlaced encode flags → Output.InterlacedEncode (schema field since Wave 6; if this command was previously imported, re-import for the typed field).", v))
 			}
 			// Keep the raw -flags arg in the encoder opts so the
 			// muxer-side AVOption is still set; the Output-level
@@ -820,6 +883,7 @@ func (p *parser) parse() (*pipeline.Config, error) {
 				return nil, fmt.Errorf("-itsoffset: invalid value %q (want seconds, e.g. -0.030)", v)
 			}
 			p.pendingITSOffset, p.pendingITSOffsetSet = f, true
+			p.warn(fmt.Sprintf("-itsoffset %s → Input.ITSOffset (schema field since Wave 5; if this command was previously imported, re-import for the typed field).", v))
 		case arg == "-sub_charenc":
 			// FFmpeg per-decoder AVOption (sub_charenc) on the
 			// subtitle decoder. Latched here as a per-input flag
@@ -830,12 +894,14 @@ func (p *parser) parse() (*pipeline.Config, error) {
 				return nil, fmt.Errorf("-sub_charenc requires an argument")
 			}
 			p.pendingSubCharenc, p.pendingSubCharencSet = p.next(), true
+			p.warn(fmt.Sprintf("-sub_charenc %q → Input.SubtitleCharenc (schema field since Wave 8; if this command was previously imported, re-import for the typed field).", p.pendingSubCharenc))
 		case arg == "-re":
 			// FFmpeg shorthand for `-readrate 1`. Per-input bool.
 			// FFmpeg warns when both -re and -readrate are set
 			// (-readrate wins); we mirror that policy by letting
 			// any subsequent -readrate overwrite the latched value.
 			p.pendingReadRate, p.pendingReadRateSet = 1.0, true
+			p.warn("-re → Input.ReadRate=1.0 (schema field since Wave 5; if this command was previously imported, re-import for the typed field).")
 		case arg == "-readrate":
 			if !p.hasMore() {
 				return nil, fmt.Errorf("-readrate requires an argument")
@@ -941,6 +1007,9 @@ func (p *parser) parse() (*pipeline.Config, error) {
 				p.fpsMode = "drop"
 			default:
 				return nil, fmt.Errorf("%s: unknown value %q (want passthrough|cfr|vfr|drop|auto|0|1|2)", arg, v)
+			}
+			if arg == "-vsync" {
+				p.warn(fmt.Sprintf("-vsync %s is deprecated; rewritten to -fps_mode %s → Output.FPSMode.", v, p.fpsMode))
 			}
 		case arg == "-hwaccel":
 			if !p.hasMore() {
@@ -1065,8 +1134,38 @@ func (p *parser) parse() (*pipeline.Config, error) {
 			}
 			ss.Encoder.Codec = val
 		case strings.HasPrefix(arg, "-"):
-			if p.hasMore() && !strings.HasPrefix(p.peek(), "-") {
-				p.globalOpts[strings.TrimPrefix(arg, "-")] = p.next()
+			flag := strings.TrimPrefix(arg, "-")
+			// Detect known deprecated / out-of-scope flags and emit
+			// actionable notes before falling through to the generic
+			// AVDict pass-through bucket.
+			switch flag {
+			case "deinterlace":
+				p.warn("-deinterlace is deprecated (removed from FFmpeg since 2013); add a yadif or bwdif filter node instead (e.g. -vf yadif).")
+			case "target":
+				if p.hasMore() && !strings.HasPrefix(p.peek(), "-") {
+					p.next() // consume preset value
+				}
+				p.warn("-target (DVD/VCD/PAL preset macro) is not supported in MediaMolder; configure the codec, container, and rate-control options individually.")
+			case "fpre", "vpre", "spre":
+				if p.hasMore() && !strings.HasPrefix(p.peek(), "-") {
+					p.next() // consume preset filename
+				}
+				p.warn(fmt.Sprintf("-%s (encoder preset file, obsolete since FFmpeg 2.0) is not supported; set codec options directly via encoder parameters instead.", flag))
+			case "xerror":
+				p.warn("-xerror has no equivalent in MediaMolder; pipeline errors are reported via the event bus (GET /api/events/{jobId}).")
+			case "stats", "nostats":
+				p.warn(fmt.Sprintf("-%s is out-of-scope for MediaMolder; progress and statistics are reported via GET /api/events/{jobId}.", flag))
+			case "stats_period":
+				if p.hasMore() && !strings.HasPrefix(p.peek(), "-") {
+					p.next() // consume interval value
+				}
+				p.warn("-stats_period is out-of-scope for MediaMolder; progress is reported via GET /api/events/{jobId}.")
+			case "dump", "hex", "debug_ts":
+				p.warn(fmt.Sprintf("-%s is a debugging flag with no equivalent in MediaMolder; use structured logging (MEDIAMOLDER_LOG_LEVEL=debug) instead.", flag))
+			default:
+				if p.hasMore() && !strings.HasPrefix(p.peek(), "-") {
+					p.globalOpts[flag] = p.next()
+				}
 			}
 		default:
 			id := fmt.Sprintf("output%d", len(p.outputs))

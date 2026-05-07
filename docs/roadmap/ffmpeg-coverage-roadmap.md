@@ -130,7 +130,7 @@ Legend: ✅ supported · ⚠️ partial · ❌ missing
 | `arnndn` (RNNoise) and other model-file filters             | ⚠️    | Filter runs if model path is correct; no fixture story for filter-side data files |
 | `zscale` + `tonemap` (HDR)                                  | ✅    | Validator (`pipeline.validateFilterAvailability`) rejects unknown / unbuilt filters with an actionable hint (`zscale` → `--enable-libzimg`, `tonemap_opencl` → `--enable-opencl`, …) instead of waiting for a runtime "filter not found". Palette (`/api/nodes`) only lists filters reported by `av.ListFilters()`, so unbuilt entries are absent automatically. (Wave 7 #42) |
 | `minterpolate` (motion-compensated interpolation)           | ✅    | Frame-rate / time-base plumbing done in §5 #1; the AVOption miner (§4 #19) exposes `mi_mode` / `mc_mode` / `me_mode` / `me` (and `vsbmc`) as typed `int` options carrying their named constants — the GUI Inspector renders them as enum dropdowns. (Wave 7 #43) |
-| Audio channel manipulation: `pan`, `channelsplit`, `channelmap`, `join`, `amerge`, `amix=weights` | ✅ | Backend works (Wave 7 #41 fixtures: `pan`, `channelmap`, `amix=weights`); GUI matrix view deferred to Wave 8 |
+| Audio channel manipulation: `pan`, `channelsplit`, `channelmap`, `join`, `amerge`, `amix=weights` | ✅ | Backend works (Wave 7 #41); GUI channel-routing matrix done (Wave 8 #49): `PanForm` gain matrix, `ChannelMapForm` source dropdowns, `ChannelSplitForm` layout selector, `JoinForm` stream+channel pickers, `AMergeForm` input count, `AMixForm` weighted mix |
 
 ### 2.4 Encoders
 
@@ -186,9 +186,9 @@ Legend: ✅ supported · ⚠️ partial · ❌ missing
 |-------------------------------------------------------------------|:------:|------|
 | Passthrough (text and bitmap)                                     | ✅    | Demonstrated by `18_subtitle_add` |
 | Burn-in via `subtitles=` filter                                   | ✅    | (works once libass is available in the build) |
-| Codec conversion (`mov_text` ↔ `srt` ↔ `ass` ↔ `webvtt`)          | ⚠️    | Works through encoder selection but not validated for incompatible pairs |
-| Subtitle charset (`-sub_charenc`)                                 | ✅    | `Input.SubtitleCharenc` (Wave 6 #34) |
-| Forced / hearing-impaired flags                                   | ✅    | `Output.Streams[].Disposition` carries `AV_DISPOSITION_FORCED` / `AV_DISPOSITION_HEARING_IMPAIRED` (Wave 1 #3); `compat/ffcli` parses `-disposition:s:v:0` (Wave 2 #9); GUI affordances deferred to Wave 8 #52. |
+| Codec conversion (`mov_text` ↔ `srt` ↔ `ass` ↔ `webvtt`)          | ⚠️    | Works through encoder selection; GUI now warns on known-incompatible codec+container pairs (Wave 8 #52) |
+| Subtitle charset (`-sub_charenc`)                                 | ✅    | `Input.SubtitleCharenc` (Wave 6 #34); charset picker in Input inspector (Wave 8 #52) |
+| Forced / hearing-impaired flags                                   | ✅    | `Output.Streams[].Disposition` carries `AV_DISPOSITION_FORCED` / `AV_DISPOSITION_HEARING_IMPAIRED` (Wave 1 #3); `compat/ffcli` parses `-disposition:s:v:0` (Wave 2 #9); dedicated Forced + HI checkboxes in `StreamSpecForm` for `type=s` streams (Wave 8 #52). |
 | Karaoke ASS effects, fontconfig integration                       | ⚠️    | Filter passes through; no GUI affordance |
 
 ### 2.7 Devices, networking, advanced
@@ -214,7 +214,7 @@ filled, the GUI also needs:
 - A **multi-output inspector** that shows all `Output` entries in one pane, with per-stream encoder tabs.
 - **BSF chain editor** (sortable list, not single field).
 - **Chapter / metadata editor** at the output level (table of `(start, end, title)` for chapters; key/value table for metadata, with per-stream tabs).
-- **HLS / DASH / Tee output wizards** with structured fields (segment duration, playlist type, variants, …).
+- ✅ **HLS / DASH / Tee output wizards** — `HLSForm` (segment timing, playlist type, mpegts/fmp4 segment type, filename templates, `var_stream_map` ABR builder, `hls_flags` checkboxes), `DASHForm` (segment/fragment durations, SegmentTemplate/SegmentTimeline tri-state toggles, LL-DASH booleans, `dash_flags`), `TeeForm` (collapsible per-target rows with URL, format, stream-select, BSF chain, `onfail`, FIFO options, key/value overrides) — Wave 8 #48 ✅.
 - **Hardware filter mapping indicator** that surfaces which filters will run on GPU once `hw_accel` is set, and warns when a software filter is forcing a hwdownload/hwupload round-trip.
 - **Live FFmpeg-CLI import** (`compat/ffcli`) extended to cover every flag the schema gains, with a clear "unsupported flag" report.
 - **Live FFmpeg-CLI export**: round-trip the JSON job back to a CLI command for users who want to copy/paste into ffmpeg directly. This
@@ -300,15 +300,17 @@ once §3.1–§3.4 land:
 2. Multi-output inspector with per-stream encoder tabs.
 3. BSF chain editor.
 4. Chapter / metadata editor.
-5. HLS / DASH / tee output wizards.
+5. HLS / DASH / tee output wizards. ✅ Wave 8 #48 — done.
 6. Hardware-filter mapping indicator + multi-device picker.
 7. Bidirectional FFmpeg-CLI conversion (existing `compat/ffcli` import + new export). The CLI export is the round-trip oracle for
    the entire schema and should be wired into the existing job-save flow as a "Show as ffmpeg command" panel.
 8. **Filter expression authoring**: monospace input with `t`/`n`/`tw`/ `th`/`text_w`/`text_h`/`w`/`h` autocomplete, live
-   syntax-validation against the server-side `eval-expression` endpoint, and a small expression cookbook (scrolling text, fade gates, frame-stamp overlays).
-9. **Audio channel-routing UI**: a bus/matrix view for `pan`, `channelsplit`, `channelmap`, `join`, `amerge`. Today's free-form `params` dict is unusable for non-trivial routing.
+   syntax-validation against the server-side `eval-expression` endpoint, and a small expression cookbook (scrolling text, fade gates, frame-stamp overlays). ✅ Wave 8 #50 — done. Variable autocomplete dropdown (↑/↓/Enter/Tab/Esc keyboard navigation, functions tinted purple, variables tinted teal), context-aware eval preview using upstream pad hints (width, height, fps, sample_rate extracted from the first probed input node upstream), and expanded cookbook (5 → 19 patterns: timeline gates, PTS speed controls, drawtext positioning, overlay centering, crop/pad centering, volume fades, `select` keyframes, `zoompan` Ken Burns). Backend registry expanded from 10 to 16 filters (`select`, `aselect`, `hue`, `geq`, `trim`, `atrim`).
+9. **Audio channel-routing UI**: a bus/matrix view for `pan`, `channelsplit`, `channelmap`, `join`, `amerge`, `amix`. ✅ Wave 8 #49 — done. `AudioChannelForm` replaces the free-form params dict with a 2-D gain matrix (pan), per-output-channel source dropdowns (channelmap), layout selector (channelsplit), stream+channel pickers (join), input-count spinner (amerge/amix), and per-input weight fields (amix).
 10. **Asset/model-file manager**: shared by the YOLO processor and by filters such as `arnndn`, `subtitles=…:fontsdir=…`. Pipelines
     should reference assets by symbolic name, with the GUI managing paths and the runtime resolving them from a search list.
+    ✅ Wave 8 #51 — done. `Config.Assets map[string]AssetRef`; runtime resolves `$asset:<name>` refs in filter params via
+    `MEDIAMOLDER_ASSET_PATH` search; `AssetManager` GUI panel manages the registry.
 
 ### 3.6 Phase F — proof of universality
 
@@ -1159,40 +1161,121 @@ wave delivers every §2.8 / §3.5 GUI item that the schema can now back.
     `end`), and a collapsible per-chapter metadata section. The
     per-stream metadata surface remained as wired by Wave 8 #45's
     `StreamSpecForm`.
-48. **HLS / DASH / Tee output wizards** (§2.8, §3.5.5) — Schema-
-    driven forms for the typed `HLS` / `DASH` / `Tee*` blocks
-    landed in Waves 1 #5 and 3 #12. Variant-stream picker for
-    HLS `var_stream_map`; per-target picker for tee slaves.
-49. **Audio channel-routing UI** (§2.8, §3.5.9) — Bus / matrix
-    view for `pan`, `channelsplit`, `channelmap`, `join`,
-    `amerge` (backend lands in Wave 7 #41). Free-form `params`
-    dict is unusable for non-trivial routing; replace with a
-    drag-from-input-channel-to-output-channel matrix.
-50. **Filter expression authoring polish** (§3.5.8) — Wave 4 #20
-    delivered the core control; this item ships the residual
-    polish: variable autocomplete dropdown (currently typed
-    free-form), context-aware variable-list refresh when the
-    upstream pad changes resolution / fps, and an expanded cookbook
-    sourced from the production-pattern corpus.
-51. **Asset / model-file manager** (§3.5.10, formerly Wave 6 #22) —
+48. **HLS / DASH / Tee output wizards** (§2.8, §3.5.5) ✅ Wave 8 —
+    Schema-driven Inspector forms for the typed `HLS` / `DASH` /
+    `Tee*` blocks landed in Waves 1 #5 and 3 #12. New
+    `HLSForm` covers `hls_time` / `hls_init_time` / `hls_list_size`
+    / `hls_start_number`, `playlist_type` (event/vod), `segment_type`
+    (mpegts/fmp4 — fMP4-only fields shown conditionally),
+    `segment_filename` / `fmp4_init_filename` / `master_pl_name`,
+    a drag-and-drop `var_stream_map` ABR variant builder (serialises
+    to the `a:N,v:N` space-separated token format), and a full
+    `hls_flags` multi-checkbox picker (delete_segments, append_list,
+    round_durations, discont_start, split_by_time, program_date_time,
+    second_level_segment_* sizes, temp_file, independent_segments,
+    iframes_only, single_file). New `DASHForm` covers `seg_duration`
+    / `frag_duration` / `window_size` / `extra_window_size`,
+    `init_seg_name` / `media_seg_name` / `adaptation_sets`, tri-state
+    toggles (unset / true / false) for `use_template` and
+    `use_timeline` (LL-DASH semantics), single-bit bool toggles for
+    `streaming`, `ldash`, `hls_playlist`, `single_file`, and a
+    `dash_flags` multi-checkbox picker (default_base_url_override,
+    round_durations, single_file_name, global_sidx, write_prft,
+    allow_media_loss). New `TeeForm` renders one collapsible row per
+    `TeeTarget` (first row open by default) covering `url` (required,
+    red asterisk when empty), `format`, `select`, `bsfs`, `onfail`
+    (abort/ignore), `use_fifo` (tri-state), `fifo_options` (shown
+    only when use_fifo=true), and a per-target `options` key/value
+    editor. `Inspector.tsx` now renders a kind selector
+    (`'' | 'file' | 'tee'`) at the top of every Output form,
+    conditionally shows URL/format/codec/BSF fields only for non-tee
+    outputs, and mounts `HLSForm` / `DASHForm` / `TeeForm` based on
+    `output.format` or `output.kind`.
+49. **Audio channel-routing UI** (§2.8, §3.5.9) ✅ — `AudioChannelForm`
+    replaces the free-form params dict for six audio channel filters:
+    `PanForm` renders a 2-D gain matrix (output channels × input channels)
+    backed by `params._pos0`; `ChannelMapForm` offers per-output-channel
+    source dropdowns backed by `params.map` + `params.channel_layout`;
+    `ChannelSplitForm` exposes a single layout selector; `JoinForm`
+    provides stream-index + channel pickers for each output channel;
+    `AMergeForm` exposes an input-count spinner; `AMixForm` adds
+    per-input weight fields plus `duration`, `normalize`, and
+    `dropout_transition` options. All forms include a live spec-preview
+    row so the final filter string is always visible. (Wave 8 #49)
+50. **Filter expression authoring polish** (§3.5.8) ✅ — `ExpressionInput`
+    gains three capabilities. **Autocomplete dropdown**: while typing
+    in the expression textarea, a floating list of matching variable
+    names and libavutil function names appears beneath the cursor;
+    `↑`/`↓` navigate, `Tab`/`Enter` complete, `Esc` dismisses; clicking
+    an item completes without losing focus. Variables are tinted teal
+    (`tok-var`), functions purple (`tok-fn`), matching the existing
+    syntax-highlight scheme. **Context-aware eval preview**: `Inspector`
+    walks the graph edge list back from the selected filter node to the
+    first probed input and extracts `{w, h, iw, ih, in_w, in_h,
+    main_w, main_h, W, H, r, FR, sar, sr, nb_channels}` bindings;
+    these are forwarded as extra URL query params to the
+    `eval-expression` endpoint so the `= X` preview shows realistic
+    values (e.g. `(main_w-tw)/2 = 880` for a 1920×p source) instead
+    of the all-zero default; the status line reads `(from context)` vs
+    `(vars=0)`. **Expanded cookbook** (5 → 19 patterns): timeline
+    gates (`between`, `gt`, `not(between)`), PTS speed controls
+    (`0.5*PTS`, `2*PTS`), `drawtext` centering / scrolling, overlay
+    centering, crop/pad centering, volume fade-in and fade-in/out,
+    `select` keyframes and every-N-th-frame, `zoompan` Ken Burns.
+    **Backend filter registry** expanded from 10 → 16 filters:
+    `select`, `aselect`, `hue`, `geq`, `trim`, `atrim`. (Wave 8 #50)
+51. **Asset / model-file manager** (§3.5.10, formerly Wave 6 #22) ✅ Wave 8 —
     Symbolic asset references (fonts for `subtitles=`, RNNoise
     models for `arnndn=`, YOLO weights, ASS `fontsdir=`). Schema
     field `Pipeline.Assets map[string]AssetRef`; runtime resolves
-    from a search-path list; GUI manages the registry.
-52. **Subtitle GUI affordances** (§2.8) — Forced / HI flag
+    `$asset:<name>` params via cwd + `MEDIAMOLDER_ASSET_PATH` env
+    var; `AssetManager` GUI modal manages the registry with
+    add/edit/remove and file-browser integration. Schema v1.0/v1.1
+    updated; `TestSchemaSyncWithGoStructs` extended to cover
+    `AssetRef`.
+52. **Subtitle GUI affordances** (§2.8) ✅ Wave 8 — Forced / HI flag
     toggles wired to per-stream disposition (backend done by
     Wave 6 #34); `-sub_charenc` picker on text-subtitle inputs;
     burn-in vs. soft-mux selector with codec-pair validation
     surfaced inline.
-53. **Live FFmpeg-CLI export** (§2.8, §3.5.7) — Round-trip oracle:
+    - **Forced / HI checkboxes**: `StreamSpecForm` (Inspector.tsx) now
+      branches on `spec.type === 's'` and renders dedicated `Forced`
+      and `Hearing impaired (HI)` checkboxes backed by
+      `hasDispFlag` / `toggleDispFlag` helpers that parse the
+      `+`-separated `AV_DISPOSITION_*` string.  A free-text "Other
+      disposition flags" field handles any remaining flags.
+    - **`-sub_charenc` picker**: `InputForm` gains a datalist-enhanced
+      text input (14 common encodings: UTF-8, ISO-8859-*, Windows-12xx,
+      Shift_JIS, GB18030, etc.) mapping to `Input.SubtitleCharenc`.
+      Hint text clarifies it applies to SRT/ASS/SSA only.
+    - **Subtitle rendering selector + compat warning**: `OutputForm`
+      now shows a **Subtitle rendering** `<select>` (`soft-mux` /
+      `burn-in`) above the subtitle codec row.  In `burn-in` mode the
+      codec/tag/BSF fields are hidden and a guidance banner directs
+      users to add a `subtitles=` or `ass=` filter node.  In
+      `soft-mux` mode an amber inline warning appears when the
+      subtitle codec is known to be incompatible with the output
+      container format (`SUBTITLE_CODEC_FORMATS` map covers
+      `mov_text`, `webvtt`, `ass`/`ssa`, `srt`, `dvd_subtitle`,
+      `hdmv_pgs_subtitle`).  CSS: `.subtitle-burnin-hint` /
+      `.subtitle-compat-warn` added to `styles.css`.
+53. ✅ **Live FFmpeg-CLI export** (§2.8, §3.5.7) — Round-trip oracle:
     JSON → ffmpeg command, with explicit "no equivalent CLI"
     failure modes for mediamolder-only features. Wired into the
-    job-save flow as a "Show as ffmpeg command" panel. Importer
-    already exists (`compat/ffcli`); this is the export half.
-54. **"Unsupported flag" import report** (§2.8) — Already partially
-    present; extend to surface every flag the schema gained in
-    Waves 5–7, with an actionable message ("This flag now maps to
-    `Output.MuxDelay`; rerun import").
+    job-save flow as a "Show CLI" toolbar button and modal panel.
+    `compat/ffcli.Export` covers all input/output options, filter
+    graphs, HLS/DASH/tee, BSF chains, stream dispositions, metadata,
+    two-pass, and more. Unsupported features (Assets, go_processor,
+    LoudnormPass) are listed in an amber warning section.
+54. ✅ **"Unsupported flag" import report** (§2.8) — `ImportResult`
+    type returned by `ParseFull`/`ParseArgsFull`; `Unsupported []string`
+    surfaces actionable notes for every Wave 5–7 schema-promoted flag
+    (BSF, color, HDR/DoVi, attachments, muxdelay/preload, async, interlace,
+    enc_time_base, field_order, filter_complex_threads, itsoffset, re,
+    sub_charenc) and deprecated out-of-scope flags (`-deinterlace`,
+    `-target`, `-fpre`/`-vpre`/`-spre`, `-xerror`, `-stats`/`-nostats`,
+    `-dump`/`-hex`/`-debug_ts`). GUI `/api/convert-cmd` response now
+    includes `unsupported`; CLI `convert-cmd` prints notes to stderr.
 
 ### 6.9 Wave 9 — "the editorial round-trip" (Phase C.8)
 

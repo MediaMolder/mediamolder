@@ -91,6 +91,45 @@ var filterExprVars = map[string][]string{
 		"n", "nb_channels", "nb_consumed_samples",
 		"nb_samples", "pos", "pts", "sample_rate", "startpts", "t", "tb",
 	},
+	// select / aselect: frame-selection expressions.
+	// Source: libavfilter/vf_select.c var_names[],
+	//         libavfilter/af_aselect.c var_names[].
+	"select": {
+		"n", "pts", "t", "pos",
+		"key", "scene",
+		"interlace_type", "pict_type",
+		"pkt_pts", "pkt_dts", "pkt_duration", "pkt_pos",
+		"PICT_TYPE_I", "PICT_TYPE_P", "PICT_TYPE_B",
+		"PICT_TYPE_S", "PICT_TYPE_SI", "PICT_TYPE_SP", "PICT_TYPE_BI",
+		"concatdec_select",
+	},
+	"aselect": {
+		"n", "pts", "t", "pos",
+		"nb_samples", "sample_rate",
+		"pkt_pts", "pkt_dts", "pkt_duration", "pkt_pos",
+		"concatdec_select",
+	},
+	// hue: colour adjustment with expression options.
+	// Source: libavfilter/vf_hue.c var_names[].
+	"hue": {
+		"n", "pts", "t", "r", "tb",
+	},
+	// geq: general pixel-equation filter.
+	// Source: libavfilter/vf_geq.c var_names[].
+	"geq": {
+		"X", "Y", "W", "H", "N", "T",
+		"BYTES", "MAXVAL",
+		"SW", "SH",
+		"lum", "cb", "cr", "alpha",
+		"p", "l",
+	},
+	// trim / atrim: timeline clipping (enable= and inline time exprs).
+	"trim": {
+		"t", "n", "pos",
+	},
+	"atrim": {
+		"t", "n", "pos", "s", "sr",
+	},
 }
 
 // fallbackExprVars is used when the requested filter has no curated
@@ -151,6 +190,27 @@ var filterExprOptions = map[string]map[string]bool{
 	"asetpts": {"expr": true},
 	"volume": {
 		"volume": true,
+		"enable": true,
+	},
+	"select": {
+		"expr": true,
+	},
+	"aselect": {
+		"expr": true,
+	},
+	"hue": {
+		"h": true, "s": true, "b": true,
+		"enable": true,
+	},
+	"geq": {
+		"lum_expr": true, "cb_expr": true, "cr_expr": true,
+		"r_expr": true, "g_expr": true, "b_expr": true, "a_expr": true,
+		"red": true, "green": true, "blue": true, "alpha": true,
+	},
+	"trim": {
+		"enable": true,
+	},
+	"atrim": {
 		"enable": true,
 	},
 }

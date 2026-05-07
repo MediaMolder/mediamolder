@@ -103,6 +103,8 @@ in-app help dialog.
    the same rate control / quality settings you'd get from running the
    original command. `-c:v copy` / `-c:a copy` produce a stream-copy
    node instead of an encoder.
+   **Show CLI** exports the current graph back to an ffmpeg command line
+   (see [§ FFmpeg CLI export](#ffmpeg-cli-export) below).
 
 ### Tips
 
@@ -542,7 +544,459 @@ Below the Bitstream-filter sections every Output form exposes a
 Per-stream metadata (e.g. `language=eng` on a specific audio track)
 remains on the per-stream tab inside the **Streams** section.
 
-### Run panel
+#### Output nodes — HLS / DASH / Tee wizards
+
+When an output's **kind** or **format** requires structured delivery
+options, the Inspector surfaces a dedicated wizard form below the
+standard URL / codec / tag / timing fields.
+
+##### Output kind selector
+
+A **Kind** select at the top of every Output form switches between:
+
+* `(default)` — plain file output; URL, format, codec, and all other
+  standard fields are shown.
+* `file` — same as default, explicit.
+* `tee` — hides the URL/format/codec/BSF fields and shows the **Tee
+  wizard** instead. The output becomes a single-pass multi-format fan-out
+  backed by `Output.kind = "tee"` and `Output.targets[]`.
+
+##### HLS wizard (`output.format = "hls"`)
+
+Shown automatically when the output format is `hls`. Fields:
+
+| Field | Backing key | Notes |
+|---|---|---|
+| **Segment duration (s)** | `hls_time` | Float, seconds |
+| **Init segment duration (s)** | `hls_init_time` | Float |
+| **Playlist size** | `hls_list_size` | 0 = unlimited (VOD) |
+| **Start number** | `hls_start_number` | Integer |
+| **Playlist type** | `playlist_type` | `''` / `event` / `vod` |
+| **Segment type** | `segment_type` | `''` / `mpegts` / `fmp4` |
+| **Segment filename** | `segment_filename` | e.g. `seg_%03d.ts` |
+| **fMP4 init filename** | `fmp4_init_filename` | Shown only when `segment_type = fmp4` |
+| **Master playlist name** | `master_pl_name` | For multi-variant ABR |
+| **Variant stream map** | `var_stream_map` | Structured ABR builder (see below) |
+| **HLS flags** | `hls_flags` | Multi-checkbox (see below) |
+
+**Variant stream map builder** — Each row specifies one rendition
+group. Columns are: stream types (`v:`, `a:`, `s:`) with their
+0-based stream-group index, and an optional `agroup:` / `sgroup:`
+association name. The builder serialises the table to the
+space-separated `a:0,v:0 a:1,v:1` token format that `hlsenc` expects
+for `var_stream_map`.
+
+**HLS flags checkboxes** — `delete_segments`, `append_list`,
+`round_durations`, `discont_start`, `split_by_time`,
+`program_date_time`, `second_level_segment_index`,
+`second_level_segment_duration`, `second_level_segment_size`,
+`temp_file`, `independent_segments`, `iframes_only`, `single_file`.
+
+##### DASH wizard (`output.format = "dash"`)
+
+Shown automatically when the output format is `dash`. Fields:
+
+| Field | Backing key | Notes |
+|---|---|---|
+| **Segment duration (s)** | `seg_duration` | Float |
+| **Fragment duration (s)** | `frag_duration` | Float; `0` = one fragment per segment |
+| **Window size** | `window_size` | Segments in live manifest; `0` = unlimited |
+| **Extra window size** | `extra_window_size` | Keep N extra segments for clients |
+| **Init segment name** | `init_seg_name` | Filename template |
+| **Media segment name** | `media_seg_name` | Filename template |
+| **Adaptation sets** | `adaptation_sets` | `id=0,streams=v id=1,streams=a` |
+| **Use SegmentTemplate** | `use_template` | Tri-state: unset / true / false |
+| **Use SegmentTimeline** | `use_timeline` | Tri-state: unset / true / false |
+| **Streaming mode** | `streaming` | Bool; enable chunked HTTP output |
+| **Low-latency DASH (LDASH)** | `ldash` | Bool |
+| **HLS playlist (CMAF)** | `hls_playlist` | Bool; emit HLS alongside DASH |
+| **Single file** | `single_file` | Bool |
+| **DASH flags** | `dash_flags` | Multi-checkbox (see below) |
+
+The **tri-state toggles** for `use_template` and `use_timeline` let
+you leave the value as "unset" (libavformat default), force it on, or
+force it off — matching the three-way semantics that LL-DASH workflows
+require.
+
+**DASH flags checkboxes** — `default_base_url_override`,
+`round_durations`, `single_file_name`, `global_sidx`, `write_prft`,
+`allow_media_loss`.
+
+##### Tee wizard (`output.kind = "tee"`)
+
+Shown when the Output kind is `tee`. Renders one collapsible row per
+`TeeTarget` entry in `output.targets[]`. The first row is open by
+default; subsequent rows are collapsed with a `▸ Target N — <url>`
+header.
+
+Per-target fields:
+
+| Field | Backing key | Notes |
+|---|---|---|
+| **URL** * | `url` | Required; red asterisk + outline when empty |
+| **Format** | `format` | e.g. `mp4`, `hls`; empty = auto-detect |
+| **Select** | `select` | Stream-type selector: `v` / `a` / `s` |
+| **BSFs** | `bsfs` | Bitstream-filter chain (same syntax as output BSF) |
+| **On fail** | `onfail` | `''` / `abort` / `ignore` |
+| **Use FIFO** | `use_fifo` | Tri-state: default / true / false |
+| **FIFO options** | `fifo_options` | Shown only when `use_fifo = true` |
+| **Extra options** | `options` | Key/value editor for target-level AVOptions |
+
+Click **+ add target** to append a new (empty, collapsed) row.
+The `×` button on each row removes it. Reorder by drag is not
+currently supported; remove and re-add to change order.
+
+### Filter nodes — expression editor
+
+For AVOptions whose value is parsed by libavutil's expression evaluator
+(e.g. `drawtext.x`, `crop.w`, `overlay.enable`, `setpts.expr`,
+`select.expr`) the Inspector renders a syntax-highlighted, live-validating
+`ExpressionInput` control instead of a plain text field.
+
+#### Syntax highlighting
+
+The expression textarea overlays a transparent `<pre>` with coloured
+tokens:
+
+| Colour | Token class |
+|---|---|
+| Purple | libavutil built-in functions (`between`, `if`, `mod`, `min`, …) |
+| Teal | Filter-specific variable names (`t`, `n`, `tw`, `main_w`, …) |
+| Green | Numeric literals |
+| Dim grey | Operators and punctuation |
+| Red wavy underline | Unknown identifiers (not in the variable or function set) |
+
+#### Live eval preview
+
+The expression is evaluated via `GET /api/filters/{filter}/eval-expression`
+with a 250 ms debounce. The result appears inline as:
+
+* `= X (from context)` — when upstream pad hints are available (see below)
+* `= X (vars=0)` — all variables default to 0 (libavfilter "before-frame"
+  semantics)
+* Red error message — when libavutil rejects the expression
+
+#### Variable autocomplete
+
+While typing an identifier, a floating completion list appears beneath
+the text area listing all matching variable names and function names.
+Variables appear teal; functions appear purple, matching the
+syntax-highlight colours.
+
+Navigation:
+- `↓` / `↑` — move highlight
+- `Tab` or `Enter` — accept the highlighted completion (replaces the
+  partial word at cursor)
+- `Esc` or continue typing — dismiss
+
+#### Context-aware eval (upstream pad hints)
+
+When the filter node has an upstream input node whose file has been
+probed (via the **Get properties** button on the Input form), the
+Inspector extracts the first video stream's `{width, height, frame_rate,
+sar}` and the first audio stream's `{sample_rate, channels}` and injects
+them as variable bindings in the eval request. Variable names populated
+this way include `w`, `h`, `iw`, `ih`, `in_w`, `in_h`, `main_w`,
+`main_h`, `W`, `H`, `r`, `FR`, `sar`, `sr`, `nb_channels`. The preview
+then shows realistic values — for example `(main_w-tw)/2` evaluates to
+`880` for a 1920 px wide source rather than `0`.
+
+#### Pattern cookbook
+
+The **Insert pattern…** dropdown below the textarea contains 19
+ready-to-use expression snippets:
+
+| Pattern | Expression | Typical use |
+|---|---|---|
+| Timeline gate | `between(t,1,8)` | `enable=` on any filter |
+| Enable after timestamp | `gt(t,30)` | `enable=` |
+| Disable in range | `not(between(t,2,5))` | `enable=` |
+| 2× speed | `0.5*PTS` | `setpts.expr` |
+| 0.5× slow-mo | `2*PTS` | `setpts.expr` |
+| drawtext center X | `(main_w-tw)/2` | `drawtext.x` |
+| drawtext bottom-center Y | `main_h-line_h-10` | `drawtext.y` |
+| drawtext top-right X | `main_w-tw-10` | `drawtext.x` |
+| drawtext scrolling marquee | `w-mod(40*t,w+tw)` | `drawtext.x` |
+| Force key every 2 s | `expr:gte(t,n_forced*2)` | `Output.ForceKeyFrames` |
+| overlay center X | `(main_w-overlay_w)/2` | `overlay.x` |
+| overlay center Y | `(main_h-overlay_h)/2` | `overlay.y` |
+| crop/pad center X | `(in_w-out_w)/2` | `crop.x`, `pad.x` |
+| crop/pad center Y | `(in_h-out_h)/2` | `crop.y`, `pad.y` |
+| Volume 3 s fade-in | `if(lt(t,3),t/3,1)` | `volume.volume` |
+| Volume/alpha fade in+out | `if(lt(t,1),t,if(lt(t,4),1,if(lt(t,5),5-t,0)))` | `volume.volume`, `drawtext.alpha` |
+| Select keyframes | `eq(pict_type,PICT_TYPE_I)` | `select.expr` |
+| Select every 5th frame | `if(eq(mod(n,5),0),1,0)` | `select.expr` |
+| Ken Burns slow zoom | `min(zoom+0.0015,1.5)` | `zoompan.zoom` |
+
+Selecting a pattern inserts it at the current cursor position,
+replacing any selected text.
+
+#### Supported filters
+
+The expression control is active for the following filters and their
+expression-typed options. The variable set listed is what the completion
+dropdown and eval endpoint use.
+
+| Filter | Expression options | Key variables |
+|---|---|---|
+| `drawtext` | `x`, `y`, `fontsize`, `alpha`, `enable` | `t`, `n`, `tw`, `th`, `main_w`, `main_h`, … |
+| `overlay` | `x`, `y`, `enable` | `main_w`, `main_h`, `overlay_w`, `overlay_h`, `t`, `n` |
+| `crop` | `x`, `y`, `w`, `h`, `enable` | `in_w`, `in_h`, `out_w`, `out_h`, `t`, `n` |
+| `scale` | `w`, `h` | `in_w`, `in_h`, `a`, `sar`, `dar` |
+| `pad` | `w`, `h`, `x`, `y`, `enable` | `in_w`, `in_h`, `out_w`, `out_h` |
+| `rotate` | `angle`, `out_w`, `out_h`, `enable` | `in_w`, `in_h`, `n`, `t` |
+| `zoompan` | `zoom`, `x`, `y`, `d`, `fps`, `enable` | `zoom`, `x`, `y`, `in_w`, `in_h` |
+| `setpts` | `expr` | `PTS`, `N`, `T`, `TB`, `STARTPTS`, `FR`, … |
+| `asetpts` | `expr` | `PTS`, `N`, `T`, `S`, `SR`, … |
+| `volume` | `volume`, `enable` | `n`, `t`, `nb_samples`, `sample_rate` |
+| `select` | `expr` | `n`, `pts`, `t`, `key`, `scene`, `pict_type`, `PICT_TYPE_I`, … |
+| `aselect` | `expr` | `n`, `pts`, `t`, `nb_samples`, `sample_rate` |
+| `hue` | `h`, `s`, `b`, `enable` | `n`, `pts`, `t`, `r`, `tb` |
+| `geq` | `lum_expr`, `cb_expr`, `cr_expr`, `r_expr`, `g_expr`, `b_expr`, `a_expr` | `X`, `Y`, `W`, `H`, `N`, `T`, `BYTES`, `lum`, `cb`, `cr` |
+| `trim` | `enable` | `t`, `n`, `pos` |
+| `atrim` | `enable` | `t`, `n`, `pos`, `s`, `sr` |
+
+All other filters fall back to the universal `{t, n, pos, w, h}` variable
+set for the `enable=` timeline expression surface.
+
+### Filter nodes — audio channel-routing matrix
+
+For the six audio channel-routing filters (`pan`, `channelmap`,
+`channelsplit`, `join`, `amerge`, `amix`) the generic AVOption form is
+replaced by a purpose-built `AudioChannelForm` that presents structured
+controls instead of a free-form `params` dict.  All sub-forms include a
+**live spec preview** row at the bottom that shows the exact filter
+argument string as it will appear in the pipeline.
+
+#### `pan` — gain matrix
+
+Two **Layout** selectors at the top control the column set (input
+channels) and the row set (output channels) of the matrix.  Both accept
+the name of any standard FFmpeg layout preset (`mono`, `stereo`, `5.1`,
+`7.1`, …) with autocomplete, and the channel list is shown as a
+monospace hint to the right.
+
+The **gain matrix** renders as a CSS grid: rows are output channels,
+columns are input channels.  Each cell accepts a floating-point gain
+coefficient (empty or `0` = muted, `1` = full level, `0.5` = −6 dB,
+etc.).  Non-zero cells are highlighted with an accent border and
+background tint for quick visual reference.  The underlying
+`params._pos0` string (the `pan=` positional argument) is updated on
+every keystroke.
+
+> **Note.** If `params._pos0` already contains positional channel names
+> (`c0`, `c1`, …) from a machine-generated spec, the form translates them
+> to named channels using the output-layout as the reference.
+
+#### `channelmap` — per-output source dropdowns
+
+Exposes a **Output layout** selector and a source row for each output
+channel.  Each row shows a `←` arrow and a dropdown listing all
+well-known FFmpeg channel names.  The serialised form is written to
+`params.map` as `IN_CH-OUT_CH` pairs separated by `|`.
+
+#### `channelsplit` — layout selector
+
+Shows a single **Input layout** selector and a notice listing the output
+pads that will be produced.  `channelsplit` creates one output pad per
+channel in the layout; connect each pad to a separate downstream filter
+or encoder.  No mapping parameters are required.
+
+#### `join` — stream + channel pickers
+
+Shows an **Input streams** count, an **Output layout** selector, and a
+source row for each output channel.  Each row provides a stream-index
+dropdown (`#0`, `#1`, …) and a channel-name dropdown.  The serialised
+form is written to `params.map` as `STREAM.IN_CH-OUT_CH` triplets
+separated by `|`.
+
+#### `amerge` — input count spinner
+
+Shows a single **Input streams to merge** number input.  A notice
+reminds that each input stream must have a distinct channel layout (e.g.
+two mono streams → stereo; stereo + stereo → quad).
+
+#### `amix` — weighted mix with options
+
+Shows an **Input streams** spinner, a column of per-input **weight**
+fields, and three option controls:
+
+| Field | Default | Description |
+|---|---|---|
+| **Duration policy** | `longest` | `longest` / `shortest` / `first` — when mixed streams have different lengths |
+| **Normalize** | `true` | Rescale so the sum of weights equals 1 |
+| **Dropout transition (s)** | `2.0` | Fade-out time applied when an input stream ends early |
+
+### Asset registry
+
+The **Assets** toolbar button opens the Asset Registry — a named table of media files (fonts, ML model weights, LUT files, or any other path) that filter params can reference by symbolic name instead of a hard-coded absolute path.  This keeps pipeline JSON machine-agnostic: fonts, RNNoise models, and LUT cubes live at different absolute paths on each workstation.
+
+#### Using assets in a filter
+
+In any filter node's **params**, set an option value to `$asset:<name>` where `<name>` is the key in the registry:
+
+```
+fontfile = $asset:heading
+model    = $asset:cb_rnnn
+filename = $asset:filmLUT
+```
+
+The runtime substitutes the resolved absolute path before constructing the libavfilter graph.  If the name is absent from the registry, the job fails validation.
+
+#### Path resolution
+
+1. If the stored path is absolute and the file exists, it is used as-is.
+2. If the path is relative, the runtime searches left-to-right:
+   - the current working directory, then
+   - each directory listed in the `MEDIAMOLDER_ASSET_PATH` environment variable (colon-separated on POSIX, semicolon-separated on Windows).
+
+Set `MEDIAMOLDER_ASSET_PATH` in the server's environment to point at a shared assets directory (e.g. `/opt/media/assets`).
+
+#### Registry management
+
+| Column | Notes |
+|--------|-------|
+| **Name** | Symbolic identifier.  Must start with a letter or underscore, then letters, digits, underscores, or hyphens (no spaces). |
+| **Kind** | `font` (TTF/OTF for `drawtext=`/`subtitles=`), `model` (ML model file for `arnndn=` / YOLO), `lut` (.cube/.3dl/.m3d for `lut3d=`/`haldclut=`), `other`. |
+| **Path** | Absolute or relative path.  Use **Browse…** to pick from the server filesystem via the file browser. |
+| **Description** | Optional free-text label (GUI only; no runtime effect). |
+
+Click **Add** to create a new entry, **Edit** to modify an existing one, or **Remove** to delete it.  The toolbar **Assets** button shows a count badge when the registry is non-empty.
+
+#### Schema field
+
+The registry is serialised as the top-level `assets` field in the job JSON:
+
+```json
+{
+  "schema_version": "1.2",
+  "assets": {
+    "heading": { "path": "/opt/fonts/OpenSans-Bold.ttf", "kind": "font" },
+    "cb_rnnn": { "path": "models/cb.rnnn", "kind": "model", "desc": "RNNoise Canonical Baseline" },
+    "filmLUT":  { "path": "luts/film.cube", "kind": "lut" }
+  },
+  ...
+}
+```
+
+### Subtitle affordances
+
+Three subtitle-specific controls are surfaced in the Inspector (Wave 8 #52).
+
+#### Input nodes — subtitle charset
+
+The **Subtitle charset** field in the Input inspector maps to the FFmpeg
+`-sub_charenc CODE` option.  Leave it empty for the default (UTF-8).
+Use the built-in picker to choose a common encoding:
+
+| Value | Use case |
+|---|---|
+| `UTF-8` | Default for most modern subtitle files |
+| `Windows-1250` / `Windows-1251` | Central/Eastern European and Cyrillic SRT files |
+| `ISO-8859-1` | Older Western European subtitles |
+| `Shift_JIS` / `GB18030` / `Big5` | CJK subtitles |
+| `KOI8-R` | Russian legacy encoding |
+
+The option is silently ignored by FFmpeg for bitmap subtitle codecs (PGS,
+DVB) because they carry timing and layout information rather than character
+data — no `sub_charenc_mode` is applied.
+
+#### Per-stream stream overrides — Forced and HI flags
+
+When editing a `StreamSpec` with **type = s (subtitle)** inside the
+**Streams** sub-panel of an Output node, the **Subtitle flags** section
+replaces the raw disposition text field with two dedicated checkboxes:
+
+| Checkbox | AV_DISPOSITION_* flag | Effect |
+|---|---|---|
+| **Forced** | `forced` | Player always renders this track regardless of user preference (e.g. foreign-language inserts) |
+| **Hearing impaired (HI)** | `hearing_impaired` | Marks the track as carrying transcriptions of speech and sound effects |
+
+An **Other disposition flags** text field below the checkboxes accepts any
+additional `+`-separated `AV_DISPOSITION_*` tokens (e.g. `default`,
+`comment`) that are not covered by dedicated controls.
+
+For all non-subtitle stream types (video, audio, data) the existing
+free-text **Disposition** field is shown unchanged.
+
+#### Output nodes — Subtitle rendering mode
+
+The **Subtitle rendering** selector in the Output inspector appears above
+the subtitle codec row and lets you indicate how subtitles will be
+delivered:
+
+| Mode | Description |
+|---|---|
+| **Soft-mux** (default) | A separate subtitle stream is written to the container alongside the video and audio streams.  The subtitle codec, codec tag, and bitstream-filter chain fields are shown. |
+| **Burn-in** | Subtitles are rendered directly into the video pixels via a filter.  The codec/tag/BSF fields are hidden; a guidance banner explains how to add a `subtitles=` or `ass=` filter node to the graph. |
+
+This is a GUI-level advisory control — switching to burn-in mode does not
+automatically add a filter node.  Add the appropriate filter manually:
+
+- `subtitles=filename='subs.srt'` — SRT / ASS soft-rendered via libass
+- `ass=filename='subs.ass'` — Styled ASS with full override capability
+
+**Codec-container compatibility warning.** In soft-mux mode, if the
+selected subtitle codec is known to be incompatible with the output
+container format, an amber inline warning is shown directly below the
+codec row:
+
+```
+⚠ "mov_text" may not be compatible with "mkv" containers. Compatible: mp4, mov, m4a, m4v, ipod.
+```
+
+Validated pairs (non-exhaustive):
+
+| Subtitle codec | Compatible containers |
+|---|---|
+| `mov_text` | `mp4`, `mov` |
+| `webvtt` | `webm`, `mkv`, `mp4`, `hls` |
+| `ass` / `ssa` | `mkv` |
+| `srt` / `subrip` | `mkv` |
+| `dvd_subtitle` | `mp4`, `mkv`, `vob` |
+| `hdmv_pgs_subtitle` | `mkv` |
+
+Unknown codecs or missing format fields produce no warning (no opinion).
+
+### FFmpeg CLI export
+
+**Show CLI** (toolbar button, enabled when the canvas is non-empty) converts
+the current graph back to an equivalent `ffmpeg …` command line. It posts the
+serialised `JobConfig` to `POST /api/export-cmd` and displays the result in a
+modal panel with a **Copy** button.
+
+The export is handled by `compat/ffcli.Export` — the inverse of the importer —
+and covers:
+
+| Feature | Exported |
+|---|---|
+| Global options (`-y`, `-loglevel`, `-threads`, `-filter_threads`) | ✅ |
+| Inputs (`-i`, `-ss`, `-to`, `-t`, `-stream_loop`, `-r`, `-readrate`, `-f`, `-itsoffset`, `-charenc`, `-copyts`) | ✅ |
+| Explicit `-map` flags | ✅ |
+| Encoders (codec, rate control, quality, `-b:v/a`, `-maxrate`, `-bufsize`, `-crf`, `-qscale`, `-profile:v`, `-preset`, `-tune`, `-level`, `-pix_fmt`, `-g`, `-bf`, `-x264-params`, `-x265-params`) | ✅ |
+| Per-stream bitstream filter chains (`-bsf:v/a`) | ✅ |
+| Stream dispositions (`-disposition:v/a`) | ✅ |
+| Stream metadata (`-metadata:s:v/a`) | ✅ |
+| Container metadata (`-metadata`) | ✅ |
+| `-t`, `-frames:v`, `-shortest` output limits | ✅ |
+| `-an`, `-vn`, `-sn` | ✅ |
+| Two-pass (`-pass 1/2`, `-passlogfile`) | ✅ |
+| `-fps_mode` | ✅ |
+| `-map_chapters` | ✅ |
+| HLS (`-hls_time`, `-hls_list_size`, `-hls_flags`, etc.) | ✅ |
+| DASH (`-seg_duration`, `-dash_segment_type`, etc.) | ✅ |
+| Tee output (`-f tee "…"`) | ✅ |
+| Filter graph (`-filter_complex`) | ✅ |
+| `Assets` registry | ⚠ not exportable — listed in "no CLI equivalent" |
+| `go_processor` nodes | ⚠ not exportable |
+| `LoudnormPass` / two-pass loudness | ⚠ not exportable |
+| Multi-output stream mapping | ⚠ approximate (no per-output `-map`) |
+
+Features that have no ffmpeg CLI equivalent are listed in an amber warning
+section in the dialog. The generated command is a best-effort approximation
+and may need manual adjustment for complex graphs.
+
+
 
 ![MediaMolder GUI Running](images/ABR_running.png)
 Click **Run** to execute the current graph. The frontend POSTs the job to
@@ -574,7 +1028,8 @@ explicitly to `127.0.0.1` (the default) if untrusted users share the host.
 | `GET`  | `/api/examples`               | List of bundled example job JSONs.                    |
 | `GET`  | `/examples/{file}`            | Static serve of the examples directory.               |
 | `POST` | `/api/validate`               | Parse + structurally validate a posted JobConfig.     |
-| `POST` | `/api/convert-cmd`            | Parse an FFmpeg command line into a JobConfig. Body `{command: string}`; response `{config: JobConfig}` on success or `422 {error: string}` on parse failure. Backed by `compat/ffcli.Parse`. Used by the toolbar's **Import FFmpeg…** dialog. |
+| `POST` | `/api/convert-cmd`            | Parse an FFmpeg command line into a JobConfig. Body `{command: string}`; response `{config: JobConfig, unsupported?: string[]}` on success or `422 {error: string}` on parse failure. `unsupported` lists actionable notes for deprecated, out-of-scope, or Wave 5–7 schema-promoted flags. Backed by `compat/ffcli.ParseFull`. Used by the toolbar's **Import FFmpeg…** dialog. |
+| `POST` | `/api/export-cmd`             | Export the current JobConfig as an ffmpeg command line. Body `{config: JobConfig}`; response `{command: string, lines: []string, unsupported: []string}` on success or `422 {error: string}`. Backed by `compat/ffcli.Export`. Used by the toolbar's **Show CLI** dialog. |
 | `POST` | `/api/run`                    | Start a run; returns `{job_id}`.                      |
 | `POST` | `/api/cancel/{jobId}`         | Cancel an in-flight run.                              |
 | `GET`  | `/api/events/{jobId}`         | Server-Sent Events stream for the run.                |

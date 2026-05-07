@@ -30,7 +30,12 @@
     "global_options": { "$ref": "#/$defs/global_options" },
     "copy_ts": { "type": "boolean", "description": "Preserve the original demuxer timestamps end-to-end instead of rebasing every input to PTS 0. Mirrors ffmpeg's global -copyts: suppresses the demuxer-side ts_offset shift that normally accompanies -ss, and changes the meaning of any output-side -ss / -to (in output.options) to absolute timeline values rather than offsets from the input's start. Required for accurate broadcast / HLS PTS handling." },
     "start_at_zero": { "type": "boolean", "description": "Modulates copy_ts. When true, re-enables the demuxer-side ts_offset shift even under copy_ts so the first kept packet still anchors at PTS 0 while later timing is preserved. Mirrors ffmpeg's global -start_at_zero (fftools/ffmpeg_demux.c L486). Requires copy_ts=true." },
-    "filter_complex_threads": { "type": "integer", "minimum": 0, "description": "Pipeline-wide cap on threads per filter graph. Mirrors ffmpeg's global -filter_complex_threads. Written to AVFilterGraph.nb_threads. 0 leaves libavfilter's default in place. Per-node `threads` overrides this." }
+    "filter_complex_threads": { "type": "integer", "minimum": 0, "description": "Pipeline-wide cap on threads per filter graph. Mirrors ffmpeg's global -filter_complex_threads. Written to AVFilterGraph.nb_threads. 0 leaves libavfilter's default in place. Per-node `threads` overrides this." },
+    "assets": {
+      "type": "object",
+      "description": "Named asset registry. Each key is a symbolic asset name referenced in filter params as \"$asset:<name>\"; the runtime substitutes the resolved filesystem path before building the libavfilter graph. Typical use-cases: fonts for drawtext=/subtitles=, ML models for arnndn=, LUT files for lut3d=/haldclut=.",
+      "additionalProperties": { "$ref": "#/$defs/asset_ref" }
+    }
   },
   "$defs": {
     "input": {
@@ -383,6 +388,16 @@
         "hls_playlist": { "type": "boolean", "description": "Also emit HLS .m3u8 playlists alongside the DASH manifest (`hls_playlist`); the CMAF dual-pack mode." },
         "ldash": { "type": "boolean", "description": "Enable low-latency DASH (`ldash`)." },
         "flags": { "type": "array", "items": { "type": "string" }, "description": "List of `dash_flags` token names; joined with `+` before being passed to libavformat." }
+      }
+    },
+    "asset_ref": {
+      "type": "object",
+      "required": ["path", "kind"],
+      "additionalProperties": false,
+      "properties": {
+        "path": { "type": "string", "minLength": 1, "description": "Filesystem path of the asset (absolute or relative to working directory / MEDIAMOLDER_ASSET_PATH)." },
+        "kind": { "type": "string", "enum": ["font", "model", "lut", "other"], "description": "Asset type for GUI classification: font (TTF/OTF), model (ML model file), lut (.cube/.3dl), other." },
+        "desc": { "type": "string", "description": "Optional human-readable label shown in the GUI asset registry." }
       }
     }
   }

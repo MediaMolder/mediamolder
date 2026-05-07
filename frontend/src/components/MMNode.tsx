@@ -30,7 +30,7 @@ export function MMNode({ id, data, selected }: NodeProps & { data: FlowNodeData 
   // streams list means "unknown" — fall back to all four so the user can
   // still wire the node manually.
   const supported: readonly StreamHandle[] =
-    isInput || isOutput || !data.streams || data.streams.length === 0
+    isOutput || !data.streams || data.streams.length === 0
       ? STREAM_HANDLES
       : STREAM_HANDLES.filter((t) => data.streams!.includes(t));
 
