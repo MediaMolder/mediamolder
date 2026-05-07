@@ -103,25 +103,31 @@ func TestExpandImplicitEncoders_PassPropagation(t *testing.T) {
 	}
 
 	// First encoder: Pass=1, custom prefix, index 0.
-	if got := encs[0].Params["__pass"]; got != 1 {
-		t.Fatalf("encs[0] __pass = %v, want 1", got)
+	if encs[0].Internal.Encoder == nil {
+		t.Fatalf("encs[0] missing Internal.Encoder")
 	}
-	if got := encs[0].Params["__passlogfile"]; got != "statsA" {
-		t.Fatalf("encs[0] __passlogfile = %v, want statsA", got)
+	if got := encs[0].Internal.Encoder.Pass; got != 1 {
+		t.Fatalf("encs[0] Pass = %v, want 1", got)
 	}
-	if got := encs[0].Params["__pass_index"]; got != 0 {
-		t.Fatalf("encs[0] __pass_index = %v, want 0", got)
+	if got := encs[0].Internal.Encoder.PassLogFile; got != "statsA" {
+		t.Fatalf("encs[0] PassLogFile = %v, want statsA", got)
+	}
+	if got := encs[0].Internal.Encoder.PassIndex; got != 0 {
+		t.Fatalf("encs[0] PassIndex = %v, want 0", got)
 	}
 
 	// Second encoder: Pass=2, no prefix (defaults at createEncoder time),
 	// index 1.
-	if got := encs[1].Params["__pass"]; got != 2 {
-		t.Fatalf("encs[1] __pass = %v, want 2", got)
+	if encs[1].Internal.Encoder == nil {
+		t.Fatalf("encs[1] missing Internal.Encoder")
 	}
-	if _, set := encs[1].Params["__passlogfile"]; set {
-		t.Fatalf("encs[1] __passlogfile should be unset, got %v", encs[1].Params["__passlogfile"])
+	if got := encs[1].Internal.Encoder.Pass; got != 2 {
+		t.Fatalf("encs[1] Pass = %v, want 2", got)
 	}
-	if got := encs[1].Params["__pass_index"]; got != 1 {
-		t.Fatalf("encs[1] __pass_index = %v, want 1", got)
+	if got := encs[1].Internal.Encoder.PassLogFile; got != "" {
+		t.Fatalf("encs[1] PassLogFile should be empty, got %q", got)
+	}
+	if got := encs[1].Internal.Encoder.PassIndex; got != 1 {
+		t.Fatalf("encs[1] PassIndex = %v, want 1", got)
 	}
 }

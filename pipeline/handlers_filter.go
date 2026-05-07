@@ -14,6 +14,16 @@ import (
 	"github.com/MediaMolder/MediaMolder/graph"
 )
 
+// filterInternalThreads returns the per-graph thread cap stamped on
+// node.Internal.Filter by NormalizeConfig (Milestone B). Returns 0
+// when no cap is set, which lets libavfilter pick its default.
+func filterInternalThreads(node *graph.Node) int {
+	if node.Internal.Filter == nil {
+		return 0
+	}
+	return node.Internal.Filter.Threads
+}
+
 // ---------- Filter handler ----------
 
 func (r *graphRunner) handleFilter(ctx context.Context, node *graph.Node, ins []<-chan any, outs []chan<- any) error {
@@ -352,31 +362,29 @@ func (r *graphRunner) createFilter(dag *graph.Graph, node *graph.Node) (*av.Filt
 	// pass 1 and inject measured_I / measured_TP / measured_LRA /
 	// measured_thresh / offset into the loudnorm node's params before
 	// the filter graph is instantiated. See pipeline/loudnorm.go.
-	if node.Filter == "loudnorm" && params != nil {
-		if pv, ok := params["__loudnorm_pass"]; ok {
-			pi, _ := pv.(int)
-			if pi == 2 {
-				statsPath, _ := params["__loudnorm_stats"].(string)
-				measured, err := loadLoudnormMeasurements(statsPath)
-				if err != nil {
-					return nil, fmt.Errorf("filter %q: %w", node.ID, err)
-				}
-				merged := make(map[string]any, len(params)+len(measured))
-				for k, v := range params {
-					merged[k] = v
-				}
-				for k, v := range measured {
-					merged[k] = v
-				}
-				params = merged
-			}
+	if node.Filter == "loudnorm" && node.Internal.Filter != nil && node.Internal.Filter.LoudnormPass == 2 {
+		statsPath := node.Internal.Filter.LoudnormStatsFile
+		measured, err := loadLoudnormMeasurements(statsPath)
+		if err != nil {
+			return nil, fmt.Errorf("filter %q: %w", node.ID, err)
 		}
+		merged := make(map[string]any, len(params)+len(measured))
+		for k, v := range params {
+			merged[k] = v
+		}
+		for k, v := range measured {
+			merged[k] = v
+		}
+		params = merged
 	}
 	filterSpec := buildFilterSpec(NodeDef{
 		Filter: node.Filter,
 		Params: params,
 	})
-	threads := paramInt(params, "__filter_threads")
+	threads := 0
+	if node.Internal.Filter != nil {
+		threads = node.Internal.Filter.Threads
+	}
 
 	// Simple 1→1 filter — fast path, but only when input and output
 	// media types match. Cross-media-type filters (showwavespic,
@@ -482,7 +490,7 @@ func (r *graphRunner) createFilterSource(node *graph.Node) (*av.FilterGraph, err
 	return av.NewSourceFilterGraph(av.SourceFilterGraphConfig{
 		Outputs:    outputs,
 		FilterSpec: spec,
-		Threads:    paramInt(node.Params, "__filter_threads"),
+		Threads:    filterInternalThreads(node),
 	})
 }
 
@@ -538,7 +546,7 @@ func (r *graphRunner) createFilterSink(dag *graph.Graph, node *graph.Node) (*av.
 	return av.NewSinkFilterGraph(av.SinkFilterGraphConfig{
 		Inputs:     inputs,
 		FilterSpec: spec,
-		Threads:    paramInt(node.Params, "__filter_threads"),
+		Threads:    filterInternalThreads(node),
 	})
 }
 

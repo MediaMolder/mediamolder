@@ -6,7 +6,6 @@ package pipeline
 import (
 	"encoding/json"
 	"reflect"
-	"sort"
 	"strings"
 	"testing"
 
@@ -174,29 +173,50 @@ func TestNormalizeConfig_LowersAllShorthand(t *testing.T) {
 		if n.ID != "scale" {
 			continue
 		}
-		got, _ := n.Params["__filter_threads"].(int)
-		if got != 4 {
-			t.Errorf("filter __filter_threads = %v, want 4", n.Params["__filter_threads"])
+		if n.Internal.Filter == nil || n.Internal.Filter.Threads != 4 {
+			t.Errorf("filter Internal.Filter.Threads = %+v, want 4", n.Internal.Filter)
 		}
 	}
 
-	// Every shorthand row that should reach the video encoder.
-	wantVideoKeys := []string{
-		"codec",
-		"__fps_mode",
-		"__pass",
-		"__passlogfile",
-		"__pass_index",
-		"__force_key_frames",
-		"__sar",
-		"__enc_time_base",
-		"__field_order",
-		"__interlaced",
+	// Every shorthand row that should reach the video encoder, now
+	// stamped on Internal.Encoder by NormalizeConfig (Milestone B).
+	encInt := videoEnc.Internal.Encoder
+	if encInt == nil {
+		t.Fatalf("video encoder missing Internal.Encoder")
 	}
-	for _, k := range wantVideoKeys {
-		if _, ok := videoEnc.Params[k]; !ok {
-			t.Errorf("video encoder missing param %q (got keys %v)", k, sortedKeys(videoEnc.Params))
-		}
+	if encInt.FPSMode != "cfr" {
+		t.Errorf("FPSMode = %q, want cfr", encInt.FPSMode)
+	}
+	if encInt.Pass != 1 {
+		t.Errorf("Pass = %d, want 1", encInt.Pass)
+	}
+	if encInt.PassLogFile != "stats" {
+		t.Errorf("PassLogFile = %q, want stats", encInt.PassLogFile)
+	}
+	if encInt.PassIndex != 0 {
+		t.Errorf("PassIndex = %d, want 0", encInt.PassIndex)
+	}
+	if encInt.ForceKeyFrames != "expr:gte(t,n_forced*2)" {
+		t.Errorf("ForceKeyFrames = %q", encInt.ForceKeyFrames)
+	}
+	if encInt.SAR != "1:1" {
+		t.Errorf("SAR = %q, want 1:1", encInt.SAR)
+	}
+	if encInt.EncoderTimeBase != "1/30000" {
+		t.Errorf("EncoderTimeBase = %q", encInt.EncoderTimeBase)
+	}
+	if encInt.FieldOrder != "tt" {
+		t.Errorf("FieldOrder = %q, want tt", encInt.FieldOrder)
+	}
+	if !encInt.Interlaced {
+		t.Errorf("Interlaced = false, want true")
+	}
+	// Generated provenance must be stamped on every synthetic node.
+	if videoEnc.Internal.Generated == nil || videoEnc.Internal.Generated.By != "expandImplicitEncoders" {
+		t.Errorf("video encoder Generated = %+v, want By=expandImplicitEncoders", videoEnc.Internal.Generated)
+	}
+	if asyncFilter.Internal.Generated == nil || asyncFilter.Internal.Generated.By != "spliceAudioSyncForOutputs" {
+		t.Errorf("aresample Generated = %+v, want By=spliceAudioSyncForOutputs", asyncFilter.Internal.Generated)
 	}
 
 	// Audio encoder only carries codec; audio_sync lives on the
@@ -206,6 +226,16 @@ func TestNormalizeConfig_LowersAllShorthand(t *testing.T) {
 	}
 	if !strings.HasPrefix(asyncFilter.Filter, "aresample=async=1000") {
 		t.Errorf("aresample filter = %q, want aresample=async=1000...", asyncFilter.Filter)
+	}
+
+	// Milestone B (B.5) regression: no __* sentinel keys must remain
+	// in any node's Params. Internal carries the typed equivalents.
+	for _, n := range def.Nodes {
+		for k := range n.Params {
+			if strings.HasPrefix(k, "__") {
+				t.Errorf("node %q leaked sentinel param %q (should be on Internal)", n.ID, k)
+			}
+		}
 	}
 }
 
@@ -261,13 +291,4 @@ func canonicalize(def *graph.Def) any {
 	var v any
 	_ = json.Unmarshal(b, &v)
 	return v
-}
-
-func sortedKeys(m map[string]any) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	sort.Strings(out)
-	return out
 }
