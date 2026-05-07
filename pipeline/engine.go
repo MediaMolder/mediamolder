@@ -420,6 +420,16 @@ func (p *Pipeline) startDataFlow() {
 	}()
 }
 
+// runLinear is the legacy non-graph execution path used when
+// Config.Graph is empty. It is the *only* runtime entry that still
+// reads authoring shorthand (Output.CodecVideo, GlobalOptions.Threads,
+// GlobalOptions.ThreadType) directly from Config rather than from a
+// normalized graph node. This intentional exemption is documented in
+// docs/field-ownership.md (§ "Linear-mode exemption") and tracked in
+// private_local/followups_roadmap.md as F7 — the linear-mode
+// retire-or-keep decision. Callers that build a graph go through
+// runGraph, which honours the Milestone C invariant: no shorthand
+// reads after NormalizeConfig.
 func (e *Pipeline) runLinear(ctx context.Context, g *errgroup.Group) error {
 	cfg := e.cfg
 	inCfg := cfg.Inputs[0]
