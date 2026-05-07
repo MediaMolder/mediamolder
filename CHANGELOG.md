@@ -6,6 +6,25 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 ## [Unreleased]
 
 ### Added
+- **Migrated `__*` sentinel `Params` keys to typed
+  `graph.NodeDef.Internal` (Milestone B.4–B.6).** The lowering
+  helpers in [pipeline/handlers_graph_build.go](pipeline/handlers_graph_build.go)
+  and [pipeline/loudnorm.go](pipeline/loudnorm.go) now write
+  `Internal.Encoder` (FPSMode, ForceKeyFrames, SAR, DAR,
+  EncoderTimeBase, FieldOrder, Interlaced, Pass, PassLogFile,
+  PassIndex), `Internal.Filter` (Threads, LoudnormPass,
+  LoudnormStatsFile), and `Internal.Generated` (provenance for
+  synthesised nodes — implicit encoders, audio sample-fmt /
+  audio_sync resamplers, two-pass loudnorm shuttle). The encoder
+  and filter consumers
+  ([pipeline/handlers_encoder.go](pipeline/handlers_encoder.go),
+  [pipeline/handlers_filter.go](pipeline/handlers_filter.go)) read
+  from those typed fields. `encoderReservedParams` is trimmed to
+  the runtime-special-cased non-AVOption keys
+  (`codec, width, height, bitrate, threads, thread_type`); all
+  `__*` entries are gone. `buildFilterSpec` keeps its `__` prefix
+  strip as a defensive guard against hand-edited authoring
+  configs.
 - **Typed `graph.NodeDef.Internal` lowering bag.** Adds an
   `Internal` field to `graph.NodeDef` and `graph.Node` carrying
   per-kind sub-structs (`EncoderInternal`, `FilterInternal`) plus a

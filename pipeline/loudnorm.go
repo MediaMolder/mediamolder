@@ -25,14 +25,14 @@ import (
 // `stats_file=<prefix>-<idx>.json` directly onto the loudnorm node's
 // Params so libavfilter writes the measurements out at uninit.
 //
-// Pass 2 (apply): the runtime stamps `__loudnorm_pass=2` and
-// `__loudnorm_stats=<path>` markers onto the node; createFilter
-// resolves the markers, reads + parses the JSON, and injects
-// `measured_I` / `measured_TP` / `measured_LRA` / `measured_thresh`
-// / `offset` into the node's params before the filter graph is
-// instantiated. Errors (missing / unparseable stats file) flow up
-// through createFilter, matching the symmetry FFmpeg users get from
-// the manual two-run recipe.
+// Pass 2 (apply): the runtime stamps `Internal.Filter.LoudnormPass=2`
+// and `Internal.Filter.LoudnormStatsFile=<path>` markers onto the
+// node; createFilter resolves the markers, reads + parses the JSON,
+// and injects `measured_I` / `measured_TP` / `measured_LRA` /
+// `measured_thresh` / `offset` into the node's params before the
+// filter graph is instantiated. Errors (missing / unparseable stats
+// file) flow up through createFilter, matching the symmetry FFmpeg
+// users get from the manual two-run recipe.
 //
 // The pass and stats-file prefix are read from cfg.Outputs. At most
 // one non-zero LoudnormPass may be present across all outputs in a
@@ -72,6 +72,14 @@ func applyLoudnormShuttle(cfg *Config, def *graph.Def) error {
 		if n.Params == nil {
 			n.Params = map[string]any{}
 		}
+		// Merge the existing FilterInternal (e.g. Threads stamped by
+		// the per-node thread cap pass) with the loudnorm shuttle
+		// state.
+		fi := n.Internal.Filter
+		if fi == nil {
+			fi = &graph.FilterInternal{}
+			n.Internal.Filter = fi
+		}
 		switch pass {
 		case 1:
 			// libavfilter writes the JSON directly via stats_file;
@@ -80,11 +88,16 @@ func applyLoudnormShuttle(cfg *Config, def *graph.Def) error {
 			// downstream pass-2 parser can rely on the format.
 			n.Params["print_format"] = "json"
 			n.Params["stats_file"] = statsPath
-			n.Params["__loudnorm_pass"] = 1
-			n.Params["__loudnorm_stats"] = statsPath
+			fi.LoudnormPass = 1
+			fi.LoudnormStatsFile = statsPath
 		case 2:
-			n.Params["__loudnorm_pass"] = 2
-			n.Params["__loudnorm_stats"] = statsPath
+			fi.LoudnormPass = 2
+			fi.LoudnormStatsFile = statsPath
+		}
+		n.Internal.Generated = &graph.GeneratedNode{
+			By:     "applyLoudnormShuttle",
+			From:   n.ID,
+			Reason: fmt.Sprintf("loudnorm two-pass shuttle, pass %d, stats %q", pass, statsPath),
 		}
 	}
 	return nil
