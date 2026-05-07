@@ -103,6 +103,8 @@ in-app help dialog.
    the same rate control / quality settings you'd get from running the
    original command. `-c:v copy` / `-c:a copy` produce a stream-copy
    node instead of an encoder.
+   **Show CLI** exports the current graph back to an ffmpeg command line
+   (see [§ FFmpeg CLI export](#ffmpeg-cli-export) below).
 
 ### Tips
 
@@ -956,7 +958,45 @@ Validated pairs (non-exhaustive):
 
 Unknown codecs or missing format fields produce no warning (no opinion).
 
-### Run panel
+### FFmpeg CLI export
+
+**Show CLI** (toolbar button, enabled when the canvas is non-empty) converts
+the current graph back to an equivalent `ffmpeg …` command line. It posts the
+serialised `JobConfig` to `POST /api/export-cmd` and displays the result in a
+modal panel with a **Copy** button.
+
+The export is handled by `compat/ffcli.Export` — the inverse of the importer —
+and covers:
+
+| Feature | Exported |
+|---|---|
+| Global options (`-y`, `-loglevel`, `-threads`, `-filter_threads`) | ✅ |
+| Inputs (`-i`, `-ss`, `-to`, `-t`, `-stream_loop`, `-r`, `-readrate`, `-f`, `-itsoffset`, `-charenc`, `-copyts`) | ✅ |
+| Explicit `-map` flags | ✅ |
+| Encoders (codec, rate control, quality, `-b:v/a`, `-maxrate`, `-bufsize`, `-crf`, `-qscale`, `-profile:v`, `-preset`, `-tune`, `-level`, `-pix_fmt`, `-g`, `-bf`, `-x264-params`, `-x265-params`) | ✅ |
+| Per-stream bitstream filter chains (`-bsf:v/a`) | ✅ |
+| Stream dispositions (`-disposition:v/a`) | ✅ |
+| Stream metadata (`-metadata:s:v/a`) | ✅ |
+| Container metadata (`-metadata`) | ✅ |
+| `-t`, `-frames:v`, `-shortest` output limits | ✅ |
+| `-an`, `-vn`, `-sn` | ✅ |
+| Two-pass (`-pass 1/2`, `-passlogfile`) | ✅ |
+| `-fps_mode` | ✅ |
+| `-map_chapters` | ✅ |
+| HLS (`-hls_time`, `-hls_list_size`, `-hls_flags`, etc.) | ✅ |
+| DASH (`-seg_duration`, `-dash_segment_type`, etc.) | ✅ |
+| Tee output (`-f tee "…"`) | ✅ |
+| Filter graph (`-filter_complex`) | ✅ |
+| `Assets` registry | ⚠ not exportable — listed in "no CLI equivalent" |
+| `go_processor` nodes | ⚠ not exportable |
+| `LoudnormPass` / two-pass loudness | ⚠ not exportable |
+| Multi-output stream mapping | ⚠ approximate (no per-output `-map`) |
+
+Features that have no ffmpeg CLI equivalent are listed in an amber warning
+section in the dialog. The generated command is a best-effort approximation
+and may need manual adjustment for complex graphs.
+
+
 
 ![MediaMolder GUI Running](images/ABR_running.png)
 Click **Run** to execute the current graph. The frontend POSTs the job to
@@ -989,6 +1029,7 @@ explicitly to `127.0.0.1` (the default) if untrusted users share the host.
 | `GET`  | `/examples/{file}`            | Static serve of the examples directory.               |
 | `POST` | `/api/validate`               | Parse + structurally validate a posted JobConfig.     |
 | `POST` | `/api/convert-cmd`            | Parse an FFmpeg command line into a JobConfig. Body `{command: string}`; response `{config: JobConfig}` on success or `422 {error: string}` on parse failure. Backed by `compat/ffcli.Parse`. Used by the toolbar's **Import FFmpeg…** dialog. |
+| `POST` | `/api/export-cmd`             | Export the current JobConfig as an ffmpeg command line. Body `{config: JobConfig}`; response `{command: string, lines: []string, unsupported: []string}` on success or `422 {error: string}`. Backed by `compat/ffcli.Export`. Used by the toolbar's **Show CLI** dialog. |
 | `POST` | `/api/run`                    | Start a run; returns `{job_id}`.                      |
 | `POST` | `/api/cancel/{jobId}`         | Cancel an in-flight run.                              |
 | `GET`  | `/api/events/{jobId}`         | Server-Sent Events stream for the run.                |

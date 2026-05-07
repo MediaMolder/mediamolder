@@ -6,6 +6,25 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 ## [Unreleased]
 
 ### Added
+- **Wave 8 #53: Live FFmpeg-CLI export.** `compat/ffcli.Export` converts a
+  `pipeline.Config` back to a full `ffmpeg …` command line — the inverse of
+  the existing importer. Coverage includes: all input flags (`-ss`, `-to`,
+  `-t`, `-stream_loop`, `-r`, `-readrate`, `-f`, `-itsoffset`, `-charenc`,
+  `-copyts`), encoder options (codec, rate control, `-crf`, `-preset`,
+  `-tune`, `-profile:v`, `-level`, `-pix_fmt`, `-g`, `-bf`, `-maxrate`,
+  `-bufsize`, `-x264/5-params`), per-stream BSF chains, dispositions and
+  metadata, container metadata, output limits (`-t`, `-frames:v`,
+  `-shortest`), `-an`/`-vn`/`-sn`, two-pass (`-pass`/`-passlogfile`),
+  `-fps_mode`, `-map_chapters`, HLS/DASH output options, tee output
+  (`-f tee "[f=…]url|…"`), and `-filter_complex` graphs.  MediaMolder-only
+  features (`Assets`, `go_processor` nodes, `LoudnormPass`, multi-output
+  stream mapping) are reported as named unsupported items rather than
+  silently dropped.  New HTTP endpoint `POST /api/export-cmd` wraps the
+  function.  New **Show CLI** toolbar button in the GUI opens a modal panel
+  that displays the generated command with a **Copy** button and an amber
+  warning list for any unsupported features.  30 new unit tests in
+  `compat/ffcli/export_test.go`.
+
 - **Wave 8 #52: Subtitle GUI affordances.** Three Inspector-level
   controls surface the subtitle backend that has been complete since
   Wave 6 #34:

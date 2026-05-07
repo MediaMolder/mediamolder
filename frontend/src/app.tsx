@@ -24,6 +24,7 @@ import { RunPanel } from './components/RunPanel';
 import { RunDock } from './components/RunDock';
 import { HelpDialog } from './components/HelpDialog';
 import { ImportFFmpegDialog } from './components/ImportFFmpegDialog';
+import { ExportFFmpegDialog } from './components/ExportFFmpegDialog';
 import { AssetManager } from './components/AssetManager';
 import { Legend } from './components/Legend';
 import {
@@ -568,6 +569,7 @@ function Editor() {
   /* ---------- Help dialog ---------- */
   const [helpOpen, setHelpOpen] = useState(false);
   const [importFFmpegOpen, setImportFFmpegOpen] = useState(false);
+  const [showExportCmd, setShowExportCmd] = useState(false);
   const [showAssetManager, setShowAssetManager] = useState(false);
 
   /* Merge live metrics + errors into node data so MMNode can render badges. */
@@ -623,6 +625,13 @@ function Editor() {
         <button onClick={onOpen}>Open…</button>
         <button onClick={() => setImportFFmpegOpen(true)} title="Paste an FFmpeg command line and convert it to a graph">
           Import FFmpeg…
+        </button>
+        <button
+          onClick={() => setShowExportCmd(true)}
+          disabled={!nodes.length}
+          title="Show the current graph as an ffmpeg command line"
+        >
+          Show CLI
         </button>
 
         <label style={{ color: 'var(--text-dim)', fontSize: 12 }}>Graph:</label>
@@ -832,6 +841,19 @@ function Editor() {
         onClose={() => setImportFFmpegOpen(false)}
         onImported={(cfg) => loadJob(cfg)}
       />
+      {showExportCmd && (
+        <ExportFFmpegDialog
+          config={flowToConfig(
+            job.schema_version || '1.2',
+            nodes,
+            edges,
+            job.description,
+            job.global_options,
+            job.assets,
+          )}
+          onClose={() => setShowExportCmd(false)}
+        />
+      )}
       {showAssetManager && (
         <AssetManager
           assets={job.assets ?? {}}

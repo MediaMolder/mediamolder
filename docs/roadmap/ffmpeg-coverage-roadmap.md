@@ -1259,11 +1259,14 @@ wave delivers every §2.8 / §3.5 GUI item that the schema can now back.
       `mov_text`, `webvtt`, `ass`/`ssa`, `srt`, `dvd_subtitle`,
       `hdmv_pgs_subtitle`).  CSS: `.subtitle-burnin-hint` /
       `.subtitle-compat-warn` added to `styles.css`.
-53. **Live FFmpeg-CLI export** (§2.8, §3.5.7) — Round-trip oracle:
+53. ✅ **Live FFmpeg-CLI export** (§2.8, §3.5.7) — Round-trip oracle:
     JSON → ffmpeg command, with explicit "no equivalent CLI"
     failure modes for mediamolder-only features. Wired into the
-    job-save flow as a "Show as ffmpeg command" panel. Importer
-    already exists (`compat/ffcli`); this is the export half.
+    job-save flow as a "Show CLI" toolbar button and modal panel.
+    `compat/ffcli.Export` covers all input/output options, filter
+    graphs, HLS/DASH/tee, BSF chains, stream dispositions, metadata,
+    two-pass, and more. Unsupported features (Assets, go_processor,
+    LoudnormPass) are listed in an amber warning section.
 54. **"Unsupported flag" import report** (§2.8) — Already partially
     present; extend to surface every flag the schema gained in
     Waves 5–7, with an actionable message ("This flag now maps to
