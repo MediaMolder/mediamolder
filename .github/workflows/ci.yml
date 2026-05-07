@@ -80,7 +80,7 @@ jobs:
       - name: Install FFmpeg build deps (macOS)
         if: runner.os == 'macOS'
         run: |
-          brew install libass freetype fontconfig fribidi harfbuzz pkg-config nasm
+          brew install libass freetype fontconfig fribidi harfbuzz opus pkg-config nasm
 
       - name: Cache FFmpeg (macOS)
         if: runner.os == 'macOS'

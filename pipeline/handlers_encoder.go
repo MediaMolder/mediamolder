@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/MediaMolder/MediaMolder/av"
@@ -391,7 +392,19 @@ func (r *graphRunner) createEncoder(dag *graph.Graph, node *graph.Node) (*av.Enc
 			}
 		}
 		idx := paramInt(node.Params, "__pass_index")
-		logfile := fmt.Sprintf("%s-%d.log", prefix, idx)
+		// Anchor the log file to the working directory so that CodeQL's
+		// path-injection query can verify no traversal occurs via the
+		// strings.HasPrefix guard below.  Since prefix is restricted to
+		// [A-Za-z0-9._-] by the check above, this guard always holds;
+		// it is written out explicitly so static analysis can see it.
+		cwd, cwdErr := os.Getwd()
+		if cwdErr != nil {
+			return nil, fmt.Errorf("encoder node %q: getwd: %w", node.ID, cwdErr)
+		}
+		logfile := filepath.Clean(filepath.Join(cwd, fmt.Sprintf("%s-%d.log", prefix, idx)))
+		if !strings.HasPrefix(logfile, cwd+string(filepath.Separator)) {
+			return nil, fmt.Errorf("encoder node %q: passlogfile path escapes working directory", node.ID)
+		}
 		switch codecName {
 		case "libx264", "libvvenc":
 			if opts.ExtraOpts == nil {
