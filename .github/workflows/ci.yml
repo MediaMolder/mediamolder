@@ -115,7 +115,7 @@ jobs:
             --disable-doc \
             --disable-programs
           make -j$(sysctl -n hw.logicalcpu)
-          make install
+          sudo make install
 
       - name: Set PKG_CONFIG_PATH (macOS)
         if: runner.os == 'macOS'
