@@ -26,6 +26,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   `"hello"`).
 
  `compat/ffcli.ParseFull`
+- **Field ownership classification.** New
+  [docs/field-ownership.md](docs/field-ownership.md) classifies every
+  `Config` / `GlobalOptions` / `Output` / `Input` field as node-local,
+  authoring shorthand, muxer-owned, true global, or deferred.
+  Authoritative reference for the normalization-boundary work tracked
+  in `private_local/normalization_plan_revised.md` (Milestone A).
+  No code changes; documentation only.
+
+- **Wave 8 #54: Unsupported-flag import report.** `compat/ffcli.ParseFull`
   and `ParseArgsFull` return an `ImportResult{Config, Unsupported}` that
   surfaces actionable notes for:
   - Wave 5–7 schema-promoted flags: `-bsf:v`/`:a`/`:s`, `-muxdelay`,
