@@ -86,7 +86,16 @@ export function Inspector({ node, nodes, edges, onChange, onDelete, onSelectNode
           probed={node.data.probed}
           onChange={(def) => onChange(updateRef(node, { kind: 'input', def }, def.id, displayUrl(def.url)))}
           onProbed={(probed) =>
-            onChange({ ...node, data: { ...node.data, probed } } as FlowNode)
+            onChange({
+              ...node,
+              data: {
+                ...node.data,
+                probed,
+                streams: probed
+                  ? [...new Set(probed.map((s) => s.type as string))]
+                  : undefined,
+              },
+            } as FlowNode)
           }
         />
       )}
@@ -139,18 +148,14 @@ function InputForm({
   const [probing, setProbing] = useState(false);
   const [probeError, setProbeError] = useState<string | null>(null);
 
-  const runProbe = async () => {
-    if (!def.url) {
-      setProbeError('Set a URL first.');
-      return;
-    }
+  const probeUrl = async (url: string) => {
     setProbing(true);
     setProbeError(null);
     try {
       const r = await fetch('/api/probe', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: def.url, options: def.options }),
+        body: JSON.stringify({ url, options: def.options }),
       });
       if (!r.ok) {
         const body = await r.text();
@@ -166,6 +171,11 @@ function InputForm({
     }
   };
 
+  const runProbe = () => {
+    if (!def.url) { setProbeError('Set a URL first.'); return; }
+    probeUrl(def.url);
+  };
+
   return (
     <>
       <Field label="ID" value={def.id} onChange={(v) => onChange({ ...def, id: v })} />
@@ -178,6 +188,10 @@ function InputForm({
           onChange({ ...def, url: v });
           // Stale once the URL changes.
           if (probed) onProbed(undefined);
+        }}
+        onBrowsePick={(path) => {
+          onChange({ ...def, url: path });
+          probeUrl(path);
         }}
       />
       <div className="probe-actions">
@@ -1808,6 +1822,7 @@ function FileField({
   filter,
   defaultFilename,
   onChange,
+  onBrowsePick,
 }: {
   label: string;
   value: string;
@@ -1815,6 +1830,10 @@ function FileField({
   filter?: string;
   defaultFilename?: string;
   onChange: (v: string) => void;
+  /** Called (in addition to onChange) only when a file is selected via the
+   * file browser — never on plain text-field edits. Useful for triggering
+   * side-effects (e.g. auto-probe) that should only fire on confirmed picks. */
+  onBrowsePick?: (path: string) => void;
 }) {
   const [local, setLocal] = useState(value);
   const [open, setOpen] = useState(false);
@@ -1843,6 +1862,7 @@ function FileField({
         onPick={(p) => {
           setLocal(p);
           onChange(p);
+          onBrowsePick?.(p);
         }}
       />
     </>
