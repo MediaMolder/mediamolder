@@ -21,6 +21,11 @@ interface Props {
   option: string;
   value: string;
   variables?: string[];
+  /** Numeric bindings for the filter's expression variables derived from
+   * the upstream pad (width, height, fps, …). Passed as extra query
+   * params to the eval endpoint so the live preview shows context-aware
+   * results instead of the default all-zero bindings. */
+  padHints?: Record<string, number>;
   onChange: (next: string) => void;
   placeholder?: string;
 }
@@ -43,30 +48,109 @@ interface Cookbook {
 }
 
 const COOKBOOK: Cookbook[] = [
+  // ── Timeline gates ───────────────────────────────────────────────────
   {
-    label: 'between (timeline gate)',
+    label: 'timeline gate: between(t, A, B)',
     expr: 'between(t,1,8)',
-    hint: 'Truthy while t is in [1,8] seconds — feed to enable=.',
+    hint: 'Truthy while t ∈ [1,8] s — wire to enable=.',
   },
   {
-    label: 'scroll (horizontal marquee)',
-    expr: 'w-mod(40*t\\,w+tw)',
+    label: 'enable after timestamp',
+    expr: 'gt(t,30)',
+    hint: 'Enabled from 30 s onward.',
+  },
+  {
+    label: 'disable (mute) in range',
+    expr: 'not(between(t,2,5))',
+    hint: 'Enabled everywhere except [2,5] s.',
+  },
+  // ── Speed / PTS ──────────────────────────────────────────────────────
+  {
+    label: 'setpts: 2× speed',
+    expr: '0.5*PTS',
+    hint: 'setpts: halve PTS → double playback speed.',
+  },
+  {
+    label: 'setpts: 0.5× slow-mo',
+    expr: '2*PTS',
+    hint: 'setpts: double PTS → half speed (slow motion).',
+  },
+  // ── Text overlay (drawtext) ───────────────────────────────────────────
+  {
+    label: 'drawtext: center X',
+    expr: '(main_w-tw)/2',
+    hint: 'drawtext.x: horizontally centred text.',
+  },
+  {
+    label: 'drawtext: bottom-center Y',
+    expr: 'main_h-line_h-10',
+    hint: 'drawtext.y: 10 px above the bottom edge.',
+  },
+  {
+    label: 'drawtext: top-right X',
+    expr: 'main_w-tw-10',
+    hint: 'drawtext.x: flush right with a 10 px margin.',
+  },
+  {
+    label: 'drawtext: scrolling marquee',
+    expr: 'w-mod(40*t,w+tw)',
     hint: 'drawtext.x: scrolls text right-to-left at 40 px/s.',
   },
+  // ── Force-keyframe expression ─────────────────────────────────────────
   {
-    label: 'frame-stamp (every 2s key)',
-    expr: 'expr:gte(t\\,n_forced*2)',
-    hint: 'Output.ForceKeyFrames: I-frame every 2s.',
+    label: 'force key every 2 s',
+    expr: 'expr:gte(t,n_forced*2)',
+    hint: 'Output.ForceKeyFrames: I-frame every 2 s.',
+  },
+  // ── Overlay / compositing ─────────────────────────────────────────────
+  {
+    label: 'overlay: center X',
+    expr: '(main_w-overlay_w)/2',
+    hint: 'overlay.x: horizontally centred overlay.',
   },
   {
-    label: 'fade-gate (in then out)',
-    expr: 'if(lt(t\\,1)\\,t\\,if(lt(t\\,4)\\,1\\,if(lt(t\\,5)\\,5-t\\,0)))',
-    hint: 'volume / alpha: 0→1 over [0,1], hold, 1→0 over [4,5].',
+    label: 'overlay: center Y',
+    expr: '(main_h-overlay_h)/2',
+    hint: 'overlay.y: vertically centred overlay.',
+  },
+  // ── Crop / pad ────────────────────────────────────────────────────────
+  {
+    label: 'crop/pad: center X',
+    expr: '(in_w-out_w)/2',
+    hint: 'crop.x / pad.x: centred horizontal offset.',
   },
   {
-    label: 'conditional (every 5th frame)',
-    expr: 'if(eq(mod(n\\,5)\\,0)\\,1\\,0)',
-    hint: 'Truthy on n=0,5,10,…',
+    label: 'crop/pad: center Y',
+    expr: '(in_h-out_h)/2',
+    hint: 'crop.y / pad.y: centred vertical offset.',
+  },
+  // ── Volume / audio ────────────────────────────────────────────────────
+  {
+    label: 'volume: 3 s fade-in',
+    expr: 'if(lt(t,3),t/3,1)',
+    hint: 'volume.volume: ramp from silence to 0 dB over 3 s.',
+  },
+  {
+    label: 'volume/alpha: fade in then out',
+    expr: 'if(lt(t,1),t,if(lt(t,4),1,if(lt(t,5),5-t,0)))',
+    hint: '0→1 over [0,1]s, hold until 4 s, 1→0 over [4,5]s.',
+  },
+  // ── Frame selection ───────────────────────────────────────────────────
+  {
+    label: 'select: keyframes only',
+    expr: 'eq(pict_type,PICT_TYPE_I)',
+    hint: 'select.expr: pass only I-frames.',
+  },
+  {
+    label: 'select: every 5th frame',
+    expr: 'if(eq(mod(n,5),0),1,0)',
+    hint: 'select.expr: keep frames n = 0, 5, 10, …',
+  },
+  // ── zoompan ───────────────────────────────────────────────────────────
+  {
+    label: 'zoompan: Ken Burns slow zoom',
+    expr: 'min(zoom+0.0015,1.5)',
+    hint: 'zoompan.zoom: gradual zoom from 1× to 1.5× over ~333 frames.',
   },
 ];
 
@@ -85,23 +169,48 @@ const KNOWN_FUNCS = new Set([
   'trunc', 'while',
 ]);
 
+/** Find the identifier word surrounding `pos` in `text`. */
+function wordAtCursor(
+  text: string,
+  pos: number,
+): { word: string; start: number; end: number } {
+  let s = pos;
+  while (s > 0 && /[A-Za-z_0-9]/.test(text[s - 1])) s--;
+  let e = pos;
+  while (e < text.length && /[A-Za-z_0-9]/.test(text[e])) e++;
+  return { word: text.slice(s, e), start: s, end: e };
+}
+
 export function ExpressionInput({
   filter,
   option,
   value,
   variables,
+  padHints,
   onChange,
   placeholder,
 }: Props) {
   const [evalResp, setEvalResp] = useState<EvalResp | null>(null);
   const [evalErr, setEvalErr] = useState<string | null>(null);
+  // Autocomplete state
+  const [acItems, setAcItems] = useState<string[]>([]);
+  const [acIndex, setAcIndex] = useState(0);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const preRef = useRef<HTMLPreElement>(null);
   const id = useId();
 
   const knownVars = useMemo(() => new Set(variables ?? []), [variables]);
 
-  // Debounced eval. Skip empty.
+  // Sorted candidate pool for autocomplete: filter variables first, then
+  // built-in libavutil functions.
+  const allCompletions = useMemo(() => {
+    const vars = Array.from(knownVars).sort().map((v) => ({ text: v, isVar: true }));
+    const fns = Array.from(KNOWN_FUNCS).sort().map((f) => ({ text: f, isVar: false }));
+    return [...vars, ...fns];
+  }, [knownVars]);
+
+  // Debounced eval. Skip empty. Thread padHints as extra variable bindings
+  // so the preview uses realistic values when upstream pad info is available.
   useEffect(() => {
     const trimmed = value.trim();
     if (!trimmed) {
@@ -111,7 +220,11 @@ export function ExpressionInput({
     }
     const ctl = new AbortController();
     const t = setTimeout(() => {
-      const url = `/api/filters/${encodeURIComponent(filter)}/eval-expression?expr=${encodeURIComponent(trimmed)}`;
+      const params = new URLSearchParams({ expr: trimmed });
+      if (padHints) {
+        for (const [k, v] of Object.entries(padHints)) params.set(k, String(v));
+      }
+      const url = `/api/filters/${encodeURIComponent(filter)}/eval-expression?${params.toString()}`;
       fetch(url, { signal: ctl.signal })
         .then(async (r) => {
           if (!r.ok) throw new Error(`HTTP ${r.status}`);
@@ -129,7 +242,7 @@ export function ExpressionInput({
       clearTimeout(t);
       ctl.abort();
     };
-  }, [filter, value]);
+  }, [filter, value, padHints]);
 
   // Mirror textarea scroll into the highlight overlay so long lines
   // stay aligned.
@@ -157,12 +270,69 @@ export function ExpressionInput({
     });
   };
 
+  // Replace the partial word at cursor with the chosen completion.
+  const applyCompletion = (completion: string) => {
+    const ta = taRef.current;
+    if (!ta) return;
+    const pos = ta.selectionStart ?? value.length;
+    const { start, end } = wordAtCursor(value, pos);
+    const next = value.slice(0, start) + completion + value.slice(end);
+    onChange(next);
+    setAcItems([]);
+    requestAnimationFrame(() => {
+      ta.focus();
+      const newPos = start + completion.length;
+      ta.setSelectionRange(newPos, newPos);
+    });
+  };
+
+  const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const newVal = e.target.value;
+    onChange(newVal);
+    const pos = e.target.selectionStart ?? newVal.length;
+    const { word } = wordAtCursor(newVal, pos);
+    if (word.length >= 1) {
+      const q = word.toLowerCase();
+      const matches = allCompletions
+        .filter((c) => c.text.toLowerCase().startsWith(q) && c.text !== word)
+        .map((c) => c.text);
+      setAcItems(matches.slice(0, 12));
+      setAcIndex(0);
+    } else {
+      setAcItems([]);
+    }
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (acItems.length === 0) return;
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setAcIndex((i) => Math.min(i + 1, acItems.length - 1));
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setAcIndex((i) => Math.max(i - 1, 0));
+    } else if (e.key === 'Tab' || e.key === 'Enter') {
+      e.preventDefault();
+      applyCompletion(acItems[acIndex]);
+    } else if (e.key === 'Escape') {
+      setAcItems([]);
+    }
+  };
+
+  // Dismiss completions on blur, but defer so a click on a completion
+  // item fires its onMouseDown before the list disappears.
+  const handleBlur = () => setTimeout(() => setAcItems([]), 100);
+
   const tokens = highlight(value, knownVars);
+  const hasPadCtx = padHints != null && Object.keys(padHints).length > 0;
   const status = evalErr
     ? { kind: 'err' as const, msg: evalErr }
     : evalResp
       ? evalResp.ok
-        ? { kind: 'ok' as const, msg: `= ${formatNum(evalResp.value)} (vars=0)` }
+        ? {
+            kind: 'ok' as const,
+            msg: `= ${formatNum(evalResp.value)} (${hasPadCtx ? 'from context' : 'vars=0'})`,
+          }
         : { kind: 'err' as const, msg: evalResp.error || 'invalid expression' }
       : null;
 
@@ -185,9 +355,29 @@ export function ExpressionInput({
           autoCorrect="off"
           rows={2}
           placeholder={placeholder}
-          onChange={(e) => onChange(e.target.value)}
+          onChange={handleChange}
+          onKeyDown={handleKeyDown}
+          onBlur={handleBlur}
           onScroll={handleScroll}
         />
+        {acItems.length > 0 && (
+          <div className="expr-completions" role="listbox" aria-label="Completions">
+            {acItems.map((item, i) => (
+              <div
+                key={item}
+                role="option"
+                aria-selected={i === acIndex}
+                className={`expr-completion-item${i === acIndex ? ' selected' : ''}`}
+                onMouseDown={(e) => {
+                  e.preventDefault(); // prevent textarea blur before apply
+                  applyCompletion(item);
+                }}
+              >
+                <span className={knownVars.has(item) ? 'tok-var' : 'tok-fn'}>{item}</span>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
       <div className="expr-meta">
         <select
@@ -291,4 +481,16 @@ const styles = `
 .expr-meta select { font-size: 11px; padding: 2px 4px; }
 .expr-ok { color: #6cc06c; }
 .expr-err { color: #f5b7b1; }
+.expr-completions {
+  position: absolute; top: 100%; left: 0; right: 0; z-index: 100;
+  background: #252526; border: 1px solid #555; border-top: none;
+  border-radius: 0 0 4px 4px; max-height: 180px; overflow-y: auto;
+  box-shadow: 0 4px 8px rgba(0,0,0,0.4);
+}
+.expr-completion-item {
+  padding: 3px 8px; cursor: pointer; font-size: 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  white-space: nowrap; user-select: none;
+}
+.expr-completion-item:hover, .expr-completion-item.selected { background: #094771; }
 `;

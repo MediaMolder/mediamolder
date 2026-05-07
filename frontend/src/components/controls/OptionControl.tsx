@@ -19,6 +19,8 @@ export interface OptionControlProps {
   /** Filter name; required for expression-typed options so the
    * ExpressionInput can hit /api/filters/{filter}/eval-expression. */
   filter?: string;
+  /** Upstream-pad variable bindings forwarded to the eval preview. */
+  padHints?: Record<string, number>;
 }
 
 /** Heuristic: decide whether to render this option as an enum-select. */
@@ -43,7 +45,7 @@ function isImplicitBool(option: EncoderOption): boolean {
   );
 }
 
-export function OptionControl({ option, value, onChange, filter }: OptionControlProps) {
+export function OptionControl({ option, value, onChange, filter, padHints }: OptionControlProps) {
   // Expression-typed (filter, option) pairs (Wave 5 #20). Falls
   // through to plain text when no filter is supplied (e.g. encoder
   // forms — encoders don't currently have expression options).
@@ -54,6 +56,7 @@ export function OptionControl({ option, value, onChange, filter }: OptionControl
         option={option.name}
         value={value}
         variables={option.variables}
+        padHints={padHints}
         onChange={onChange}
         placeholder={defaultDisplay(option)}
       />
@@ -105,6 +108,12 @@ export function OptionControl({ option, value, onChange, filter }: OptionControl
       value={value}
       placeholder={defaultDisplay(option)}
       onChange={(e) => onChange(e.target.value)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          (e.currentTarget as HTMLInputElement).blur();
+        }
+      }}
     />
   );
 }

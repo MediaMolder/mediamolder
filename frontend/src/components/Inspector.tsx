@@ -9,6 +9,9 @@ import { MEDIA_FILE_EXTENSIONS } from '../lib/mediaExtensions';
 import { FileBrowser, type BrowseMode } from './FileBrowser';
 import { EncoderForm } from './EncoderForm';
 import { FilterForm } from './FilterForm';
+import { HLSForm } from './HLSForm';
+import { DASHForm } from './DASHForm';
+import { TeeForm } from './TeeForm';
 import { describeKind } from './MMNode';
 
 interface Props {
@@ -23,9 +26,13 @@ interface Props {
    *  Wave 8 #45 multi-output tab strip so the user can flip between
    *  outputs without going back to the canvas. */
   onSelectNode?: (id: string) => void;
+  /** Called when probe results arrive for an input node.  Kept separate from
+   *  onChange so the caller can use a functional setNodes update and avoid
+   *  overwriting concurrent URL changes made by the same event batch. */
+  onProbedData: (nodeId: string, probed: ProbedStream[] | undefined) => void;
 }
 
-export function Inspector({ node, nodes, edges, onChange, onDelete, onSelectNode }: Props) {
+export function Inspector({ node, nodes, edges, onChange, onDelete, onSelectNode, onProbedData }: Props) {
   if (!node) {
     return (
       <div className="inspector">
@@ -82,9 +89,7 @@ export function Inspector({ node, nodes, edges, onChange, onDelete, onSelectNode
           def={ref.def}
           probed={node.data.probed}
           onChange={(def) => onChange(updateRef(node, { kind: 'input', def }, def.id, displayUrl(def.url)))}
-          onProbed={(probed) =>
-            onChange({ ...node, data: { ...node.data, probed } } as FlowNode)
-          }
+          onProbed={(probed) => onProbedData(node.id, probed)}
         />
       )}
       {ref.kind === 'output' && (
@@ -104,6 +109,7 @@ export function Inspector({ node, nodes, edges, onChange, onDelete, onSelectNode
       {ref.kind === 'node' && (
         <NodeForm
           def={ref.def}
+          padHints={resolveUpstreamPad(nodes, edges, node.id)}
           onChange={(def) =>
             onChange(updateRef(node, { kind: 'node', def }, nodeDisplayLabel(def), nodeDisplaySublabel(def)))
           }
@@ -135,18 +141,14 @@ function InputForm({
   const [probing, setProbing] = useState(false);
   const [probeError, setProbeError] = useState<string | null>(null);
 
-  const runProbe = async () => {
-    if (!def.url) {
-      setProbeError('Set a URL first.');
-      return;
-    }
+  const probeUrl = async (url: string) => {
     setProbing(true);
     setProbeError(null);
     try {
       const r = await fetch('/api/probe', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: def.url, options: def.options }),
+        body: JSON.stringify({ url, options: def.options }),
       });
       if (!r.ok) {
         const body = await r.text();
@@ -162,6 +164,11 @@ function InputForm({
     }
   };
 
+  const runProbe = () => {
+    if (!def.url) { setProbeError('Set a URL first.'); return; }
+    probeUrl(def.url);
+  };
+
   return (
     <>
       <Field label="ID" value={def.id} onChange={(v) => onChange({ ...def, id: v })} />
@@ -174,6 +181,10 @@ function InputForm({
           onChange({ ...def, url: v });
           // Stale once the URL changes.
           if (probed) onProbed(undefined);
+        }}
+        onBrowsePick={(path) => {
+          onChange({ ...def, url: path });
+          probeUrl(path);
         }}
       />
       <div className="probe-actions">
@@ -194,6 +205,21 @@ function InputForm({
       </div>
       {probeError && <div className="probe-error">{probeError}</div>}
       {probed && <ProbedStreamsView streams={probed} />}
+      <label style={{ marginTop: 12 }}>Subtitle charset</label>
+      <input
+        list="sub-charenc-list"
+        value={def.subtitle_charenc ?? ''}
+        onChange={(e) => onChange({ ...def, subtitle_charenc: e.target.value || undefined })}
+        placeholder="UTF-8 (default)"
+      />
+      <datalist id="sub-charenc-list">
+        {SUBTITLE_CHARSETS.map((c) => <option key={c} value={c} />)}
+      </datalist>
+      <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: -4, marginBottom: 4 }}>
+        Character encoding for text subtitle streams (<code>-sub_charenc</code>).
+        Leave empty for the UTF-8 default. Applies to SRT, ASS, SSA; ignored
+        for bitmap subtitles (PGS, DVB).
+      </div>
       <TimingFields
         kind="input"
         options={def.options}
@@ -318,79 +344,159 @@ function OutputForm({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [effVideo, def.codec_tag_video]);
 
+  const isTee = def.kind === 'tee';
+  const [subtitleMode, setSubtitleMode] = useState<'soft-mux' | 'burn-in'>('soft-mux');
+  const compatWarn = subtitleMode === 'soft-mux'
+    ? subtitleCompatWarning(effSubtitle, def.format)
+    : null;
+
   return (
     <>
       <Field label="ID" value={def.id} onChange={(v) => onChange({ ...def, id: v })} />
-      <FileField
-        label="URL"
-        value={def.url}
-        mode="save"
-        defaultFilename="output.mp4"
-        onChange={(v) => onChange({ ...def, url: v })}
-      />
-      <Field label="Format" value={def.format ?? ''} onChange={(v) => onChange({ ...def, format: v || undefined })} />
-      <CodecRow
-        label="Codec (video)"
-        upstream={upstreamCodecs.video}
-        explicit={def.codec_video}
-        onClear={() => onChange({ ...def, codec_video: undefined })}
-        onEdit={(v) => onChange({ ...def, codec_video: v || undefined })}
-      />
-      <CodecRow
-        label="Codec (audio)"
-        upstream={upstreamCodecs.audio}
-        explicit={def.codec_audio}
-        onClear={() => onChange({ ...def, codec_audio: undefined })}
-        onEdit={(v) => onChange({ ...def, codec_audio: v || undefined })}
-      />
-      <CodecRow
-        label="Codec (subtitle)"
-        upstream={upstreamCodecs.subtitle}
-        explicit={def.codec_subtitle}
-        onClear={() => onChange({ ...def, codec_subtitle: undefined })}
-        onEdit={(v) => onChange({ ...def, codec_subtitle: v || undefined })}
-      />
-      <TagField
-        label="Codec tag (video)"
-        value={def.codec_tag_video ?? ''}
-        suggestions={tagsForVideo(effVideo)}
-        onChange={(v) => onChange({ ...def, codec_tag_video: v || undefined })}
-      />
-      <TagField
-        label="Codec tag (audio)"
-        value={def.codec_tag_audio ?? ''}
-        suggestions={tagsForAudio(effAudio)}
-        onChange={(v) => onChange({ ...def, codec_tag_audio: v || undefined })}
-      />
-      <TagField
-        label="Codec tag (subtitle)"
-        value={def.codec_tag_subtitle ?? ''}
-        suggestions={tagsForSubtitle(effSubtitle)}
-        onChange={(v) => onChange({ ...def, codec_tag_subtitle: v || undefined })}
-      />
-      <TimingFields
-        kind="output"
-        options={def.options}
-        onChange={(opts) => onChange({ ...def, options: opts })}
-      />
-      <BSFEditor
-        label="Bitstream filters (video)"
-        kind="video"
-        spec={def.bsf_video}
-        onChange={(s) => onChange({ ...def, bsf_video: s })}
-      />
-      <BSFEditor
-        label="Bitstream filters (audio)"
-        kind="audio"
-        spec={def.bsf_audio}
-        onChange={(s) => onChange({ ...def, bsf_audio: s })}
-      />
-      <BSFEditor
-        label="Bitstream filters (subtitle)"
-        kind="subtitle"
-        spec={def.bsf_subtitle}
-        onChange={(s) => onChange({ ...def, bsf_subtitle: s })}
-      />
+
+      {/* Output kind: file (default) or tee (multi-target) */}
+      <label>Output kind</label>
+      <select
+        value={def.kind ?? ''}
+        onChange={(e) => {
+          const k = e.target.value as Output['kind'];
+          onChange({ ...def, kind: k || undefined });
+        }}
+      >
+        <option value="">(default — file)</option>
+        <option value="file">file</option>
+        <option value="tee">tee (multi-output)</option>
+      </select>
+
+      {/* Regular file output: URL, format, codecs, timing, BSFs */}
+      {!isTee && (
+        <>
+          <FileField
+            label="URL"
+            value={def.url}
+            mode="save"
+            defaultFilename="output.mp4"
+            onChange={(v) => onChange({ ...def, url: v })}
+          />
+          <Field label="Format" value={def.format ?? ''} onChange={(v) => onChange({ ...def, format: v || undefined })} />
+          <CodecRow
+            label="Codec (video)"
+            upstream={upstreamCodecs.video}
+            explicit={def.codec_video}
+            onClear={() => onChange({ ...def, codec_video: undefined })}
+            onEdit={(v) => onChange({ ...def, codec_video: v || undefined })}
+          />
+          <CodecRow
+            label="Codec (audio)"
+            upstream={upstreamCodecs.audio}
+            explicit={def.codec_audio}
+            onClear={() => onChange({ ...def, codec_audio: undefined })}
+            onEdit={(v) => onChange({ ...def, codec_audio: v || undefined })}
+          />
+          {/* Subtitle rendering mode --------------------------------------------------------- */}
+          <label style={{ marginTop: 10 }}>Subtitle rendering</label>
+          <select
+            value={subtitleMode}
+            onChange={(e) => setSubtitleMode(e.target.value as 'soft-mux' | 'burn-in')}
+            style={{ background: 'var(--panel-2)', color: 'var(--text)', border: '1px solid var(--border)', borderRadius: 4, padding: '5px 7px', fontSize: 12, width: '100%' }}
+          >
+            <option value="soft-mux">Soft-mux (subtitle stream in output)</option>
+            <option value="burn-in">Burn-in (rendered via filter into video)</option>
+          </select>
+          {subtitleMode === 'burn-in' && (
+            <div className="subtitle-burnin-hint">
+              Add a <code>subtitles=</code> (SRT / ASS) or <code>ass=</code>{' '}
+              (styled ASS) filter node to the graph and connect it to the video
+              stream. No separate subtitle stream is written to the output.
+            </div>
+          )}
+          {subtitleMode === 'soft-mux' && (
+            <>
+              <CodecRow
+                label="Codec (subtitle)"
+                upstream={upstreamCodecs.subtitle}
+                explicit={def.codec_subtitle}
+                onClear={() => onChange({ ...def, codec_subtitle: undefined })}
+                onEdit={(v) => onChange({ ...def, codec_subtitle: v || undefined })}
+              />
+              {compatWarn && (
+                <div className="subtitle-compat-warn">⚠ {compatWarn}</div>
+              )}
+            </>
+          )}
+          {/* ----------------------------------------------------------------------------- */}
+          <TagField
+            label="Codec tag (video)"
+            value={def.codec_tag_video ?? ''}
+            suggestions={tagsForVideo(effVideo)}
+            onChange={(v) => onChange({ ...def, codec_tag_video: v || undefined })}
+          />
+          <TagField
+            label="Codec tag (audio)"
+            value={def.codec_tag_audio ?? ''}
+            suggestions={tagsForAudio(effAudio)}
+            onChange={(v) => onChange({ ...def, codec_tag_audio: v || undefined })}
+          />
+          {subtitleMode === 'soft-mux' && (
+            <TagField
+              label="Codec tag (subtitle)"
+              value={def.codec_tag_subtitle ?? ''}
+              suggestions={tagsForSubtitle(effSubtitle)}
+              onChange={(v) => onChange({ ...def, codec_tag_subtitle: v || undefined })}
+            />
+          )}
+          <TimingFields
+            kind="output"
+            options={def.options}
+            onChange={(opts) => onChange({ ...def, options: opts })}
+          />
+          <BSFEditor
+            label="Bitstream filters (video)"
+            kind="video"
+            spec={def.bsf_video}
+            onChange={(s) => onChange({ ...def, bsf_video: s })}
+          />
+          <BSFEditor
+            label="Bitstream filters (audio)"
+            kind="audio"
+            spec={def.bsf_audio}
+            onChange={(s) => onChange({ ...def, bsf_audio: s })}
+          />
+          {subtitleMode === 'soft-mux' && (
+            <BSFEditor
+              label="Bitstream filters (subtitle)"
+              kind="subtitle"
+              spec={def.bsf_subtitle}
+              onChange={(s) => onChange({ ...def, bsf_subtitle: s })}
+            />
+          )}
+        </>
+      )}
+
+      {/* HLS wizard — shown when format is hls */}
+      {!isTee && def.format === 'hls' && (
+        <HLSForm
+          hls={def.hls ?? {}}
+          onChange={(h) => onChange({ ...def, hls: h })}
+        />
+      )}
+
+      {/* DASH wizard — shown when format is dash */}
+      {!isTee && def.format === 'dash' && (
+        <DASHForm
+          dash={def.dash ?? {}}
+          onChange={(d) => onChange({ ...def, dash: d })}
+        />
+      )}
+
+      {/* Tee multi-output target list */}
+      {isTee && (
+        <TeeForm
+          targets={def.targets ?? []}
+          onChange={(t) => onChange({ ...def, targets: t })}
+        />
+      )}
+
       <MetadataEditor
         label="Container metadata"
         hint={<>Per-output container tags (<code>-metadata key=value</code>): <code>title</code>, <code>artist</code>, <code>comment</code>, <code>genre</code>, <code>date</code>, …</>}
@@ -500,6 +606,73 @@ function resolveUpstreamCodecs(
   return result;
 }
 
+/** Walk the edge graph upstream from a filter node and extract numeric
+ * pad hints from the first input node whose probed metadata is available.
+ * These are forwarded to the expression eval endpoint as variable bindings
+ * so previews show context-aware (not all-zero) results. */
+function resolveUpstreamPad(
+  nodes: FlowNode[],
+  edges: FlowEdge[],
+  filterId: string,
+): Record<string, number> {
+  const nodeById = new Map(nodes.map((n) => [n.id, n]));
+  let currentId = filterId;
+  const visited = new Set<string>();
+  for (let hops = 0; hops < 32; hops++) {
+    if (visited.has(currentId)) break;
+    visited.add(currentId);
+    const incoming = edges.find((e) => e.target === currentId);
+    if (!incoming) break;
+    const src = nodeById.get(incoming.source);
+    if (!src) break;
+    if (src.data.ref.kind === 'input' && src.data.probed && src.data.probed.length > 0) {
+      const hints: Record<string, number> = {};
+      const video = src.data.probed.find((s) => s.type === 'video');
+      if (video) {
+        if (video.width) {
+          hints.w = video.width; hints.iw = video.width;
+          hints.in_w = video.width; hints.main_w = video.width; hints.W = video.width;
+        }
+        if (video.height) {
+          hints.h = video.height; hints.ih = video.height;
+          hints.in_h = video.height; hints.main_h = video.height; hints.H = video.height;
+        }
+        if (video.frame_rate) {
+          const fps = parsePadFps(video.frame_rate);
+          if (fps !== null) { hints.r = fps; hints.FR = fps; }
+        }
+        if (video.sar) {
+          const sarVal = parsePadRatio(video.sar);
+          if (sarVal !== null) hints.sar = sarVal;
+        }
+      }
+      const audio = src.data.probed.find((s) => s.type === 'audio');
+      if (audio) {
+        if (audio.sample_rate) hints.sr = audio.sample_rate;
+        if (audio.channels) hints.nb_channels = audio.channels;
+      }
+      if (Object.keys(hints).length > 0) return hints;
+    }
+    currentId = src.id;
+  }
+  return {};
+}
+
+function parsePadFps(fps: string): number | null {
+  const m = /^(\d+)(?:\/(\d+))?$/.exec(fps.trim());
+  if (!m) return null;
+  const n = parseInt(m[1]);
+  const d = m[2] ? parseInt(m[2]) : 1;
+  return d === 0 ? null : n / d;
+}
+
+function parsePadRatio(r: string): number | null {
+  const m = /^(\d+):(\d+)$/.exec(r.trim());
+  if (!m) return null;
+  const d = parseInt(m[2]);
+  return d === 0 ? null : parseInt(m[1]) / d;
+}
+
 // Curated FourCC suggestions for the muxer's per-stream codec_tag override.
 // Free text is still accepted; these only populate the datalist drop-down.
 // Values come from MOV/MP4's stsd tables in libavformat
@@ -586,6 +759,30 @@ const SUBTITLE_TAGS_BY_CODEC: Record<string, string[]> = {
   eia_708: ['c708'],
 };
 
+// Known-compatible subtitle codec ↔ container combinations.
+// Key = normalised codec name; value = format substrings that accept it.
+// Unlisted codecs are not validated.
+const SUBTITLE_CODEC_FORMATS: Record<string, string[]> = {
+  mov_text:          ['mp4', 'mov', 'm4a', 'm4v', 'ipod'],
+  webvtt:            ['webm', 'mkv', 'matroska', 'mp4', 'hls'],
+  ass:               ['mkv', 'matroska'],
+  ssa:               ['mkv', 'matroska'],
+  srt:               ['mkv', 'matroska'],
+  subrip:            ['mkv', 'matroska'],
+  dvd_subtitle:      ['mp4', 'mov', 'mkv', 'matroska', 'vob'],
+  dvdsub:            ['mp4', 'mov', 'mkv', 'matroska', 'vob'],
+  hdmv_pgs_subtitle: ['mkv', 'matroska'],
+};
+
+// Common character-encoding names for the subtitle_charenc picker.
+const SUBTITLE_CHARSETS = [
+  'UTF-8', 'UTF-16LE', 'UTF-16BE',
+  'ISO-8859-1', 'ISO-8859-2', 'ISO-8859-5', 'ISO-8859-15',
+  'Windows-1250', 'Windows-1251', 'Windows-1252', 'Windows-1254',
+  'Shift_JIS', 'GB18030', 'GBK', 'Big5',
+  'KOI8-R', 'KOI8-U', 'EUC-JP', 'EUC-KR',
+];
+
 function normalizeCodec(name: string | undefined | null): string {
   return (name ?? '').trim().toLowerCase().replace(/-/g, '_');
 }
@@ -616,6 +813,28 @@ function tagsForAudio(codec: string | undefined): string[] {
 }
 function tagsForSubtitle(codec: string | undefined): string[] {
   return lookupTags(SUBTITLE_TAGS_BY_CODEC, codec);
+}
+
+function subtitleCompatWarning(codec: string, format: string | undefined): string | null {
+  if (!codec || !format) return null;
+  const compat = SUBTITLE_CODEC_FORMATS[normalizeCodec(codec)];
+  if (!compat) return null;
+  const fmt = format.toLowerCase().trim();
+  if (compat.some((c) => fmt.includes(c) || c.includes(fmt))) return null;
+  return `"${codec}" may not be compatible with "${format}" containers. Compatible: ${compat.join(', ')}.`;
+}
+
+// Toggle a single AV_DISPOSITION_* flag in a '+'-separated disposition string.
+function hasDispFlag(disposition: string, flag: string): boolean {
+  return disposition.split('+').map((f) => f.trim()).includes(flag);
+}
+
+function toggleDispFlag(disposition: string, flag: string, on: boolean): string {
+  const flags = disposition.split('+').map((f) => f.trim()).filter(Boolean);
+  const idx = flags.indexOf(flag);
+  if (on && idx === -1) flags.push(flag);
+  if (!on && idx !== -1) flags.splice(idx, 1);
+  return flags.join('+');
 }
 
 /* ---------- 4-char FourCC field with datalist suggestions ---------- */
@@ -665,7 +884,7 @@ function TagField({
 }
 
 /* ---------- Graph node form ---------- */
-function NodeForm({ def, onChange }: { def: NodeDef; onChange: (next: NodeDef) => void }) {
+function NodeForm({ def, onChange, padHints }: { def: NodeDef; onChange: (next: NodeDef) => void; padHints?: Record<string, number> }) {
   const isFilter =
     def.type === 'filter' || def.type === 'filter_source' || def.type === 'filter_sink';
   return (
@@ -686,7 +905,7 @@ function NodeForm({ def, onChange }: { def: NodeDef; onChange: (next: NodeDef) =
         />
       )}
       {def.type === 'encoder' && <EncoderForm def={def} onChange={onChange} />}
-      {isFilter && <FilterForm def={def} onChange={onChange} />}
+      {isFilter && <FilterForm def={def} onChange={onChange} padHints={padHints} />}
       {def.type !== 'encoder' && !isFilter && (
         <ParamsEditor params={def.params ?? {}} onChange={(p) => onChange({ ...def, params: p })} />
       )}
@@ -1464,15 +1683,58 @@ function StreamSpecForm({
           Remove
         </button>
       </div>
-      <Field
-        label="Disposition"
-        value={spec.disposition ?? ''}
-        onChange={(v) => onChange({ disposition: v || undefined })}
-      />
-      <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: -4, marginBottom: 4 }}>
-        <code>+</code>-separated <code>AV_DISPOSITION_*</code> flags
-        (e.g. <code>default+forced</code>, <code>hearing_impaired</code>).
-      </div>
+      {spec.type === 's' ? (
+        <>
+          <label style={{ marginTop: 6 }}>Subtitle flags</label>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 4 }}>
+            <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontWeight: 'normal', cursor: 'pointer' }}>
+              <input
+                type="checkbox"
+                checked={hasDispFlag(spec.disposition ?? '', 'forced')}
+                onChange={(e) =>
+                  onChange({ disposition: toggleDispFlag(spec.disposition ?? '', 'forced', e.target.checked) || undefined })
+                }
+              />
+              Forced — always displayed (e.g. foreign-language inserts)
+            </label>
+            <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontWeight: 'normal', cursor: 'pointer' }}>
+              <input
+                type="checkbox"
+                checked={hasDispFlag(spec.disposition ?? '', 'hearing_impaired')}
+                onChange={(e) =>
+                  onChange({ disposition: toggleDispFlag(spec.disposition ?? '', 'hearing_impaired', e.target.checked) || undefined })
+                }
+              />
+              Hearing impaired (HI) — includes sound descriptions
+            </label>
+          </div>
+          <Field
+            label="Other disposition flags"
+            value={(spec.disposition ?? '').split('+').filter((f) => f !== 'forced' && f !== 'hearing_impaired').join('+')}
+            onChange={(v) => {
+              const others = v.split('+').map((f) => f.trim()).filter(Boolean);
+              const base = (['forced', 'hearing_impaired'] as const).filter((f) => hasDispFlag(spec.disposition ?? '', f));
+              onChange({ disposition: [...base, ...others].join('+') || undefined });
+            }}
+          />
+          <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: -4, marginBottom: 4 }}>
+            Additional <code>+</code>-separated <code>AV_DISPOSITION_*</code> flags
+            (e.g. <code>default</code>, <code>comment</code>).
+          </div>
+        </>
+      ) : (
+        <>
+          <Field
+            label="Disposition"
+            value={spec.disposition ?? ''}
+            onChange={(v) => onChange({ disposition: v || undefined })}
+          />
+          <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: -4, marginBottom: 4 }}>
+            <code>+</code>-separated <code>AV_DISPOSITION_*</code> flags
+            (e.g. <code>default+forced</code>, <code>hearing_impaired</code>).
+          </div>
+        </>
+      )}
       <label style={{ marginTop: 10 }}>Metadata</label>
       <ParamsEditor
         params={spec.metadata ?? {}}
@@ -1553,6 +1815,7 @@ function FileField({
   filter,
   defaultFilename,
   onChange,
+  onBrowsePick,
 }: {
   label: string;
   value: string;
@@ -1560,6 +1823,10 @@ function FileField({
   filter?: string;
   defaultFilename?: string;
   onChange: (v: string) => void;
+  /** Called (in addition to onChange) only when a file is selected via the
+   * file browser — never on plain text-field edits. Useful for triggering
+   * side-effects (e.g. auto-probe) that should only fire on confirmed picks. */
+  onBrowsePick?: (path: string) => void;
 }) {
   const [local, setLocal] = useState(value);
   const [open, setOpen] = useState(false);
@@ -1588,6 +1855,7 @@ function FileField({
         onPick={(p) => {
           setLocal(p);
           onChange(p);
+          onBrowsePick?.(p);
         }}
       />
     </>

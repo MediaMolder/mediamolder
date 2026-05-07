@@ -24,6 +24,8 @@ import { RunPanel } from './components/RunPanel';
 import { RunDock } from './components/RunDock';
 import { HelpDialog } from './components/HelpDialog';
 import { ImportFFmpegDialog } from './components/ImportFFmpegDialog';
+import { ExportFFmpegDialog } from './components/ExportFFmpegDialog';
+import { AssetManager } from './components/AssetManager';
 import { Legend } from './components/Legend';
 import {
   configToFlow,
@@ -37,7 +39,7 @@ import { spawnNodeFrom, type PaletteEntry } from './lib/spawn';
 import { useJobRun } from './lib/useJobRun';
 import { inferEdgeAttributes, summariseAttributes } from './lib/streamAttrs';
 import { fetchCatalog, indexStreams } from './lib/nodeCatalog';
-import type { JobConfig, StreamType } from './lib/jobTypes';
+import type { JobConfig, ProbedStream, StreamType } from './lib/jobTypes';
 
 const NODE_TYPES = { mmNode: MMNode };
 const EDGE_TYPES = { mmEdge: MMEdge };
@@ -296,6 +298,32 @@ function Editor() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const onProbedData = useCallback((nodeId: string, probed: ProbedStream[] | undefined) => {
+    const streams = probed
+      ? [...new Set(probed.map((s) => s.type as string))]
+      : undefined;
+    setNodes((ns) => ns.map((n) => {
+      if (n.id !== nodeId) return n;
+      return {
+        ...n,
+        data: {
+          ...n.data,
+          probed,
+          streams,
+        },
+      };
+    }));
+    // Remove edges whose sourceHandle is no longer in the probed stream set.
+    // (streams === undefined means unrestricted — keep all edges.)
+    if (streams !== undefined) {
+      setEdges((es) =>
+        es.filter((e) => e.source !== nodeId || e.sourceHandle == null || streams.includes(e.sourceHandle)),
+      );
+    }
+    markDirty();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const onNodeDelete = useCallback((id: string) => {
     setNodes((ns) => ns.filter((n) => n.id !== id));
     setEdges((es) => es.filter((e) => e.source !== id && e.target !== id));
@@ -346,6 +374,7 @@ function Editor() {
       edges,
       job.description,
       job.global_options,
+      job.assets,
     );
     return JSON.stringify(out, null, 2);
   }, [job, nodes, edges]);
@@ -511,6 +540,7 @@ function Editor() {
       edges,
       job.description,
       job.global_options,
+      job.assets,
     );
   };
   const run = useJobRun(() => buildJobRef.current?.() ?? null);
@@ -565,6 +595,8 @@ function Editor() {
   /* ---------- Help dialog ---------- */
   const [helpOpen, setHelpOpen] = useState(false);
   const [importFFmpegOpen, setImportFFmpegOpen] = useState(false);
+  const [showExportCmd, setShowExportCmd] = useState(false);
+  const [showAssetManager, setShowAssetManager] = useState(false);
 
   /* Merge live metrics + errors into node data so MMNode can render badges. */
   const runByNode = useMemo(() => {
@@ -619,6 +651,13 @@ function Editor() {
         <button onClick={onOpen}>Open…</button>
         <button onClick={() => setImportFFmpegOpen(true)} title="Paste an FFmpeg command line and convert it to a graph">
           Import FFmpeg…
+        </button>
+        <button
+          onClick={() => setShowExportCmd(true)}
+          disabled={!nodes.length}
+          title="Show the current graph as an ffmpeg command line"
+        >
+          Show CLI
         </button>
 
         <label style={{ color: 'var(--text-dim)', fontSize: 12 }}>Graph:</label>
@@ -736,6 +775,14 @@ function Editor() {
           {showRunPanel ? 'Hide log' : 'Show log'}
         </button>
         <button onClick={() => setHelpOpen(true)} title="Open help (or press ?)">Help</button>
+        <button
+          onClick={() => setShowAssetManager(true)}
+          title="Manage the asset registry (fonts, ML models, LUTs)"
+        >
+          Assets{job.assets && Object.keys(job.assets).length > 0 && (
+            <span className="toolbar-badge">{Object.keys(job.assets).length}</span>
+          )}
+        </button>
       </div>
 
       {showPalette && <Palette />}
@@ -809,7 +856,7 @@ function Editor() {
       </div>
 
       {showInspector && (
-      <Inspector node={selectedNode} nodes={nodes} edges={edges} onChange={onNodeUpdate} onDelete={onNodeDelete} onSelectNode={setSelectedId} />
+      <Inspector node={selectedNode} nodes={nodes} edges={edges} onChange={onNodeUpdate} onDelete={onNodeDelete} onSelectNode={setSelectedId} onProbedData={onProbedData} />
       )}
       <RunDock visible={showRunPanel}>
         <RunPanel run={run} nodeKinds={nodeKinds} onClose={() => setShowRunPanel(false)} />
@@ -820,6 +867,28 @@ function Editor() {
         onClose={() => setImportFFmpegOpen(false)}
         onImported={(cfg) => loadJob(cfg)}
       />
+      {showExportCmd && (
+        <ExportFFmpegDialog
+          config={flowToConfig(
+            job.schema_version || '1.2',
+            nodes,
+            edges,
+            job.description,
+            job.global_options,
+            job.assets,
+          )}
+          onClose={() => setShowExportCmd(false)}
+        />
+      )}
+      {showAssetManager && (
+        <AssetManager
+          assets={job.assets ?? {}}
+          onChange={(a) =>
+            setJob((j) => ({ ...j, assets: Object.keys(a).length > 0 ? a : undefined }))
+          }
+          onClose={() => setShowAssetManager(false)}
+        />
+      )}
     </div>
   );
 }

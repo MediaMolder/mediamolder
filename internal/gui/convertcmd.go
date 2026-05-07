@@ -23,9 +23,11 @@ type convertCmdRequest struct {
 
 // convertCmdResponse is the success body returned by POST /api/convert-cmd.
 // Config is the parsed mediamolder JobConfig, ready to be fed into loadJob
-// on the client side.
+// on the client side. Unsupported lists any deprecated, out-of-scope, or
+// Wave 5–7 schema-promoted flags encountered during import.
 type convertCmdResponse struct {
-	Config *pipeline.Config `json:"config"`
+	Config      *pipeline.Config `json:"config"`
+	Unsupported []string         `json:"unsupported,omitempty"`
 }
 
 // handleConvertCmd parses an FFmpeg-style command line into a mediamolder
@@ -44,11 +46,11 @@ func handleConvertCmd(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, fmt.Errorf("command is required"))
 		return
 	}
-	cfg, err := ffcli.Parse(cmd)
+	res, err := ffcli.ParseFull(cmd)
 	if err != nil {
 		writeJSONError(w, http.StatusUnprocessableEntity, err)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(convertCmdResponse{Config: cfg})
+	_ = json.NewEncoder(w).Encode(convertCmdResponse{Config: res.Config, Unsupported: res.Unsupported})
 }

@@ -225,13 +225,16 @@ func cmdConvertCmd(args []string) error {
 		return fmt.Errorf("usage: mediamolder convert-cmd \"ffmpeg -i in.mp4 -c:v libx264 out.mp4\"")
 	}
 	cmdline := strings.Join(fs.Args(), " ")
-	cfg, err := ffcli.Parse(cmdline)
+	res, err := ffcli.ParseFull(cmdline)
 	if err != nil {
 		return fmt.Errorf("parse error: %w", err)
 	}
+	for _, u := range res.Unsupported {
+		fmt.Fprintln(os.Stderr, "note:", u)
+	}
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
-	return enc.Encode(cfg)
+	return enc.Encode(res.Config)
 }
 
 func cmdListCodecs(args []string) error {

@@ -880,6 +880,12 @@ func (p *Pipeline) runGraph(ctx context.Context) (runErr error) {
 		}()
 	}
 
+	// 1a. Resolve "$asset:<name>" references in filter params.
+	cfg, err := resolveConfigAssets(cfg)
+	if err != nil {
+		return fmt.Errorf("resolve assets: %w", err)
+	}
+
 	// 1. Convert pipeline config → graph definition → validated DAG.
 	def := configToGraphDef(cfg)
 	dag, err := graph.Build(def)
