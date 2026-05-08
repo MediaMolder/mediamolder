@@ -27,6 +27,31 @@ answer before they can be reclassified.
 | **true global** | Cross-cutting policy that no single node owns | Stays on `graph.Def` top-level (assets, security, observability, timestamp policy) |
 | **defer** | Currently unclear or contested | Open question; named owner |
 
+## Reverse-lowering (graph → FFmpeg CLI)
+
+Per ownership class, here is how each row round-trips through
+`compat/ffcli.ExportGraph(cfg, def, warnings)` (the F1 reverse
+exporter that the F2 schema deprecation will rely on). This is the
+"Reverse-lowering" companion column to the per-field tables below.
+
+| Class | Reverse-lowering source | Emission path |
+|---|---|---|
+| **node-local** | The owning node in `def.Nodes` (typed `Internal.{Encoder,Filter,Generated}` for synthesised values; `node.Params` for user-authored AVOptions) | Per-output `-c:<type>` / `-<key>:<stream>` flags via `outputView` + `(*exporter).buildEncoderNodes`; filter chains via `graphToFilterComplex(cfg)` |
+| **authoring shorthand** | Lowered onto a synthesised `__enc__*` node by `expandImplicitEncoders`, recovered from `Internal.Encoder.{FPSMode, ForceKeyFrames, SAR, DAR, EncoderTimeBase, FieldOrder, Interlaced, Pass, PassLogFile}` and `Params["codec"]`/`EncoderParams*` | Same per-output flag emission as the node-local path; `ExportGraph` is byte-equivalent to `Export(cfg)` for these rows (round-trip test: `TestExportGraph_RoundTrip`) |
+| **muxer-owned** | The output's sink node in `cfg.Outputs` (still read directly — sink-node typing is post-F2 work) | Per-output URL + muxer flags after `-map` |
+| **true global** | `cfg` top-level (Assets/timestamp/security typed lookups; same as `Export(cfg)`) | Global flag block before `-i` |
+| **defer** | Reported on `ExportResult.Unsupported` when the field has no clean inverse (e.g. `Assets`, processor `ErrorPolicy`, `LoudnormPass` shuttle stamps) | Stderr `note:` lines; CLI omits the field |
+
+The `__async__*` audio-sync filter splice (synthesised by
+`spliceAudioSyncForOutputs`) is recovered by
+`recoverAudioSyncFromGraph` parsing the `aresample=async=N` spec
+back to `N` and emitting `-async:a:<idx> N`. The `__aspl__*`
+sample-format adapter splice and the loudnorm two-pass shuttle
+collapse silently — they are graph-internal lowerings of a single
+authoring-side field that already round-trips cleanly.
+
+See [export.md](export.md) for the full export entry-point matrix.
+
 ---
 
 ## `Config` (top-level)
