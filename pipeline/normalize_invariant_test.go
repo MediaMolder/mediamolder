@@ -17,19 +17,19 @@ import (
 // FPSMode, AudioSync, Pass, PassLogFile, ForceKeyFrames, SAR, DAR,
 // EncoderTimeBase, FieldOrder, InterlacedEncode). The proof is:
 //
-//   1. Build a representative Config exercising every shorthand row.
-//   2. Run it through NormalizeConfig → graph.Def "A".
-//   3. Assert every shorthand row that was present has been lowered
-//      onto a node (Internal.Encoder / Internal.Filter / a synthetic
-//      filter / a synthetic encoder node) — verified by structural
-//      checks below.
-//   4. Make a deep copy of the Config, clear every shorthand field
-//      on the copy, normalize again. The cleared graph is *expected*
-//      to differ structurally (no synthesised encoders, no audio
-//      resampler, no Pass tracking) — that is exactly the proof that
-//      the lowering reads only from shorthand and the runtime reads
-//      only from the lowered graph. The cleared run must produce no
-//      ambiguity warnings (cleared shorthand cannot conflict).
+//  1. Build a representative Config exercising every shorthand row.
+//  2. Run it through NormalizeConfig → graph.Def "A".
+//  3. Assert every shorthand row that was present has been lowered
+//     onto a node (Internal.Encoder / Internal.Filter / a synthetic
+//     filter / a synthetic encoder node) — verified by structural
+//     checks below.
+//  4. Make a deep copy of the Config, clear every shorthand field
+//     on the copy, normalize again. The cleared graph is *expected*
+//     to differ structurally (no synthesised encoders, no audio
+//     resampler, no Pass tracking) — that is exactly the proof that
+//     the lowering reads only from shorthand and the runtime reads
+//     only from the lowered graph. The cleared run must produce no
+//     ambiguity warnings (cleared shorthand cannot conflict).
 //
 // The static "no .CodecVideo / .FPSMode reads outside lowering" grep
 // audit lives in [docs/field-ownership.md] (Milestone C exit
