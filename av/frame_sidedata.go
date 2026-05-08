@@ -49,7 +49,10 @@ package av
 // }
 import "C"
 
-import "unsafe"
+import (
+	"math"
+	"unsafe"
+)
 
 // FrameSideDataType mirrors libavutil's enum AVFrameSideDataType. Values are
 // taken from the linked FFmpeg headers, so they always match the runtime
@@ -105,6 +108,7 @@ const (
 	FrameSideDataDoViMetadata              FrameSideDataType = C.AV_FRAME_DATA_DOVI_METADATA
 	FrameSideDataDynamicHDRVivid           FrameSideDataType = C.AV_FRAME_DATA_DYNAMIC_HDR_VIVID
 	FrameSideDataAmbientViewingEnvironment FrameSideDataType = C.AV_FRAME_DATA_AMBIENT_VIEWING_ENVIRONMENT
+	// FrameSideDataVideoHint requires FFmpeg 7.0 (libavutil 59.x) or later.
 	FrameSideDataVideoHint                 FrameSideDataType = C.AV_FRAME_DATA_VIDEO_HINT
 )
 
@@ -186,7 +190,10 @@ func (f *Frame) SideData(typ FrameSideDataType) [][]byte {
 		}
 		size := int(C.frame_side_data_size(sd))
 		if size == 0 {
-			out = append(out, []byte{})
+			out = append(out, nil)
+			continue
+		}
+		if size > math.MaxInt32 {
 			continue
 		}
 		out = append(out, C.GoBytes(unsafe.Pointer(C.frame_side_data_data(sd)), C.int(size)))
@@ -214,7 +221,7 @@ func (f *Frame) AllSideData() []FrameSideDataEntry {
 		typ := FrameSideDataType(C.frame_side_data_type(sd))
 		size := int(C.frame_side_data_size(sd))
 		var data []byte
-		if size > 0 {
+		if size > 0 && size <= math.MaxInt32 {
 			data = C.GoBytes(unsafe.Pointer(C.frame_side_data_data(sd)), C.int(size))
 		}
 		out = append(out, FrameSideDataEntry{Type: typ, Data: data})
@@ -237,7 +244,7 @@ func (f *Frame) RemoveSideData(typ FrameSideDataType) {
 // codec-specific user_data_unregistered SEI NAL when the encoder supports it
 // (libx264 requires `udu_sei=1`, libx265 ships SEI by default).
 //
-// Backwards-compatible wrapper around AddSideData(FrameSideDataSEIUnregistered, ...).
+// Convenience wrapper around AddSideData(FrameSideDataSEIUnregistered, ...).
 func (f *Frame) AddSEIUnregisteredSideData(payload []byte) error {
 	if len(payload) < 16 {
 		return &Err{Code: -22, Message: "AddSEIUnregisteredSideData: payload must include 16-byte UUID"}
@@ -247,7 +254,7 @@ func (f *Frame) AddSEIUnregisteredSideData(payload []byte) error {
 
 // SEIUnregisteredSideData returns copies of all AV_FRAME_DATA_SEI_UNREGISTERED
 // payloads attached to the frame. Each payload includes the leading 16-byte
-// UUID. Backwards-compatible wrapper around SideData(FrameSideDataSEIUnregistered).
+// UUID. Convenience wrapper around SideData(FrameSideDataSEIUnregistered).
 func (f *Frame) SEIUnregisteredSideData() [][]byte {
 	return f.SideData(FrameSideDataSEIUnregistered)
 }
@@ -316,7 +323,10 @@ func (f *Frame) S12MTimecodes() []S12MTimecode {
 	}
 	maxAvailable := uint32((len(buf) - wordSize) / wordSize)
 	if count > maxAvailable {
-		count = maxAvailable
+		// Buffer is shorter than the count field claims; the side data is
+		// malformed. Return nil so callers see no timecodes rather than
+		// silently truncated results.
+		return nil
 	}
 	out := make([]S12MTimecode, 0, count)
 	for i := uint32(0); i < count; i++ {
