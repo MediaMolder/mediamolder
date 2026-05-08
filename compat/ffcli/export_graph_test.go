@@ -153,8 +153,7 @@ func TestExportGraph_RoundTrip(t *testing.T) {
 			// its Params and the FPSMode shorthand on its
 			// Internal.Encoder. The graph-sourced view must
 			// surface all three identically to the shorthand path.
-			name: "implicit_encoder_with_filter_and_shorthand",
-			cfg: &pipeline.Config{
+			name: "implicit_encoder_with_filter_and_shorthand",			cfg: &pipeline.Config{
 				SchemaVersion: "1.2",
 				Inputs:        []pipeline.Input{{ID: "in0", URL: "in.mp4"}},
 				Graph: pipeline.GraphDef{
@@ -174,6 +173,59 @@ func TestExportGraph_RoundTrip(t *testing.T) {
 						"preset": "fast",
 					},
 					FPSMode: "cfr",
+				}},
+			},
+		},
+		{
+			// F1.4: chained user-authored video filters
+			// (scale → fps) feeding an explicit encoder. Both
+			// Export(cfg) and ExportGraph(cfg, def) must emit the
+			// same -filter_complex chain since both walk
+			// cfg.Graph for the filter topology; def's synthesised
+			// nodes (none expected here) must not leak into it.
+			name: "explicit_filter_chain_video",
+			cfg: &pipeline.Config{
+				SchemaVersion: "1.2",
+				Inputs:        []pipeline.Input{{ID: "in0", URL: "in.mp4"}},
+				Graph: pipeline.GraphDef{
+					Nodes: []pipeline.NodeDef{
+						{ID: "scale0", Type: "filter", Filter: "scale", Params: map[string]any{"w": 1280, "h": 720}},
+						{ID: "fps0", Type: "filter", Filter: "fps", Params: map[string]any{"fps": 30}},
+						{ID: "enc0", Type: "encoder", Params: map[string]any{
+							"codec": "libx264", "crf": 23,
+						}},
+					},
+					Edges: []pipeline.EdgeDef{
+						{From: "in0:v:0", To: "scale0:in:0", Type: "video"},
+						{From: "scale0:out:0", To: "fps0:in:0", Type: "video"},
+						{From: "fps0:out:0", To: "enc0:in:0", Type: "video"},
+						{From: "enc0:v", To: "out0:v", Type: "video"},
+					},
+				},
+				Outputs: []pipeline.Output{{ID: "out0", URL: "out.mp4"}},
+			},
+		},
+		{
+			// F1.4: explicit audio filter (atempo) feeding an
+			// implicit-shorthand audio encoder. Exercises the
+			// audio side of buildFilterComplex plus the
+			// expandImplicitEncoders splice for the audio output.
+			name: "explicit_audio_filter_implicit_encoder",
+			cfg: &pipeline.Config{
+				SchemaVersion: "1.2",
+				Inputs:        []pipeline.Input{{ID: "in0", URL: "in.mp4"}},
+				Graph: pipeline.GraphDef{
+					Nodes: []pipeline.NodeDef{
+						{ID: "tempo0", Type: "filter", Filter: "atempo", Params: map[string]any{"tempo": 1.25}},
+					},
+					Edges: []pipeline.EdgeDef{
+						{From: "in0:a:0", To: "tempo0:in:0", Type: "audio"},
+						{From: "tempo0:out:0", To: "out0:a", Type: "audio"},
+					},
+				},
+				Outputs: []pipeline.Output{{
+					ID: "out0", URL: "out.mp4",
+					CodecAudio: "aac",
 				}},
 			},
 		},
