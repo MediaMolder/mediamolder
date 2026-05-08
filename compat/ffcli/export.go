@@ -472,10 +472,13 @@ func (e *exporter) buildOutput(out pipeline.Output) {
 	}
 
 	// Encoder params — flatten to per-type flag strings (sourced
-	// via outputView; F1.1 refactor).
-	e.buildEncoderParams("v", view.Video.Params)
-	e.buildEncoderParams("a", view.Audio.Params)
-	e.buildEncoderParams("s", view.Subtitle.Params)
+	// via outputView; F1.1 refactor). For codecs in codecToParamsFlag
+	// (libx264/libx265/libsvtav1/...) the non-reserved keys are packed
+	// into a single "-<codec>-params" flag instead of individual
+	// "-<key>:<stream> <val>" pairs.
+	e.emitEncoderParams("v", view.Video.Codec, view.Video.Params)
+	e.emitEncoderParams("a", view.Audio.Codec, view.Audio.Params)
+	e.emitEncoderParams("s", view.Subtitle.Codec, view.Subtitle.Params)
 
 	// Explicit encoder nodes authored in the GUI store codec + AVOptions
 	// on the node itself rather than on Output.EncoderParams*.  Emit them
@@ -495,9 +498,21 @@ func (e *exporter) buildOutput(out pipeline.Output) {
 			if ss.Encoder.Codec != "" {
 				e.add(fmt.Sprintf("-c:%s:%d", ss.Type, ss.Index), ss.Encoder.Codec)
 			}
-			for k, v := range ss.Encoder.Options {
-				e.add(fmt.Sprintf("-%s:%s:%d", k, ss.Type, ss.Index), fmt.Sprint(v))
+			// Resolve codec for *-params routing: the per-stream
+			// override codec wins; otherwise inherit the output-level
+			// resolved codec for that stream type.
+			streamCodec := ss.Encoder.Codec
+			if streamCodec == "" {
+				switch ss.Type {
+				case "v":
+					streamCodec = view.Video.Codec
+				case "a":
+					streamCodec = view.Audio.Codec
+				case "s":
+					streamCodec = view.Subtitle.Codec
+				}
 			}
+			e.emitEncoderParams(spec, streamCodec, ss.Encoder.Options)
 		}
 	}
 
@@ -834,25 +849,11 @@ func (e *exporter) graphMaps(outID string) []string {
 	return args
 }
 
-// buildEncoderParams flattens the encoder params map into per-stream flags.
-// Only the most common keys are promoted to first-class flags; the rest
-// are emitted as -<key>:<stream> <val>.
-func (e *exporter) buildEncoderParams(stream string, params map[string]any) {
-	if len(params) == 0 {
-		return
-	}
-	// Emit in sorted key order for deterministic output.
-	keys := make([]string, 0, len(params))
-	for k := range params {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	for _, k := range keys {
-		v := params[k]
-		flag := fmt.Sprintf("-%s:%s", k, stream)
-		e.add(flag, fmt.Sprint(v))
-	}
-}
+// buildEncoderParams was the legacy per-key emitter; F1.2 routes all
+// encoder param emission through (*exporter).emitEncoderParams in
+// encoder_view.go so that codec-specific "-<codec>-params" packing
+// applies uniformly to output-shorthand, per-stream override, and
+// explicit-encoder-node sources.
 
 // (graphCodecs lifted to the package-level graphCodecsForOutput helper
 // in encoder_view.go; the buildOutput codec block now sources codecs
@@ -879,40 +880,8 @@ func (e *exporter) buildEncoderNodes(out pipeline.Output) {
 			continue
 		}
 		typ := portType(edge.To, edge.Type)
-		e.buildEncoderNodeParams(typ, n.Params)
-	}
-}
-
-// buildEncoderNodeParams emits per-stream AVOption flags from an encoder
-// node's Params map.  Keys that are consumed internally by the runtime
-// (codec, width, height, bitrate, threads, thread_type, and any
-// __-prefixed sentinel) are skipped.
-func (e *exporter) buildEncoderNodeParams(stream string, params map[string]any) {
-	if len(params) == 0 {
-		return
-	}
-	keys := make([]string, 0, len(params))
-	for k := range params {
-		if k == "codec" || strings.HasPrefix(k, "__") {
-			continue
-		}
-		switch k {
-		case "width", "height", "bitrate", "threads", "thread_type":
-			continue
-		}
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	for _, k := range keys {
-		v := params[k]
-		if v == nil {
-			continue
-		}
-		s := fmt.Sprint(v)
-		if s == "" {
-			continue
-		}
-		e.add(fmt.Sprintf("-%s:%s", k, stream), s)
+		codec, _ := n.Params["codec"].(string)
+		e.emitEncoderParams(typ, codec, n.Params)
 	}
 }
 
