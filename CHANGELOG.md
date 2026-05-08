@@ -15,6 +15,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
     encoder-params / fps_mode / audio_sync / two-pass blocks read
     only from this view, decoupling the formatter from
     `pipeline.Output` shorthand fields ahead of `ExportGraph`.
+  - **F1.4 — explicit-filter chain coverage in graph-sourced
+    export.** Verified that user-authored filter nodes round-trip
+    through `ExportGraph` identically to `Export(cfg)`. Both paths
+    walk `cfg.Graph` for the `-filter_complex` topology via the
+    shared `graphToFilterComplex`, so synthesised `__async__*` /
+    `__aspl__*` / loudnorm-shuttle nodes that only exist in
+    `def.Nodes` cannot leak into the rendered command. New
+    `TestExportGraph_RoundTrip` cases `explicit_filter_chain_video`
+    (chained `scale` → `fps` → explicit libx264 encoder) and
+    `explicit_audio_filter_implicit_encoder` (`atempo` feeding an
+    implicit `aac` shorthand encoder) lock in the parity.
+
   - **F1.3 — explicit-encoder coverage in graph-sourced export.**
     `resolveOutputViewFromGraph` now treats user-authored encoder
     nodes (no `Internal.Generated` provenance) as codec-only entries
