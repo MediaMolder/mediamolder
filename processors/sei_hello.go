@@ -62,6 +62,8 @@ func (p *SEIHello) Init(params map[string]any) error {
 }
 
 func (p *SEIHello) Process(frame *av.Frame, ctx ProcessorContext) (*av.Frame, *Metadata, error) {
+	// Init must be called before Process; if payload is nil the attach call
+	// returns EINVAL and this function propagates that error.
 	if ctx.MediaType != av.MediaTypeVideo || frame == nil {
 		return frame, nil, nil
 	}
