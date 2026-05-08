@@ -35,6 +35,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
     encoder-params / fps_mode / audio_sync / two-pass blocks read
     only from this view, decoupling the formatter from
     `pipeline.Output` shorthand fields ahead of `ExportGraph`.
+  - **F1.5 — `mediamolder export` CLI subcommand.** Renders a JSON
+    pipeline.Config back into an FFmpeg command line — the inverse
+    of `convert-cmd`. Default mode is the existing
+    `compat/ffcli.Export(cfg)` shorthand path; `--from-graph`
+    routes through `pipeline.NormalizeConfig` and
+    `compat/ffcli.ExportGraph(cfg, def, warnings)` so the rendered
+    CLI is sourced from the lowered graph (the F2 schema-deprecation
+    pre-flight). Normaliser warnings and `Unsupported` notes go to
+    stderr; the FFmpeg command goes to stdout. New
+    `TestCmdExport_FromGraph` proves the two modes produce the
+    same command for round-trippable configs.
+
   - **F1.4 — explicit-filter chain coverage in graph-sourced
     export.** Verified that user-authored filter nodes round-trip
     through `ExportGraph` identically to `Export(cfg)`. Both paths
