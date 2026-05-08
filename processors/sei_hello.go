@@ -9,9 +9,13 @@ import (
 	"github.com/MediaMolder/MediaMolder/av"
 )
 
-// seiHelloUUID is a fixed 16-byte UUID identifying the user_data_unregistered
+// seiHelloUUID is a fixed 16-byte identifier for the user_data_unregistered
 // SEI messages emitted by this example processor. Anything starting with this
-// UUID in the encoded bitstream came from MediaMolder's "sei_hello" demo.
+// value in the encoded bitstream came from MediaMolder's "sei_hello" demo.
+//
+// Note: this is an ASCII string, not a structured RFC 4122 UUID. For
+// production processors, generate a proper UUID (e.g. uuid.New() from
+// github.com/google/uuid) to avoid collisions with other SEI producers.
 var seiHelloUUID = [16]byte{
 	'M', 'M', 'H', 'e', 'l', 'l', 'o', 'S',
 	'E', 'I', 'E', 'x', 'a', 'm', 'p', '1',
