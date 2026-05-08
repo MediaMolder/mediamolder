@@ -517,6 +517,7 @@ button.danger:hover { background: rgba(185, 74, 74, 0.15); }
   font-size: 12px;
 }
 .mm-node.selected { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(79, 140, 255, 0.25); }
+.mm-node.mm-node--io { max-width: 200px; }
 .mm-node.implicit {
   background: transparent;
   border-style: dashed;
@@ -561,6 +562,32 @@ button.danger:hover { background: rgba(185, 74, 74, 0.15); }
 }
 .mm-node .mm-node-title { font-weight: 600; }
 .mm-node .mm-node-sub { font-size: 11px; color: var(--text-dim); margin-top: 2px; }
+/* Clickable URL chip on input/output nodes. Inherits .mm-node-sub base
+ * styles and adds button reset + right-tail truncation via RTL overflow. */
+.mm-node .mm-node-sub-btn {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  background: transparent;
+  border: none;
+  padding: 1px 3px;
+  margin-left: -3px;
+  font-size: 11px;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  border-radius: 3px;
+  /* Anchor text to the right so long paths truncate from the left */
+  direction: rtl;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  transition: background 0.1s ease, color 0.1s ease;
+}
+.mm-node .mm-node-sub-btn:hover {
+  background: var(--panel);
+  color: var(--text);
+}
 /* Run-time stats badge: each metric is its own span with no whitespace
  * between them, so use flex+gap to separate them visually. */
 .mm-node .mm-node-run {

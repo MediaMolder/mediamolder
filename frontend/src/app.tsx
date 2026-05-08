@@ -18,7 +18,8 @@ import '@xyflow/react/dist/style.css';
 
 import { Palette } from './components/Palette';
 import { Inspector } from './components/Inspector';
-import { MMNode, type MMNodeRunData, INSPECTOR_OPEN_EVENT } from './components/MMNode';
+import { MMNode, type MMNodeRunData, INSPECTOR_OPEN_EVENT, URL_BROWSE_EVENT } from './components/MMNode';
+import { FileBrowser } from './components/FileBrowser';
 import { MMEdge } from './components/MMEdge';
 import { RunPanel } from './components/RunPanel';
 import { RunDock } from './components/RunDock';
@@ -29,11 +30,13 @@ import { AssetManager } from './components/AssetManager';
 import { Legend } from './components/Legend';
 import {
   configToFlow,
+  displayUrl,
   flowToConfig,
   materializeImplicitEncoders,
   type FlowEdge,
   type FlowNode,
 } from './lib/jsonAdapter';
+import { MEDIA_FILE_EXTENSIONS } from './lib/mediaExtensions';
 import { autoLayout } from './lib/layout';
 import { spawnNodeFrom, type PaletteEntry } from './lib/spawn';
 import { useJobRun } from './lib/useJobRun';
@@ -613,6 +616,29 @@ function Editor() {
   const [showExportCmd, setShowExportCmd] = useState(false);
   const [showAssetManager, setShowAssetManager] = useState(false);
 
+  /* ---------- Node URL browse (from clicking URL chip on canvas) ---------- */
+  const [browseNodeId, setBrowseNodeId] = useState<string | null>(null);
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const id = (e as CustomEvent<{ id: string }>).detail?.id;
+      if (!id) return;
+      setBrowseNodeId(id);
+    };
+    window.addEventListener(URL_BROWSE_EVENT, handler);
+    return () => window.removeEventListener(URL_BROWSE_EVENT, handler);
+  }, []);
+  const browseNode = browseNodeId ? nodes.find((n) => n.id === browseNodeId) : null;
+  const browseIsInput = browseNode?.data.kind === 'input';
+  const browseCurrentUrl =
+    browseNode?.data.ref.kind === 'input' ? browseNode.data.ref.def.url
+    : browseNode?.data.ref.kind === 'output' ? browseNode.data.ref.def.url
+    : '';
+  const browseInitialDir = (() => {
+    const u = browseCurrentUrl ?? '';
+    const last = Math.max(u.lastIndexOf('/'), u.lastIndexOf('\\'));
+    return last > 0 ? u.slice(0, last) : undefined;
+  })();
+
   /* Merge live metrics + errors into node data so MMNode can render badges. */
   const runByNode = useMemo(() => {
     const map = new Map<string, MMNodeRunData>();
@@ -907,6 +933,34 @@ function Editor() {
             setJob((j) => ({ ...j, assets: Object.keys(a).length > 0 ? a : undefined }))
           }
           onClose={() => setShowAssetManager(false)}
+        />
+      )}
+      {browseNodeId && browseNode && (
+        <FileBrowser
+          open
+          mode={browseIsInput ? 'open' : 'save'}
+          title={browseIsInput ? 'Choose input file' : 'Choose output file'}
+          filter={browseIsInput ? MEDIA_FILE_EXTENSIONS : undefined}
+          initialPath={browseInitialDir}
+          defaultFilename={browseIsInput ? undefined : 'output.mp4'}
+          onClose={() => setBrowseNodeId(null)}
+          onPick={(path) => {
+            setBrowseNodeId(null);
+            setNodes((ns) =>
+              ns.map((n) => {
+                if (n.id !== browseNodeId) return n;
+                const ref = n.data.ref;
+                if (ref.kind === 'input') {
+                  return { ...n, data: { ...n.data, sublabel: displayUrl(path), ref: { kind: 'input', def: { ...ref.def, url: path } } } };
+                }
+                if (ref.kind === 'output') {
+                  return { ...n, data: { ...n.data, sublabel: displayUrl(path), ref: { kind: 'output', def: { ...ref.def, url: path } } } };
+                }
+                return n;
+              }),
+            );
+            markDirty();
+          }}
         />
       )}
     </div>
