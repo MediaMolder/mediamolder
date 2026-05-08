@@ -514,12 +514,12 @@ func (e *exporter) buildOutput(out pipeline.Output) {
 	// on the node itself rather than on Output.EncoderParams*.  Emit them
 	// here so the CLI round-trip is complete.
 	//
-	// In graph-sourced mode (ExportGraph) the view already aggregates
-	// encoder params from the lowered graph, so this pass would
-	// double-emit; skip it.
-	if !e.fromGraph {
-		e.buildEncoderNodes(out)
-	}
+	// Both Export(cfg) and ExportGraph(cfg, def) walk the same
+	// cfg.Graph.Nodes here. Synthesised encoders ("__enc__*" stamped
+	// by expandImplicitEncoders) only live in def.Nodes, never in
+	// cfg.Graph.Nodes, so they are surfaced via the per-output view
+	// instead and won't be double-emitted by this pass.
+	e.buildEncoderNodes(out)
 
 	// Per-stream stream specs (metadata + disposition + encoder overrides).
 	for _, ss := range out.Streams {
