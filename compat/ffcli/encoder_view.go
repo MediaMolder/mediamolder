@@ -24,8 +24,10 @@ package ffcli
 import (
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
+	"github.com/MediaMolder/MediaMolder/graph"
 	"github.com/MediaMolder/MediaMolder/pipeline"
 )
 
@@ -137,6 +139,160 @@ func graphCodecsForOutput(cfg *pipeline.Config, outID string) map[string]string 
 		return nil
 	}
 	return result
+}
+
+// resolveOutputViewFromGraph builds an outputView from the normalized
+// graph (def), layered on top of the shorthand-sourced view as a
+// fallback. The graph wins for any slot it actually fills:
+//
+//   - The codec is read from the encoder/copy node directly upstream
+//     (Params["codec"] for encoder, "copy" for copy).
+//   - Encoder AVOptions come from that node's Params (reservedEncoderParamKey
+//     filtered) — covers both user-authored and "__enc__*" synthetic
+//     encoder nodes from expandImplicitEncoders.
+//   - Encoder shorthand (FPSMode, ForceKeyFrames, SAR, DAR,
+//     EncoderTimeBase, FieldOrder, Interlaced, Pass, PassLogFile)
+//     is read from the node's typed Internal.Encoder (populated by
+//     NormalizeConfig from Output.* shorthand).
+//   - AudioSync is recovered from any "__async__*" filter node
+//     synthesised by spliceAudioSyncForOutputs that appears upstream
+//     of the output's audio edge — its Filter spec is parsed back
+//     from "aresample=async=N[:first_pts=0]" to N.
+//
+// Slots the graph does not fill (e.g. an output with no edges in
+// cfg.Graph) inherit the shorthand value, which keeps round-trip
+// parity with Export(cfg) for the wide range of configs that have
+// not yet been fully lowered to a graph.
+//
+// Per-stream Output.Streams[i].Encoder overrides are NOT lowered to
+// graph nodes today, so resolveOutputViewFromGraph does not see them;
+// the caller (buildOutput) handles those separately by reading from
+// cfg.Outputs.
+func resolveOutputViewFromGraph(cfg *pipeline.Config, def *graph.Def, out pipeline.Output) outputView {
+	// Start from shorthand so unfilled slots round-trip cleanly.
+	v := resolveOutputViewFromConfig(cfg, out)
+	if def == nil {
+		return v
+	}
+	nodeByID := make(map[string]graph.NodeDef, len(def.Nodes))
+	for _, n := range def.Nodes {
+		nodeByID[n.ID] = n
+	}
+
+	// First pass: walk edges that terminate AT the output. Find the
+	// encoder/copy node feeding each per-type slot.
+	for _, edge := range def.Edges {
+		if portNode(edge.To) != out.ID {
+			continue
+		}
+		typ := portType(edge.To, edge.Type)
+		ev := pickEncoderView(&v, typ)
+		if ev == nil {
+			continue
+		}
+		n, ok := nodeByID[portNode(edge.From)]
+		if !ok {
+			continue
+		}
+		switch n.Type {
+		case "copy":
+			ev.Codec = "copy"
+			ev.Params = nil
+		case "encoder":
+			if codec, _ := n.Params["codec"].(string); codec != "" {
+				ev.Codec = codec
+			}
+			ev.Params = n.Params
+			if enc := n.Internal.Encoder; enc != nil {
+				ev.FPSMode = enc.FPSMode
+				ev.ForceKeyFrames = enc.ForceKeyFrames
+				ev.SAR = enc.SAR
+				ev.DAR = enc.DAR
+				ev.EncTimeBase = enc.EncoderTimeBase
+				ev.FieldOrder = enc.FieldOrder
+				ev.Interlaced = enc.Interlaced
+				ev.Pass = enc.Pass
+				ev.PassLogFile = enc.PassLogFile
+			}
+		}
+	}
+
+	// Second pass: recover AudioSync by walking back from the
+	// output's audio edge to find an "__async__" filter synthesised
+	// by spliceAudioSyncForOutputs. Only override the shorthand
+	// fallback when we actually find one.
+	if n := recoverAudioSyncFromGraph(def, nodeByID, out.ID); n > 0 {
+		v.AudioSync = n
+	}
+
+	return v
+}
+
+// pickEncoderView returns a pointer to the per-type encoderView slot
+// of v matching typ ("v"/"a"/"s"), or nil for unknown types.
+func pickEncoderView(v *outputView, typ string) *encoderView {
+	switch typ {
+	case "v":
+		return &v.Video
+	case "a":
+		return &v.Audio
+	case "s":
+		return &v.Subtitle
+	}
+	return nil
+}
+
+// recoverAudioSyncFromGraph walks edges backwards from outID's audio
+// inputs looking for an "__async__" filter node whose Filter spec
+// matches "aresample=async=N[:first_pts=0]" (the form emitted by
+// pipeline.spliceAudioSyncForOutputs). Returns the recovered N, or
+// 0 if no such node is reachable.
+func recoverAudioSyncFromGraph(def *graph.Def, nodeByID map[string]graph.NodeDef, outID string) int {
+	// Build a reverse adjacency: nodeID -> incoming edges.
+	rev := make(map[string][]graph.EdgeDef, len(def.Edges))
+	for _, e := range def.Edges {
+		rev[portNode(e.To)] = append(rev[portNode(e.To)], e)
+	}
+	visited := make(map[string]bool)
+	queue := []string{outID}
+	for len(queue) > 0 {
+		cur := queue[0]
+		queue = queue[1:]
+		if visited[cur] {
+			continue
+		}
+		visited[cur] = true
+		for _, e := range rev[cur] {
+			fromID := portNode(e.From)
+			if strings.HasPrefix(fromID, "__async__") {
+				if n, ok := nodeByID[fromID]; ok {
+					if n := parseAresampleAsync(n.Filter); n > 0 {
+						return n
+					}
+				}
+			}
+			queue = append(queue, fromID)
+		}
+	}
+	return 0
+}
+
+// parseAresampleAsync parses an "aresample=async=N[:first_pts=0]"
+// filter spec back into N. Returns 0 on any mismatch.
+func parseAresampleAsync(spec string) int {
+	const prefix = "aresample=async="
+	if !strings.HasPrefix(spec, prefix) {
+		return 0
+	}
+	rest := spec[len(prefix):]
+	if i := strings.Index(rest, ":"); i >= 0 {
+		rest = rest[:i]
+	}
+	n, err := strconv.Atoi(rest)
+	if err != nil || n < 1 {
+		return 0
+	}
+	return n
 }
 
 // codecToParamsFlag enumerates the encoders whose private options are

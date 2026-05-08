@@ -27,6 +27,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/MediaMolder/MediaMolder/graph"
 	"github.com/MediaMolder/MediaMolder/pipeline"
 )
 
@@ -52,13 +53,37 @@ func Export(cfg *pipeline.Config) ExportResult {
 	return e.result()
 }
 
+// ExportGraph is the F1.2 graph-sourced exporter. It produces the
+// same FFmpeg command line as Export(cfg), but reads codec / encoder
+// params / encoder shorthand (fps_mode, force_key_frames, sar/dar,
+// enc_time_base, field_order, interlaced, pass, passlogfile) and
+// audio-sync from the *normalized graph* (def) rather than from the
+// `Output.*` shorthand fields. This is the path the F2 schema
+// deprecation will rely on: once shorthand is gone from the JSON,
+// ExportGraph still produces a correct CLI because every shorthand
+// row has a typed home in the lowered graph.
+//
+// Per-stream Output.Streams[i].Encoder overrides are not lowered to
+// graph nodes today, so they are still read directly from cfg.
+//
+// `warnings` (currently unused) is the slice returned by
+// pipeline.NormalizeConfig; reserved so future passes can surface
+// normaliser-side issues alongside formatter-side Unsupported entries.
+func ExportGraph(cfg *pipeline.Config, def *graph.Def, warnings []pipeline.NormalizeWarning) ExportResult {
+	e := &exporter{cfg: cfg, def: def, fromGraph: true}
+	e.build()
+	return e.result()
+}
+
 // ────────────────────────────────────────────────────────────────────────────
 // Internal
 
 type exporter struct {
-	cfg   *pipeline.Config
-	args  []string
-	unsup []string
+	cfg       *pipeline.Config
+	def       *graph.Def // populated by ExportGraph; nil for Export(cfg)
+	fromGraph bool       // true when sourcing views from def, not cfg
+	args      []string
+	unsup     []string
 }
 
 func (e *exporter) warn(msg string) { e.unsup = append(e.unsup, msg) }
@@ -447,9 +472,14 @@ func (e *exporter) buildOutput(out pipeline.Output) {
 	// (F1.1). The view encapsulates the precedence rule "explicit
 	// graph encoder/copy node > Output.Codec* shorthand", so the
 	// formatter no longer needs to thread that logic itself. F1.2
-	// will let callers source the same view from a normalized
-	// graph instead.
-	view := resolveOutputViewFromConfig(e.cfg, out)
+	// can source the same view from a normalized graph instead
+	// (ExportGraph path).
+	var view outputView
+	if e.fromGraph {
+		view = resolveOutputViewFromGraph(e.cfg, e.def, out)
+	} else {
+		view = resolveOutputViewFromConfig(e.cfg, out)
+	}
 	if v := view.Video.Codec; v != "" {
 		e.add("-c:v", v)
 	}
@@ -483,7 +513,13 @@ func (e *exporter) buildOutput(out pipeline.Output) {
 	// Explicit encoder nodes authored in the GUI store codec + AVOptions
 	// on the node itself rather than on Output.EncoderParams*.  Emit them
 	// here so the CLI round-trip is complete.
-	e.buildEncoderNodes(out)
+	//
+	// In graph-sourced mode (ExportGraph) the view already aggregates
+	// encoder params from the lowered graph, so this pass would
+	// double-emit; skip it.
+	if !e.fromGraph {
+		e.buildEncoderNodes(out)
+	}
 
 	// Per-stream stream specs (metadata + disposition + encoder overrides).
 	for _, ss := range out.Streams {
