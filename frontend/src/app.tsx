@@ -652,14 +652,6 @@ function Editor() {
         <button onClick={() => setImportFFmpegOpen(true)} title="Paste an FFmpeg command line and convert it to a graph">
           FFmpeg -{'>'}
         </button>
-        <button
-          onClick={() => setShowExportCmd(true)}
-          disabled={!nodes.length}
-          title="Show the current graph as an ffmpeg command line"
-        >
-          -{'>'}  FFmpeg
-        </button>
-
         <label style={{ color: 'var(--text-dim)', fontSize: 12 }}>Graph:</label>
         <select
           value={identity.kind === 'example' ? identity.url : '__current__'}
@@ -700,6 +692,13 @@ function Editor() {
         </button>
         <button onClick={onSaveAs} disabled={!nodes.length} title="Save to a new file…">
           Save As…
+        </button>
+        <button
+          onClick={() => setShowExportCmd(true)}
+          disabled={!nodes.length}
+          title="Show the current graph as an ffmpeg command line"
+        >
+          -{'>'}  FFmpeg
         </button>
 
         <div className="spacer" />
