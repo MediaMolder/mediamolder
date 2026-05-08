@@ -244,7 +244,7 @@ func (f *Frame) RemoveSideData(typ FrameSideDataType) {
 // codec-specific user_data_unregistered SEI NAL when the encoder supports it
 // (libx264 requires `udu_sei=1`, libx265 ships SEI by default).
 //
-// Backwards-compatible wrapper around AddSideData(FrameSideDataSEIUnregistered, ...).
+// Convenience wrapper around AddSideData(FrameSideDataSEIUnregistered, ...).
 func (f *Frame) AddSEIUnregisteredSideData(payload []byte) error {
 	if len(payload) < 16 {
 		return &Err{Code: -22, Message: "AddSEIUnregisteredSideData: payload must include 16-byte UUID"}
@@ -254,7 +254,7 @@ func (f *Frame) AddSEIUnregisteredSideData(payload []byte) error {
 
 // SEIUnregisteredSideData returns copies of all AV_FRAME_DATA_SEI_UNREGISTERED
 // payloads attached to the frame. Each payload includes the leading 16-byte
-// UUID. Backwards-compatible wrapper around SideData(FrameSideDataSEIUnregistered).
+// UUID. Convenience wrapper around SideData(FrameSideDataSEIUnregistered).
 func (f *Frame) SEIUnregisteredSideData() [][]byte {
 	return f.SideData(FrameSideDataSEIUnregistered)
 }
