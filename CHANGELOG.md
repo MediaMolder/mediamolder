@@ -35,7 +35,31 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
     encoder-params / fps_mode / audio_sync / two-pass blocks read
     only from this view, decoupling the formatter from
     `pipeline.Output` shorthand fields ahead of `ExportGraph`.
-  - **F1.2 (partial) — codec-aware `*-params` emission.** Encoders
+  - **F1.2 — `ExportGraph(cfg, def, warnings)` entry + round-trip
+    proof.** New public exporter that sources the encoder views from
+    a normalized `*graph.Def` instead of `Output.*` shorthand. The
+    new `resolveOutputViewFromGraph` walks edges back from the
+    output's sink, reading codec from each upstream encoder/copy
+    node's `Params["codec"]`, encoder AVOptions from
+    `node.Params` (covering both user-authored encoder nodes and
+    `__enc__*` synthetic nodes from `expandImplicitEncoders`), and
+    encoder shorthand (`FPSMode`, `ForceKeyFrames`, `SAR`/`DAR`,
+    `EncoderTimeBase`, `FieldOrder`, `Interlaced`, `Pass`,
+    `PassLogFile`) from the typed `Internal.Encoder`. Audio sync is
+    recovered by detecting any upstream `__async__*` filter node
+    and parsing its `aresample=async=N[:first_pts=0]` spec back to
+    `N`. Slots the graph does not fill inherit shorthand, which
+    keeps round-trip parity for configs that have not been fully
+    lowered. In graph mode `buildEncoderNodes` is skipped so encoder
+    AVOptions are not double-emitted. The new
+    `TestExportGraph_RoundTrip` runs ten representative configs
+    (codec shorthand, `*-params` payloads, FPS mode, audio sync,
+    two-pass, force-key-frames, explicit encoder, copy node,
+    implicit-encoder synthesis with shorthand) and asserts
+    `ExportGraph(cfg, NormalizeConfig(cfg))` produces the same
+    command as `Export(cfg)` byte-for-byte.
+
+  - **F1.2 (prep) — codec-aware `*-params` emission.** Encoders
     that expose a "-<codec>-params" channel (libx264, libx264rgb,
     libx265, libsvtav1, librav1e, libxavs2) now have their
     non-reserved AVOptions packed into a single
