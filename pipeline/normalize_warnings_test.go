@@ -30,12 +30,12 @@ func TestNormalize_AmbiguityWarn_VideoCodecShorthand(t *testing.T) {
 		Outputs: []Output{{
 			ID:                 "out0",
 			URL:                "out.mp4",
-			CodecVideo:         "libx265",                      // ignored
-			FPSMode:            "cfr",                          // ignored
-			ForceKeyFrames:     "expr:gte(t,n_forced*2)",       // ignored
-			EncoderParamsVideo: map[string]any{"crf": "20"},    // ignored
-			Pass:               1,                              // ignored
-			PassLogFile:        "stats",                        // ignored
+			CodecVideo:         "libx265",                   // ignored
+			FPSMode:            "cfr",                       // ignored
+			ForceKeyFrames:     "expr:gte(t,n_forced*2)",    // ignored
+			EncoderParamsVideo: map[string]any{"crf": "20"}, // ignored
+			Pass:               1,                           // ignored
+			PassLogFile:        "stats",                     // ignored
 		}},
 	}
 	_, warnings, err := NormalizeConfig(cfg)
@@ -72,10 +72,10 @@ func TestNormalize_AmbiguityWarn_AudioAndSubtitle(t *testing.T) {
 		Outputs: []Output{{
 			ID:                    "out0",
 			URL:                   "out.mkv",
-			CodecAudio:            "aac",                          // ignored
-			EncoderParamsAudio:    map[string]any{"b:a": "128k"},  // ignored
-			CodecSubtitle:         "mov_text",                     // ignored
-			EncoderParamsSubtitle: map[string]any{"x": "1"},       // ignored
+			CodecAudio:            "aac",                         // ignored
+			EncoderParamsAudio:    map[string]any{"b:a": "128k"}, // ignored
+			CodecSubtitle:         "mov_text",                    // ignored
+			EncoderParamsSubtitle: map[string]any{"x": "1"},      // ignored
 		}},
 	}
 	_, warnings, err := NormalizeConfig(cfg)
@@ -130,8 +130,8 @@ func TestNormalize_NoAmbiguityWarn_ImplicitOnly(t *testing.T) {
 	cfg := &Config{
 		Inputs: []Input{{ID: "in0", URL: "in.mp4"}},
 		Graph: GraphDef{
-			Nodes:   []NodeDef{},
-			Edges:   []EdgeDef{{From: "in0:v:0", To: "out0", Type: "video"}},
+			Nodes: []NodeDef{},
+			Edges: []EdgeDef{{From: "in0:v:0", To: "out0", Type: "video"}},
 		},
 		Outputs: []Output{{
 			ID:         "out0",
