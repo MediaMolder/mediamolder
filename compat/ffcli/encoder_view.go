@@ -199,6 +199,18 @@ func resolveOutputViewFromGraph(cfg *pipeline.Config, def *graph.Def, out pipeli
 			ev.Codec = "copy"
 			ev.Params = nil
 		case "encoder":
+			// Explicit (user-authored) encoder nodes already have
+			// their codec picked up by graphCodecsForOutput in the
+			// shorthand seed, and their Params are emitted by
+			// (*exporter).buildEncoderNodes (which walks
+			// cfg.Graph.Nodes in declaration order). Only override
+			// the per-slot view for synthesised encoders — the
+			// "__enc__*" nodes stamped by expandImplicitEncoders —
+			// where the typed Internal.Encoder carries the lowered
+			// shorthand and Params hold the lowered EncoderParams*.
+			if n.Internal.Generated == nil {
+				continue
+			}
 			if codec, _ := n.Params["codec"].(string); codec != "" {
 				ev.Codec = codec
 			}

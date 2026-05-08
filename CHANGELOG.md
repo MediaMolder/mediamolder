@@ -35,6 +35,25 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
     encoder-params / fps_mode / audio_sync / two-pass blocks read
     only from this view, decoupling the formatter from
     `pipeline.Output` shorthand fields ahead of `ExportGraph`.
+  - **F1.3 — explicit-encoder coverage in graph-sourced export.**
+    `resolveOutputViewFromGraph` now treats user-authored encoder
+    nodes (no `Internal.Generated` provenance) as codec-only entries
+    in the per-output view; their AVOptions are emitted by the
+    existing `(*exporter).buildEncoderNodes` pass exactly as
+    `Export(cfg)` already does. Synthesised `__enc__*` nodes
+    (`Internal.Generated.By == "expandImplicitEncoders"`) continue
+    to flow through the view (Codec + Params + typed
+    `Internal.Encoder` shorthand). The `if !e.fromGraph` guard
+    around `buildEncoderNodes` is removed: synthesised encoders only
+    live in `def.Nodes`, never in `cfg.Graph.Nodes`, so the
+    surface-once invariant is preserved without a mode flag. New
+    test `TestExportGraph_ExplicitEncoderCoverage` exercises four
+    user-authored encoder topologies (libx264 with crf+preset, aac
+    with profile+bitrate, libx265 with crf+preset, mixed
+    explicit-video + implicit-audio) asserting both round-trip
+    parity with `Export(cfg)` and the presence of the expected
+    per-output `-c:<type>` and AVOption flags.
+
   - **F1.2 — `ExportGraph(cfg, def, warnings)` entry + round-trip
     proof.** New public exporter that sources the encoder views from
     a normalized `*graph.Def` instead of `Output.*` shorthand. The
