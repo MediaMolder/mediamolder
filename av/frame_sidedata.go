@@ -316,7 +316,10 @@ func (f *Frame) S12MTimecodes() []S12MTimecode {
 	}
 	maxAvailable := uint32((len(buf) - wordSize) / wordSize)
 	if count > maxAvailable {
-		count = maxAvailable
+		// Buffer is shorter than the count field claims; the side data is
+		// malformed. Return nil so callers see no timecodes rather than
+		// silently truncated results.
+		return nil
 	}
 	out := make([]S12MTimecode, 0, count)
 	for i := uint32(0); i < count; i++ {
