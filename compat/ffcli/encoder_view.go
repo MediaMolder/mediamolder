@@ -11,8 +11,21 @@ package ffcli
 // (buildOutput) reads only from outputView, never directly from
 // `pipeline.Output` shorthand fields, which is what makes the F2 schema
 // deprecation possible.
+//
+// This file also owns codec-specific encoder-params routing: for encoders
+// that expose an FFmpeg "-<codec>-params" flag (libx264, libx265,
+// libsvtav1, librav1e, libxavs2), all non-reserved AVOption keys are
+// packed into that single flag rather than emitted as individual
+// "-<key>:<stream> <val>" pairs. This produces the form a user would
+// hand-author (e.g. "-x264-params crf=22:preset=slow:me=hex:subme=8")
+// and is the canonical path for the long tail of encoder-private
+// options that have no first-class FFmpeg flag.
 
 import (
+	"fmt"
+	"sort"
+	"strings"
+
 	"github.com/MediaMolder/MediaMolder/pipeline"
 )
 
@@ -125,3 +138,110 @@ func graphCodecsForOutput(cfg *pipeline.Config, outID string) map[string]string 
 	}
 	return result
 }
+
+// codecToParamsFlag enumerates the encoders whose private options are
+// commonly passed via a single FFmpeg "-<flag>" argument carrying a
+// colon-separated list of "key=value" pairs. The mapping value is the
+// flag name without the leading dash.
+//
+//   - libx264 / libx264rgb: "x264-params" — see libavcodec/libx264.c
+//     (X264_OPT_LIST in libavcodec's option table).
+//   - libx265: "x265-params" — see libavcodec/libx265.c.
+//   - libsvtav1: "svtav1-params" — see libavcodec/libsvtav1.c.
+//   - librav1e: "rav1e-params" — see libavcodec/librav1e.c.
+//   - libxavs2: "xavs2-params" — see libavcodec/libxavs2.c.
+//
+// Encoders absent from this map keep the legacy per-key emission
+// (-<key>:<stream> <val>) because they have no analogous bulk
+// parameter channel.
+var codecToParamsFlag = map[string]string{
+	"libx264":    "x264-params",
+	"libx264rgb": "x264-params",
+	"libx265":    "x265-params",
+	"libsvtav1":  "svtav1-params",
+	"librav1e":   "rav1e-params",
+	"libxavs2":   "xavs2-params",
+}
+
+// reservedEncoderParamKey returns true for AVOption-map keys that the
+// runtime treats as out-of-band (handled by other emitters: -c:<type>,
+// -b:<type>, -s, -threads, -thread_type) or as internal Milestone-B
+// sentinels that must never reach the CLI. Used by emitEncoderParams
+// to filter both the per-key fallback and the "-<codec>-params"
+// payload.
+func reservedEncoderParamKey(k string) bool {
+	if k == "codec" || strings.HasPrefix(k, "__") {
+		return true
+	}
+	switch k {
+	case "width", "height", "bitrate", "threads", "thread_type":
+		return true
+	}
+	return false
+}
+
+// emitEncoderParams writes the encoder AVOption flags for the given
+// per-stream specifier (e.g. "v", "v:0") and codec to the exporter's
+// arg list. When the codec is in codecToParamsFlag the non-reserved
+// keys are packed into a single "-<flag>:<stream> k1=v1:k2=v2..."
+// argument; otherwise each key is emitted as its own
+// "-<key>:<stream> <val>" pair (legacy behaviour).
+//
+// If the params map already contains an entry whose key is the
+// codec's own *-params flag (e.g. params["x264-params"]), its value
+// is treated as a literal extra payload appended to the packed
+// argument so that user-supplied raw strings round-trip correctly.
+func (e *exporter) emitEncoderParams(stream, codec string, params map[string]any) {
+	if len(params) == 0 {
+		return
+	}
+	flagName, useParamsFlag := codecToParamsFlag[codec]
+
+	keys := make([]string, 0, len(params))
+	for k := range params {
+		if reservedEncoderParamKey(k) {
+			continue
+		}
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	if useParamsFlag {
+		var pairs []string
+		for _, k := range keys {
+			v := params[k]
+			if v == nil {
+				continue
+			}
+			s := fmt.Sprint(v)
+			if s == "" {
+				continue
+			}
+			if k == flagName {
+				// User pre-built a raw "-<codec>-params" payload;
+				// append it verbatim instead of double-quoting.
+				pairs = append(pairs, s)
+				continue
+			}
+			pairs = append(pairs, k+"="+s)
+		}
+		if len(pairs) > 0 {
+			e.add("-"+flagName+":"+stream, strings.Join(pairs, ":"))
+		}
+		return
+	}
+
+	// Generic per-key emission.
+	for _, k := range keys {
+		v := params[k]
+		if v == nil {
+			continue
+		}
+		s := fmt.Sprint(v)
+		if s == "" {
+			continue
+		}
+		e.add("-"+k+":"+stream, s)
+	}
+}
+
