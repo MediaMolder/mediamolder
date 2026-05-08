@@ -6,6 +6,34 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 ## [Unreleased]
 
 ### Added
+- **F1 — Reverse-lowering export (graph → FFmpeg CLI), in progress.**
+  - **F1.1 — `outputView` abstraction.** `compat/ffcli/encoder_view.go`
+    introduces `outputView` (per-stream Codec / Params / FPSMode /
+    ForceKeyFrames / SAR / DAR / EncTimeBase / FieldOrder / Pass /
+    PassLogFile / AudioSync) plus
+    `resolveOutputViewFromConfig(cfg, out)`. The exporter's codec /
+    encoder-params / fps_mode / audio_sync / two-pass blocks read
+    only from this view, decoupling the formatter from
+    `pipeline.Output` shorthand fields ahead of `ExportGraph`.
+  - **F1.2 (partial) — codec-aware `*-params` emission.** Encoders
+    that expose a "-<codec>-params" channel (libx264, libx264rgb,
+    libx265, libsvtav1, librav1e, libxavs2) now have their
+    non-reserved AVOptions packed into a single
+    `-<codec>-params:<stream> k1=v1:k2=v2:…` argument instead of
+    individual `-<key>:<stream> <val>` flags. Reserved keys
+    (`codec`, `width`, `height`, `bitrate`, `threads`,
+    `thread_type`, and any `__`-prefixed Milestone-B sentinel) are
+    skipped — those are still emitted by their dedicated FFmpeg
+    flags. A pre-supplied `EncoderParamsVideo["x264-params"]`
+    payload is merged verbatim with the other keys. The new
+    helper `(*exporter).emitEncoderParams` is used by all three
+    emission paths: output-shorthand, per-stream override, and
+    explicit-encoder-node. Non-allowlist codecs keep the legacy
+    per-key emission. New tests:
+    `TestExport_EncoderParams_X264_PrivateOptions`,
+    `_X264_RawParamsMerged`, `_X265`, `_NonAllowlistCodec`.
+
+### Added (Milestone C)
 - **Milestone C — strip runtime reads of authoring shorthand.**
   Three slices land the architectural promise that runtime code
   never reads `Output.CodecVideo / CodecAudio / CodecSubtitle /
