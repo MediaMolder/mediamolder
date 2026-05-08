@@ -443,24 +443,21 @@ func (e *exporter) buildOutput(out pipeline.Output) {
 		e.add("-dn")
 	}
 
-	// Codec selection — explicit graph nodes (encoder or copy) take
-	// precedence over the Output-level codec fields, which may be
-	// stale when the user rewires the graph in the GUI.
-	gc := e.graphCodecs(out.ID)
-	if v := gc["v"]; v != "" {
+	// Codec selection — sourced via the outputView abstraction
+	// (F1.1). The view encapsulates the precedence rule "explicit
+	// graph encoder/copy node > Output.Codec* shorthand", so the
+	// formatter no longer needs to thread that logic itself. F1.2
+	// will let callers source the same view from a normalized
+	// graph instead.
+	view := resolveOutputViewFromConfig(e.cfg, out)
+	if v := view.Video.Codec; v != "" {
 		e.add("-c:v", v)
-	} else if out.CodecVideo != "" {
-		e.add("-c:v", out.CodecVideo)
 	}
-	if v := gc["a"]; v != "" {
+	if v := view.Audio.Codec; v != "" {
 		e.add("-c:a", v)
-	} else if out.CodecAudio != "" {
-		e.add("-c:a", out.CodecAudio)
 	}
-	if v := gc["s"]; v != "" {
+	if v := view.Subtitle.Codec; v != "" {
 		e.add("-c:s", v)
-	} else if out.CodecSubtitle != "" {
-		e.add("-c:s", out.CodecSubtitle)
 	}
 
 	// Codec tags.
@@ -474,10 +471,11 @@ func (e *exporter) buildOutput(out pipeline.Output) {
 		e.add("-tag:s", out.CodecTagSubtitle)
 	}
 
-	// Encoder params — flatten to per-type flag strings.
-	e.buildEncoderParams("v", out.EncoderParamsVideo)
-	e.buildEncoderParams("a", out.EncoderParamsAudio)
-	e.buildEncoderParams("s", out.EncoderParamsSubtitle)
+	// Encoder params — flatten to per-type flag strings (sourced
+	// via outputView; F1.1 refactor).
+	e.buildEncoderParams("v", view.Video.Params)
+	e.buildEncoderParams("a", view.Audio.Params)
+	e.buildEncoderParams("s", view.Subtitle.Params)
 
 	// Explicit encoder nodes authored in the GUI store codec + AVOptions
 	// on the node itself rather than on Output.EncoderParams*.  Emit them
@@ -522,14 +520,14 @@ func (e *exporter) buildOutput(out pipeline.Output) {
 		e.add("-frames:a", strconv.Itoa(out.MaxFramesAudio))
 	}
 
-	// FPS mode.
-	if out.FPSMode != "" {
-		e.add("-fps_mode", out.FPSMode)
+	// FPS mode (sourced via outputView; F1.1 refactor).
+	if view.Video.FPSMode != "" {
+		e.add("-fps_mode", view.Video.FPSMode)
 	}
 
-	// Audio sync.
-	if out.AudioSync != 0 {
-		e.add("-async", strconv.Itoa(out.AudioSync))
+	// Audio sync (sourced via outputView; F1.1 refactor).
+	if view.AudioSync != 0 {
+		e.add("-async", strconv.Itoa(view.AudioSync))
 	}
 
 	// Misc output flags.
@@ -549,12 +547,12 @@ func (e *exporter) buildOutput(out pipeline.Output) {
 		e.add("-avoid_negative_ts", out.AvoidNegativeTS)
 	}
 
-	// Two-pass encoding.
-	if out.Pass != 0 {
-		e.add("-pass", strconv.Itoa(out.Pass))
+	// Two-pass encoding (sourced via outputView; F1.1 refactor).
+	if view.Video.Pass != 0 {
+		e.add("-pass", strconv.Itoa(view.Video.Pass))
 	}
-	if out.PassLogFile != "" {
-		e.add("-passlogfile", out.PassLogFile)
+	if view.Video.PassLogFile != "" {
+		e.add("-passlogfile", view.Video.PassLogFile)
 	}
 
 	// LoudnormPass has no ffmpeg CLI equivalent (it's a mediamolder
@@ -856,42 +854,9 @@ func (e *exporter) buildEncoderParams(stream string, params map[string]any) {
 	}
 }
 
-// graphCodecs returns a map from stream-type letter ("v","a","s") to the
-// codec string that an explicit graph node (encoder or copy) wired to
-// outID dictates.  Copy nodes always map to "copy"; encoder nodes read
-// from node.Params["codec"].  Returns nil when no explicit nodes exist.
-func (e *exporter) graphCodecs(outID string) map[string]string {
-	if len(e.cfg.Graph.Nodes) == 0 {
-		return nil
-	}
-	nodeByID := make(map[string]pipeline.NodeDef, len(e.cfg.Graph.Nodes))
-	for _, n := range e.cfg.Graph.Nodes {
-		nodeByID[n.ID] = n
-	}
-	result := make(map[string]string)
-	for _, edge := range e.cfg.Graph.Edges {
-		if portNode(edge.To) != outID {
-			continue
-		}
-		n, ok := nodeByID[portNode(edge.From)]
-		if !ok {
-			continue
-		}
-		typ := portType(edge.To, edge.Type)
-		switch n.Type {
-		case "copy":
-			result[typ] = "copy"
-		case "encoder":
-			if codec, _ := n.Params["codec"].(string); codec != "" {
-				result[typ] = codec
-			}
-		}
-	}
-	if len(result) == 0 {
-		return nil
-	}
-	return result
-}
+// (graphCodecs lifted to the package-level graphCodecsForOutput helper
+// in encoder_view.go; the buildOutput codec block now sources codecs
+// through the outputView abstraction. F1.1.)
 
 // buildEncoderNodes emits AVOption flags sourced from explicit encoder nodes
 // that are wired into out's sink in the graph.  Codec flags are handled
