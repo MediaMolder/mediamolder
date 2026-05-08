@@ -190,7 +190,7 @@ func (f *Frame) SideData(typ FrameSideDataType) [][]byte {
 		}
 		size := int(C.frame_side_data_size(sd))
 		if size == 0 {
-			out = append(out, []byte{})
+			out = append(out, nil)
 			continue
 		}
 		if size > math.MaxInt32 {
