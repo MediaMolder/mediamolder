@@ -700,8 +700,14 @@ function Editor() {
 
         <button
           onClick={onSave}
-          disabled={!nodes.length || (identity.kind === 'file' && !dirty)}
-          title={identity.kind === 'file' ? `Save to ${identity.name}` : 'Save to disk…'}
+          disabled={!nodes.length || identity.kind === 'example' || (identity.kind === 'file' && !dirty)}
+          title={
+            identity.kind === 'example'
+              ? 'Use Save As… to save a copy — built-in examples cannot be overwritten'
+              : identity.kind === 'file'
+              ? `Save to ${identity.name}`
+              : 'Save to disk…'
+          }
         >
           Save
         </button>
