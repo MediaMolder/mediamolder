@@ -650,14 +650,14 @@ function Editor() {
         <button onClick={onClear}>New</button>
         <button onClick={onOpen}>Open…</button>
         <button onClick={() => setImportFFmpegOpen(true)} title="Paste an FFmpeg command line and convert it to a graph">
-          Import FFmpeg…
+          FFmpeg ->
         </button>
         <button
           onClick={() => setShowExportCmd(true)}
           disabled={!nodes.length}
           title="Show the current graph as an ffmpeg command line"
         >
-          Show CLI
+          -> FFmpeg
         </button>
 
         <label style={{ color: 'var(--text-dim)', fontSize: 12 }}>Graph:</label>
