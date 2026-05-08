@@ -304,10 +304,25 @@ function Editor() {
       : undefined;
     setNodes((ns) => ns.map((n) => {
       if (n.id !== nodeId) return n;
+      // Rebuild def.streams from probe results so the serialised JSON only
+      // declares streams the file actually contains. Track indices are
+      // assigned per-type in appearance order (first video → track 0, etc.).
+      let ref = n.data.ref;
+      if (probed !== undefined && ref.kind === 'input') {
+        const trackCount: Record<string, number> = {};
+        const rebuiltStreams = probed.map((s) => {
+          const t = s.type as StreamType;
+          const track = trackCount[t as string] ?? 0;
+          trackCount[t as string] = track + 1;
+          return { input_index: 0, type: t, track };
+        });
+        ref = { kind: 'input', def: { ...ref.def, streams: rebuiltStreams } };
+      }
       return {
         ...n,
         data: {
           ...n.data,
+          ref,
           probed,
           streams,
         },
