@@ -49,7 +49,10 @@ package av
 // }
 import "C"
 
-import "unsafe"
+import (
+	"math"
+	"unsafe"
+)
 
 // FrameSideDataType mirrors libavutil's enum AVFrameSideDataType. Values are
 // taken from the linked FFmpeg headers, so they always match the runtime
@@ -189,6 +192,9 @@ func (f *Frame) SideData(typ FrameSideDataType) [][]byte {
 			out = append(out, []byte{})
 			continue
 		}
+		if size > math.MaxInt32 {
+			continue
+		}
 		out = append(out, C.GoBytes(unsafe.Pointer(C.frame_side_data_data(sd)), C.int(size)))
 	}
 	return out
@@ -214,7 +220,7 @@ func (f *Frame) AllSideData() []FrameSideDataEntry {
 		typ := FrameSideDataType(C.frame_side_data_type(sd))
 		size := int(C.frame_side_data_size(sd))
 		var data []byte
-		if size > 0 {
+		if size > 0 && size <= math.MaxInt32 {
 			data = C.GoBytes(unsafe.Pointer(C.frame_side_data_data(sd)), C.int(size))
 		}
 		out = append(out, FrameSideDataEntry{Type: typ, Data: data})
