@@ -20,6 +20,7 @@ Everything runs in-process: no subprocesses, no network calls, no Python. Your p
 		- [`frame_info`](#frame_info)
 		- [`scene_change`](#scene_change)
 		- [`metadata_file_writer`](#metadata_file_writer)
+		- [`sei_hello`](#sei_hello)
 	- [Helper functions](#helper-functions)
 		- [Letterbox](#letterbox)
 		- [ImageToFloat32Tensor](#imagetofloat32tensor)
@@ -304,6 +305,34 @@ Each line in the output file is a JSON object:
 ```
 
 Frames where the inner processor returns no metadata produce no output line.
+
+---
+
+### `sei_hello`
+
+An example processor that attaches a `user_data_unregistered` SEI payload to
+every video frame via `av.Frame.AddSEIUnregisteredSideData`. H.264 and HEVC
+encoders that honour SEI side data (libx265 by default; libx264 with
+`udu_sei=1`) serialise the payload into the output bitstream.
+
+Non-video frames are passed through untouched.
+
+| Param  | Type   | Default   | Description                                       |
+|--------|--------|-----------|---------------------------------------------------|
+| `text` | string | `"hello"` | Payload appended after the 16-byte UUID in the SEI NAL |
+
+```json
+{
+  "id": "stamp_sei",
+  "type": "go_processor",
+  "processor": "sei_hello",
+  "params": { "text": "hello" }
+}
+```
+
+> **Note:** `seiHelloUUID` is an ASCII placeholder, not an RFC 4122 UUID.
+> Production processors should use a proper UUID to avoid bitstream collisions
+> with other SEI producers.
 
 ---
 
