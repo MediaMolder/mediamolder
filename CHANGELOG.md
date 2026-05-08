@@ -15,6 +15,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
     encoder-params / fps_mode / audio_sync / two-pass blocks read
     only from this view, decoupling the formatter from
     `pipeline.Output` shorthand fields ahead of `ExportGraph`.
+  - **F1.6 — documentation.** New
+    [docs/export.md](docs/export.md) describes the two reverse
+    exporters (`Export(cfg)` vs `ExportGraph(cfg, def, warnings)`),
+    when to use each, the per-class round-trip behaviour, the CLI
+    entry, and the test gates that lock in the identity. Added a
+    "Reverse-lowering" section to
+    [docs/field-ownership.md](docs/field-ownership.md) cross-walking
+    each ownership class to its source-of-truth in `def` /
+    `cfg.Graph` and its emission path. Linked from the README.
+
   - **F1.5 — `mediamolder export` CLI subcommand.** Renders a JSON
     pipeline.Config back into an FFmpeg command line — the inverse
     of `convert-cmd`. Default mode is the existing
