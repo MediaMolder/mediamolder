@@ -59,6 +59,7 @@ See [Build & Packaging](docs/build_and_packaging.md) for detailed instructions f
 - [Graph Basics — Nodes, Edges, Sources, Sinks, and the FFmpeg CLI mapping](docs/graph-basics.md)
 - [FFmpeg Migration Guide](docs/ffmpeg-migration-guide.md)
 - [JSON Config Reference](docs/json-config-reference.md)
+- [Reverse Export: Config → FFmpeg CLI](docs/export.md)
 - [Visual Editor (GUI)](docs/gui.md)
 - [Go Processor Nodes](docs/go-processor-nodes.md)
 - [Yolov8 object detection/classification](docs/yolov8-guide.md)
