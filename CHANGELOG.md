@@ -6,7 +6,26 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 ## [Unreleased]
 
 ### Added
-- **Wave 8 #54: Unsupported-flag import report.** `compat/ffcli.ParseFull`
+- **`av` package: frame side data API.** `av/frame_sidedata.go` exposes
+  helpers to attach, read, and remove `AVFrameSideData` entries on any
+  `av.Frame`:
+  - Generic: `AddSideData`, `SideData`, `AllSideData`, `RemoveSideData`.
+  - Typed helpers: `AddSEIUnregisteredSideData` / `SEIUnregisteredSideData`
+    (H.264/HEVC user-data-unregistered SEI), `AddA53ClosedCaptions` /
+    `A53ClosedCaptions` (CEA-608/708 A53 CC), `AddS12MTimecodes` /
+    `S12MTimecodes` (SMPTE ST 12-1 timecode SEI).
+  - `FrameSideDataType` enum mirroring `libavutil`'s
+    `AVFrameSideDataType`, with all constants from FFmpeg 7.0.
+  - Tests in `av/frame_sidedata_test.go` cover round-trips, nil-receiver
+    safety, validation, and the S12M wire layout.
+- **`sei_hello` built-in processor.** `processors/sei_hello.go` — minimal
+  example demonstrating `AddSEIUnregisteredSideData` on video frames.
+  Attaches a configurable 16-byte-UUID + text payload to every video frame;
+  non-video frames are passed through untouched.  Useful as a reference for
+  custom SEI injection.  Config parameter: `"text"` (string, default
+  `"hello"`).
+
+ `compat/ffcli.ParseFull`
   and `ParseArgsFull` return an `ImportResult{Config, Unsupported}` that
   surfaces actionable notes for:
   - Wave 5–7 schema-promoted flags: `-bsf:v`/`:a`/`:s`, `-muxdelay`,

@@ -5,6 +5,7 @@ package av
 
 import (
 	"bytes"
+	"strings"
 	"testing"
 )
 
@@ -173,21 +174,10 @@ func TestFrameSideDataTypeName(t *testing.T) {
 			t.Errorf("FrameSideDataType(%d).Name() = \"\", want non-empty", tc.typ)
 			continue
 		}
-		if !contains(got, tc.want) {
+		if !strings.Contains(got, tc.want) {
 			t.Errorf("FrameSideDataType(%d).Name() = %q, want substring %q",
 				tc.typ, got, tc.want)
 		}
 	}
 }
 
-func contains(haystack, needle string) bool {
-	if len(needle) == 0 {
-		return true
-	}
-	for i := 0; i+len(needle) <= len(haystack); i++ {
-		if haystack[i:i+len(needle)] == needle {
-			return true
-		}
-	}
-	return false
-}
