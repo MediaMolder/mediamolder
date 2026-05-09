@@ -25,7 +25,6 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   custom SEI injection.  Config parameter: `"text"` (string, default
   `"hello"`).
 
- `compat/ffcli.ParseFull`
 - **F1 — Reverse-lowering export (graph → FFmpeg CLI), in progress.**
   - **F1.1 — `outputView` abstraction.** `compat/ffcli/encoder_view.go`
     introduces `outputView` (per-stream Codec / Params / FPSMode /
