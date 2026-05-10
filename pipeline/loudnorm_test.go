@@ -94,8 +94,9 @@ func TestApplyLoudnormShuttlePass1Injects(t *testing.T) {
 	if got := p["stats_file"]; got != "/tmp/foo-0.json" {
 		t.Errorf("stats_file = %v, want /tmp/foo-0.json", got)
 	}
-	if p["__loudnorm_pass"] != 1 {
-		t.Errorf("__loudnorm_pass = %v, want 1", p["__loudnorm_pass"])
+	fi := def.Nodes[0].Internal.Filter
+	if fi == nil || fi.LoudnormPass != 1 {
+		t.Errorf("Internal.Filter.LoudnormPass = %+v, want 1", fi)
 	}
 }
 
@@ -128,8 +129,8 @@ func TestApplyLoudnormShuttleNoOpWhenZero(t *testing.T) {
 	if err := applyLoudnormShuttle(cfg, def); err != nil {
 		t.Fatalf("applyLoudnormShuttle: %v", err)
 	}
-	if _, ok := def.Nodes[0].Params["__loudnorm_pass"]; ok {
-		t.Errorf("expected no __loudnorm_pass marker on no-op")
+	if def.Nodes[0].Internal.Filter != nil && def.Nodes[0].Internal.Filter.LoudnormPass != 0 {
+		t.Errorf("expected no LoudnormPass marker on no-op, got %d", def.Nodes[0].Internal.Filter.LoudnormPass)
 	}
 	if _, ok := def.Nodes[0].Params["stats_file"]; ok {
 		t.Errorf("expected no stats_file injection on no-op")
@@ -201,6 +202,11 @@ func TestLoadLoudnormMeasurementsErrors(t *testing.T) {
 }
 
 func TestBuildFilterSpecStripsReservedKeys(t *testing.T) {
+	// `__` prefixed keys remain reserved at the buildFilterSpec layer
+	// as a defensive guard even though NormalizeConfig (Milestone B)
+	// no longer writes any. The reserved-prefix check must keep
+	// stripping them so user-authored Params with such keys (e.g.
+	// from a hand-edited GUI export) can never reach libavfilter.
 	spec := buildFilterSpec(NodeDef{
 		Filter: "loudnorm",
 		Params: map[string]any{

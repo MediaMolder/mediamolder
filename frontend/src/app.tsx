@@ -18,7 +18,8 @@ import '@xyflow/react/dist/style.css';
 
 import { Palette } from './components/Palette';
 import { Inspector } from './components/Inspector';
-import { MMNode, type MMNodeRunData, INSPECTOR_OPEN_EVENT } from './components/MMNode';
+import { MMNode, type MMNodeRunData, INSPECTOR_OPEN_EVENT, URL_BROWSE_EVENT } from './components/MMNode';
+import { FileBrowser } from './components/FileBrowser';
 import { MMEdge } from './components/MMEdge';
 import { RunPanel } from './components/RunPanel';
 import { RunDock } from './components/RunDock';
@@ -29,11 +30,13 @@ import { AssetManager } from './components/AssetManager';
 import { Legend } from './components/Legend';
 import {
   configToFlow,
+  displayUrl,
   flowToConfig,
   materializeImplicitEncoders,
   type FlowEdge,
   type FlowNode,
 } from './lib/jsonAdapter';
+import { MEDIA_FILE_EXTENSIONS } from './lib/mediaExtensions';
 import { autoLayout } from './lib/layout';
 import { spawnNodeFrom, type PaletteEntry } from './lib/spawn';
 import { useJobRun } from './lib/useJobRun';
@@ -304,10 +307,25 @@ function Editor() {
       : undefined;
     setNodes((ns) => ns.map((n) => {
       if (n.id !== nodeId) return n;
+      // Rebuild def.streams from probe results so the serialised JSON only
+      // declares streams the file actually contains. Track indices are
+      // assigned per-type in appearance order (first video → track 0, etc.).
+      let ref = n.data.ref;
+      if (probed !== undefined && ref.kind === 'input') {
+        const trackCount: Record<string, number> = {};
+        const rebuiltStreams = probed.map((s) => {
+          const t = s.type as StreamType;
+          const track = trackCount[t as string] ?? 0;
+          trackCount[t as string] = track + 1;
+          return { input_index: 0, type: t, track };
+        });
+        ref = { kind: 'input', def: { ...ref.def, streams: rebuiltStreams } };
+      }
       return {
         ...n,
         data: {
           ...n.data,
+          ref,
           probed,
           streams,
         },
@@ -598,6 +616,29 @@ function Editor() {
   const [showExportCmd, setShowExportCmd] = useState(false);
   const [showAssetManager, setShowAssetManager] = useState(false);
 
+  /* ---------- Node URL browse (from clicking URL chip on canvas) ---------- */
+  const [browseNodeId, setBrowseNodeId] = useState<string | null>(null);
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const id = (e as CustomEvent<{ id: string }>).detail?.id;
+      if (!id) return;
+      setBrowseNodeId(id);
+    };
+    window.addEventListener(URL_BROWSE_EVENT, handler);
+    return () => window.removeEventListener(URL_BROWSE_EVENT, handler);
+  }, []);
+  const browseNode = browseNodeId ? nodes.find((n) => n.id === browseNodeId) : null;
+  const browseIsInput = browseNode?.data.kind === 'input';
+  const browseCurrentUrl =
+    browseNode?.data.ref.kind === 'input' ? browseNode.data.ref.def.url
+    : browseNode?.data.ref.kind === 'output' ? browseNode.data.ref.def.url
+    : '';
+  const browseInitialDir = (() => {
+    const u = browseCurrentUrl ?? '';
+    const last = Math.max(u.lastIndexOf('/'), u.lastIndexOf('\\'));
+    return last > 0 ? u.slice(0, last) : undefined;
+  })();
+
   /* Merge live metrics + errors into node data so MMNode can render badges. */
   const runByNode = useMemo(() => {
     const map = new Map<string, MMNodeRunData>();
@@ -650,16 +691,8 @@ function Editor() {
         <button onClick={onClear}>New</button>
         <button onClick={onOpen}>Open…</button>
         <button onClick={() => setImportFFmpegOpen(true)} title="Paste an FFmpeg command line and convert it to a graph">
-          Import FFmpeg…
+          FFmpeg -{'>'}
         </button>
-        <button
-          onClick={() => setShowExportCmd(true)}
-          disabled={!nodes.length}
-          title="Show the current graph as an ffmpeg command line"
-        >
-          Show CLI
-        </button>
-
         <label style={{ color: 'var(--text-dim)', fontSize: 12 }}>Graph:</label>
         <select
           value={identity.kind === 'example' ? identity.url : '__current__'}
@@ -693,13 +726,26 @@ function Editor() {
 
         <button
           onClick={onSave}
-          disabled={!nodes.length || (identity.kind === 'file' && !dirty)}
-          title={identity.kind === 'file' ? `Save to ${identity.name}` : 'Save to disk…'}
+          disabled={!nodes.length || identity.kind === 'example' || (identity.kind === 'file' && !dirty)}
+          title={
+            identity.kind === 'example'
+              ? 'Use Save As… to save a copy — built-in examples cannot be overwritten'
+              : identity.kind === 'file'
+              ? `Save to ${identity.name}`
+              : 'Save to disk…'
+          }
         >
           Save
         </button>
         <button onClick={onSaveAs} disabled={!nodes.length} title="Save to a new file…">
           Save As…
+        </button>
+        <button
+          onClick={() => setShowExportCmd(true)}
+          disabled={!nodes.length}
+          title="Show the current graph as an ffmpeg command line"
+        >
+          -{'>'}  FFmpeg
         </button>
 
         <div className="spacer" />
@@ -887,6 +933,34 @@ function Editor() {
             setJob((j) => ({ ...j, assets: Object.keys(a).length > 0 ? a : undefined }))
           }
           onClose={() => setShowAssetManager(false)}
+        />
+      )}
+      {browseNodeId && browseNode && (
+        <FileBrowser
+          open
+          mode={browseIsInput ? 'open' : 'save'}
+          title={browseIsInput ? 'Choose input file' : 'Choose output file'}
+          filter={browseIsInput ? MEDIA_FILE_EXTENSIONS : undefined}
+          initialPath={browseInitialDir}
+          defaultFilename={browseIsInput ? undefined : 'output.mp4'}
+          onClose={() => setBrowseNodeId(null)}
+          onPick={(path) => {
+            setBrowseNodeId(null);
+            setNodes((ns) =>
+              ns.map((n) => {
+                if (n.id !== browseNodeId) return n;
+                const ref = n.data.ref;
+                if (ref.kind === 'input') {
+                  return { ...n, data: { ...n.data, sublabel: displayUrl(path), ref: { kind: 'input', def: { ...ref.def, url: path } } } };
+                }
+                if (ref.kind === 'output') {
+                  return { ...n, data: { ...n.data, sublabel: displayUrl(path), ref: { kind: 'output', def: { ...ref.def, url: path } } } };
+                }
+                return n;
+              }),
+            );
+            markDirty();
+          }}
         />
       )}
     </div>

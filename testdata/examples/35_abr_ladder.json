@@ -134,27 +134,19 @@
   "outputs": [
     {
       "id": "out_1080",
-      "url": "{{out_1080}}",
-      "codec_video": "libx264",
-      "codec_audio": "aac"
+      "url": "{{out_1080}}"
     },
     {
       "id": "out_720",
-      "url": "{{out_720}}",
-      "codec_video": "libx264",
-      "codec_audio": "aac"
+      "url": "{{out_720}}"
     },
     {
       "id": "out_540",
-      "url": "{{out_540}}",
-      "codec_video": "libx264",
-      "codec_audio": "aac"
+      "url": "{{out_540}}"
     },
     {
       "id": "out_360",
-      "url": "{{out_360}}",
-      "codec_video": "libx264",
-      "codec_audio": "aac"
+      "url": "{{out_360}}"
     }
   ]
 }

@@ -27,6 +27,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/MediaMolder/MediaMolder/graph"
 	"github.com/MediaMolder/MediaMolder/pipeline"
 )
 
@@ -52,13 +53,37 @@ func Export(cfg *pipeline.Config) ExportResult {
 	return e.result()
 }
 
+// ExportGraph is the F1.2 graph-sourced exporter. It produces the
+// same FFmpeg command line as Export(cfg), but reads codec / encoder
+// params / encoder shorthand (fps_mode, force_key_frames, sar/dar,
+// enc_time_base, field_order, interlaced, pass, passlogfile) and
+// audio-sync from the *normalized graph* (def) rather than from the
+// `Output.*` shorthand fields. This is the path the F2 schema
+// deprecation will rely on: once shorthand is gone from the JSON,
+// ExportGraph still produces a correct CLI because every shorthand
+// row has a typed home in the lowered graph.
+//
+// Per-stream Output.Streams[i].Encoder overrides are not lowered to
+// graph nodes today, so they are still read directly from cfg.
+//
+// `warnings` (currently unused) is the slice returned by
+// pipeline.NormalizeConfig; reserved so future passes can surface
+// normaliser-side issues alongside formatter-side Unsupported entries.
+func ExportGraph(cfg *pipeline.Config, def *graph.Def, warnings []pipeline.NormalizeWarning) ExportResult {
+	e := &exporter{cfg: cfg, def: def, fromGraph: true}
+	e.build()
+	return e.result()
+}
+
 // ────────────────────────────────────────────────────────────────────────────
 // Internal
 
 type exporter struct {
-	cfg   *pipeline.Config
-	args  []string
-	unsup []string
+	cfg       *pipeline.Config
+	def       *graph.Def // populated by ExportGraph; nil for Export(cfg)
+	fromGraph bool       // true when sourcing views from def, not cfg
+	args      []string
+	unsup     []string
 }
 
 func (e *exporter) warn(msg string) { e.unsup = append(e.unsup, msg) }
@@ -443,24 +468,26 @@ func (e *exporter) buildOutput(out pipeline.Output) {
 		e.add("-dn")
 	}
 
-	// Codec selection — explicit graph nodes (encoder or copy) take
-	// precedence over the Output-level codec fields, which may be
-	// stale when the user rewires the graph in the GUI.
-	gc := e.graphCodecs(out.ID)
-	if v := gc["v"]; v != "" {
+	// Codec selection — sourced via the outputView abstraction
+	// (F1.1). The view encapsulates the precedence rule "explicit
+	// graph encoder/copy node > Output.Codec* shorthand", so the
+	// formatter no longer needs to thread that logic itself. F1.2
+	// can source the same view from a normalized graph instead
+	// (ExportGraph path).
+	var view outputView
+	if e.fromGraph {
+		view = resolveOutputViewFromGraph(e.cfg, e.def, out)
+	} else {
+		view = resolveOutputViewFromConfig(e.cfg, out)
+	}
+	if v := view.Video.Codec; v != "" {
 		e.add("-c:v", v)
-	} else if out.CodecVideo != "" {
-		e.add("-c:v", out.CodecVideo)
 	}
-	if v := gc["a"]; v != "" {
+	if v := view.Audio.Codec; v != "" {
 		e.add("-c:a", v)
-	} else if out.CodecAudio != "" {
-		e.add("-c:a", out.CodecAudio)
 	}
-	if v := gc["s"]; v != "" {
+	if v := view.Subtitle.Codec; v != "" {
 		e.add("-c:s", v)
-	} else if out.CodecSubtitle != "" {
-		e.add("-c:s", out.CodecSubtitle)
 	}
 
 	// Codec tags.
@@ -474,14 +501,24 @@ func (e *exporter) buildOutput(out pipeline.Output) {
 		e.add("-tag:s", out.CodecTagSubtitle)
 	}
 
-	// Encoder params — flatten to per-type flag strings.
-	e.buildEncoderParams("v", out.EncoderParamsVideo)
-	e.buildEncoderParams("a", out.EncoderParamsAudio)
-	e.buildEncoderParams("s", out.EncoderParamsSubtitle)
+	// Encoder params — flatten to per-type flag strings (sourced
+	// via outputView; F1.1 refactor). For codecs in codecToParamsFlag
+	// (libx264/libx265/libsvtav1/...) the non-reserved keys are packed
+	// into a single "-<codec>-params" flag instead of individual
+	// "-<key>:<stream> <val>" pairs.
+	e.emitEncoderParams("v", view.Video.Codec, view.Video.Params)
+	e.emitEncoderParams("a", view.Audio.Codec, view.Audio.Params)
+	e.emitEncoderParams("s", view.Subtitle.Codec, view.Subtitle.Params)
 
 	// Explicit encoder nodes authored in the GUI store codec + AVOptions
 	// on the node itself rather than on Output.EncoderParams*.  Emit them
 	// here so the CLI round-trip is complete.
+	//
+	// Both Export(cfg) and ExportGraph(cfg, def) walk the same
+	// cfg.Graph.Nodes here. Synthesised encoders ("__enc__*" stamped
+	// by expandImplicitEncoders) only live in def.Nodes, never in
+	// cfg.Graph.Nodes, so they are surfaced via the per-output view
+	// instead and won't be double-emitted by this pass.
 	e.buildEncoderNodes(out)
 
 	// Per-stream stream specs (metadata + disposition + encoder overrides).
@@ -497,9 +534,21 @@ func (e *exporter) buildOutput(out pipeline.Output) {
 			if ss.Encoder.Codec != "" {
 				e.add(fmt.Sprintf("-c:%s:%d", ss.Type, ss.Index), ss.Encoder.Codec)
 			}
-			for k, v := range ss.Encoder.Options {
-				e.add(fmt.Sprintf("-%s:%s:%d", k, ss.Type, ss.Index), fmt.Sprint(v))
+			// Resolve codec for *-params routing: the per-stream
+			// override codec wins; otherwise inherit the output-level
+			// resolved codec for that stream type.
+			streamCodec := ss.Encoder.Codec
+			if streamCodec == "" {
+				switch ss.Type {
+				case "v":
+					streamCodec = view.Video.Codec
+				case "a":
+					streamCodec = view.Audio.Codec
+				case "s":
+					streamCodec = view.Subtitle.Codec
+				}
 			}
+			e.emitEncoderParams(spec, streamCodec, ss.Encoder.Options)
 		}
 	}
 
@@ -522,14 +571,14 @@ func (e *exporter) buildOutput(out pipeline.Output) {
 		e.add("-frames:a", strconv.Itoa(out.MaxFramesAudio))
 	}
 
-	// FPS mode.
-	if out.FPSMode != "" {
-		e.add("-fps_mode", out.FPSMode)
+	// FPS mode (sourced via outputView; F1.1 refactor).
+	if view.Video.FPSMode != "" {
+		e.add("-fps_mode", view.Video.FPSMode)
 	}
 
-	// Audio sync.
-	if out.AudioSync != 0 {
-		e.add("-async", strconv.Itoa(out.AudioSync))
+	// Audio sync (sourced via outputView; F1.1 refactor).
+	if view.AudioSync != 0 {
+		e.add("-async", strconv.Itoa(view.AudioSync))
 	}
 
 	// Misc output flags.
@@ -549,12 +598,12 @@ func (e *exporter) buildOutput(out pipeline.Output) {
 		e.add("-avoid_negative_ts", out.AvoidNegativeTS)
 	}
 
-	// Two-pass encoding.
-	if out.Pass != 0 {
-		e.add("-pass", strconv.Itoa(out.Pass))
+	// Two-pass encoding (sourced via outputView; F1.1 refactor).
+	if view.Video.Pass != 0 {
+		e.add("-pass", strconv.Itoa(view.Video.Pass))
 	}
-	if out.PassLogFile != "" {
-		e.add("-passlogfile", out.PassLogFile)
+	if view.Video.PassLogFile != "" {
+		e.add("-passlogfile", view.Video.PassLogFile)
 	}
 
 	// LoudnormPass has no ffmpeg CLI equivalent (it's a mediamolder
@@ -836,62 +885,15 @@ func (e *exporter) graphMaps(outID string) []string {
 	return args
 }
 
-// buildEncoderParams flattens the encoder params map into per-stream flags.
-// Only the most common keys are promoted to first-class flags; the rest
-// are emitted as -<key>:<stream> <val>.
-func (e *exporter) buildEncoderParams(stream string, params map[string]any) {
-	if len(params) == 0 {
-		return
-	}
-	// Emit in sorted key order for deterministic output.
-	keys := make([]string, 0, len(params))
-	for k := range params {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	for _, k := range keys {
-		v := params[k]
-		flag := fmt.Sprintf("-%s:%s", k, stream)
-		e.add(flag, fmt.Sprint(v))
-	}
-}
+// buildEncoderParams was the legacy per-key emitter; F1.2 routes all
+// encoder param emission through (*exporter).emitEncoderParams in
+// encoder_view.go so that codec-specific "-<codec>-params" packing
+// applies uniformly to output-shorthand, per-stream override, and
+// explicit-encoder-node sources.
 
-// graphCodecs returns a map from stream-type letter ("v","a","s") to the
-// codec string that an explicit graph node (encoder or copy) wired to
-// outID dictates.  Copy nodes always map to "copy"; encoder nodes read
-// from node.Params["codec"].  Returns nil when no explicit nodes exist.
-func (e *exporter) graphCodecs(outID string) map[string]string {
-	if len(e.cfg.Graph.Nodes) == 0 {
-		return nil
-	}
-	nodeByID := make(map[string]pipeline.NodeDef, len(e.cfg.Graph.Nodes))
-	for _, n := range e.cfg.Graph.Nodes {
-		nodeByID[n.ID] = n
-	}
-	result := make(map[string]string)
-	for _, edge := range e.cfg.Graph.Edges {
-		if portNode(edge.To) != outID {
-			continue
-		}
-		n, ok := nodeByID[portNode(edge.From)]
-		if !ok {
-			continue
-		}
-		typ := portType(edge.To, edge.Type)
-		switch n.Type {
-		case "copy":
-			result[typ] = "copy"
-		case "encoder":
-			if codec, _ := n.Params["codec"].(string); codec != "" {
-				result[typ] = codec
-			}
-		}
-	}
-	if len(result) == 0 {
-		return nil
-	}
-	return result
-}
+// (graphCodecs lifted to the package-level graphCodecsForOutput helper
+// in encoder_view.go; the buildOutput codec block now sources codecs
+// through the outputView abstraction. F1.1.)
 
 // buildEncoderNodes emits AVOption flags sourced from explicit encoder nodes
 // that are wired into out's sink in the graph.  Codec flags are handled
@@ -914,40 +916,8 @@ func (e *exporter) buildEncoderNodes(out pipeline.Output) {
 			continue
 		}
 		typ := portType(edge.To, edge.Type)
-		e.buildEncoderNodeParams(typ, n.Params)
-	}
-}
-
-// buildEncoderNodeParams emits per-stream AVOption flags from an encoder
-// node's Params map.  Keys that are consumed internally by the runtime
-// (codec, width, height, bitrate, threads, thread_type, and any
-// __-prefixed sentinel) are skipped.
-func (e *exporter) buildEncoderNodeParams(stream string, params map[string]any) {
-	if len(params) == 0 {
-		return
-	}
-	keys := make([]string, 0, len(params))
-	for k := range params {
-		if k == "codec" || strings.HasPrefix(k, "__") {
-			continue
-		}
-		switch k {
-		case "width", "height", "bitrate", "threads", "thread_type":
-			continue
-		}
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	for _, k := range keys {
-		v := params[k]
-		if v == nil {
-			continue
-		}
-		s := fmt.Sprint(v)
-		if s == "" {
-			continue
-		}
-		e.add(fmt.Sprintf("-%s:%s", k, stream), s)
+		codec, _ := n.Params["codec"].(string)
+		e.emitEncoderParams(typ, codec, n.Params)
 	}
 }
 

@@ -373,8 +373,105 @@ func TestExport_EncoderParams(t *testing.T) {
 	}
 	r := mustExport(t, cfg)
 	requireArg(t, r.Command, "-c:v", "libx264")
-	requireArg(t, r.Command, "-crf:v", "22")
-	requireArg(t, r.Command, "-preset:v", "slow")
+	// libx264 is in codecToParamsFlag, so non-reserved AVOptions are
+	// packed into a single -x264-params flag (sorted by key).
+	requireArg(t, r.Command, "-x264-params:v", "crf=22:preset=slow")
+	requireNoFlag(t, r.Command, "-crf:v")
+	requireNoFlag(t, r.Command, "-preset:v")
+}
+
+// TestExport_EncoderParams_X264_PrivateOptions verifies that
+// encoder-private options without a first-class FFmpeg flag (e.g. me,
+// subme, aq-mode, psy-rd) round-trip via -x264-params. Keys are
+// sorted for deterministic output.
+func TestExport_EncoderParams_X264_PrivateOptions(t *testing.T) {
+	cfg := &pipeline.Config{
+		SchemaVersion: "1.2",
+		Inputs:        []pipeline.Input{{ID: "in0", URL: "a.mp4"}},
+		Graph:         pipeline.GraphDef{},
+		Outputs: []pipeline.Output{{
+			ID:         "out0",
+			URL:        "out.mp4",
+			CodecVideo: "libx264",
+			EncoderParamsVideo: map[string]any{
+				"me":      "hex",
+				"subme":   7,
+				"aq-mode": 2,
+				"psy-rd":  "1.0:0.15",
+			},
+		}},
+	}
+	r := mustExport(t, cfg)
+	requireArg(t, r.Command, "-x264-params:v", "aq-mode=2:me=hex:psy-rd=1.0:0.15:subme=7")
+}
+
+// TestExport_EncoderParams_X264_RawParamsMerged verifies that a
+// pre-built "x264-params" string in EncoderParamsVideo is merged
+// verbatim with the other keys rather than re-quoted.
+func TestExport_EncoderParams_X264_RawParamsMerged(t *testing.T) {
+	cfg := &pipeline.Config{
+		SchemaVersion: "1.2",
+		Inputs:        []pipeline.Input{{ID: "in0", URL: "a.mp4"}},
+		Graph:         pipeline.GraphDef{},
+		Outputs: []pipeline.Output{{
+			ID:         "out0",
+			URL:        "out.mp4",
+			CodecVideo: "libx264",
+			EncoderParamsVideo: map[string]any{
+				"crf":         22,
+				"x264-params": "nal-hrd=cbr:force-cfr=1",
+			},
+		}},
+	}
+	r := mustExport(t, cfg)
+	// Sorted: "crf" then "x264-params" (the raw payload is appended
+	// verbatim, not "x264-params=...").
+	requireArg(t, r.Command, "-x264-params:v", "crf=22:nal-hrd=cbr:force-cfr=1")
+}
+
+// TestExport_EncoderParams_X265 verifies the same packing rule applies
+// to libx265 via "-x265-params".
+func TestExport_EncoderParams_X265(t *testing.T) {
+	cfg := &pipeline.Config{
+		SchemaVersion: "1.2",
+		Inputs:        []pipeline.Input{{ID: "in0", URL: "a.mp4"}},
+		Graph:         pipeline.GraphDef{},
+		Outputs: []pipeline.Output{{
+			ID:         "out0",
+			URL:        "out.mp4",
+			CodecVideo: "libx265",
+			EncoderParamsVideo: map[string]any{
+				"crf":    24,
+				"preset": "medium",
+			},
+		}},
+	}
+	r := mustExport(t, cfg)
+	requireArg(t, r.Command, "-x265-params:v", "crf=24:preset=medium")
+}
+
+// TestExport_EncoderParams_NonAllowlistCodec verifies that codecs
+// outside codecToParamsFlag (e.g. libvpx-vp9) still emit per-key
+// flags as before — there is no "-vp9-params" channel.
+func TestExport_EncoderParams_NonAllowlistCodec(t *testing.T) {
+	cfg := &pipeline.Config{
+		SchemaVersion: "1.2",
+		Inputs:        []pipeline.Input{{ID: "in0", URL: "a.mp4"}},
+		Graph:         pipeline.GraphDef{},
+		Outputs: []pipeline.Output{{
+			ID:         "out0",
+			URL:        "out.mp4",
+			CodecVideo: "libvpx-vp9",
+			EncoderParamsVideo: map[string]any{
+				"crf":     30,
+				"b:v":     "0",
+				"deadline": "good",
+			},
+		}},
+	}
+	r := mustExport(t, cfg)
+	requireArg(t, r.Command, "-crf:v", "30")
+	requireArg(t, r.Command, "-deadline:v", "good")
 }
 
 func TestExport_FilterGraph(t *testing.T) {
@@ -560,8 +657,9 @@ func TestExport_ExplicitEncoderNodeParams(t *testing.T) {
 	r := mustExport(t, cfg)
 
 	requireArg(t, r.Command, "-c:v", "libx264")
-	requireArg(t, r.Command, "-crf:v", "22")
-	requireArg(t, r.Command, "-preset:v", "slow")
+	requireArg(t, r.Command, "-x264-params:v", "crf=22:preset=slow")
+	requireNoFlag(t, r.Command, "-crf:v")
+	requireNoFlag(t, r.Command, "-preset:v")
 
 	// Reserved / internal keys must be absent.
 	requireNoFlag(t, r.Command, "-__fps_mode:v")
@@ -602,7 +700,8 @@ func TestExport_ExplicitEncoderNode_CodecAlreadyOnOutput(t *testing.T) {
 	if count != 1 {
 		t.Errorf("expected exactly one -c:v flag; got %d in %q", count, r.Command)
 	}
-	requireArg(t, r.Command, "-preset:v", "medium")
+	requireArg(t, r.Command, "-x264-params:v", "preset=medium")
+	requireNoFlag(t, r.Command, "-preset:v")
 }
 
 // TestExport_CopyNode_Video verifies that an explicit copy node wired to a

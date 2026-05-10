@@ -13,6 +13,7 @@ export interface MMNodeRunData {
 }
 
 export const INSPECTOR_OPEN_EVENT = 'mm.inspector.open';
+export const URL_BROWSE_EVENT = 'mm.url.browse';
 
 export function MMNode({ id, data, selected }: NodeProps & { data: FlowNodeData & { run?: MMNodeRunData } }) {
   const naming = useNamingMode();
@@ -39,6 +40,7 @@ export function MMNode({ id, data, selected }: NodeProps & { data: FlowNodeData 
     selected ? 'selected' : '',
     errored ? 'errored' : '',
     data.implicit ? 'implicit' : '',
+    (isInput || isOutput) ? 'mm-node--io' : '',
   ]
     .filter(Boolean)
     .join(' ');
@@ -87,7 +89,22 @@ export function MMNode({ id, data, selected }: NodeProps & { data: FlowNodeData 
         )}
       </div>
       <div className="mm-node-title">{heading}</div>
-      {data.sublabel && <div className="mm-node-sub">{data.sublabel}</div>}
+      {data.sublabel && (isInput || isOutput) ? (
+        <button
+          type="button"
+          className="mm-node-sub mm-node-sub-btn"
+          title={data.sublabel as string}
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={(e) => {
+            e.stopPropagation();
+            window.dispatchEvent(new CustomEvent(URL_BROWSE_EVENT, { detail: { id } }));
+          }}
+        >
+          {data.sublabel as string}
+        </button>
+      ) : (
+        data.sublabel && <div className="mm-node-sub">{data.sublabel}</div>
+      )}
       {run && (run.frames !== undefined || run.errors !== undefined) && (
         <div className="mm-node-run">
           {run.frames !== undefined && <span>{run.frames} pkt</span>}
