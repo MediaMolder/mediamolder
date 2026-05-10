@@ -4,6 +4,21 @@
 
 This document applies the **C4 Model** (Context, Containers, Components, Code) — a lightweight, hierarchical approach to software architecture documentation created by Simon Brown. It is ideal for this project because the codebase is well-structured into clear layers (CLI, HTTP, graph, runtime, processors, AV bindings, frontend).
 
+> **See also:** [field-ownership.md](../field-ownership.md) — authoritative
+> classification of every `Config` / `Output` / `GlobalOptions` / `Input`
+> field as node-local, authoring shorthand, muxer-owned, true global, or
+> deferred. Drives the normalization boundary work tracked in
+> `private_local/normalization_plan_revised.md`.
+>
+> **Normalization boundary:** `pipeline.NormalizeConfig(cfg) → (*graph.Def, []NormalizeWarning, error)`
+> is the single entry point that lowers an authoring `pipeline.Config`
+> into the executable `graph.Def` consumed by `graph.Build` →
+> `graph.Compile` → `runtime.Scheduler`. `runGraph` calls it in
+> `pipeline/engine.go` and surfaces warnings on the existing pipeline
+> events channel. The function is currently a thin wrapper around
+> `configToGraphDef`; subsequent commits move all `__*` sentinel
+> lowering behind it.
+
 ---
 
 ## Level 1: System Context Diagram

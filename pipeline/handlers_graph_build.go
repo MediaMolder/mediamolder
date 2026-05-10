@@ -25,27 +25,20 @@ func configToGraphDef(cfg *Config) *graph.Def {
 			continue
 		}
 		params := node.Params
+		var internal graph.Internal
 		// Wave 7 #38: propagate per-node thread cap (or pipeline-wide
 		// default) into the runtime's filter graph allocator via the
-		// Params bag. Per-node `Threads` wins over the pipeline-wide
-		// `Config.FilterComplexThreads`. Both are applied only to
-		// filter nodes — encoders have their own `threads` AVOption.
+		// node's typed Internal field. Per-node `Threads` wins over the
+		// pipeline-wide `Config.FilterComplexThreads`. Both are applied
+		// only to filter nodes — encoders have their own `threads`
+		// AVOption.
 		if node.Type == "filter" {
 			eff := node.Threads
 			if eff == 0 {
 				eff = cfg.FilterComplexThreads
 			}
 			if eff > 0 {
-				if params == nil {
-					params = make(map[string]any, 1)
-				} else {
-					cp := make(map[string]any, len(params)+1)
-					for k, v := range params {
-						cp[k] = v
-					}
-					params = cp
-				}
-				params["__filter_threads"] = eff
+				internal.Filter = &graph.FilterInternal{Threads: eff}
 			}
 		}
 		// Wave 7 #37: auto-fill OutputMediaType from the cross-media-type
@@ -66,6 +59,7 @@ func configToGraphDef(cfg *Config) *graph.Def {
 			Processor:       node.Processor,
 			Params:          params,
 			OutputMediaType: omt,
+			Internal:        internal,
 		})
 	}
 	for _, out := range cfg.Outputs {
@@ -219,6 +213,13 @@ func spliceAudioAdaptersForEncoders(def *graph.Def) {
 			ID:     filtID,
 			Type:   "filter",
 			Filter: spec,
+			Internal: graph.Internal{
+				Generated: &graph.GeneratedNode{
+					By:     "spliceAudioAdaptersForEncoders",
+					From:   dstNode.ID,
+					Reason: "audio sample-fmt + frame-size adapter for encoder " + codec,
+				},
+			},
 		}
 		def.Nodes = append(def.Nodes, filtNode)
 		nodeByID[filtID] = filtNode
@@ -345,6 +346,13 @@ func spliceAudioSyncForOutputs(cfg *Config, def *graph.Def) {
 			ID:     filtID,
 			Type:   "filter",
 			Filter: spec,
+			Internal: graph.Internal{
+				Generated: &graph.GeneratedNode{
+					By:     "spliceAudioSyncForOutputs",
+					From:   outID,
+					Reason: fmt.Sprintf("audio_sync=%d resampler", n),
+				},
+			},
 		}
 		def.Nodes = append(def.Nodes, filtNode)
 		nodeByID[filtID] = filtNode
@@ -476,60 +484,45 @@ func expandImplicitEncoders(cfg *Config, def *graph.Def) {
 				nodeParams[k] = v
 			}
 		}
-		// Stash FPSMode on the synthetic encoder node for video edges so
-		// handleEncoder's per-frame renumberer can consume it. The double-
-		// underscore prefix matches the `__enc__` convention and keeps the
-		// key out of the AVDictionary path via encoderReservedParams.
-		if e.Type == "video" && out.FPSMode != "" {
-			nodeParams["__fps_mode"] = out.FPSMode
-		}
-		// Two-pass video encoding (FFmpeg `-pass N -passlogfile P`).
-		// Honoured only on video edges; the global stream index is
-		// computed below after all synthetic encoders are added so it
-		// matches the `<prefix>-<idx>.log` numbering FFmpeg uses
-		// (one entry per video encoder in declaration order).
-		if e.Type == "video" && out.Pass != 0 {
-			nodeParams["__pass"] = out.Pass
-			if out.PassLogFile != "" {
-				nodeParams["__passlogfile"] = out.PassLogFile
+		// Build the typed lowering bag (Milestone B). Encoder-only
+		// shorthand fields (FPSMode, ForceKeyFrames, SAR, DAR,
+		// EncoderTimeBase, FieldOrder, Interlaced, Pass, PassLogFile)
+		// flow into Internal.Encoder; createEncoder reads them from
+		// there. Audio / subtitle edges keep an empty Internal.Encoder
+		// since none of these fields apply to non-video streams.
+		var encInt *graph.EncoderInternal
+		if e.Type == "video" {
+			encInt = &graph.EncoderInternal{
+				FPSMode:         out.FPSMode,
+				ForceKeyFrames:  out.ForceKeyFrames,
+				SAR:             out.SAR,
+				DAR:             out.DAR,
+				EncoderTimeBase: out.EncoderTimeBase,
+				FieldOrder:      out.FieldOrder,
+				Interlaced:      out.InterlacedEncode,
+				Pass:            out.Pass,
 			}
-		}
-		// Force-keyframe spec (FFmpeg `-force_key_frames`). Honoured
-		// only on video edges; the encoder handler builds a
-		// forceKeyFramesMatcher and stamps frame.pict_type =
-		// AV_PICTURE_TYPE_I on each matching frame before SendFrame.
-		if e.Type == "video" && out.ForceKeyFrames != "" {
-			nodeParams["__force_key_frames"] = out.ForceKeyFrames
-		}
-		// SAR / DAR shorthand (FFmpeg `-aspect` / `setsar` / `setdar`).
-		// Resolved to a numeric SAR in createEncoder once the encoder's
-		// width/height are known. Honoured only on video edges.
-		if e.Type == "video" && out.SAR != "" {
-			nodeParams["__sar"] = out.SAR
-		}
-		if e.Type == "video" && out.DAR != "" {
-			nodeParams["__dar"] = out.DAR
-		}
-		// EncoderTimeBase / FieldOrder / InterlacedEncode (Wave 6 #33).
-		// Honoured only on video edges; subtitle outputs reject
-		// EncoderTimeBase at validate time.
-		if e.Type == "video" && out.EncoderTimeBase != "" {
-			nodeParams["__enc_time_base"] = out.EncoderTimeBase
-		}
-		if e.Type == "video" && out.FieldOrder != "" {
-			nodeParams["__field_order"] = out.FieldOrder
-		}
-		if e.Type == "video" && out.InterlacedEncode {
-			nodeParams["__interlaced"] = "1"
+			if out.Pass != 0 && out.PassLogFile != "" {
+				encInt.PassLogFile = out.PassLogFile
+			}
 		}
 		if codec == "copy" {
 			nodeType = "copy"
 			nodeParams = nil
+			encInt = nil
 		}
 		encNode := graph.NodeDef{
 			ID:     encID,
 			Type:   nodeType,
 			Params: nodeParams,
+			Internal: graph.Internal{
+				Encoder: encInt,
+				Generated: &graph.GeneratedNode{
+					By:     "expandImplicitEncoders",
+					From:   toID,
+					Reason: "implicit " + nodeType + " for output " + e.Type + " stream",
+				},
+			},
 		}
 		def.Nodes = append(def.Nodes, encNode)
 		nodeByID[encID] = encNode
@@ -538,22 +531,22 @@ func expandImplicitEncoders(cfg *Config, def *graph.Def) {
 	}
 	def.Edges = append(def.Edges, added...)
 
-	// Assign sequential `__pass_index` to each video encoder that
+	// Assign sequential PassIndex to each video encoder that
 	// requested two-pass mode, in node-declaration order. The index
 	// drives the `<prefix>-<idx>.log` naming so multiple two-pass
 	// video streams in one run (e.g. ABR ladder) get unique stats
-	// files \u2014 mirrors FFmpeg's `ost_idx` computation in
+	// files — mirrors FFmpeg's `ost_idx` computation in
 	// fftools/ffmpeg_mux_init.c.
 	passIdx := 0
 	for i := range def.Nodes {
 		n := &def.Nodes[i]
-		if n.Type != "encoder" || n.Params == nil {
+		if n.Type != "encoder" || n.Internal.Encoder == nil {
 			continue
 		}
-		if _, ok := n.Params["__pass"]; !ok {
+		if n.Internal.Encoder.Pass == 0 {
 			continue
 		}
-		n.Params["__pass_index"] = passIdx
+		n.Internal.Encoder.PassIndex = passIdx
 		passIdx++
 	}
 }

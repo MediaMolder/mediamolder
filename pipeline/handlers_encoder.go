@@ -42,19 +42,20 @@ type encoderSession struct {
 }
 
 // newEncoderSession creates an encoderSession for the given encoder node,
-// resolving fpsRewriter and forceKeyFramesMatcher from node.Params.
+// resolving fpsRewriter and forceKeyFramesMatcher from node.Internal.Encoder.
 func (r *graphRunner) newEncoderSession(node *graph.Node, enc *av.EncoderContext, outs []chan<- any) (*encoderSession, error) {
+	encInt := node.Internal.Encoder
 	var fpsRW *fpsRewriter
-	if enc.MediaType() == av.MediaTypeVideo {
-		mode := paramString(node.Params, "__fps_mode")
+	if enc.MediaType() == av.MediaTypeVideo && encInt != nil {
+		mode := encInt.FPSMode
 		if mode != "" && mode != "passthrough" {
 			fpsRW = newFPSRewriter(mode, computeFrameDurationTB(enc.FrameRate(), enc.TimeBase()))
 		}
 	}
 
 	var forceKF *forceKeyFramesMatcher
-	if enc.MediaType() == av.MediaTypeVideo {
-		if specStr := paramString(node.Params, "__force_key_frames"); specStr != "" {
+	if enc.MediaType() == av.MediaTypeVideo && encInt != nil {
+		if specStr := encInt.ForceKeyFrames; specStr != "" {
 			spec, err := parseForceKeyFrames(specStr)
 			if err != nil {
 				return nil, fmt.Errorf("encoder %q: %w", node.ID, err)
@@ -234,25 +235,16 @@ func (r *graphRunner) handleEncoder(ctx context.Context, node *graph.Node, ins [
 }
 
 func (r *graphRunner) createEncoder(dag *graph.Graph, node *graph.Node) (*av.EncoderContext, error) {
-	// Determine codec: first from node params, then from downstream output config.
+	// After NormalizeConfig the codec is always present in node.Params:
+	// expandImplicitEncoders stamps it from Output.CodecVideo /
+	// Output.CodecAudio / Output.Streams[i].Encoder.Codec, and
+	// hand-authored encoder nodes set it directly. Reading
+	// Output.CodecVideo here at runtime would violate the Milestone C
+	// invariant ("runtime never reads authoring shorthand"), so this
+	// path fails fast instead of falling back.
 	codecName := paramString(node.Params, "codec")
 	if codecName == "" {
-		for _, e := range node.Outbound {
-			if e.To.Kind == graph.KindSink {
-				out := r.findOutputConfig(e.To.ID)
-				if out != nil {
-					switch e.Type {
-					case graph.PortVideo:
-						codecName = out.CodecVideo
-					case graph.PortAudio:
-						codecName = out.CodecAudio
-					}
-				}
-			}
-		}
-	}
-	if codecName == "" {
-		return nil, fmt.Errorf("encoder node %q: no codec specified", node.ID)
+		return nil, fmt.Errorf("encoder node %q: no codec in node.Params (NormalizeConfig is required to populate it)", node.ID)
 	}
 
 	si, err := r.resolveStreamInfo(dag, node)
@@ -325,14 +317,15 @@ func (r *graphRunner) createEncoder(dag *graph.Graph, node *graph.Node) (*av.Enc
 	// SAR / DAR shorthand (FFmpeg `-aspect` / `setsar` / `setdar`).
 	// Resolve against the encoder's just-decided Width/Height so DAR
 	// can be converted into a SAR fraction.
-	if sar := paramString(node.Params, "__sar"); sar != "" {
-		n, d, err := resolveSAR(sar, "", opts.Width, opts.Height)
+	encInt := node.Internal.Encoder
+	if encInt != nil && encInt.SAR != "" {
+		n, d, err := resolveSAR(encInt.SAR, "", opts.Width, opts.Height)
 		if err != nil {
 			return nil, fmt.Errorf("encoder node %q: %w", node.ID, err)
 		}
 		opts.SampleAspectRatio = [2]int{n, d}
-	} else if dar := paramString(node.Params, "__dar"); dar != "" {
-		n, d, err := resolveSAR("", dar, opts.Width, opts.Height)
+	} else if encInt != nil && encInt.DAR != "" {
+		n, d, err := resolveSAR("", encInt.DAR, opts.Width, opts.Height)
 		if err != nil {
 			return nil, fmt.Errorf("encoder node %q: %w", node.ID, err)
 		}
@@ -342,14 +335,14 @@ func (r *graphRunner) createEncoder(dag *graph.Graph, node *graph.Node) (*av.Enc
 	// FieldOrder / InterlacedEncode (Wave 6 #33). Honour the
 	// encoder-side broadcast knobs after time_base / SAR but before
 	// avcodec_open2 (run via av.OpenEncoder below).
-	if fo := paramString(node.Params, "__field_order"); fo != "" {
-		v, ok := fieldOrderEnumValue(fo)
+	if encInt != nil && encInt.FieldOrder != "" {
+		v, ok := fieldOrderEnumValue(encInt.FieldOrder)
 		if !ok {
-			return nil, fmt.Errorf("encoder node %q: invalid field_order %q", node.ID, fo)
+			return nil, fmt.Errorf("encoder node %q: invalid field_order %q", node.ID, encInt.FieldOrder)
 		}
 		opts.FieldOrder = v
 	}
-	if paramString(node.Params, "__interlaced") == "1" {
+	if encInt != nil && encInt.Interlaced {
 		opts.InterlacedEncode = true
 	}
 	// EncoderTimeBase rational form ("N/D" or "N:D"). Sentinels
@@ -361,8 +354,8 @@ func (r *graphRunner) createEncoder(dag *graph.Graph, node *graph.Node) (*av.Enc
 	// requires explicit threading from the source side; we accept
 	// the marker here and let the existing buffersink default cover
 	// the common case (the validator caught misuse upstream).
-	if etb := paramString(node.Params, "__enc_time_base"); etb != "" {
-		n, d, sentinel, err := parseEncoderTimeBase(etb)
+	if encInt != nil && encInt.EncoderTimeBase != "" {
+		n, d, sentinel, err := parseEncoderTimeBase(encInt.EncoderTimeBase)
 		if err != nil {
 			return nil, fmt.Errorf("encoder node %q: %w", node.ID, err)
 		}
@@ -377,9 +370,10 @@ func (r *graphRunner) createEncoder(dag *graph.Graph, node *graph.Node) (*av.Enc
 	opts.ExtraOpts = collectEncoderExtraOpts(node.Params)
 
 	// Two-pass video encoding. Mirrors fftools/ffmpeg_mux_init.c:705 et seq.
-	if pass := paramInt(node.Params, "__pass"); pass != 0 {
+	if encInt != nil && encInt.Pass != 0 {
+		pass := encInt.Pass
 		opts.Pass = pass
-		prefix := paramString(node.Params, "__passlogfile")
+		prefix := encInt.PassLogFile
 		if prefix == "" {
 			prefix = "ffmpeg2pass"
 		} else {
@@ -391,7 +385,7 @@ func (r *graphRunner) createEncoder(dag *graph.Graph, node *graph.Node) (*av.Enc
 				prefix = "ffmpeg2pass"
 			}
 		}
-		idx := paramInt(node.Params, "__pass_index")
+		idx := encInt.PassIndex
 		// Anchor the log file to the working directory so that CodeQL's
 		// path-injection query can verify no traversal occurs via the
 		// strings.HasPrefix guard below.  Since prefix is restricted to
@@ -445,6 +439,13 @@ func (r *graphRunner) createEncoder(dag *graph.Graph, node *graph.Node) (*av.Enc
 // (or used to address the node itself). They must not be forwarded as
 // AVDictionary options because some are not codec AVOptions ("codec", "width",
 // "height") and the rest are already applied to EncoderOptions explicitly.
+//
+// Milestone B (B.5): the historical __* sentinel keys (__fps_mode,
+// __pass, __passlogfile, __pass_index, __sar, __dar, __enc_time_base,
+// __field_order, __interlaced, __force_key_frames) are no longer
+// written into NodeDef.Params; they live in NodeDef.Internal.Encoder
+// and are read directly from the typed struct. Only the genuinely
+// authored, runtime-special-cased keys remain in this set.
 var encoderReservedParams = map[string]bool{
 	"codec":       true,
 	"width":       true,
@@ -452,24 +453,6 @@ var encoderReservedParams = map[string]bool{
 	"bitrate":     true,
 	"threads":     true,
 	"thread_type": true,
-	// `__fps_mode` is consumed by handleEncoder's per-frame renumberer,
-	// not by libavcodec. Keep it out of the AVDictionary forwarded to
-	// avcodec_open2 so the encoder doesn't reject the unknown option.
-	"__fps_mode": true,
-	// `__pass`, `__passlogfile`, `__pass_index` are consumed by
-	// createEncoder to drive two-pass video encoding. They never
-	// reach avcodec_open2 directly \u2014 createEncoder either sets the
-	// codec-specific stats AVOption (libx264 / libvvenc / libx265)
-	// or wires AVCodecContext.stats_in / opens a log file for
-	// stats_out (generic codecs).
-	"__pass":          true,
-	"__passlogfile":   true,
-	"__pass_index":    true,
-	"__sar":           true,
-	"__dar":           true,
-	"__enc_time_base": true,
-	"__field_order":   true,
-	"__interlaced":    true,
 }
 
 // collectEncoderExtraOpts returns a map of AVDictionary options to forward to

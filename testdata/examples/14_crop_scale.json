@@ -39,6 +39,20 @@
           "h": "240"
         }
       }
+      {
+        "id": "enc_video",
+        "type": "encoder",
+        "params": {
+          "codec": "libx264"
+        }
+      },
+      {
+        "id": "enc_audio",
+        "type": "encoder",
+        "params": {
+          "codec": "aac"
+        }
+      }
     ],
     "edges": [
       {
@@ -53,11 +67,21 @@
       },
       {
         "from": "scale0",
+        "to": "enc_video",
+        "type": "video"
+      },
+      {
+        "from": "enc_video",
         "to": "out0:v",
         "type": "video"
       },
       {
         "from": "in0:a:0",
+        "to": "enc_audio",
+        "type": "audio"
+      },
+      {
+        "from": "enc_audio",
         "to": "out0:a",
         "type": "audio"
       }
@@ -66,9 +90,7 @@
   "outputs": [
     {
       "id": "out0",
-      "url": "{{output}}",
-      "codec_video": "libx264",
-      "codec_audio": "aac"
+      "url": "{{output}}"
     }
   ]
 }

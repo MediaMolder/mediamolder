@@ -25,7 +25,199 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   custom SEI injection.  Config parameter: `"text"` (string, default
   `"hello"`).
 
- `compat/ffcli.ParseFull`
+- **F1 — Reverse-lowering export (graph → FFmpeg CLI), in progress.**
+  - **F1.1 — `outputView` abstraction.** `compat/ffcli/encoder_view.go`
+    introduces `outputView` (per-stream Codec / Params / FPSMode /
+    ForceKeyFrames / SAR / DAR / EncTimeBase / FieldOrder / Pass /
+    PassLogFile / AudioSync) plus
+    `resolveOutputViewFromConfig(cfg, out)`. The exporter's codec /
+    encoder-params / fps_mode / audio_sync / two-pass blocks read
+    only from this view, decoupling the formatter from
+    `pipeline.Output` shorthand fields ahead of `ExportGraph`.
+  - **F1.6 — documentation.** New
+    [docs/export.md](docs/export.md) describes the two reverse
+    exporters (`Export(cfg)` vs `ExportGraph(cfg, def, warnings)`),
+    when to use each, the per-class round-trip behaviour, the CLI
+    entry, and the test gates that lock in the identity. Added a
+    "Reverse-lowering" section to
+    [docs/field-ownership.md](docs/field-ownership.md) cross-walking
+    each ownership class to its source-of-truth in `def` /
+    `cfg.Graph` and its emission path. Linked from the README.
+
+  - **F1.5 — `mediamolder export` CLI subcommand.** Renders a JSON
+    pipeline.Config back into an FFmpeg command line — the inverse
+    of `convert-cmd`. Default mode is the existing
+    `compat/ffcli.Export(cfg)` shorthand path; `--from-graph`
+    routes through `pipeline.NormalizeConfig` and
+    `compat/ffcli.ExportGraph(cfg, def, warnings)` so the rendered
+    CLI is sourced from the lowered graph (the F2 schema-deprecation
+    pre-flight). Normaliser warnings and `Unsupported` notes go to
+    stderr; the FFmpeg command goes to stdout. New
+    `TestCmdExport_FromGraph` proves the two modes produce the
+    same command for round-trippable configs.
+
+  - **F1.4 — explicit-filter chain coverage in graph-sourced
+    export.** Verified that user-authored filter nodes round-trip
+    through `ExportGraph` identically to `Export(cfg)`. Both paths
+    walk `cfg.Graph` for the `-filter_complex` topology via the
+    shared `graphToFilterComplex`, so synthesised `__async__*` /
+    `__aspl__*` / loudnorm-shuttle nodes that only exist in
+    `def.Nodes` cannot leak into the rendered command. New
+    `TestExportGraph_RoundTrip` cases `explicit_filter_chain_video`
+    (chained `scale` → `fps` → explicit libx264 encoder) and
+    `explicit_audio_filter_implicit_encoder` (`atempo` feeding an
+    implicit `aac` shorthand encoder) lock in the parity.
+
+  - **F1.3 — explicit-encoder coverage in graph-sourced export.**
+    `resolveOutputViewFromGraph` now treats user-authored encoder
+    nodes (no `Internal.Generated` provenance) as codec-only entries
+    in the per-output view; their AVOptions are emitted by the
+    existing `(*exporter).buildEncoderNodes` pass exactly as
+    `Export(cfg)` already does. Synthesised `__enc__*` nodes
+    (`Internal.Generated.By == "expandImplicitEncoders"`) continue
+    to flow through the view (Codec + Params + typed
+    `Internal.Encoder` shorthand). The `if !e.fromGraph` guard
+    around `buildEncoderNodes` is removed: synthesised encoders only
+    live in `def.Nodes`, never in `cfg.Graph.Nodes`, so the
+    surface-once invariant is preserved without a mode flag. New
+    test `TestExportGraph_ExplicitEncoderCoverage` exercises four
+    user-authored encoder topologies (libx264 with crf+preset, aac
+    with profile+bitrate, libx265 with crf+preset, mixed
+    explicit-video + implicit-audio) asserting both round-trip
+    parity with `Export(cfg)` and the presence of the expected
+    per-output `-c:<type>` and AVOption flags.
+
+  - **F1.2 — `ExportGraph(cfg, def, warnings)` entry + round-trip
+    proof.** New public exporter that sources the encoder views from
+    a normalized `*graph.Def` instead of `Output.*` shorthand. The
+    new `resolveOutputViewFromGraph` walks edges back from the
+    output's sink, reading codec from each upstream encoder/copy
+    node's `Params["codec"]`, encoder AVOptions from
+    `node.Params` (covering both user-authored encoder nodes and
+    `__enc__*` synthetic nodes from `expandImplicitEncoders`), and
+    encoder shorthand (`FPSMode`, `ForceKeyFrames`, `SAR`/`DAR`,
+    `EncoderTimeBase`, `FieldOrder`, `Interlaced`, `Pass`,
+    `PassLogFile`) from the typed `Internal.Encoder`. Audio sync is
+    recovered by detecting any upstream `__async__*` filter node
+    and parsing its `aresample=async=N[:first_pts=0]` spec back to
+    `N`. Slots the graph does not fill inherit shorthand, which
+    keeps round-trip parity for configs that have not been fully
+    lowered. In graph mode `buildEncoderNodes` is skipped so encoder
+    AVOptions are not double-emitted. The new
+    `TestExportGraph_RoundTrip` runs ten representative configs
+    (codec shorthand, `*-params` payloads, FPS mode, audio sync,
+    two-pass, force-key-frames, explicit encoder, copy node,
+    implicit-encoder synthesis with shorthand) and asserts
+    `ExportGraph(cfg, NormalizeConfig(cfg))` produces the same
+    command as `Export(cfg)` byte-for-byte.
+
+  - **F1.2 (prep) — codec-aware `*-params` emission.** Encoders
+    that expose a "-<codec>-params" channel (libx264, libx264rgb,
+    libx265, libsvtav1, librav1e, libxavs2) now have their
+    non-reserved AVOptions packed into a single
+    `-<codec>-params:<stream> k1=v1:k2=v2:…` argument instead of
+    individual `-<key>:<stream> <val>` flags. Reserved keys
+    (`codec`, `width`, `height`, `bitrate`, `threads`,
+    `thread_type`, and any `__`-prefixed Milestone-B sentinel) are
+    skipped — those are still emitted by their dedicated FFmpeg
+    flags. A pre-supplied `EncoderParamsVideo["x264-params"]`
+    payload is merged verbatim with the other keys. The new
+    helper `(*exporter).emitEncoderParams` is used by all three
+    emission paths: output-shorthand, per-stream override, and
+    explicit-encoder-node. Non-allowlist codecs keep the legacy
+    per-key emission. New tests:
+    `TestExport_EncoderParams_X264_PrivateOptions`,
+    `_X264_RawParamsMerged`, `_X265`, `_NonAllowlistCodec`.
+
+### Added (Milestone C)
+- **Milestone C — strip runtime reads of authoring shorthand.**
+  Three slices land the architectural promise that runtime code
+  never reads `Output.CodecVideo / CodecAudio / CodecSubtitle /
+  EncoderParams* / FPSMode / AudioSync / Pass / PassLogFile /
+  ForceKeyFrames / SAR / DAR / EncoderTimeBase / FieldOrder /
+  InterlacedEncode` after `NormalizeConfig` has run.
+  - **C.1 — Ambiguity warnings.** `NormalizeConfig` now emits
+    `compat.output_encoder_shorthand_ignored` warnings (routed
+    through the existing `EventBus` `ErrorEvent` path in
+    [pipeline/engine.go](pipeline/engine.go)) whenever an `Output`
+    carries authoring shorthand alongside an explicit encoder or
+    `copy` node that already feeds the same edge. The explicit
+    node wins; the warning makes the silently-dropped shorthand
+    visible. Synthetic encoders inserted by
+    `expandImplicitEncoders` are skipped via
+    `Internal.Generated.By` provenance — they ARE the lowered
+    shorthand. Five regression tests in
+    [pipeline/normalize_warnings_test.go](pipeline/normalize_warnings_test.go).
+  - **C.2 — Invariant test + linear-mode exemption.**
+    [pipeline/normalize_invariant_test.go](pipeline/normalize_invariant_test.go)
+    asserts that a representative shorthand-heavy `Config`
+    produces a `*graph.Def` whose encoders / filters / synthetic
+    nodes carry typed `Internal.Encoder` / `Internal.Filter` /
+    `Internal.Generated` — i.e. shorthand has been *fully* lowered
+    onto node-local state. Clearing all shorthand on a clone
+    produces zero ambiguity warnings. The legacy `runLinear` path
+    is documented as the single intentional exemption (it bypasses
+    `NormalizeConfig`; retire-or-keep tracked as F7 in the
+    followups roadmap).
+  - **C.3 — Drop runtime fallback.** `graphRunner.createEncoder`
+    no longer falls back to scanning sinks for `Output.CodecVideo
+    / CodecAudio` when `node.Params["codec"]` is empty; it fails
+    fast. After Milestone B every synthesised encoder node has
+    `codec` in `Params`, so the fallback was dead code that also
+    violated the C invariant. Audit grep for `out.CodecVideo /
+    out.FPSMode / ...` across `pipeline/`, `runtime/`, `graph/`
+    now shows only the two documented `runLinear` exemptions.
+- **Migrated `__*` sentinel `Params` keys to typed
+  `graph.NodeDef.Internal` (Milestone B.4–B.6).** The lowering
+  helpers in [pipeline/handlers_graph_build.go](pipeline/handlers_graph_build.go)
+  and [pipeline/loudnorm.go](pipeline/loudnorm.go) now write
+  `Internal.Encoder` (FPSMode, ForceKeyFrames, SAR, DAR,
+  EncoderTimeBase, FieldOrder, Interlaced, Pass, PassLogFile,
+  PassIndex), `Internal.Filter` (Threads, LoudnormPass,
+  LoudnormStatsFile), and `Internal.Generated` (provenance for
+  synthesised nodes — implicit encoders, audio sample-fmt /
+  audio_sync resamplers, two-pass loudnorm shuttle). The encoder
+  and filter consumers
+  ([pipeline/handlers_encoder.go](pipeline/handlers_encoder.go),
+  [pipeline/handlers_filter.go](pipeline/handlers_filter.go)) read
+  from those typed fields. `encoderReservedParams` is trimmed to
+  the runtime-special-cased non-AVOption keys
+  (`codec, width, height, bitrate, threads, thread_type`); all
+  `__*` entries are gone. `buildFilterSpec` keeps its `__` prefix
+  strip as a defensive guard against hand-edited authoring
+  configs.
+- **Typed `graph.NodeDef.Internal` lowering bag.** Adds an
+  `Internal` field to `graph.NodeDef` and `graph.Node` carrying
+  per-kind sub-structs (`EncoderInternal`, `FilterInternal`) plus a
+  `Generated {By, From, Reason}` provenance record for synthesised
+  nodes. The struct is the typed replacement for the historical
+  `__*` sentinel keys in `Params`; this commit lands the types and
+  plumbs them through `graph.Build` but does not yet write or read
+  them — that follows in Milestone B.4/B.5/B.6. See
+  [graph/internal_fields.go](graph/internal_fields.go) and
+  [docs/field-ownership.md](docs/field-ownership.md).
+- **`pipeline.NormalizeConfig` boundary.** New
+  `pipeline.NormalizeConfig(cfg) (*graph.Def, []NormalizeWarning, error)`
+  is the single, deterministic entry point for lowering an authoring
+  `pipeline.Config` into the executable `graph.Def` the runtime
+  consumes. `runGraph` now goes through it and surfaces any returned
+  warnings as `ErrorEvent`s on the existing pipeline events channel.
+  Today the function is a thin wrapper around `configToGraphDef`;
+  subsequent commits move the `__*` sentinel-key lowering behind it
+  and replace the sentinels with a typed `NodeDef.Internal` sub-struct
+  (Milestone B of `private_local/normalization_plan_revised.md`).
+  Three regression tests in
+  [pipeline/normalize_test.go](pipeline/normalize_test.go) gate the
+  no-mutation, determinism, and shorthand-coverage contracts.
+- **Field ownership classification.** New
+  [docs/field-ownership.md](docs/field-ownership.md) classifies every
+  `Config` / `GlobalOptions` / `Output` / `Input` field as node-local,
+  authoring shorthand, muxer-owned, true global, or deferred.
+  Authoritative reference for the normalization-boundary work tracked
+  in `private_local/normalization_plan_revised.md` (Milestone A).
+  No code changes; documentation only.
+
+- **Wave 8 #54: Unsupported-flag import report.** `compat/ffcli.ParseFull`
   and `ParseArgsFull` return an `ImportResult{Config, Unsupported}` that
   surfaces actionable notes for:
   - Wave 5–7 schema-promoted flags: `-bsf:v`/`:a`/`:s`, `-muxdelay`,

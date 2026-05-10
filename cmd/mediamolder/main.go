@@ -41,6 +41,8 @@ func run(args []string) error {
 		return cmdInspect(args[1:])
 	case "convert-cmd":
 		return cmdConvertCmd(args[1:])
+	case "export":
+		return cmdExport(args[1:])
 	case "list-codecs":
 		return cmdListCodecs(args[1:])
 	case "list-filters":
@@ -237,6 +239,47 @@ func cmdConvertCmd(args []string) error {
 	return enc.Encode(res.Config)
 }
 
+// cmdExport renders a JSON config back into an FFmpeg command line
+// (the inverse of `convert-cmd`). With --from-graph the config is
+// first normalised through pipeline.NormalizeConfig and the
+// resulting *graph.Def is fed to ExportGraph; otherwise the
+// shorthand-sourced Export(cfg) path is used. NormalizeConfig
+// warnings and ExportResult.Unsupported notes are printed to
+// stderr; the FFmpeg command goes to stdout.
+func cmdExport(args []string) error {
+	fs := flag.NewFlagSet("export", flag.ContinueOnError)
+	fromGraph := fs.Bool("from-graph", false,
+		"normalise the config through pipeline.NormalizeConfig and render via ExportGraph")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() < 1 {
+		return fmt.Errorf("usage: mediamolder export [--from-graph] <config.json>")
+	}
+	cfg, err := pipeline.ParseConfigFile(fs.Arg(0))
+	if err != nil {
+		return fmt.Errorf("read config %q: %w", fs.Arg(0), err)
+	}
+	var res ffcli.ExportResult
+	if *fromGraph {
+		def, warnings, nerr := pipeline.NormalizeConfig(cfg)
+		if nerr != nil {
+			return fmt.Errorf("normalize: %w", nerr)
+		}
+		for _, w := range warnings {
+			fmt.Fprintf(os.Stderr, "normalize warning: %s\n", w.Message)
+		}
+		res = ffcli.ExportGraph(cfg, def, warnings)
+	} else {
+		res = ffcli.Export(cfg)
+	}
+	for _, u := range res.Unsupported {
+		fmt.Fprintln(os.Stderr, "note:", u)
+	}
+	fmt.Println(res.Command)
+	return nil
+}
+
 func cmdListCodecs(args []string) error {
 	fs := flag.NewFlagSet("list-codecs", flag.ContinueOnError)
 	jsonOut := fs.Bool("json", false, "output as JSON")
@@ -389,6 +432,9 @@ Commands:
                                 --set KEY=VALUE (substitute {{KEY}} in the job JSON; may be repeated).
   inspect <config.json>  Validate and pretty-print the resolved pipeline config.
   convert-cmd "..."      Convert an FFmpeg command line to JSON config.
+  export <config.json>   Render a JSON config back into an FFmpeg command line.
+                         Flags: --from-graph (normalise via pipeline.NormalizeConfig
+                         and render via ExportGraph instead of the shorthand path).
   migrate <config.json>  Validate config and pretty-print (v1.0 migration scaffolding).
   list-codecs            List available codecs.
   list-filters           List available filters.
