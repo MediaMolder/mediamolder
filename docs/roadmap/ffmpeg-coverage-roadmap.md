@@ -4,7 +4,7 @@
 
 > Companion to [roadmap.md](roadmap.md), which is phase-based. This document is **capability-based** — it enumerates the FFmpeg surface area, marks what MediaMolder covers today, and prioritises the gaps.
 >
-> **Document structure:** §1–§2 form the *gap assessment* — §1 explains how gaps were identified (community-scripts corpus and production-pattern review, detailed below), §2 catalogues the full FFmpeg surface area. §3–§4 define the strategy. §5 is the completed *initial backlog* (all 8 items done). §6 is the *ongoing wave plan* — Waves 1–4 (items 1–22) are complete; Waves 5–9 (items 23–55) close every remaining non-deprecated CLI option and GUI gap; Wave 10 (items 56–60) deliberately defers hardware acceleration until everything else lands.
+> **Document structure:** §1–§2 form the *gap assessment* — §1 explains how gaps were identified (community-scripts corpus and production-pattern review, detailed below), §2 catalogues the full FFmpeg surface area. §3–§4 define the strategy. §5 is the completed *initial backlog* (all 8 items done). §6 is the *ongoing wave plan* — Waves 1–4 (items 1–22) are complete; Waves 5–9 (items 23–55) close every remaining non-deprecated CLI option and GUI gap; Wave 10 (items 56–60) deliberately defers hardware acceleration until everything else lands; Wave 11 (items 61–67) closes live-capture GUI, cover art embedding, attachment stream mapping, model-file filter assets, and network-source schema validation.
 
 ## 1. Testing with a wide range of FFmpeg commands
 
@@ -88,7 +88,7 @@ Legend: ✅ supported · ⚠️ partial · ❌ missing
 | Lavfi virtual sources (`-f lavfi -i color=…`)               | ✅    | `Input.Kind = "lavfi"`; `URL` carries the filtergraph spec. libavdevice linked + `avdevice_register_all()` at init |
 | `image2` glob pattern (`-i 'frames/*.png'`)                 | ✅    | `Input.PatternType` (`""`/`"none"`/`"sequence"`/`"glob"`/`"glob_sequence"`); validated against the libavformat enum |
 | `concat` demuxer (listfile)                                 | ✅    | `Input.Kind = "concat"` + `Input.ConcatList []ConcatEntry` (file/duration/inpoint/outpoint/metadata). `pipeline.materialiseConcatList` writes an `ffconcat 1.0` listfile to a temp path, opened with `format="concat"`; cleanup runs at input close. Apostrophes/newlines in filenames are rejected up front |
-| Device capture (`-f avfoundation`, `-f dshow`, `-f v4l2`)   | ⚠️    | Works through AVDict; no GUI palette, no probe |
+| Device capture (`-f avfoundation`, `-f dshow`, `-f v4l2`)   | ⚠️    | Works through AVDict; no GUI palette, no probe (Wave 11 #61–63) |
 | `-hwaccel`, `-hwaccel_device`, `-hwaccel_output_format`     | ⚠️    | Global only; not per-input |
 
 ### 2.2 Stream selection / mapping
@@ -102,7 +102,7 @@ Legend: ✅ supported · ⚠️ partial · ❌ missing
 | `-map_metadata`, `-map_chapters`              | ✅    | `metadata_reader` / `metadata_writer` graph nodes + `Input.MapMetadata` / `Input.MapChapters` shorthand; done Wave 2 #11 |
 | `-vn` / `-an` / `-sn` / `-dn` per output      | ✅    | `Output.DisableVideo`/`DisableAudio`/`DisableSubtitle`/`DisableData` drop every inbound edge of the corresponding media type at the sink before `expandImplicitEncoders` runs (mirrors fftools/ffmpeg_opt.c L1977/2078/2115/2187 — the OPT_OUTPUT half of the dual-purpose disable bools). Validator rejects all-four-set. |
 | Reuse of one decoded stream by N filters/outputs (`split`/`asplit`) | ✅ | Works via multi-output filters |
-| Per-input `-map` of *attachment* streams      | ❌    | (see §2.5 attachments) |
+| Per-input `-map` of *attachment* streams      | ❌    | (see §2.5 attachments; Wave 11 #65) |
 
 §2.2 is now covered for all four common selector grammars (track, all-of-type, optional, negate, program). FFmpeg's full `-map` grammar also supports `m:KEY[:VALUE]` metadata-based filters and `M:i:N` id-based selection, which remain out of scope; both have negligible real-world usage in the §6 corpus.
 
@@ -171,7 +171,7 @@ Legend: ✅ supported · ⚠️ partial · ❌ missing
 | `-map_metadata`, `-map_chapters`                                  | ✅    | `metadata_reader` / `metadata_writer` graph nodes connected by a `metadata` edge route container metadata or chapters from any input into any output (Wave 2 #11); `Input.MapMetadata` / `Input.MapChapters` shorthand still works for single-input cases. `compat/ffcli` parses both flags into the node pair. |
 | Chapter writing API                                               | ✅    | `Output.Chapters []ChapterInfo`; `metadata_writer` with `section=chapters` routes `AVChapter` entries from any input. |
 | Attachments (fonts for ASS, cover art)                            | ✅    | `Output.Attachments []Attachment` ({path, filename?, mimetype?}); muxed as `AVMEDIA_TYPE_ATTACHMENT` streams in matroska / mkv / webm. ffcli `-attach FILE`. (Wave 6 #31) |
-| Cover art / thumbnail embed in MP4/M4A                            | ❌    | Common end-user request |
+| Cover art / thumbnail embed in MP4/M4A                            | ❌    | Common end-user request (Wave 11 #64) |
 | Multiple outputs in one pipeline                                  | ✅    | Multiple `Output` entries |
 | **`tee` muxer / single-pass multi-format** (`mp4 + hls + dash`)   | ✅    | `Output.Kind="tee"` + typed `Output.Targets[]`; Wave 1 #5. |
 | HLS muxer (`hls_time`, `hls_playlist_type`, EXT-X-MAP, byte-range, low-latency) | ✅ | `Output.HLS *HLSOptions` typed (full hlsenc table); Wave 3 #12. |
@@ -195,8 +195,8 @@ Legend: ✅ supported · ⚠️ partial · ❌ missing
 
 | Capability                                                        | Status | Note |
 |-------------------------------------------------------------------|:------:|------|
-| RTP / RTSP / RTMP / SRT / RIST / NDI input/output                 | ⚠️    | Works through libavformat URL handlers; no schema validation, no GUI |
-| Screen capture (`avfoundation`, `gdigrab`, `x11grab`)             | ⚠️    | Same |
+| RTP / RTSP / RTMP / SRT / RIST / NDI input/output                 | ⚠️    | Works through libavformat URL handlers; no schema validation, no GUI (Wave 11 #67) |
+| Screen capture (`avfoundation`, `gdigrab`, `x11grab`)             | ⚠️    | Same; see Wave 11 #61–63 |
 | Decklink SDI input/output                                         | ⚠️    | Same |
 | `ffprobe` equivalence (stream summary)                            | ⚠️    | `/api/probe` exists but does not expose every probe field |
 | Tee muxer (see §2.5)                                              | ✅    | `Output.Kind="tee"` + `Output.Targets[]` (Wave 1 #5) |
@@ -1316,7 +1316,81 @@ already works in degraded form via per-filter spellings.
     forcing a hwdownload/hwupload round-trip, and exposes a
     device picker on every encoder/filter node.
 
-### 6.11 Cross-cutting accelerators (parallel with all waves)
+### 6.11 Wave 11 — "live capture, device palette & remaining parity"
+
+**Targets:** the ⚠️/❌ items in §2.1, §2.2, §2.5, §2.7 not addressed by any earlier wave — device capture GUI, cover art embedding, attachment stream mapping, model-file filter assets, and network-source schema validation.
+
+61. **`av.ListDevices` + `GET /api/devices` endpoint** (§2.1, §2.7) —
+    CGO wrapper around `avdevice_list_input_sources()` in `av/list.go`
+    (alongside `ListFilters`/`ListCodecs`). Returns
+    `[]DeviceInfo{Name, Description}` per enumerated device. New REST
+    endpoint `GET /api/devices?format=<fmt>` (registered in
+    `internal/gui/api.go`) dispatches per format: `dshow` on Windows,
+    `avfoundation` on macOS, `v4l2` on Linux. Guard with a 2-second
+    context timeout — Windows dshow enumeration can block on an
+    in-use device.
+
+62. **Device probe + seek guard** (§2.1) —
+    Extend `POST /api/probe` to accept an optional `format` string
+    field; opens the device URL with
+    `av.OpenInputWithFormat(url, format, opts)` under a 2-second
+    deadline context, then calls `avformat_find_stream_info` and
+    closes. In `pipeline/handlers_source.go`, add an
+    `isDeviceFormat()` helper
+    (`{"dshow", "avfoundation", "v4l2", "gdigrab", "x11grab", "decklink"}`)
+    and extend the existing seek-skip guard so that device inputs are
+    never seeked (same pattern already applied for `lavfi`). Per-platform
+    palette entries emitted by `/api/nodes` using `runtime.GOOS`
+    dispatch.
+
+63. **Device picker + Inspector form (frontend)** (§2.1, §2.8) —
+    A `DeviceInput` palette entry per platform
+    (dshow / avfoundation / v4l2 / gdigrab). Inspector form:
+    device-type dropdown (`video` / `audio` / `screen`); async
+    device-name combobox that fetches
+    `GET /api/devices?format=<fmt>` and populates the URL field with
+    the platform-appropriate specifier (e.g.
+    `video="Integrated Camera"` for dshow, `/dev/video0` for v4l2).
+    Typed AVDict option fields for common capture knobs: `framerate`,
+    `video_size`, `pixel_format`, `sample_rate`.
+
+64. **Cover art / thumbnail embed in MP4/M4A** (§2.5) —
+    `Output.CoverArt string` path field; materialised as an
+    `AVMEDIA_TYPE_VIDEO` stream carrying `AV_DISPOSITION_ATTACHED_PIC`
+    before `avformat_write_header`. Validator rejects containers that
+    don't support attached pictures (allow-list: mp4/m4a/mov/mp3/mkv).
+    GUI: file-picker in the output inspector (shown only when format
+    is in the allow-list). `compat/ffcli` maps
+    `-attach FILE -metadata:s:v:0 comment=Cover` to the new field.
+
+65. **Per-input `-map` of attachment streams** (§2.2) —
+    Extend `StreamSelect` with `type: "attachment"` (maps to
+    `AVMEDIA_TYPE_ATTACHMENT`); `handleSource` copies the attachment
+    packet unchanged (no decode/encode path). `compat/ffcli` maps
+    `-map 0:t` to the new specifier. `schema/v1.x.json` and
+    `frontend/src/lib/jobTypes.ts` updated.
+
+66. **Model-file filter fixture story** (§2.3) —
+    Standardise how filter parameters that reference on-disk model
+    files are expressed and validated (`arnndn=model=rnnoise.rnnn`,
+    `sofalizer=sofa=file.sofa`). Add a
+    `filter_asset_paths []string` field to `pipeline.Config`;
+    validator resolves model paths relative to the pipeline file and
+    rejects missing files at `Validate()` time (mirrors the YOLO
+    model-path story in `processors/`). GUI: file-picker appears in
+    the Inspector when a filter option name matches known model-bearing
+    suffixes (`_model`, `_sofa`, `model`, `sofa`).
+
+67. **RTP/RTSP/RTMP/SRT/RIST URL-scheme validation + GUI affordance** (§2.7) —
+    `pipeline.Validate()` inspects `Input.URL` scheme and emits a
+    structured error for known-bad option combos (e.g. `rtsp://`
+    without `rtsp_transport` when `Input.Options` is empty).
+    GUI: URL-scheme icon in the input inspector;
+    `rtsp_transport` dropdown (`tcp` / `udp` / `udp_multicast` / `http`)
+    and `stimeout` field for RTSP; `listen_timeout` and `mode` for SRT.
+    NDI and Decklink remain AVDict-passthrough only (§6.13).
+
+### 6.12 Cross-cutting accelerators (parallel with all waves)
 
 - **Capability-registry CI gate** — every PR touching
   `pipeline.Config` must update `compat/capabilities.yaml` or the
@@ -1330,7 +1404,7 @@ already works in degraded form via per-filter spellings.
   the per-stream / multi-output / tee surface from earlier waves is
   what makes the export non-trivial.
 
-### 6.12 Suggested deprecations / out-of-scope
+### 6.13 Suggested deprecations / out-of-scope
 
 Mark these `out-of-scope` in the capability registry rather than chase them. Importer (`compat/ffcli`) may still accept the legacy spelling and rewrite it.
 
@@ -1346,10 +1420,10 @@ Mark these `out-of-scope` in the capability registry rather than chase them. Imp
 | `-bsf` shorthand without `:stream_specifier` | Importer normalises to `-bsf:v`. No deprecated form in schema. |
 | `-aspect` (encoder side) | Subsumed by `Output.SAR` / `Output.DAR` (Wave 3 #15). Don't ship two ways to spell the same thing. |
 | `image2`'s `%d`-pattern globbing for **inputs** | Already side-stepped by `mjpeg` muxer choice in §5#2. For inputs, accept only explicit `-pattern_type glob` / `sequence`; reject `printf`-style patterns at schema validation as a footgun. |
-| Decklink / NDI **GUI** wizards | Keep the URL handlers (no work needed) but don't build dedicated inspectors until customer demand. AVDict passthrough is acceptable indefinitely for these. |
+| Decklink / NDI **GUI** wizards | Keep the URL handlers (no work needed) but don't build dedicated inspectors until customer demand. AVDict passthrough is acceptable indefinitely for these. See Wave 11 #67 for the URL-scheme validation layer. |
 | `-streamid`, `-bitexact`, `-tag` | Edge cases for spec-conformance testing. Ship as AVDict, never promote. |
 
-#### 6.12.1 Rejected deprecations (refactor as needed)
+#### 6.13.1 Rejected deprecations (refactor as needed)
 
 These parameters were suggested to be deprecated, but should be supported and refactored for mediamolder.
 | Flag(s) | Rationale |
