@@ -32,6 +32,9 @@ go.work.sum
 Thumbs.db
 
 # Test media corpus (handled by Git LFS)
+/testdata/dental_video.mp4
+/testdata/dental_video_10s.mp4
+/testdata/dental_video_30s.mp4
 # Keeping *.mp4, *.mkv etc. in LFS via .gitattributes
 
 # Benchmark results (tracked separately)
