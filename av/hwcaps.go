@@ -178,6 +178,16 @@ type DeviceCapabilities struct {
 	// runtime from libnvcuvid via cuvidGetDecoderCaps.  Nil for non-CUDA
 	// devices or when the NVDEC library is not installed.
 	NVDECCaps []NVDECCodecCaps
+
+	// AMFCaps holds per-codec AMD AMF encoder capability records queried at
+	// runtime from libamfrt64.so.1.  Nil for non-AMF devices or when the AMF
+	// runtime is not installed.
+	AMFCaps []AMFCodecCaps
+
+	// StaticCaps holds capability data derived from vendor-published look-up
+	// tables (max bitrate, NVDEC session count, VT resolution limits).
+	// The zero value means no static data is available for this device.
+	StaticCaps HWStaticCaps
 }
 
 // QueryCapabilities interrogates an open HWDeviceContext for its runtime
@@ -249,8 +259,17 @@ func (d *HWDeviceContext) QueryCapabilities() DeviceCapabilities {
 		caps.DisplayName = queryQSVDisplayName()
 	}
 
+	// AMF: run standalone library probe for per-codec encoder caps.
+	if d.deviceType == HWDeviceAMF {
+		caps.AMFCaps = QueryAMFCaps()
+		caps.DisplayName = "AMD GPU (AMF)"
+	}
+
 	// Hardware-accelerated filters for this device type.
 	caps.Filters = FilterHWAccels(d.deviceType)
+
+	// Static / table-derived caps (NVENC bitrate, NVDEC session count, VT limits).
+	caps.StaticCaps = QueryStaticCaps(caps)
 
 	return caps
 }
@@ -293,6 +312,7 @@ var hwFilterSuffixes = map[HWDeviceType][]string{
 	HWDeviceVAAPI:        {"_vaapi"},
 	HWDeviceQSV:          {"_qsv"},
 	HWDeviceVideoToolbox: {"_videotoolbox"},
+	HWDeviceAMF:          {"_amf"},
 }
 
 // hwFilterExact lists filter names that are hardware-accelerated but do not
