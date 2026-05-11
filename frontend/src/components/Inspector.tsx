@@ -149,6 +149,167 @@ function isDeviceInput(def: Input): boolean {
   return !!(def.format && DEVICE_FORMATS.has(def.format));
 }
 
+/* ---------- Network-input helpers (Wave 11 #67) ---------- */
+
+/** Extract the lower-cased scheme from a URL (token before "://"), or "" if none. */
+function urlScheme(url: string): string {
+  const m = /^([a-zA-Z][a-zA-Z0-9+\-.]*):\/\//.exec(url);
+  return m ? m[1].toLowerCase() : '';
+}
+
+/** True for live-network schemes that may need protocol-specific AVOptions. */
+function isNetworkInput(url: string): boolean {
+  switch (urlScheme(url)) {
+    case 'rtsp': case 'rtsps':
+    case 'rtmp': case 'rtmps': case 'rtmpe': case 'rtmpt': case 'rtmpte':
+    case 'srt':
+    case 'rist':
+    case 'rtp':
+      return true;
+  }
+  return false;
+}
+
+const SCHEME_LABEL: Record<string, string> = {
+  rtsp: 'RTSP', rtsps: 'RTSPS',
+  rtmp: 'RTMP', rtmps: 'RTMPS', rtmpe: 'RTMPE', rtmpt: 'RTMPT', rtmpte: 'RTMPTE',
+  srt: 'SRT',
+  rist: 'RIST',
+  rtp: 'RTP',
+};
+
+/** A small coloured badge showing the URL protocol. */
+function SchemeBadge({ url }: { url: string }) {
+  const scheme = urlScheme(url);
+  const label = SCHEME_LABEL[scheme];
+  if (!label) return null;
+  return (
+    <span
+      className="url-scheme-badge"
+      title={`Network protocol: ${label}`}
+      style={{
+        display: 'inline-block',
+        fontSize: 10,
+        fontFamily: 'monospace',
+        fontWeight: 700,
+        padding: '1px 5px',
+        borderRadius: 3,
+        marginLeft: 4,
+        verticalAlign: 'middle',
+        background: 'var(--accent-muted, #1e3a5f)',
+        color: 'var(--accent, #4ea8de)',
+        border: '1px solid var(--accent, #4ea8de)',
+        letterSpacing: '0.04em',
+        userSelect: 'none',
+      }}
+    >
+      {label}
+    </span>
+  );
+}
+
+/** Protocol-specific option controls that write into Input.Options (AVDict passthrough). */
+function NetworkInputSection({
+  url,
+  options,
+  onChange,
+}: {
+  url: string;
+  options: Record<string, unknown> | undefined;
+  onChange: (opts: Record<string, unknown> | undefined) => void;
+}) {
+  const scheme = urlScheme(url);
+  const setOpt = (key: string, value: string) => onChange(setDeviceOption(options, key, value));
+  const getOpt = (key: string) => String(options?.[key] ?? '');
+
+  if (scheme === 'rtsp' || scheme === 'rtsps') {
+    return (
+      <>
+        <label style={{ marginTop: 10 }}>RTSP transport</label>
+        <select
+          value={getOpt('rtsp_transport')}
+          onChange={(e) => setOpt('rtsp_transport', e.target.value)}
+        >
+          <option value="">Default (UDP)</option>
+          <option value="tcp">TCP (recommended for firewalled networks)</option>
+          <option value="udp">UDP</option>
+          <option value="udp_multicast">UDP multicast</option>
+          <option value="http">HTTP tunnelling</option>
+        </select>
+        <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: -4, marginBottom: 4 }}>
+          <code>-rtsp_transport</code> — TCP is more reliable across NAT/firewalls.
+        </div>
+        <label>Socket timeout (µs)</label>
+        <input
+          type="number"
+          min="0"
+          value={getOpt('stimeout')}
+          onChange={(e) => setOpt('stimeout', e.target.value)}
+          placeholder="e.g. 5000000 (5 s)"
+        />
+        <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: -4, marginBottom: 4 }}>
+          <code>-stimeout</code> — RTSP socket timeout in microseconds. 0 = no timeout.
+        </div>
+      </>
+    );
+  }
+
+  if (scheme === 'srt') {
+    return (
+      <>
+        <label style={{ marginTop: 10 }}>SRT mode</label>
+        <select
+          value={getOpt('mode')}
+          onChange={(e) => setOpt('mode', e.target.value)}
+        >
+          <option value="">Default (caller)</option>
+          <option value="caller">Caller — connect to a remote host</option>
+          <option value="listener">Listener — wait for incoming connection</option>
+          <option value="rendezvous">Rendezvous — symmetric hole-punch</option>
+        </select>
+        <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: -4, marginBottom: 4 }}>
+          <code>-mode</code> — SRT connection role.
+        </div>
+        <label>Listen timeout (µs)</label>
+        <input
+          type="number"
+          min="0"
+          value={getOpt('listen_timeout')}
+          onChange={(e) => setOpt('listen_timeout', e.target.value)}
+          placeholder="e.g. 30000000 (30 s)"
+        />
+        <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: -4, marginBottom: 4 }}>
+          <code>-listen_timeout</code> — Required in listener mode to prevent indefinite blocking.
+          0 = no timeout.
+        </div>
+      </>
+    );
+  }
+
+  if (scheme === 'rtmp' || scheme === 'rtmps' || scheme === 'rtmpe' ||
+      scheme === 'rtmpt' || scheme === 'rtmpte') {
+    return (
+      <>
+        <label style={{ marginTop: 10 }}>Connection timeout (µs)</label>
+        <input
+          type="number"
+          min="0"
+          value={getOpt('timeout')}
+          onChange={(e) => setOpt('timeout', e.target.value)}
+          placeholder="e.g. 10000000 (10 s)"
+        />
+        <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: -4, marginBottom: 4 }}>
+          <code>-timeout</code> — Network I/O timeout in microseconds. 0 = no timeout.
+        </div>
+      </>
+    );
+  }
+
+  // RIST, RTP, and other network schemes: no specialised controls — AVDict
+  // passthrough via the generic Options dict in TimingFields handles them.
+  return null;
+}
+
 type DeviceType = 'video' | 'audio' | 'screen';
 
 interface DeviceEntry {
@@ -445,6 +606,13 @@ function InputForm({
           probeUrl(path);
         }}
       />
+      {/* Wave 11 #67: show protocol badge when URL is a network scheme. */}
+      {isNetworkInput(def.url) && (
+        <div style={{ marginTop: -4, marginBottom: 4, fontSize: 11, color: 'var(--text-dim)' }}>
+          <SchemeBadge url={def.url} />
+          {' '}Network stream
+        </div>
+      )}
       <div className="probe-actions">
         {def.url && def.url.trim() ? (
           <button onClick={runProbe} disabled={probing}>
@@ -463,6 +631,14 @@ function InputForm({
       </div>
       {probeError && <div className="probe-error">{probeError}</div>}
       {probed && <ProbedStreamsView streams={probed} />}
+      {/* Wave 11 #67: network-protocol specific option controls. */}
+      {isNetworkInput(def.url) && (
+        <NetworkInputSection
+          url={def.url}
+          options={def.options}
+          onChange={(opts) => onChange({ ...def, options: opts })}
+        />
+      )}
       <label style={{ marginTop: 12 }}>Subtitle charset</label>
       <input
         list="sub-charenc-list"
