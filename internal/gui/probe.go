@@ -4,9 +4,11 @@
 package gui
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/MediaMolder/MediaMolder/av"
 )
@@ -14,6 +16,7 @@ import (
 // probeRequest is the JSON body accepted by POST /api/probe.
 type probeRequest struct {
 	URL     string            `json:"url"`
+	Format  string            `json:"format,omitempty"` // optional libavformat short name; required for device inputs ("dshow", "v4l2", "avfoundation", "gdigrab", …)
 	Options map[string]string `json:"options,omitempty"`
 }
 
@@ -82,14 +85,35 @@ func handleProbe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ctx, err := av.OpenInput(req.URL, req.Options)
-	if err != nil {
-		writeJSONError(w, http.StatusUnprocessableEntity, fmt.Errorf("open %q: %w", req.URL, err))
+	// Device demuxers (dshow, v4l2, avfoundation, gdigrab, …) can block
+	// indefinitely when a device is in use. Run the open in a goroutine
+	// and abort after 2 seconds regardless of whether a format was supplied.
+	type openResult struct {
+		ctx *av.InputFormatContext
+		err error
+	}
+	openCtx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+	defer cancel()
+	ch := make(chan openResult, 1)
+	go func() {
+		c, err := av.OpenInputWithFormat(req.URL, req.Format, req.Options)
+		ch <- openResult{c, err}
+	}()
+	var ictx *av.InputFormatContext
+	select {
+	case res := <-ch:
+		if res.err != nil {
+			writeJSONError(w, http.StatusUnprocessableEntity, fmt.Errorf("open %q: %w", req.URL, res.err))
+			return
+		}
+		ictx = res.ctx
+	case <-openCtx.Done():
+		writeJSONError(w, http.StatusGatewayTimeout, fmt.Errorf("probe %q timed out", req.URL))
 		return
 	}
-	defer ctx.Close()
+	defer ictx.Close()
 
-	streams, err := ctx.AllStreams()
+	streams, err := ictx.AllStreams()
 	if err != nil {
 		writeJSONError(w, http.StatusInternalServerError, fmt.Errorf("read streams: %w", err))
 		return

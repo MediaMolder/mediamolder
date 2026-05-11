@@ -468,6 +468,18 @@ func (r *graphRunner) handleCopy(ctx context.Context, node *graph.Node, ins []<-
 // keep frames in GPU memory. This mirrors FFmpeg's
 // -hwaccel_output_format semantics: any format not on the hw-surface
 // list triggers automatic hw→sw transfer. (Wave 10 #59)
+// isDeviceFormat reports whether the libavformat demuxer name refers to a
+// live capture device. Device inputs do not support seeking — attempting
+// avformat_seek_file on them returns an error or blocks indefinitely.
+// The set mirrors FFmpeg's built-in device demuxers on all supported platforms.
+func isDeviceFormat(name string) bool {
+	switch name {
+	case "dshow", "avfoundation", "v4l2", "gdigrab", "x11grab", "decklink":
+		return true
+	}
+	return false
+}
+
 func isSwPixFmtName(name string) bool {
 	if name == "" {
 		return false
@@ -606,7 +618,9 @@ func (r *graphRunner) openSource(cfg Input, srcNode *graph.Node, decOpts av.Deco
 	// for lavfi inputs — virtual sources don't support seeking and
 	// always start at zero, so any -ss value is converted to the
 	// per-packet stop check via timing's recording_time path.
-	if timing.haveStart && formatName != "lavfi" {
+	// Device inputs (dshow, v4l2, avfoundation, gdigrab, x11grab,
+	// decklink) likewise never support seeking.
+	if timing.haveStart && formatName != "lavfi" && !isDeviceFormat(formatName) {
 		targetUS := timing.seekTimestampUS(input.StartTime())
 		if err := input.SeekFile(targetUS); err != nil {
 			input.Close()
