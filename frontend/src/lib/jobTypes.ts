@@ -123,6 +123,9 @@ export interface NodeDef {
    *  (e.g. `showwavespic`: audio in, video out). Auto-filled by the engine
    *  from a curated registry when omitted. */
   output_media_type?: StreamType;
+  /** Name of a `hardware_devices` entry whose opened AVHWDeviceContext is
+   *  used for HW-accelerated encode/decode/filter on this node. (Wave 10 #56) */
+  device?: string;
 }
 
 export interface EdgeDef {
@@ -519,6 +522,21 @@ export interface Options {
   realtime?: boolean;
 }
 
+/** A named hardware-acceleration device context. Each entry is opened via
+ *  av_hwdevice_ctx_create at pipeline start and referenced from nodes via
+ *  NodeDef.device. Mirrors FFmpeg's `-init_hw_device type[=name][:device]`.
+ *  (Wave 10 #56) */
+export interface HardwareDevice {
+  /** Symbolic label (e.g. "gpu0"). Must be unique within the pipeline. */
+  name: string;
+  /** Device type: "cuda" | "vaapi" | "qsv" | "videotoolbox". */
+  type: string;
+  /** OS-level device specifier (e.g. "/dev/dri/renderD128", "0"). Omit for first available. */
+  device?: string;
+  /** Extra AVDictionary entries forwarded to av_hwdevice_ctx_create. */
+  options?: Record<string, unknown>;
+}
+
 export interface ErrorPolicy {
   policy: string;
   max_retries?: number;
@@ -556,6 +574,10 @@ export interface JobConfig {
    *  substitutes the resolved filesystem path before building the
    *  libavfilter graph. */
   assets?: Record<string, AssetRef>;
+  /** Named hardware-acceleration device contexts (Wave 10 #56). Each entry
+   *  is opened via av_hwdevice_ctx_create at pipeline start. Nodes reference
+   *  a device by name via NodeDef.device. Mirrors ffmpeg's -init_hw_device. */
+  hardware_devices?: HardwareDevice[];
 }
 
 /** A named media-asset entry in `JobConfig.assets`. The symbolic name
