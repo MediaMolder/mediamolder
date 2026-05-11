@@ -168,6 +168,16 @@ type DeviceCapabilities struct {
 	// version (e.g. "Ada Lovelace", "Ampere", "Turing").
 	// Empty when CUDASMMajor is 0.
 	CUDAArch string
+
+	// NVENCCaps holds per-codec NVENC encoder capability records queried at
+	// runtime from libnvidia-encode via nvEncGetEncodeCaps.  Nil for non-CUDA
+	// devices or when the NVENC library is not installed.
+	NVENCCaps []NVENCCodecCaps
+
+	// NVDECCaps holds per-codec NVDEC decoder capability records queried at
+	// runtime from libnvcuvid via cuvidGetDecoderCaps.  Nil for non-CUDA
+	// devices or when the NVDEC library is not installed.
+	NVDECCaps []NVDECCodecCaps
 }
 
 // QueryCapabilities interrogates an open HWDeviceContext for its runtime
@@ -211,6 +221,9 @@ func (d *HWDeviceContext) QueryCapabilities() DeviceCapabilities {
 			// Driver unavailable (macOS, no NVIDIA drivers) — keep static list.
 			caps.Codecs = staticCodecs
 		}
+		// Dynamic NVENC / NVDEC capability queries (no-ops when libraries absent).
+		caps.NVENCCaps = QueryNVENCCaps(d)
+		caps.NVDECCaps = QueryNVDECCaps(d)
 	} else {
 		caps.Codecs = staticCodecs
 	}

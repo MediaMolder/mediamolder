@@ -62,6 +62,8 @@ func run(args []string) error {
 		return nil
 	case "migrate":
 		return cmdMigrate(args[1:])
+	case "hwbench":
+		return cmdHWBench(args[1:])
 	case "help", "--help", "-h":
 		usage()
 		return nil
@@ -480,6 +482,9 @@ Commands:
   migrate <config.json>  Validate config and pretty-print (v1.0 migration scaffolding).
   list-codecs            List available codecs.
   list-hw-devices        Probe hardware acceleration devices (CUDA, VAAPI, QSV…).
+  hwbench                Benchmark encode/decode throughput and query HW capabilities.
+                         Flags: --device=TYPE, --codecs=LIST, --resolutions=LIST,
+                         --frames=N, --warmup=N, --output=FILE, --caps-only.
   list-filters           List available filters.
   list-formats           List available formats.
   list-processors        List registered go_processor processors.
