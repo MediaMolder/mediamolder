@@ -668,7 +668,9 @@ export interface ProbeResponse {
 }
 
 /** Runtime hardware-acceleration probe result from GET /api/hwaccel.
- *  Codecs is a static registry scan (what FFmpeg was compiled with).
+ *  For CUDA devices the codec list is filtered to the GPU generation and
+ *  annotated with per-codec limitation notes; other backends return the
+ *  full FFmpeg registry scan.
  *  SWFormats / MaxWidth / MaxHeight come from av_hwdevice_get_hwframe_constraints
  *  and are backend-specific — VideoToolbox and CUDA return partial data. */
 export interface HWAccelProbe {
@@ -681,6 +683,15 @@ export interface HWAccelProbe {
   max_width?: number;
   /** Maximum frame height reported by the device; 0 = not reported. */
   max_height?: number;
-  /** All codecs in the FFmpeg registry claiming HW_DEVICE_CTX support. */
-  codecs?: Array<{ name: string; role: 'encode' | 'decode' }>;
+  /** Codecs supported by this GPU generation (CUDA) or full FFmpeg registry (others). */
+  codecs?: Array<{
+    name: string;
+    role: 'encode' | 'decode';
+    /** Non-empty when the codec is supported but with profile/feature gaps at this GPU. */
+    note?: string;
+  }>;
+  /** CUDA compute capability string, e.g. "8.9". Present only for CUDA devices. */
+  cuda_sm?: string;
+  /** CUDA GPU architecture name, e.g. "Ada Lovelace". Present only for CUDA devices. */
+  cuda_arch?: string;
 }

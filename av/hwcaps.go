@@ -100,11 +100,15 @@ type HWCodecInfo struct {
 	Name string
 	// Role is "encode" or "decode".
 	Role string
+	// Note is an optional human-readable limitation note for this codec at
+	// the current GPU's compute capability (e.g. "4:2:2 profiles require
+	// Turing (SM 7.5+)").  Empty when there are no known limitations.
+	Note string
 }
 
 // DeviceCapabilities summarises the capabilities of an open hardware device,
 // combining runtime constraints from av_hwdevice_get_hwframe_constraints with
-// a static scan of the FFmpeg codec registry.
+// a filtered/annotated scan of the FFmpeg codec registry.
 type DeviceCapabilities struct {
 	// SWFormats lists the software pixel formats the device can transfer
 	// frames to/from (AVHWFramesConstraints.valid_sw_formats). Empty when
@@ -117,18 +121,33 @@ type DeviceCapabilities struct {
 	MaxWidth  int
 	MaxHeight int
 
-	// Codecs lists every codec in the FFmpeg registry that declares
-	// AV_CODEC_HW_CONFIG_METHOD_HW_DEVICE_CTX support for this device type.
-	// This is a static per-build enumeration — it reflects what FFmpeg was
-	// compiled with, not what the physical device supports (e.g. an old
-	// Kepler CUDA GPU will still list av1_cuvid even though NVDEC on Kepler
-	// cannot decode AV1). Use the SWFormats / MaxWidth constraints and the
-	// NVIDIA support matrix to cross-reference actual per-GPU capabilities.
+	// Codecs lists every codec that is supported by this device.
+	// For CUDA devices where the SM version could be probed, codecs
+	// unsupported by the GPU generation are removed and those with
+	// profile/feature gaps carry a non-empty HWCodecInfo.Note.
+	// For other backends (VAAPI, VideoToolbox, QSV) this is the full
+	// FFmpeg registry scan without filtering.
 	Codecs []HWCodecInfo
+
+	// CUDASMMajor / CUDASMMinor are the CUDA compute capability (e.g. 8, 9
+	// for Ada Lovelace).  Both are 0 for non-CUDA devices or when the SM
+	// version probe fails (no CUDA driver at runtime, macOS, etc.).
+	CUDASMMajor int
+	CUDASMMinor int
+
+	// CUDAArch is the GPU architecture marketing name derived from the SM
+	// version (e.g. "Ada Lovelace", "Ampere", "Turing").
+	// Empty when CUDASMMajor is 0.
+	CUDAArch string
 }
 
 // QueryCapabilities interrogates an open HWDeviceContext for its runtime
 // frame-format constraints and enumerates the matching FFmpeg codecs.
+//
+// For CUDA devices the SM (compute capability) version is probed via the
+// CUDA driver API and used to:
+//   - remove codecs that the GPU generation cannot execute, and
+//   - annotate codecs that have profile/feature gaps at this SM version.
 func (d *HWDeviceContext) QueryCapabilities() DeviceCapabilities {
 	var caps DeviceCapabilities
 
@@ -148,8 +167,21 @@ func (d *HWDeviceContext) QueryCapabilities() DeviceCapabilities {
 		caps.MaxHeight = int(cMaxH)
 	}
 
-	// Static codec registry scan.
-	caps.Codecs = ListHWCodecs(d.deviceType)
+	// Codec list: static registry scan, refined for CUDA with per-GPU filtering.
+	staticCodecs := ListHWCodecs(d.deviceType)
+	if d.deviceType == HWDeviceCUDA {
+		if smMaj, smMin, err := queryCUDASMVersion(d); err == nil {
+			caps.CUDASMMajor = smMaj
+			caps.CUDASMMinor = smMin
+			caps.CUDAArch = nvidiaArchName(smMaj, smMin)
+			caps.Codecs = FilterNVIDIACodecs(smMaj, smMin, staticCodecs)
+		} else {
+			// Driver unavailable (macOS, no NVIDIA drivers) — keep static list.
+			caps.Codecs = staticCodecs
+		}
+	} else {
+		caps.Codecs = staticCodecs
+	}
 
 	return caps
 }
