@@ -91,17 +91,70 @@ With `hw_accel` set, the pipeline:
 3. Routes frames through hardware filters (e.g., `scale_cuda` instead of `scale`)
 4. Feeds frames to a hardware encoder (e.g., `h264_nvenc`)
 
-### Hardware Filters
+### Hardware Filters — Auto-Mapping (Wave 10 #58)
 
-When a hardware device is active, software filters are automatically mapped to their hardware equivalents where available:
+Hardware filter auto-mapping is **opt-in per node** via the `auto_map_hw` field. When set to `true` on a filter node, the pipeline's `expandHWFilterMappings` pass:
 
-| Software Filter | CUDA | VAAPI | QSV | VideoToolbox |
-|----------------|------|-------|-----|--------------|
-| `scale` | `scale_cuda` | `scale_vaapi` | `scale_qsv` | `scale_vt` |
-| `yadif` | `yadif_cuda` | — | — | — |
-| `transpose` | `transpose_cuda` | `transpose_vaapi` | — | — |
-| `overlay` | `overlay_cuda` | `overlay_vaapi` | `overlay_qsv` | — |
-| `deinterlace` | — | `deinterlace_vaapi` | `deinterlace_qsv` | — |
+1. **Promotes** the software filter name to its hardware equivalent based on the node's `device` type (e.g. `"scale"` on a CUDA device → `"scale_cuda"`).
+2. **Inserts `hwupload`** nodes on incoming video edges from sources not on the same device (CPU frames → GPU surface).
+3. **Inserts `hwdownload`** nodes on outgoing video edges to destinations not on the same device (GPU surface → CPU frames).
+
+Audio and subtitle edges are never converted. The pass is a no-op when no `hardware_devices` are declared.
+
+**Example — CUDA scale with auto-mapping:**
+
+```json
+{
+  "hardware_devices": [{ "name": "gpu0", "type": "cuda", "device": "0" }],
+  "graph": {
+    "nodes": [
+      { "id": "scale", "type": "filter", "filter": "scale",
+        "params": { "w": "1920", "h": "1080" },
+        "device": "gpu0", "auto_map_hw": true }
+    ]
+  }
+}
+```
+
+The engine rewrites this to `scale_cuda`, inserts `hwupload` before it (when the source is a CPU decoder) and `hwdownload` after it (when the destination is a CPU encoder) — without requiring the user to name hardware filters explicitly.
+
+**Validation rules:**
+- `auto_map_hw` is only valid on `"filter"` nodes.
+- `device` must be set when `auto_map_hw` is `true`.
+- If the filter has no hardware alternative for the named device type, `validate()` rejects the config with a descriptive error listing the supported device types.
+
+Nodes that already name a hardware filter directly (e.g. `"scale_cuda"`) must **not** set `auto_map_hw: true`.
+
+**Supported filter/device combinations:**
+
+| Software Filter | CUDA | VAAPI | QSV | VideoToolbox | Vulkan | OpenCL |
+|----------------|------|-------|-----|--------------|--------|--------|
+| `scale` | `scale_cuda` | `scale_vaapi` | `scale_qsv` | `scale_vt` | `scale_vulkan` | — |
+| `yadif` | `yadif_cuda` | `deinterlace_vaapi` | — | — | — | — |
+| `deinterlace` | — | `deinterlace_vaapi` | `deinterlace_qsv` | — | — | — |
+| `overlay` | `overlay_cuda` | `overlay_vaapi` | `overlay_qsv` | — | — | — |
+| `transpose` | — | `transpose_vaapi` | `transpose_qsv` | — | — | — |
+| `thumbnail` | `thumbnail_cuda` | — | — | — | — | — |
+| `tonemap` | — | `tonemap_vaapi` | — | — | — | `tonemap_opencl` |
+| `flip` | — | — | — | — | `flip_vulkan` | — |
+| `rotate` | — | — | — | — | `rotate_vulkan` | — |
+| `avgblur` | — | — | — | — | `avgblur_vulkan` | `avgblur_opencl` |
+| `unsharp` | — | — | — | — | — | `unsharp_opencl` |
+| `bilateral` | — | — | — | — | — | `bilateral_opencl` |
+| `nlmeans` | — | — | — | — | — | `nlmeans_opencl` |
+| `convolution` | — | — | — | — | — | `convolution_opencl` |
+| `boxblur` | — | — | — | — | — | `boxblur_opencl` |
+| `sobel` | — | — | — | — | — | `sobel_opencl` |
+| `deshake` | — | — | — | — | — | `deshake_opencl` |
+| `colorkey` | `chromakey_cuda` | — | — | — | — | `colorkey_opencl` |
+| `blend` | — | — | — | — | `blend_vulkan` | `blend_opencl` |
+| `maskedmerge` | — | — | — | — | — | `maskedmerge_opencl` |
+| `erosion` | — | — | — | — | — | `erosion_opencl` |
+| `dilation` | — | — | — | — | — | `dilation_opencl` |
+| `xfade` | — | — | — | — | — | `xfade_opencl` |
+| `pad` | — | — | — | — | — | `pad_opencl` |
+
+Use `pipeline.HWFilterAlts()` to query the full table at runtime (e.g. for GUI node-palette population).
 
 ### Fallback to Software
 

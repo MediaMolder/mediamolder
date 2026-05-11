@@ -60,6 +60,7 @@ func configToGraphDef(cfg *Config) *graph.Def {
 			Params:          params,
 			OutputMediaType: omt,
 			Device:          node.Device,
+			AutoMapHW:       node.AutoMapHW,
 			Internal:        internal,
 		})
 	}
@@ -109,6 +110,7 @@ func configToGraphDef(cfg *Config) *graph.Def {
 			Type: e.Type,
 		})
 	}
+	expandHWFilterMappings(cfg, def)
 	expandImplicitEncoders(cfg, def)
 	spliceAudioAdaptersForEncoders(def)
 	spliceAudioSyncForOutputs(cfg, def)

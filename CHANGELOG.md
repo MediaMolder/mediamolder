@@ -6,6 +6,19 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 ## [Unreleased]
 
 ### Added
+- **Wave 10 #58: Hardware filter auto-mapping (`auto_map_hw`).** Per-node
+  opt-in flag on `pipeline.NodeDef` (JSON: `auto_map_hw`). When `true`,
+  `expandHWFilterMappings` (called just before `expandImplicitEncoders`)
+  promotes the software filter name to its hardware equivalent based on
+  the node's `device` type (e.g. `"scale"` → `"scale_cuda"` on CUDA),
+  and inserts synthetic `hwupload` / `hwdownload` nodes at device
+  boundaries. 21 sw→hw filter mappings across CUDA, VAAPI, QSV,
+  VideoToolbox, Vulkan, and OpenCL. Validation rejects unsupported
+  pairings with an actionable error. `pipeline.HWFilterAlts()` exports
+  the full table for tooling. 16 new tests in
+  [pipeline/hw_filter_map_test.go](pipeline/hw_filter_map_test.go).
+  Schemas and frontend types updated.
+
 - **`av` package: frame side data API.** `av/frame_sidedata.go` exposes
   helpers to attach, read, and remove `AVFrameSideData` entries on any
   `av.Frame`:

@@ -126,6 +126,11 @@ export interface NodeDef {
   /** Name of a `hardware_devices` entry whose opened AVHWDeviceContext is
    *  used for HW-accelerated encode/decode/filter on this node. (Wave 10 #56) */
   device?: string;
+  /** Opt-in hardware filter auto-mapping. When true, the sw filter name (e.g.
+   *  `"scale"`) is promoted to its hw equivalent (e.g. `"scale_cuda"`) based
+   *  on the device type, and hwupload/hwdownload nodes are inserted at device
+   *  boundaries. Requires `device` to be set. (Wave 10 #58) */
+  auto_map_hw?: boolean;
 }
 
 export interface EdgeDef {
