@@ -24,6 +24,7 @@ const STREAM_LETTER: Record<StreamType, string> = {
   subtitle: 's',
   data: 'd',
   metadata: 'm',
+  attachment: 't',
 };
 
 const LETTER_STREAM: Record<string, StreamType> = {
