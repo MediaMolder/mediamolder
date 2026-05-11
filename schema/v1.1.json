@@ -152,7 +152,8 @@
           "description": "Declared output media type. Required for cross-media-type filters (showwavespic, showspectrumpic, showvolume, ...) where the output type cannot be inferred from the inbound edge type. Auto-filled from a curated registry when omitted."
         },
         "error_policy": { "$ref": "#/$defs/error_policy" },
-        "device": { "type": "string", "description": "Name of a hardware_devices entry whose opened AVHWDeviceContext is used for HW-accelerated encode/decode/filter on this node. (Wave 10 #56)" }
+        "device": { "type": "string", "description": "Name of a hardware_devices entry whose opened AVHWDeviceContext is used for HW-accelerated encode/decode/filter on this node. (Wave 10 #56)" },
+        "auto_map_hw": { "type": "boolean", "description": "Opt-in per-node hardware filter auto-mapping. When true, the sw filter name (e.g. \"scale\") is promoted to its hw equivalent (e.g. \"scale_cuda\") based on the device type, and hwupload/hwdownload nodes are inserted at device boundaries. Requires \"device\" to be set. (Wave 10 #58)" }
       },
       "if": {
         "properties": { "type": { "const": "go_processor" } }

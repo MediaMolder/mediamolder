@@ -8,6 +8,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"sort"
+	"strings"
 )
 
 // Config is the top-level MediaMolder pipeline configuration (JSON schema v1.0).
@@ -412,6 +414,22 @@ type NodeDef struct {
 	// binding that FFmpeg expresses via `-init_hw_device` + per-codec
 	// AVOption (hwaccel_device). (Wave 10 #56)
 	Device string `json:"device,omitempty"`
+	// AutoMapHW, when true on a filter node that also has Device set,
+	// opts the node into the hardware filter auto-mapping pass
+	// (expandHWFilterMappings). The pass promotes the software filter
+	// name to its hardware equivalent for the declared device type
+	// (e.g. "scale" on a "cuda" device → "scale_cuda"), and inserts
+	// synthetic "hwupload" / "hwdownload" nodes on any video edge
+	// that crosses a device boundary.
+	//
+	// This is an explicit per-node opt-in so the user retains full
+	// control: a node with Device set but AutoMapHW=false keeps its
+	// software filter name and receives no format-conversion splices.
+	// Nodes that already name a hardware filter (e.g. "scale_cuda")
+	// should leave AutoMapHW=false (or omit it) — the pass only
+	// operates on names listed in the hw_filter_map table and is a
+	// no-op for hardware filter names not in that table. (Wave 10 #58)
+	AutoMapHW bool `json:"auto_map_hw,omitempty"`
 }
 
 // EdgeDef describes a directed edge between two nodes.
@@ -1603,9 +1621,38 @@ func validate(cfg *Config) error {
 		}
 	}
 	// Validate that NodeDef.Device references a declared hardware_device name.
+	// Also validate AutoMapHW constraints (Wave 10 #58).
 	for i, node := range cfg.Graph.Nodes {
 		if node.Device != "" && !hwDeviceNames[node.Device] {
 			return fmt.Errorf("node[%d] %q: device %q does not match any hardware_devices entry", i, node.ID, node.Device)
+		}
+		if node.AutoMapHW {
+			if node.Type != "filter" {
+				return fmt.Errorf("node[%d] %q: auto_map_hw is only valid on filter nodes (type is %q)", i, node.ID, node.Type)
+			}
+			if node.Device == "" {
+				return fmt.Errorf("node[%d] %q: auto_map_hw requires device to be set", i, node.ID)
+			}
+			// Look up the device type to give an early hint about unsupported combos.
+			var devType string
+			for _, hd := range cfg.HardwareDevices {
+				if hd.Name == node.Device {
+					devType = strings.ToLower(hd.Type)
+					break
+				}
+			}
+			if devType != "" {
+				alts := HWFilterAlts()
+				if devAlts, ok := alts[node.Filter]; ok {
+					if _, ok := devAlts[devType]; !ok {
+						return fmt.Errorf("node[%d] %q: auto_map_hw has no hardware equivalent for filter %q on device type %q (supported device types: %s)",
+							i, node.ID, node.Filter, devType, joinedKeys(devAlts))
+					}
+				}
+				// If the filter itself is not in the table the pass is a no-op;
+				// no error — the user may have set AutoMapHW speculatively on a
+				// filter that never needed mapping, and that is harmless.
+			}
 		}
 	}
 	return nil
@@ -1624,3 +1671,14 @@ func paramStringConfig(m map[string]any, key string) string {
 	s, _ := v.(string)
 	return s
 }
+
+// joinedKeys returns the sorted keys of m joined by ", " for error messages.
+func joinedKeys(m map[string]string) string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return strings.Join(keys, ", ")
+}
+

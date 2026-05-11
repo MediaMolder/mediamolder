@@ -122,7 +122,7 @@ Legend: ✅ supported · ⚠️ partial · ❌ missing
 | `-filter_threads`                                           | ✅    | Per-node override via `NodeDef.Threads`; pipeline-wide cap via `Config.FilterComplexThreads`. Both map to `AVFilterGraph.nb_threads`. (Wave 7 #38) |
 | Filter quoting (`,`, `;`, `'` in values)                    | ✅    | Fixed in commit `04f1a0c7` (`pipeline/engine.go` `buildFilterSpec`) |
 | Sidedata / per-frame metadata propagation                   | ✅    | `AVFrame->metadata` propagates through libavfilter natively; `metadata`/`ametadata` filters wired as regular `filter` nodes; av-layer `Frame.Metadata()`/`GetMetadata`/`SetMetadata` exposed for Go processors (Wave 7 #39). Fixture `51_metadata_filter.json`. |
-| Hardware filter auto-mapping (sw `scale` → `scale_cuda` etc.) | ❌  | User must spell the hardware filter name today |
+| Hardware filter auto-mapping (sw `scale` → `scale_cuda` etc.) | ✅  | Per-node `auto_map_hw` promotes sw filter to hw equivalent + inserts hwupload/hwdownload at device boundaries. 21 mappings: CUDA/VAAPI/QSV/VT/Vulkan/OpenCL. (Wave 10 #58) |
 | `hwupload`, `hwdownload`, `hwmap` filters                   | ⚠️    | Available via filter name, no first-class palette |
 | **Filter expression engine** (`t`, `n`, `frame`, `tw`, `th`, `text_w`, `text_h`, `w`, `h`, `enable=between(t,2,8)`, arithmetic) | ✅ | Strings reach libavfilter intact; `GET /api/filters/{name}/eval-expression` validator (§5#7); `expression: true` AVOption flag bit + curated per-filter variable registry (Wave 4 #19); syntax-highlighted `ExpressionInput` GUI control with cookbook + live validation (Wave 4 #20). |
 | **Mixed labelled + unlabelled `-filter_complex` outputs**   | ✅    | `compat/ffcli.NormalizeFilterComplex` rewrites dangling pads to synthetic `[mm_fc_out_N]`/`[mm_fc_in_0]` labels; idempotent (Wave 7 #40). Full `-filter_complex` parse → node+edge wiring deferred to Wave 8 #53. |
@@ -1312,10 +1312,12 @@ already works in degraded form via per-filter spellings.
     actionable `--enable-xxx` rebuild hints. Tests: 7 new targeted
     subtests plus `TestScaleNppVsScaleCuda`. (Wave 10 #57, complete)
 58. **Hardware filter auto-mapping** (`scale` ↔ `scale_cuda` /
-    `scale_npp` / `scale_qsv` / `scale_vt`) (§2.3) — Promote a
-    sw-filter name to its hw equivalent based on the active
-    `Device`; insert `hwupload` / `hwdownload` / `hwmap` only when
-    pad formats actually disagree.
+    `scale_npp` / `scale_qsv` / `scale_vt`) (§2.3) — Opt-in
+    per-node `auto_map_hw` flag promotes a sw-filter name to its hw
+    equivalent based on the node's `device` type; inserts
+    `hwupload` / `hwdownload` at device boundaries. 21 filter
+    mappings covering CUDA, VAAPI, QSV, VideoToolbox, Vulkan, and
+    OpenCL. 16 tests. (Wave 10 #58, complete)
 59. **Per-input `-hwaccel`** (§2.1) — Promote the global hwaccel
     knob to per-input granularity (`Input.HWAccel`,
     `Input.HWAccelDevice`, `Input.HWAccelOutputFormat`).

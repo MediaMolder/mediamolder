@@ -96,6 +96,10 @@ type NodeDef struct {
 	// whose opened AVHWDeviceContext is used for this node. Empty = CPU path.
 	// (Wave 10 #56)
 	Device string
+	// AutoMapHW opts this filter node into the hardware filter
+	// auto-mapping pass in pipeline (expandHWFilterMappings). See
+	// pipeline.NodeDef.AutoMapHW for the full contract. (Wave 10 #58)
+	AutoMapHW bool
 	// Internal carries typed lowering output produced by
 	// pipeline.NormalizeConfig (Milestone B). It is the typed
 	// replacement for the historical __* sentinel keys in Params.
