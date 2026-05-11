@@ -14,9 +14,10 @@ import (
 
 // hwCodecInfo mirrors av.HWCodecInfo for the JSON API.
 type hwCodecInfo struct {
-	Name string `json:"name"`           // e.g. "h264_cuvid", "hevc_vaapi"
-	Role string `json:"role"`           // "encode" or "decode"
-	Note string `json:"note,omitempty"` // capability limitation at this GPU, if any
+	Name      string `json:"name"`                // e.g. "h264_cuvid", "hevc_vaapi"
+	Role      string `json:"role"`                // "encode" or "decode"
+	MediaType string `json:"media_type,omitempty"` // "video", "audio", etc.
+	Note      string `json:"note,omitempty"`       // capability limitation at this GPU, if any
 }
 
 // hwAccelEntry is the JSON shape returned by GET /api/hwaccel.
@@ -65,7 +66,7 @@ func probeHWAccelOnce() []hwAccelEntry {
 				if len(caps.Codecs) > 0 {
 					entry.Codecs = make([]hwCodecInfo, len(caps.Codecs))
 					for i, c := range caps.Codecs {
-						entry.Codecs[i] = hwCodecInfo{Name: c.Name, Role: c.Role, Note: c.Note}
+						entry.Codecs[i] = hwCodecInfo{Name: c.Name, Role: c.Role, MediaType: c.MediaType, Note: c.Note}
 					}
 				}
 				entry.Filters = caps.Filters

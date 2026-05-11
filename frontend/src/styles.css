@@ -1129,7 +1129,7 @@ button.danger:hover { background: rgba(185, 74, 74, 0.15); }
   text-transform: uppercase;
   letter-spacing: 0.4px;
   color: var(--text-dim);
-  width: 48px;
+  width: 62px;
   flex-shrink: 0;
   padding-top: 3px;
 }

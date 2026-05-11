@@ -8,13 +8,17 @@ package av
 // #include "libavutil/bprint.h"
 // #include "libavcodec/avcodec.h"
 //
-// // Returns 1 if codec supports the device type via HW_DEVICE_CTX method.
-// static int mm_codec_supports_hw_device(const AVCodec *codec,
-//                                         enum AVHWDeviceType dev_type) {
+// // Returns 1 if codec supports the device type via HW_DEVICE_CTX or
+// // HW_FRAMES_CTX methods. Both must be considered: decoders typically use
+// // HW_DEVICE_CTX (opened context passed in) while encoders such as the
+// // VideoToolbox family use HW_FRAMES_CTX (frames context wraps the device).
+// static int mm_codec_supports_hw(const AVCodec *codec,
+//                                  enum AVHWDeviceType dev_type) {
 //     for (int i = 0;; i++) {
 //         const AVCodecHWConfig *cfg = avcodec_get_hw_config(codec, i);
 //         if (!cfg) break;
-//         if ((cfg->methods & AV_CODEC_HW_CONFIG_METHOD_HW_DEVICE_CTX) &&
+//         if (((cfg->methods & AV_CODEC_HW_CONFIG_METHOD_HW_DEVICE_CTX) ||
+//              (cfg->methods & AV_CODEC_HW_CONFIG_METHOD_HW_FRAMES_CTX)) &&
 //             cfg->device_type == dev_type)
 //             return 1;
 //     }
@@ -57,16 +61,22 @@ package av
 //     AVHWFramesConstraints *c =
 //         av_hwdevice_get_hwframe_constraints(device_ref, NULL);
 //     if (!c) return -1;
-//     *max_w = (int)c->max_width;
-//     *max_h = (int)c->max_height;
+//     // INT_MAX is the FFmpeg sentinel meaning "not known / uncapped".
+//     // Treat it as unavailable so callers see 0 instead of a garbage value.
+//     int w = (int)c->max_width;
+//     int h = (int)c->max_height;
 //     av_hwframe_constraints_free(&c);
+//     if (w == INT_MAX || h == INT_MAX) return -1;
+//     *max_w = w;
+//     *max_h = h;
 //     return 0;
 // }
 //
-// // Returns a '\n'-separated list of "name:encode" or "name:decode" entries
-// // for every FFmpeg codec registered with AV_CODEC_HW_CONFIG_METHOD_HW_DEVICE_CTX
-// // for the given device type. This is a static registry query; it does not
-// // require an open device context and does not probe the actual GPU.
+// // Returns a '\n'-separated list of "name:role:mediatype" entries for every
+// // FFmpeg codec that supports the given device type via HW_DEVICE_CTX or
+// // HW_FRAMES_CTX. role is "encode"|"decode"; mediatype is the
+// // av_get_media_type_string value ("video", "audio", etc.).
+// // This is a static registry query; no open device context is required.
 // // Caller must free the returned pointer with av_free.
 // // Returns NULL on allocation failure or when no codecs match.
 // static char* mm_hw_codec_list(enum AVHWDeviceType dev_type) {
@@ -76,10 +86,13 @@ package av
 //     const AVCodec *codec;
 //     int first = 1;
 //     while ((codec = av_codec_iterate(&iter))) {
-//         if (!mm_codec_supports_hw_device(codec, dev_type)) continue;
+//         if (!mm_codec_supports_hw(codec, dev_type)) continue;
+//         const char *mt = av_get_media_type_string(codec->type);
+//         if (!mt) mt = "unknown";
 //         if (!first) av_bprintf(&bp, "\n");
-//         av_bprintf(&bp, "%s:%s", codec->name,
-//                    av_codec_is_encoder(codec) ? "encode" : "decode");
+//         av_bprintf(&bp, "%s:%s:%s", codec->name,
+//                    av_codec_is_encoder(codec) ? "encode" : "decode",
+//                    mt);
 //         first = 0;
 //     }
 //     char *result = NULL;
@@ -94,12 +107,16 @@ import (
 )
 
 // HWCodecInfo names a codec that advertises hardware-acceleration support
-// for a device type via AV_CODEC_HW_CONFIG_METHOD_HW_DEVICE_CTX.
+// for a device type via AV_CODEC_HW_CONFIG_METHOD_HW_DEVICE_CTX or
+// AV_CODEC_HW_CONFIG_METHOD_HW_FRAMES_CTX.
 type HWCodecInfo struct {
 	// Name is the canonical FFmpeg codec name (e.g. "h264_cuvid", "hevc_vaapi").
 	Name string
 	// Role is "encode" or "decode".
 	Role string
+	// MediaType is the AVMediaType string from FFmpeg: "video", "audio",
+	// "subtitle", "data", or "unknown".
+	MediaType string
 	// Note is an optional human-readable limitation note for this codec at
 	// the current GPU's compute capability (e.g. "4:2:2 profiles require
 	// Turing (SM 7.5+)").  Empty when there are no known limitations.
@@ -220,9 +237,16 @@ func ListHWCodecs(t HWDeviceType) []HWCodecInfo {
 	lines := strings.Split(s, "\n")
 	out := make([]HWCodecInfo, 0, len(lines))
 	for _, line := range lines {
-		if i := strings.IndexByte(line, ':'); i > 0 {
-			out = append(out, HWCodecInfo{Name: line[:i], Role: line[i+1:]})
+		// Format: "name:role:mediatype" (3 fields).
+		parts := strings.SplitN(line, ":", 3)
+		if len(parts) < 2 {
+			continue
 		}
+		ci := HWCodecInfo{Name: parts[0], Role: parts[1]}
+		if len(parts) == 3 {
+			ci.MediaType = parts[2]
+		}
+		out = append(out, ci)
 	}
 	return out
 }
