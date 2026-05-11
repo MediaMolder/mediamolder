@@ -417,6 +417,66 @@ appear in the GUI palette:
 Each entry carries `Type: "device_input"` so the frontend can render a
 dedicated device inspector form (Wave 11 #63).
 
+## Device picker + Inspector form (Wave 11 #63)
+
+### Spawning a device input node
+
+Dragging a `device_input` palette entry onto the graph canvas creates an
+`Input` node with `format` pre-set to the demuxer name (`dshow`, `v4l2`,
+etc.). The Inspector detects device inputs by checking `Input.format`
+against the set of known device formats and routes them to
+`DeviceInputForm` instead of the standard `InputForm`.
+
+### DeviceInputForm
+
+`DeviceInputForm` (in `frontend/src/components/Inspector.tsx`) provides:
+
+**Device type dropdown** — shown when the format supports more than one
+stream type (`dshow`, `avfoundation`, `decklink`):
+- `video` — selects a video capture device
+- `audio` — selects an audio capture device
+- `screen` — for `gdigrab` (always selected; no dropdown shown)
+
+**Device name combobox** — asynchronously fetches
+`GET /api/devices?format=<fmt>` on mount and populates a `<datalist>`.
+Selecting or typing a device name builds the URL automatically:
+
+| Format | URL form |
+|--------|----------|
+| `dshow` | `video="<name>"` or `audio="<name>"` |
+| `avfoundation` | `<video_index>` or `none:<audio_index>` |
+| `v4l2` | `/dev/videoN` (raw device path) |
+| `gdigrab` | `desktop` or window title |
+| `decklink` | device name string |
+
+**Device URL field** — the auto-built URL shown verbatim; the user can
+override it manually (useful for `gdigrab` window titles or
+`avfoundation` combined `<v>:<a>` indices).
+
+**Test connection button** — issues `POST /api/probe` with
+`{url, format, options}` under the existing 2-second timeout. On
+success, stream metadata appears below (codec, resolution, frame rate,
+etc.) just like the standard input probe.
+
+**Capture options** — four typed fields mapped to AVDict entries:
+
+| Field | AVOption | Example |
+|-------|----------|---------|
+| Frame rate | `framerate` | `30` |
+| Video size | `video_size` | `1280x720` |
+| Pixel format | `pixel_format` | `yuyv422` |
+| Sample rate | `sample_rate` | `44100` |
+
+These go into `Input.options` (the AVDict passed to
+`avformat_open_input`) so they reach the device demuxer directly.
+
+### Roundtrip from JSON
+
+When a job config is loaded from JSON, inputs with a `format` matching a
+known device demuxer name are automatically shown in `DeviceInputForm`
+regardless of how they were created — no `kind: "device_input"` tag is
+required in the JSON.
+
 ## Troubleshooting
 
 ### "av_hwdevice_ctx_create: Cannot allocate memory"

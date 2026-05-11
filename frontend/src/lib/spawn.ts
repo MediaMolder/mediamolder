@@ -61,6 +61,26 @@ export function spawnNodeFrom(
     };
   }
 
+  // Wave 11 #63: Capture-device input. Spawns a top-level Input pre-populated
+  // with `format` set to the libavdevice demuxer name (dshow / avfoundation /
+  // v4l2 / gdigrab). The Inspector routes device inputs to DeviceInputForm.
+  if (entry.type === 'device_input') {
+    const baseId = entry.name; // 'dshow', 'v4l2', etc.
+    const id = uniqueId(baseId, existingIds.map((i) => i.replace(INPUT_PREFIX, '')));
+    const streams = (entry.streams ?? ['video']).map(
+      (t, idx): Input['streams'][number] => ({ input_index: idx, type: t as Input['streams'][number]['type'], track: 0 }),
+    );
+    const def: Input = { id, url: '', format: entry.name, streams };
+    return {
+      flowNode: {
+        id: INPUT_PREFIX + id,
+        type: 'mmNode',
+        position,
+        data: { kind: 'device_input', label: id, sublabel: entry.name, ref: { kind: 'input', def } },
+      },
+    };
+  }
+
   // Wave 8 #44: Input.Kind="lavfi" shorthand. Spawns a top-level Input
   // pre-populated with kind:"lavfi" so the URL field becomes the
   // libavfilter graph spec (e.g. `anullsrc=r=48000:cl=stereo`).
