@@ -58,6 +58,54 @@ export function lookupFriendlyName(name: string | undefined): string | undefined
   return friendlyByName.get(name);
 }
 
+// Static display labels for common hardware-accelerated filter names.
+// Falls back to lookupFriendlyName (palette registry) and then to a
+// simple pretty-print (drop the vendor suffix, title-case the rest).
+const FILTER_LABEL: Record<string, string> = {
+  scale_cuda:            'Scale (CUDA)',
+  scale_vaapi:           'Scale (VAAPI)',
+  scale_qsv:             'Scale (QSV)',
+  scale_videotoolbox:    'Scale (VideoToolbox)',
+  scale_amf:             'Scale (AMF)',
+  yadif_cuda:            'Deinterlace (CUDA)',
+  yadif_vaapi:           'Deinterlace (VAAPI)',
+  overlay_cuda:          'Overlay (CUDA)',
+  overlay_vaapi:         'Overlay (VAAPI)',
+  overlay_qsv:           'Overlay (QSV)',
+  overlay_amf:           'Overlay (AMF)',
+  tonemap_vaapi:         'Tone Map (VAAPI)',
+  tonemap_opencl:        'Tone Map (OpenCL)',
+  deinterlace_vaapi:     'Deinterlace (VAAPI)',
+  denoise_vaapi:         'Denoise (VAAPI)',
+  sharpen_vaapi:         'Sharpen (VAAPI)',
+  procamp_vaapi:         'ProAmp (VAAPI)',
+  hwupload_cuda:         'HW Upload (CUDA)',
+  hwdownload:            'HW Download',
+  hwupload:              'HW Upload',
+  hwmap:                 'HW Map',
+  transpose_vaapi:       'Transpose (VAAPI)',
+  transpose_cuda:        'Transpose (CUDA)',
+  transpose_qsv:         'Transpose (QSV)',
+  rotate_vaapi:          'Rotate (VAAPI)',
+  vpp_qsv:               'Video Post-Processing (QSV)',
+  vpp_amf:               'Video Post-Processing (AMF)',
+};
+
+/**
+ * Return a human-friendly label for a hardware-accelerated filter name.
+ * Checks the static label table first, then the palette registry, and
+ * finally falls back to a prettified version of the raw name.
+ */
+export function friendlyFilterName(name: string): string {
+  const stat = FILTER_LABEL[name];
+  if (stat) return stat;
+  const reg = lookupFriendlyName(name);
+  if (reg) return reg;
+  // Pretty-print: replace underscores, capitalise first word.
+  const words = name.replace(/_/g, ' ');
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
 /**
  * Return the human-friendly heading for an entry given the active
  * naming mode. In 'library' mode (or when no friendly alias exists)

@@ -1,5 +1,5 @@
 import type { HWAccelProbe } from '../lib/jobTypes';
-import { lookupFriendlyName } from '../lib/friendlyNames';
+import { lookupFriendlyName, friendlyFilterName } from '../lib/friendlyNames';
 
 interface Props {
   open: boolean;
@@ -147,13 +147,14 @@ function DeviceCard({ probe }: CardProps) {
               <span className="hw-row-label">Filters</span>
               <div className="hw-row-chips">
                 {filters.map((f) => (
-                  <Chip key={f} label={f} />
+                  <Chip key={f} label={friendlyFilterName(f)} />
                 ))}
               </div>
             </div>
           )}
 
-          {(maxRes || (probe.sw_formats && probe.sw_formats.length > 0)) && (
+          {(maxRes || (probe.sw_formats && probe.sw_formats.length > 0) ||
+            probe.nvenc_caps || probe.nvdec_caps || probe.amf_caps || probe.static_caps) && (
             <details className="hw-advanced">
               <summary>Advanced</summary>
               <div className="hw-advanced-body">
@@ -167,6 +168,114 @@ function DeviceCard({ probe }: CardProps) {
                   <div className="hw-adv-row">
                     <span className="hw-adv-key">SW pixel formats</span>
                     <span className="hw-adv-val">{probe.sw_formats.join(', ')}</span>
+                  </div>
+                )}
+                {probe.static_caps?.nvdec_max_sessions != null && (
+                  <div className="hw-adv-row">
+                    <span className="hw-adv-key">Max NVDEC sessions</span>
+                    <span className="hw-adv-val">{probe.static_caps.nvdec_max_sessions}</span>
+                  </div>
+                )}
+                {probe.static_caps?.vt_max_width != null && probe.static_caps.vt_max_height != null && (
+                  <div className="hw-adv-row">
+                    <span className="hw-adv-key">VT max encode res</span>
+                    <span className="hw-adv-val">{probe.static_caps.vt_max_width} × {probe.static_caps.vt_max_height}</span>
+                  </div>
+                )}
+                {probe.nvenc_caps && probe.nvenc_caps.length > 0 && (
+                  <div className="hw-caps-section">
+                    <div className="hw-caps-title">NVENC encoder limits</div>
+                    <table className="hw-caps-table">
+                      <thead>
+                        <tr>
+                          <th>Codec</th>
+                          <th>Max res</th>
+                          <th title="Theoretical macroblock throughput ceiling">MB/s</th>
+                          <th title="Hardware encoder engines">Engines</th>
+                          <th>Level</th>
+                          <th title="Maximum consecutive B-frames">B-frames</th>
+                          <th title="Comma-separated feature flags: 10-bit, 4:4:4, lossless, lookahead, temporal AQ, weighted prediction, B-frame reference">Features</th>
+                          {probe.static_caps?.nvenc_max_bitrate_kbps && <th title="Vendor-published maximum bitrate">Max Mbps</th>}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {probe.nvenc_caps.map((c) => {
+                          const flags: string[] = [];
+                          if (c.support_10bit) flags.push('10-bit');
+                          if (c.support_yuv444) flags.push('4:4:4');
+                          if (c.support_lossless) flags.push('lossless');
+                          if (c.support_lookahead) flags.push('lookahead');
+                          if (c.support_temporal_aq) flags.push('temporal AQ');
+                          if (c.support_weighted_pred) flags.push('weighted pred');
+                          if (c.support_bframe_ref) flags.push('B-ref');
+                          const maxKbps = probe.static_caps?.nvenc_max_bitrate_kbps?.[c.codec_name];
+                          return (
+                            <tr key={c.codec_name}>
+                              <td>{codecLabel(c.codec_name)}</td>
+                              <td>{c.max_width}×{c.max_height}</td>
+                              <td>{c.mb_per_sec_max > 0 ? (c.mb_per_sec_max / 1000).toFixed(0) + 'k' : '—'}</td>
+                              <td>{c.num_encoder_engines > 0 ? c.num_encoder_engines : '—'}</td>
+                              <td>{c.level_min}–{c.level_max}</td>
+                              <td>{c.max_bframes}</td>
+                              <td>{flags.join(', ') || '—'}</td>
+                              {probe.static_caps?.nvenc_max_bitrate_kbps && (
+                                <td>{maxKbps ? (maxKbps / 1000).toFixed(0) + ' Mbps' : '—'}</td>
+                              )}
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+                {probe.nvdec_caps && probe.nvdec_caps.length > 0 && (
+                  <div className="hw-caps-section">
+                    <div className="hw-caps-title">NVDEC decoder limits</div>
+                    <table className="hw-caps-table">
+                      <thead>
+                        <tr>
+                          <th>Codec</th>
+                          <th>Max res</th>
+                          <th>Chroma</th>
+                          <th>Bit depth</th>
+                          <th title="Pixel format output bitmask">Formats</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {probe.nvdec_caps.map((c) => (
+                          <tr key={`${c.codec_name}-${c.chroma_fmt}-${c.bit_depth}`}>
+                            <td>{codecLabel(c.codec_name)}</td>
+                            <td>{c.max_width}×{c.max_height}</td>
+                            <td>{c.chroma_fmt}</td>
+                            <td>{c.bit_depth}-bit</td>
+                            <td>0x{c.output_format_mask.toString(16).padStart(2, '0')}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+                {probe.amf_caps && probe.amf_caps.length > 0 && (
+                  <div className="hw-caps-section">
+                    <div className="hw-caps-title">AMF encoder limits</div>
+                    <table className="hw-caps-table">
+                      <thead>
+                        <tr>
+                          <th>Codec</th>
+                          <th>Max res</th>
+                          <th title="Maximum concurrent encode streams">Streams</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {probe.amf_caps.map((c) => (
+                          <tr key={c.codec_name}>
+                            <td>{codecLabel(c.codec_name)}</td>
+                            <td>{c.max_width}×{c.max_height}</td>
+                            <td>{c.max_num_of_streams}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
                   </div>
                 )}
               </div>
