@@ -717,7 +717,7 @@ func (r *graphRunner) openSource(cfg Input, srcNode *graph.Node, decOpts av.Deco
 		si := streamByIdx[idx]
 		typ := si.Type.String()
 		switch {
-		case copyOnly[typ] || typ == "attachment":
+		case copyOnly[typ] || typ == "attachment" || typ == "data" || typ == "unknown":
 			// Stream-copy only: don't open a decoder.
 			// Attachment data lives in codecpar->extradata and is written
 			// by WriteHeader; no packet decoding is needed.
