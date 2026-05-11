@@ -215,6 +215,14 @@ func (d *HWDeviceContext) QueryCapabilities() DeviceCapabilities {
 		caps.Codecs = staticCodecs
 	}
 
+	// For VideoToolbox, augment the LibAV registry scan with a direct
+	// platform probe that can reveal codecs LibAV cannot represent
+	// (e.g. ProRes RAW encode/decode on Apple Silicon).
+	if d.deviceType == HWDeviceVideoToolbox {
+		vtCaps := QueryVTCapabilities()
+		caps.Codecs = mergeVTCodecs(caps.Codecs, vtCaps)
+	}
+
 	// Hardware-accelerated filters for this device type.
 	caps.Filters = FilterHWAccels(d.deviceType)
 
@@ -297,4 +305,26 @@ func FilterHWAccels(t HWDeviceType) []string {
 		}
 	}
 	return out
+}
+
+// mergeVTCodecs adds VT-native codec entries (from a direct platform probe)
+// to base, skipping any codec name that already appears in base.
+func mergeVTCodecs(base []HWCodecInfo, vt VTPlatformCapabilities) []HWCodecInfo {
+	seen := make(map[string]bool, len(base))
+	for _, c := range base {
+		seen[c.Name+":"+c.Role] = true
+	}
+	for _, c := range vt.ExtraEncoders {
+		if !seen[c.Name+":"+c.Role] {
+			base = append(base, c)
+			seen[c.Name+":"+c.Role] = true
+		}
+	}
+	for _, c := range vt.ExtraDecoders {
+		if !seen[c.Name+":"+c.Role] {
+			base = append(base, c)
+			seen[c.Name+":"+c.Role] = true
+		}
+	}
+	return base
 }
