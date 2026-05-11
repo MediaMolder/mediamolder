@@ -71,3 +71,143 @@ func TestValidateFilterAvailability_AllowsKnownFilter(t *testing.T) {
 		t.Fatalf("expected scale to validate, got %v", err)
 	}
 }
+
+// TestFilterAvailabilityCache verifies that builtInFilters() returns a
+// non-empty set and that 'scale' (always compiled in) is present.
+func TestFilterAvailabilityCache(t *testing.T) {
+	set := builtInFilters()
+	if len(set) == 0 {
+		t.Fatal("builtInFilters returned empty set; av.ListFilters broken?")
+	}
+	if _, ok := set["scale"]; !ok {
+		t.Error("builtInFilters: 'scale' not in cache; libavfilter build is broken")
+	}
+	// Calling again must return the same map (sync.Once).
+	set2 := builtInFilters()
+	if &set != &set2 && len(set) != len(set2) {
+		t.Error("builtInFilters: second call returned different-sized map")
+	}
+}
+
+// TestHardwareFilterHints_CUDA checks that CUDA filters that are absent get
+// an actionable --enable-cuda-nvcc hint, and that scale_npp (which also
+// requires libnpp) mentions libnpp specifically.
+func TestHardwareFilterHints_CUDA(t *testing.T) {
+	for _, tc := range []struct {
+		filter  string
+		wantHint string
+	}{
+		{"scale_cuda", "cuda-nvcc"},
+		{"yadif_cuda", "cuda-nvcc"},
+		{"overlay_cuda", "cuda-nvcc"},
+		{"scale_npp", "libnpp"},
+		{"transpose_npp", "libnpp"},
+	} {
+		if av.FindFilter(tc.filter) {
+			continue // filter is present — skip hint check
+		}
+		err := filterAvailabilityError(tc.filter)
+		if err == nil {
+			t.Errorf("%s: expected unavailability error, got nil", tc.filter)
+			continue
+		}
+		if !strings.Contains(err.Error(), tc.wantHint) {
+			t.Errorf("%s: error %q does not mention %q", tc.filter, err.Error(), tc.wantHint)
+		}
+	}
+}
+
+// TestHardwareFilterHints_QSV checks Intel QSV filter hints.
+func TestHardwareFilterHints_QSV(t *testing.T) {
+	for _, filter := range []string{"scale_qsv", "deinterlace_qsv", "vpp_qsv", "overlay_qsv"} {
+		if av.FindFilter(filter) {
+			continue
+		}
+		err := filterAvailabilityError(filter)
+		if err == nil {
+			t.Errorf("%s: expected unavailability error, got nil", filter)
+			continue
+		}
+		if !strings.Contains(err.Error(), "libmfx") {
+			t.Errorf("%s: error %q does not mention libmfx", filter, err.Error())
+		}
+	}
+}
+
+// TestHardwareFilterHints_Vulkan checks Vulkan filter hints.
+func TestHardwareFilterHints_Vulkan(t *testing.T) {
+	for _, filter := range []string{"scale_vulkan", "overlay_vulkan", "transpose_vulkan"} {
+		if av.FindFilter(filter) {
+			continue
+		}
+		err := filterAvailabilityError(filter)
+		if err == nil {
+			t.Errorf("%s: expected unavailability error, got nil", filter)
+			continue
+		}
+		if !strings.Contains(err.Error(), "vulkan") {
+			t.Errorf("%s: error %q does not mention vulkan", filter, err.Error())
+		}
+	}
+}
+
+// TestHardwareFilterHints_OpenCL checks OpenCL filter hints.
+func TestHardwareFilterHints_OpenCL(t *testing.T) {
+	for _, filter := range []string{"tonemap_opencl", "scale_vulkan", "nlmeans_opencl", "unsharp_opencl"} {
+		if av.FindFilter(filter) {
+			continue
+		}
+		err := filterAvailabilityError(filter)
+		if err == nil {
+			t.Errorf("%s: expected unavailability error, got nil", filter)
+			continue
+		}
+		// scale_vulkan mentions vulkan; others mention opencl
+		if filter == "scale_vulkan" {
+			if !strings.Contains(err.Error(), "vulkan") {
+				t.Errorf("%s: error %q does not mention vulkan", filter, err.Error())
+			}
+		} else {
+			if !strings.Contains(err.Error(), "opencl") {
+				t.Errorf("%s: error %q does not mention opencl", filter, err.Error())
+			}
+		}
+	}
+}
+
+// TestHardwareFilterHints_VAAPI checks VAAPI filter hints.
+func TestHardwareFilterHints_VAAPI(t *testing.T) {
+	for _, filter := range []string{"scale_vaapi", "deinterlace_vaapi", "overlay_vaapi", "procamp_vaapi"} {
+		if av.FindFilter(filter) {
+			continue
+		}
+		err := filterAvailabilityError(filter)
+		if err == nil {
+			t.Errorf("%s: expected unavailability error, got nil", filter)
+			continue
+		}
+		if !strings.Contains(err.Error(), "vaapi") {
+			t.Errorf("%s: error %q does not mention vaapi", filter, err.Error())
+		}
+	}
+}
+
+// TestScaleNppVsScaleCuda verifies the error messages differentiate NPP
+// (needs libnpp) from plain CUDA (needs cuda-nvcc only).
+func TestScaleNppVsScaleCuda(t *testing.T) {
+	if av.FindFilter("scale_npp") || av.FindFilter("scale_cuda") {
+		t.Skip("one or both CUDA scale filters are present; can't check missing hints")
+	}
+	nppErr := filterAvailabilityError("scale_npp")
+	cudaErr := filterAvailabilityError("scale_cuda")
+	if nppErr == nil || cudaErr == nil {
+		t.Skip("filters available; skipping error message check")
+	}
+	if !strings.Contains(nppErr.Error(), "libnpp") {
+		t.Errorf("scale_npp error should mention libnpp, got: %v", nppErr)
+	}
+	if strings.Contains(cudaErr.Error(), "libnpp") {
+		t.Errorf("scale_cuda error should NOT mention libnpp (only cuda-nvcc), got: %v", cudaErr)
+	}
+}
+

@@ -201,7 +201,7 @@ Legend: ✅ supported · ⚠️ partial · ❌ missing
 | `ffprobe` equivalence (stream summary)                            | ⚠️    | `/api/probe` exists but does not expose every probe field |
 | Tee muxer (see §2.5)                                              | ✅    | `Output.Kind="tee"` + `Output.Targets[]` (Wave 1 #5) |
 | Dynamic per-frame metadata via ZMQ filter                         | ❌    | |
-| **`-init_hw_device` (multi-device graphs)**                       | ❌    | Pipelines that bridge CUDA decode → CPU filter → QSV encode need named device declarations + `hwmap` between them |
+| **`-init_hw_device` (multi-device graphs)**                       | ✅    | `Config.HardwareDevices []HardwareDevice` ({name, type, device?, options?}) + `NodeDef.Device` selector; opened via `av_hwdevice_ctx_create` at pipeline start. Parse/export via `compat/ffcli`. (Wave 10 #56) |
 | **`scale_npp` availability separate from `scale_cuda`**           | ⚠️    | Different libraries; needs per-filter availability probe at startup |
 | **First-class raw-stream input** (`-f rawvideo -pix_fmt yuv420p -s 1920x1080 -r 30 -i raw.yuv`) | ✅ | `Input.Kind = "raw"` + typed `Format`/`PixelFormat`/`VideoSize`/`FrameRate`/`SampleRate`/`Channels`/`SampleFormat`. Validated up front (raw inputs require `Format` plus the matching geometry/format fields). Round-trip-tested via `compat/ffcli` and `testdata/community-scripts/27_raw_yuv.json` |
 
@@ -1293,15 +1293,24 @@ matrix in §2 still has many ⚠️/❌ entries that affect every user, while
 hardware acceleration affects only users with specific devices and
 already works in degraded form via per-filter spellings.
 
-56. **`-init_hw_device` + per-node `device:` selector** (§3.4.5) —
-    Mandatory for any mixed-vendor pipeline (CUDA decode → CPU
-    filter → QSV encode). `Pipeline.HardwareDevices
-    []HardwareDevice` (`{name, type, device?, options?}`) plus a
-    `Device string` field on encoder/decoder/filter nodes.
-57. **Per-filter availability probe** (`scale_npp` vs `scale_cuda`)
-    (§3.4.6) — Already done for codecs; same harness pattern
-    applied to the filter table at process start. Schema validator
-    rejects unknown-filter references with an actionable error.
+56. ✅ **`-init_hw_device` + per-node `device:` selector** (§3.4.5) —
+    `Config.HardwareDevices []HardwareDevice` + `NodeDef.Device`
+    string; opened at pipeline start via `av_hwdevice_ctx_create`;
+    parsed/exported by `compat/ffcli`; schemas and frontend types
+    updated. (Wave 10 #56, complete)
+57. ✅ **Per-filter availability probe** (`scale_npp` vs `scale_cuda`)
+    (§3.4.6) — `builtInFilters()` singleton (built once at first call
+    via `sync.Once` + `av.ListFilters()`) provides an O(1) pure-Go
+    map lookup for all subsequent `validateFilterAvailability` calls —
+    same harness pattern as the codec probe. `optionalFilterLibs`
+    expanded to cover CUDA (`scale_cuda`, `yadif_cuda`, `overlay_cuda`,
+    …), CUDA+libnpp (`scale_npp`, `transpose_npp` — hint distinguishes
+    from plain CUDA), Intel QSV (`scale_qsv`, `vpp_qsv`, …), Vulkan
+    (`scale_vulkan`, `overlay_vulkan`, …), OpenCL (20+ filters), VAAPI
+    (`overlay_vaapi`, `procamp_vaapi`, …), and VideoToolbox
+    (`scale_vt`). All hardware filter references in a config produce
+    actionable `--enable-xxx` rebuild hints. Tests: 7 new targeted
+    subtests plus `TestScaleNppVsScaleCuda`. (Wave 10 #57, complete)
 58. **Hardware filter auto-mapping** (`scale` ↔ `scale_cuda` /
     `scale_npp` / `scale_qsv` / `scale_vt`) (§2.3) — Promote a
     sw-filter name to its hw equivalent based on the active
