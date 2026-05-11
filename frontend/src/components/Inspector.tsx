@@ -87,7 +87,15 @@ export function Inspector({ node, nodes, edges, onChange, onDelete, onSelectNode
         {describeKind(node.data.kind, node.data.streams ?? [])}
       </div>
 
-      {ref.kind === 'input' && (
+      {ref.kind === 'input' && isDeviceInput(ref.def) && (
+        <DeviceInputForm
+          def={ref.def}
+          probed={node.data.probed}
+          onChange={(def) => onChange(updateRef(node, { kind: 'input', def }, def.id, displayUrl(def.url)))}
+          onProbed={(probed) => onProbedData(node.id, probed)}
+        />
+      )}
+      {ref.kind === 'input' && !isDeviceInput(ref.def) && (
         <InputForm
           def={ref.def}
           probed={node.data.probed}
@@ -128,6 +136,248 @@ function updateRef(node: FlowNode, ref: FlowNode['data']['ref'], label: string, 
     ...node,
     data: { ...node.data, ref, label, sublabel },
   };
+}
+
+/* ---------- Device-input helpers ---------- */
+const DEVICE_FORMATS = new Set(['dshow', 'avfoundation', 'v4l2', 'gdigrab', 'decklink']);
+
+function isDeviceInput(def: Input): boolean {
+  return !!(def.format && DEVICE_FORMATS.has(def.format));
+}
+
+type DeviceType = 'video' | 'audio' | 'screen';
+
+interface DeviceEntry {
+  name: string;
+  description: string;
+}
+
+/** Mutate a copy of `options`, setting or deleting `key`. Returns undefined when the map is empty. */
+function setDeviceOption(
+  options: Record<string, unknown> | undefined,
+  key: string,
+  value: string,
+): Record<string, unknown> | undefined {
+  const next: Record<string, unknown> = { ...(options ?? {}) };
+  if (value.trim() === '') {
+    delete next[key];
+  } else {
+    next[key] = value;
+  }
+  return Object.keys(next).length === 0 ? undefined : next;
+}
+
+/** Build the libavdevice URL specifier from a device name, type, and format. */
+function buildDeviceUrl(name: string, type: DeviceType, format: string, devices: DeviceEntry[]): string {
+  switch (format) {
+    case 'dshow':
+      return type === 'audio' ? `audio="${name}"` : `video="${name}"`;
+    case 'gdigrab':
+      return name || 'desktop';
+    case 'v4l2':
+      return name;
+    case 'avfoundation': {
+      // URL is the device index in the enumerated list, or "none:<idx>" for audio-only.
+      const idx = devices.findIndex((d) => d.name === name);
+      const idxStr = idx >= 0 ? String(idx) : name;
+      return type === 'audio' ? `none:${idxStr}` : idxStr;
+    }
+    default:
+      return name;
+  }
+}
+
+/** Extract the raw device name from a pre-built libavdevice URL. */
+function extractDeviceName(url: string, format: string): string {
+  if (!url) return '';
+  if (format === 'dshow') {
+    const m = /^(?:video|audio)="(.*)"$/.exec(url);
+    return m ? m[1] : url;
+  }
+  return url;
+}
+
+/* ---------- Device input form (Wave 11 #63) ----------
+ * Shown instead of InputForm when Input.format is a libavdevice demuxer name.
+ * Provides:
+ *   • Device type dropdown (video / audio / screen) where format allows it.
+ *   • Async device-name combobox populated from GET /api/devices?format=<fmt>.
+ *   • Raw URL field — auto-populated by the picker, also freely editable.
+ *   • Common capture knobs: framerate, video_size, pixel_format, sample_rate.
+ *   • "Test connection" probe button (passes format + options to /api/probe). */
+function DeviceInputForm({
+  def,
+  probed,
+  onChange,
+  onProbed,
+}: {
+  def: Input;
+  probed?: ProbedStream[];
+  onChange: (next: Input) => void;
+  onProbed: (next: ProbedStream[] | undefined) => void;
+}) {
+  const format = def.format ?? 'dshow';
+
+  const availableTypes: DeviceType[] =
+    format === 'gdigrab' ? ['screen'] :
+    format === 'v4l2'    ? ['video']  :
+    ['video', 'audio']; // dshow, avfoundation, decklink
+
+  const inferType = (): DeviceType => {
+    if (availableTypes.length === 1) return availableTypes[0];
+    if (def.url.startsWith('audio=') || def.url.startsWith('none:')) return 'audio';
+    return 'video';
+  };
+
+  const [deviceType, setDeviceType] = useState<DeviceType>(inferType);
+  const [devices, setDevices] = useState<DeviceEntry[]>([]);
+  const [loadingDevices, setLoadingDevices] = useState(false);
+  const [deviceError, setDeviceError] = useState<string | null>(null);
+  const [probing, setProbing] = useState(false);
+  const [probeError, setProbeError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setLoadingDevices(true);
+    setDeviceError(null);
+    fetch(`/api/devices?format=${encodeURIComponent(format)}`)
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
+      .then((d: DeviceEntry[]) => setDevices(d ?? []))
+      .catch((e: Error) => setDeviceError(e.message))
+      .finally(() => setLoadingDevices(false));
+  }, [format]);
+
+  const runProbe = async () => {
+    if (!def.url) { setProbeError('Select a device first.'); return; }
+    setProbing(true);
+    setProbeError(null);
+    try {
+      const r = await fetch('/api/probe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: def.url, format: def.format, options: def.options }),
+      });
+      if (!r.ok) throw new Error((await r.text()) || `HTTP ${r.status}`);
+      const resp = (await r.json()) as ProbeResponse;
+      onProbed(resp.streams);
+    } catch (err) {
+      setProbeError((err as Error).message);
+      onProbed(undefined);
+    } finally {
+      setProbing(false);
+    }
+  };
+
+  const listId = `device-names-${format}`;
+  const currentName = extractDeviceName(def.url, format);
+
+  return (
+    <>
+      <Field label="ID" value={def.id} onChange={(v) => onChange({ ...def, id: v })} />
+      <label>Format</label>
+      <div className="inspector-canonical" style={{ marginBottom: 8 }}>
+        <code>{format}</code>
+      </div>
+      {availableTypes.length > 1 && (
+        <>
+          <label>Device type</label>
+          <select
+            value={deviceType}
+            onChange={(e) => {
+              const t = e.target.value as DeviceType;
+              setDeviceType(t);
+              if (currentName) onChange({ ...def, url: buildDeviceUrl(currentName, t, format, devices) });
+            }}
+          >
+            {availableTypes.map((t) => <option key={t} value={t}>{t}</option>)}
+          </select>
+        </>
+      )}
+      <label style={{ marginTop: 8 }}>Device</label>
+      {loadingDevices && (
+        <div style={{ fontSize: 11, color: 'var(--text-dim)', marginBottom: 4 }}>Listing devices…</div>
+      )}
+      {deviceError && <div className="probe-error">{deviceError}</div>}
+      {/* key=format resets the uncontrolled input when the format changes */}
+      <input
+        key={format}
+        list={listId}
+        defaultValue={currentName}
+        placeholder={devices.length === 0 && !loadingDevices ? 'No devices found — type a name' : 'Select or type device name…'}
+        onBlur={(e) => {
+          const name = e.target.value.trim();
+          if (!name) return;
+          const url = buildDeviceUrl(name, deviceType, format, devices);
+          onChange({ ...def, url });
+          if (probed) onProbed(undefined);
+        }}
+      />
+      <datalist id={listId}>
+        {devices.map((d) => (
+          <option key={d.name} value={d.name}>{d.description || d.name}</option>
+        ))}
+      </datalist>
+      <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: -4, marginBottom: 8 }}>
+        {format === 'dshow'        && 'Device name as reported by Windows (e.g. "Integrated Camera").'}
+        {format === 'avfoundation' && 'Device index from the enumerated list.'}
+        {format === 'v4l2'         && 'Device node path (e.g. /dev/video0).'}
+        {format === 'gdigrab'      && 'Window title, or leave empty for the full desktop.'}
+        {format === 'decklink'     && 'Blackmagic DeckLink device name.'}
+      </div>
+      <label>Device URL</label>
+      <div style={{ fontSize: 11, color: 'var(--text-dim)', marginBottom: 4 }}>
+        Full specifier sent to libavdevice — auto-populated above, or edit directly.
+      </div>
+      <input
+        value={def.url}
+        onChange={(e) => {
+          onChange({ ...def, url: e.target.value });
+          if (probed) onProbed(undefined);
+        }}
+      />
+      <div className="probe-actions">
+        {def.url ? (
+          <button onClick={runProbe} disabled={probing}>
+            {probing ? 'Testing…' : 'Test connection'}
+          </button>
+        ) : (
+          <div className="empty" style={{ fontSize: 11 }}>
+            Select a device above to test the connection.
+          </div>
+        )}
+        {probed && (
+          <button className="link-btn" onClick={() => onProbed(undefined)} title="Discard probed metadata">
+            Clear
+          </button>
+        )}
+      </div>
+      {probeError && <div className="probe-error">{probeError}</div>}
+      {probed && <ProbedStreamsView streams={probed} />}
+      <label style={{ marginTop: 12 }}>Capture options</label>
+      <div style={{ fontSize: 11, color: 'var(--text-dim)', marginBottom: 4 }}>
+        Common knobs passed to the demuxer as AVOptions. Leave empty to use device defaults.
+      </div>
+      <Field
+        label="Frame rate"
+        value={String(def.options?.['framerate'] ?? '')}
+        onChange={(v) => onChange({ ...def, options: setDeviceOption(def.options, 'framerate', v) })}
+      />
+      <Field
+        label="Video size (e.g. 1280x720)"
+        value={String(def.options?.['video_size'] ?? '')}
+        onChange={(v) => onChange({ ...def, options: setDeviceOption(def.options, 'video_size', v) })}
+      />
+      <Field
+        label="Pixel format"
+        value={String(def.options?.['pixel_format'] ?? '')}
+        onChange={(v) => onChange({ ...def, options: setDeviceOption(def.options, 'pixel_format', v) })}
+      />
+      <Field
+        label="Sample rate (Hz)"
+        value={String(def.options?.['sample_rate'] ?? '')}
+        onChange={(v) => onChange({ ...def, options: setDeviceOption(def.options, 'sample_rate', v) })}
+      />
+    </>
+  );
 }
 
 /* ---------- Input form ---------- */

@@ -154,6 +154,8 @@ export function describeKind(kind: string, supported: readonly string[]): string
   switch (kind) {
     case 'input':
       return 'File read / Demux';
+    case 'device_input':
+      return 'Capture device / Demux';
     case 'output':
       return 'Mux / File write';
     case 'demuxer':

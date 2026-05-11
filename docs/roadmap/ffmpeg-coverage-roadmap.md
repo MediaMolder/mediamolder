@@ -1364,7 +1364,7 @@ already works in degraded form via per-filter spellings.
     Windows → `dshow` + `gdigrab`; macOS → `avfoundation`; Linux → `v4l2`.
     (Wave 11 #62, complete)
 
-63. **Device picker + Inspector form (frontend)** (§2.1, §2.8) —
+63. ✅ **Device picker + Inspector form (frontend)** (§2.1, §2.8) —
     A `DeviceInput` palette entry per platform
     (dshow / avfoundation / v4l2 / gdigrab). Inspector form:
     device-type dropdown (`video` / `audio` / `screen`); async
