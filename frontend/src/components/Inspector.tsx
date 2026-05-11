@@ -737,8 +737,26 @@ function InputForm({
           const encoders = probe.codecs?.filter((c) => c.role === 'encode') ?? [];
           const hasCaps = decoders.length > 0 || encoders.length > 0 ||
                           (probe.sw_formats?.length ?? 0) > 0 ||
-                          probe.max_width;
+                          probe.max_width || probe.cuda_arch;
           if (!hasCaps) return null;
+          // Helper: render codec names with per-codec notes as a footnote block.
+          const CodecList = ({ list, label }: { list: typeof decoders; label: string }) => {
+            if (list.length === 0) return null;
+            const noted = list.filter((c) => c.note);
+            return (
+              <div>
+                <strong>{label}:</strong>{' '}
+                {list.map((c) => c.name).join(', ')}
+                {noted.length > 0 && (
+                  <div style={{ color: 'var(--text-dim)', paddingLeft: 8, marginTop: 2 }}>
+                    {noted.map((c) => (
+                      <div key={c.name}>{c.name}: {c.note}</div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          };
           return (
             <div style={{
               fontSize: 11,
@@ -749,18 +767,14 @@ function InputForm({
               marginBottom: 8,
               lineHeight: 1.6,
             }}>
-              {decoders.length > 0 && (
+              {probe.cuda_arch && (
                 <div>
-                  <strong>Decoders:</strong>{' '}
-                  {decoders.map((c) => c.name).join(', ')}
+                  <strong>Architecture:</strong>{' '}
+                  {probe.cuda_arch}{probe.cuda_sm ? ` (SM ${probe.cuda_sm})` : ''}
                 </div>
               )}
-              {encoders.length > 0 && (
-                <div>
-                  <strong>Encoders:</strong>{' '}
-                  {encoders.map((c) => c.name).join(', ')}
-                </div>
-              )}
+              <CodecList list={decoders} label="Decoders" />
+              <CodecList list={encoders} label="Encoders" />
               {(probe.sw_formats?.length ?? 0) > 0 && (
                 <div>
                   <strong>SW formats:</strong>{' '}

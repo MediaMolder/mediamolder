@@ -5,6 +5,7 @@ package gui
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"sync"
 
@@ -13,20 +14,24 @@ import (
 
 // hwCodecInfo mirrors av.HWCodecInfo for the JSON API.
 type hwCodecInfo struct {
-	Name string `json:"name"` // e.g. "h264_cuvid", "hevc_vaapi"
-	Role string `json:"role"` // "encode" or "decode"
+	Name string `json:"name"`            // e.g. "h264_cuvid", "hevc_vaapi"
+	Role string `json:"role"`            // "encode" or "decode"
+	Note string `json:"note,omitempty"` // capability limitation at this GPU, if any
 }
 
 // hwAccelEntry is the JSON shape returned by GET /api/hwaccel.
 type hwAccelEntry struct {
-	Type      string       `json:"type"`
-	Available bool         `json:"available"`
-	Error     string       `json:"error,omitempty"`
+	Type      string        `json:"type"`
+	Available bool          `json:"available"`
+	Error     string        `json:"error,omitempty"`
 	// Populated only when Available is true:
-	SWFormats []string     `json:"sw_formats,omitempty"` // software pixel formats
-	MaxWidth  int          `json:"max_width,omitempty"`  // 0 = not reported
-	MaxHeight int          `json:"max_height,omitempty"` // 0 = not reported
-	Codecs    []hwCodecInfo `json:"codecs,omitempty"`     // codecs in FFmpeg registry
+	SWFormats   []string      `json:"sw_formats,omitempty"`  // software pixel formats
+	MaxWidth    int           `json:"max_width,omitempty"`   // 0 = not reported
+	MaxHeight   int           `json:"max_height,omitempty"`  // 0 = not reported
+	Codecs      []hwCodecInfo `json:"codecs,omitempty"`      // codecs supported by this GPU
+	// CUDA-specific (empty for non-CUDA backends):
+	CUDASMVersion string `json:"cuda_sm,omitempty"`   // e.g. "8.9"
+	CUDAArch      string `json:"cuda_arch,omitempty"` // e.g. "Ada Lovelace"
 }
 
 var (
@@ -57,8 +62,12 @@ func probeHWAccelOnce() []hwAccelEntry {
 				if len(caps.Codecs) > 0 {
 					entry.Codecs = make([]hwCodecInfo, len(caps.Codecs))
 					for i, c := range caps.Codecs {
-						entry.Codecs[i] = hwCodecInfo{Name: c.Name, Role: c.Role}
+						entry.Codecs[i] = hwCodecInfo{Name: c.Name, Role: c.Role, Note: c.Note}
 					}
+				}
+				if caps.CUDAArch != "" {
+					entry.CUDASMVersion = fmt.Sprintf("%d.%d", caps.CUDASMMajor, caps.CUDASMMinor)
+					entry.CUDAArch = caps.CUDAArch
 				}
 			}
 			hwAccelResult = append(hwAccelResult, entry)
