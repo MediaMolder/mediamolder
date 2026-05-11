@@ -88,7 +88,7 @@ Legend: ✅ supported · ⚠️ partial · ❌ missing
 | Lavfi virtual sources (`-f lavfi -i color=…`)               | ✅    | `Input.Kind = "lavfi"`; `URL` carries the filtergraph spec. libavdevice linked + `avdevice_register_all()` at init |
 | `image2` glob pattern (`-i 'frames/*.png'`)                 | ✅    | `Input.PatternType` (`""`/`"none"`/`"sequence"`/`"glob"`/`"glob_sequence"`); validated against the libavformat enum |
 | `concat` demuxer (listfile)                                 | ✅    | `Input.Kind = "concat"` + `Input.ConcatList []ConcatEntry` (file/duration/inpoint/outpoint/metadata). `pipeline.materialiseConcatList` writes an `ffconcat 1.0` listfile to a temp path, opened with `format="concat"`; cleanup runs at input close. Apostrophes/newlines in filenames are rejected up front |
-| Device capture (`-f avfoundation`, `-f dshow`, `-f v4l2`)   | ⚠️    | Works through AVDict; no GUI palette, no probe (Wave 11 #61–63) |
+| Device capture (`-f avfoundation`, `-f dshow`, `-f v4l2`)   | ✅    | `av.ListDevices` + `GET /api/devices`; `POST /api/probe` format field; seek guard for live inputs; `DeviceInputForm` in Inspector with device-type/name pickers and capture-knob fields. (Wave 11 #61–63) |
 | `-hwaccel`, `-hwaccel_device`, `-hwaccel_output_format`     | ✅    | Per-input via `Input.HWAccel`, `Input.HWAccelDevice`, `Input.HWAccelOutputFormat`; `hwaccel_device` may name a pre-declared `hardware_devices` entry. (Wave 10 #59) |
 
 ### 2.2 Stream selection / mapping
@@ -102,7 +102,7 @@ Legend: ✅ supported · ⚠️ partial · ❌ missing
 | `-map_metadata`, `-map_chapters`              | ✅    | `metadata_reader` / `metadata_writer` graph nodes + `Input.MapMetadata` / `Input.MapChapters` shorthand; done Wave 2 #11 |
 | `-vn` / `-an` / `-sn` / `-dn` per output      | ✅    | `Output.DisableVideo`/`DisableAudio`/`DisableSubtitle`/`DisableData` drop every inbound edge of the corresponding media type at the sink before `expandImplicitEncoders` runs (mirrors fftools/ffmpeg_opt.c L1977/2078/2115/2187 — the OPT_OUTPUT half of the dual-purpose disable bools). Validator rejects all-four-set. |
 | Reuse of one decoded stream by N filters/outputs (`split`/`asplit`) | ✅ | Works via multi-output filters |
-| Per-input `-map` of *attachment* streams      | ❌    | (see §2.5 attachments; Wave 11 #65) |
+| Per-input `-map` of *attachment* streams      | ✅    | `StreamSelect` `type: "attachment"` → `AVMEDIA_TYPE_ATTACHMENT`; copy-only (no decoder); sink drops attachment packets (data in `codecpar->extradata`). `compat/ffcli` `-map 0:t`. (Wave 11 #65) |
 
 §2.2 is now covered for all four common selector grammars (track, all-of-type, optional, negate, program). FFmpeg's full `-map` grammar also supports `m:KEY[:VALUE]` metadata-based filters and `M:i:N` id-based selection, which remain out of scope; both have negligible real-world usage in the §6 corpus.
 
@@ -196,13 +196,13 @@ Legend: ✅ supported · ⚠️ partial · ❌ missing
 | Capability                                                        | Status | Note |
 |-------------------------------------------------------------------|:------:|------|
 | RTP / RTSP / RTMP / SRT / RIST / NDI input/output                 | ⚠️    | Works through libavformat URL handlers; no schema validation, no GUI (Wave 11 #67) |
-| Screen capture (`avfoundation`, `gdigrab`, `x11grab`)             | ⚠️    | Same; see Wave 11 #61–63 |
+| Screen capture (`avfoundation`, `gdigrab`, `x11grab`)             | ✅    | Covered by device capture (Wave 11 #61–63); `gdigrab` palette entry on Windows; `x11grab` via format field. |
 | Decklink SDI input/output                                         | ⚠️    | Same |
 | `ffprobe` equivalence (stream summary)                            | ⚠️    | `/api/probe` exists but does not expose every probe field |
 | Tee muxer (see §2.5)                                              | ✅    | `Output.Kind="tee"` + `Output.Targets[]` (Wave 1 #5) |
 | Dynamic per-frame metadata via ZMQ filter                         | ❌    | |
 | **`-init_hw_device` (multi-device graphs)**                       | ✅    | `Config.HardwareDevices []HardwareDevice` ({name, type, device?, options?}) + `NodeDef.Device` selector; opened via `av_hwdevice_ctx_create` at pipeline start. Parse/export via `compat/ffcli`. (Wave 10 #56) |
-| **`scale_npp` availability separate from `scale_cuda`**           | ⚠️    | Different libraries; needs per-filter availability probe at startup |
+| **`scale_npp` availability separate from `scale_cuda`**           | ✅    | `validateFilterAvailability` + `optionalFilterLibs` emit distinct `--enable-libnpp` vs `--enable-cuda-nvcc` rebuild hints; only filters present in `av.ListFilters()` appear in the palette. (Wave 10 #57) |
 | **First-class raw-stream input** (`-f rawvideo -pix_fmt yuv420p -s 1920x1080 -r 30 -i raw.yuv`) | ✅ | `Input.Kind = "raw"` + typed `Format`/`PixelFormat`/`VideoSize`/`FrameRate`/`SampleRate`/`Channels`/`SampleFormat`. Validated up front (raw inputs require `Format` plus the matching geometry/format fields). Round-trip-tested via `compat/ffcli` and `testdata/community-scripts/27_raw_yuv.json` |
 
 ### 2.8 Frontend GUI gaps (in addition to schema gaps)
@@ -210,15 +210,14 @@ Legend: ✅ supported · ⚠️ partial · ❌ missing
 The GUI cannot be more powerful than the schema. Once §2.1–§2.7 are
 filled, the GUI also needs:
 
-- A palette section for **virtual source nodes** (color/testsrc/sine/anullsrc).
-- A **multi-output inspector** that shows all `Output` entries in one pane, with per-stream encoder tabs.
-- **BSF chain editor** (sortable list, not single field).
-- **Chapter / metadata editor** at the output level (table of `(start, end, title)` for chapters; key/value table for metadata, with per-stream tabs).
+- ✅ A palette section for **virtual source nodes** (color/testsrc/sine/anullsrc) — `filter_source`/`filter_sink` palette entries; `spawnNodeFrom` device_input branch; `lavfi_input` shorthand. (Wave 8 #44)
+- ✅ A **multi-output inspector** that shows all `Output` entries in one pane, with per-stream encoder tabs — `OutputTabs` + `StreamSpecForm` + `EncoderOverride` UI. (Wave 8 #45)
+- ✅ **BSF chain editor** (sortable list, not single field) — `BSFEditor` in Inspector; `parseBSFChain`/`serializeBSFChain` in `bsf.ts`. (Wave 8 #46)
+- ✅ **Chapter / metadata editor** at the output level (table of `(start, end, title)` for chapters; key/value table for metadata, with per-stream tabs) — `ChaptersEditor` / `MetadataEditor`. (Wave 8 #47)
 - ✅ **HLS / DASH / Tee output wizards** — `HLSForm` (segment timing, playlist type, mpegts/fmp4 segment type, filename templates, `var_stream_map` ABR builder, `hls_flags` checkboxes), `DASHForm` (segment/fragment durations, SegmentTemplate/SegmentTimeline tri-state toggles, LL-DASH booleans, `dash_flags`), `TeeForm` (collapsible per-target rows with URL, format, stream-select, BSF chain, `onfail`, FIFO options, key/value overrides) — Wave 8 #48 ✅.
-- **Hardware filter mapping indicator** that surfaces which filters will run on GPU once `hw_accel` is set, and warns when a software filter is forcing a hwdownload/hwupload round-trip.
-- **Live FFmpeg-CLI import** (`compat/ffcli`) extended to cover every flag the schema gains, with a clear "unsupported flag" report.
-- **Live FFmpeg-CLI export**: round-trip the JSON job back to a CLI command for users who want to copy/paste into ffmpeg directly. This
-  is the strongest correctness signal we can ship. Note that mediamolder has a superset of FFmpeg features, so some mediamolder JSONs may not have an FFmpeg CLI equivalent, and this feature must fail gracefully, explaining why no FFmpeg command line can be generated.
+- ✅ **Hardware filter mapping indicator** that surfaces which filters will run on GPU once `hw_accel` is set, and warns when a software filter is forcing a hwdownload/hwupload round-trip — purple GPU badge, amber ⚠ sw/hw badge, `auto_map_hw` checkbox, `decoratedNodes` memo. (Wave 10 #60)
+- ✅ **Live FFmpeg-CLI import** (`compat/ffcli`) extended to cover every flag the schema gains, with a clear "unsupported flag" report — `ImportResult.Unsupported []string` surfaces actionable notes; `/api/convert-cmd` response includes `unsupported`. (Wave 8 #54)
+- ✅ **Live FFmpeg-CLI export**: round-trip the JSON job back to a CLI command — `compat/ffcli.Export`; "Show CLI" toolbar button and modal; unsupported mediamolder-only features listed in amber section. (Wave 8 #53)
 
 ## 3. Strategy
 
@@ -1385,14 +1384,19 @@ already works in degraded form via per-filter spellings.
     `-attach FILE -metadata:s:v:0 comment=Cover` to the new field.
     CGO helper in `av/cover_art.go`; validation in
     `pipeline/cover_art.go`; schemas and TypeScript types updated.
-    (Wave 11 #64, commit pending)
+    (Wave 11 #64, commit `688d208`)
 
 65. **Per-input `-map` of attachment streams** (§2.2) —
     Extend `StreamSelect` with `type: "attachment"` (maps to
-    `AVMEDIA_TYPE_ATTACHMENT`); `handleSource` copies the attachment
-    packet unchanged (no decode/encode path). `compat/ffcli` maps
-    `-map 0:t` to the new specifier. `schema/v1.x.json` and
-    `frontend/src/lib/jobTypes.ts` updated.
+    `AVMEDIA_TYPE_ATTACHMENT`); `handleSource` treats attachment streams
+    as copy-only (no decoder opened; data lives in `codecpar->extradata`);
+    sink drops attachment packets since `avformat_write_header` already
+    copies extradata via `AddStreamFromInput`. `copySourceFor` improved
+    to resolve multi-stream tracks by sorted stream index and
+    `FromPort` track suffix. `compat/ffcli` maps `-map 0:t` /
+    `-map 0:t:N` to the new specifier. `schema/v1.x.json`,
+    `frontend/src/lib/jobTypes.ts`, `av/demux.go`, `graph/graph.go`
+    updated.
 
 66. **Model-file filter fixture story** (§2.3) —
     Standardise how filter parameters that reference on-disk model

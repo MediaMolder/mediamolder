@@ -11,13 +11,13 @@ import (
 // coverArtCapableContainers is the closed set of libavformat muxers that
 // support AV_DISPOSITION_ATTACHED_PIC on a video stream for cover art.
 //
-// - mp4 / m4a / mov / ipod: libavformat/movenc.c writes the cover image
-//   into the `covr` box when a video stream has AV_DISPOSITION_ATTACHED_PIC.
-// - mp3: libavformat/mp3enc.c writes the image as an ID3 APIC frame.
-// - mkv / matroska: libavformat/matroskaenc.c writes the stream as a
-//   video track with the ATTACHED_PIC flag; some players surface it as
-//   cover art. (Note: mkv also supports AV_DISPOSITION_ATTACHED_PIC via
-//   the AVMEDIA_TYPE_VIDEO path, distinct from AVMEDIA_TYPE_ATTACHMENT.)
+//   - mp4 / m4a / mov / ipod: libavformat/movenc.c writes the cover image
+//     into the `covr` box when a video stream has AV_DISPOSITION_ATTACHED_PIC.
+//   - mp3: libavformat/mp3enc.c writes the image as an ID3 APIC frame.
+//   - mkv / matroska: libavformat/matroskaenc.c writes the stream as a
+//     video track with the ATTACHED_PIC flag; some players surface it as
+//     cover art. (Note: mkv also supports AV_DISPOSITION_ATTACHED_PIC via
+//     the AVMEDIA_TYPE_VIDEO path, distinct from AVMEDIA_TYPE_ATTACHMENT.)
 //
 // Wave 11 #64.
 var coverArtCapableContainers = map[string]bool{

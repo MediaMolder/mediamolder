@@ -132,9 +132,9 @@ type parser struct {
 	// `-metadata:s:v:0 comment=Cover`, the attachment is routed here
 	// instead of pendingAttachments. Drained to Output.CoverArt.
 	pendingCoverArt string
-	hwAccel            string
-	hwDevice           string
-	hwOutFmt           string
+	hwAccel         string
+	hwDevice        string
+	hwOutFmt        string
 	// initHWDevices holds entries parsed from -init_hw_device flags.
 	// Each -init_hw_device type[=name][:device] produces one entry.
 	// Drained into Config.HardwareDevices at the end of parse(). (Wave 10 #56)
