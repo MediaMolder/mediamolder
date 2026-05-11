@@ -440,3 +440,51 @@ func TestCorpusFFmpegCommands(t *testing.T) {
 		})
 	}
 }
+
+// Wave 10 #56: -init_hw_device parsing tests
+
+func TestParseInitHWDevice(t *testing.T) {
+cases := []struct {
+spec, wantName, wantType, wantDevice string
+wantErr                              bool
+}{
+{"cuda", "cuda", "cuda", "", false},
+{"cuda=gpu0", "gpu0", "cuda", "", false},
+{"cuda=gpu0:0", "gpu0", "cuda", "0", false},
+{"vaapi=va:/dev/dri/renderD128", "va", "vaapi", "/dev/dri/renderD128", false},
+{"qsv=qsv0:MFX_IMPL_HARDWARE", "qsv0", "qsv", "MFX_IMPL_HARDWARE", false},
+{"cuda=gpu0:0,child_device=0", "gpu0", "cuda", "0", false},
+{"", "", "", "", true},
+{"=name", "", "", "", true},
+{"type=", "", "", "", true},
+}
+for _, tc := range cases {
+t.Run(tc.spec, func(t *testing.T) {
+got, err := parseInitHWDevice(tc.spec)
+if tc.wantErr {
+if err == nil { t.Fatal("expected error, got nil") }
+return
+}
+if err != nil { t.Fatalf("unexpected error: %v", err) }
+if got.Name != tc.wantName { t.Errorf("Name = %q, want %q", got.Name, tc.wantName) }
+if got.Type != tc.wantType { t.Errorf("Type = %q, want %q", got.Type, tc.wantType) }
+if got.Device != tc.wantDevice { t.Errorf("Device = %q, want %q", got.Device, tc.wantDevice) }
+})
+}
+}
+
+func TestParseInitHWDeviceFlag(t *testing.T) {
+cfg, err := Parse("ffmpeg -init_hw_device cuda=gpu0:0 -i in.mp4 -c:v h264_nvenc out.mp4")
+if err != nil { t.Fatalf("Parse: %v", err) }
+if len(cfg.HardwareDevices) != 1 { t.Fatalf("len(hardware_devices) = %d, want 1", len(cfg.HardwareDevices)) }
+hd := cfg.HardwareDevices[0]
+if hd.Name != "gpu0" || hd.Type != "cuda" || hd.Device != "0" {
+t.Errorf("hardware_device = %+v, want {Name:gpu0 Type:cuda Device:0}", hd)
+}
+}
+
+func TestParseMultipleInitHWDeviceFlags(t *testing.T) {
+cfg, err := Parse("ffmpeg -init_hw_device cuda=gpu0 -init_hw_device vaapi=va:/dev/dri/renderD128 -i in.mp4 -c:v h264_nvenc out.mp4")
+if err != nil { t.Fatalf("Parse: %v", err) }
+if len(cfg.HardwareDevices) != 2 { t.Fatalf("len(hardware_devices) = %d, want 2", len(cfg.HardwareDevices)) }
+}
