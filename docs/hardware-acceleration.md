@@ -493,6 +493,94 @@ required in the JSON.
 - Use zero-copy path: set `hw_accel` in global options
 - Check that the hardware encoder is receiving frames in the GPU pixel format
 
+## Hardware Capabilities Dialog
+
+The palette's **Hardware** button (at the very top of the left sidebar, above
+the search box) opens a modal dialog that shows the result of the startup
+hardware probe for every backend MediaMolder knows about.
+
+### Backend cards
+
+Each backend that was successfully opened shows a card with:
+
+| Element | Content |
+|---------|---------|
+| **Device name** | Human-readable GPU/accelerator label (e.g. `NVIDIA GeForce RTX 4090`, `Apple VideoToolbox`). |
+| **Backend label** | Canonical type string: `NVIDIA CUDA`, `Apple VideoToolbox`, `Intel QSV`, `AMD/Intel VAAPI`, etc. |
+| **Video encode / Video decode** | Chips for every codec the backend can encode or decode, grouped separately. Codecs without a known `media_type` default to video. |
+| **Audio encode / Audio decode** | Chips for audio codecs (e.g. `aac_at` on VideoToolbox). Shown only when the backend reports at least one audio codec; chip rows are prefixed `V` (video) / `A` (audio). |
+| **Advanced** | Expandable `<details>` section showing the supported software pixel formats and, when reported, the maximum encode resolution. |
+
+Chip colour: white for supported codecs, amber with a `⚠` icon for codecs
+the backend nominally lists but whose hardware support could not be confirmed
+(e.g. a CUDA codec on an older SM generation that lacks the hardware block).
+
+### Unavailable backends
+
+Any backend the probe attempted but could not open appears in a separate
+**Unavailable backends** section below the cards, showing the error message
+returned by `av_hwdevice_ctx_create`. Common causes:
+
+- Driver not installed / GPU not present
+- VAAPI device file (`/dev/dri/renderD128`) not accessible
+- FFmpeg not built with support for that backend
+
+### Button state
+
+| Condition | Button label |
+|-----------|-------------|
+| Probe not yet complete | `Hardware …` (loading) |
+| ≥ 1 usable backend | `Hardware  N available` (badge with count) |
+| No usable backend | `Hardware  Software only` |
+
+Clicking the button at any time opens the dialog. Clicking the overlay or
+pressing Escape closes it.
+
+### /api/hwaccel response shape
+
+`GET /api/hwaccel` returns an array of `HWAccelProbe` objects:
+
+```jsonc
+[
+  {
+    "type": "videotoolbox",
+    "available": true,
+    "display_name": "Apple VideoToolbox",
+    "filters": ["scale_vt", "vpp_qsv"],
+    "codecs": [
+      { "name": "h264_videotoolbox", "role": "encoder", "media_type": "video" },
+      { "name": "hevc_videotoolbox", "role": "encoder", "media_type": "video" },
+      { "name": "prores_videotoolbox", "role": "encoder", "media_type": "video" },
+      { "name": "h264", "role": "decoder", "media_type": "video" }
+    ],
+    "max_width": -1,
+    "max_height": -1,
+    "sw_formats": ["nv12", "yuv420p", "p010le"]
+  }
+]
+```
+
+`max_width`/`max_height` of `-1` means the backend imposes no resolution
+limit (`INT_MAX` sentinel suppressed).
+
+### Codec detection coverage
+
+MediaMolder uses `av_codec_iterate` to enumerate the codecs compiled into
+LibAV and tests each one for hardware support via both
+`AV_CODEC_HW_CONFIG_METHOD_HW_DEVICE_CTX` (decoders: VAAPI, CUDA/cuvid, VT
+decode) **and** `AV_CODEC_HW_CONFIG_METHOD_HW_FRAMES_CTX` (encoders:
+VideoToolbox, NVENC, QSV).  The latter flag was missing from an earlier
+version of the scan, which caused VideoToolbox encoders to be invisible.
+
+Because LibAV's codec registry is static (compiled in at build time —
+`avcodec_register` was removed in FFmpeg 5.0), any codec not compiled into
+your FFmpeg build will not appear.  In particular, **ProRes RAW encode and
+hardware-accelerated ProRes RAW decode** are not representable in the LibAV
+codec registry at all and will never appear in this dialog regardless of the
+hardware present.  A future MediaMolder-native VideoToolbox path for ProRes
+RAW is planned (see
+[roadmap/hardware.md](roadmap/) for status).
+
 ## GUI: Device Picker and HW Indicator Badges (Wave 10 #60)
 
 When using the visual graph editor, hardware device assignment is surfaced directly on the canvas and in the Inspector panel.
