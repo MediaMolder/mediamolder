@@ -141,6 +141,10 @@ function updateRef(node: FlowNode, ref: FlowNode['data']['ref'], label: string, 
 /* ---------- Device-input helpers ---------- */
 const DEVICE_FORMATS = new Set(['dshow', 'avfoundation', 'v4l2', 'gdigrab', 'decklink']);
 
+// COVER_ART_FORMATS is the set of libavformat muxer names that support
+// AV_DISPOSITION_ATTACHED_PIC cover art embedding (Wave 11 #64).
+const COVER_ART_FORMATS = new Set(['mp4', 'm4a', 'mov', 'ipod', 'mp3', 'mkv', 'matroska']);
+
 function isDeviceInput(def: Input): boolean {
   return !!(def.format && DEVICE_FORMATS.has(def.format));
 }
@@ -722,6 +726,16 @@ function OutputForm({
               kind="subtitle"
               spec={def.bsf_subtitle}
               onChange={(s) => onChange({ ...def, bsf_subtitle: s })}
+            />
+          )}
+          {/* Cover art — shown only for containers that support AV_DISPOSITION_ATTACHED_PIC */}
+          {COVER_ART_FORMATS.has(def.format ?? '') && (
+            <FileField
+              label="Cover art"
+              value={def.cover_art ?? ''}
+              mode="open"
+              filter="image/jpeg,image/png,image/webp,image/*"
+              onChange={(v) => onChange({ ...def, cover_art: v || undefined })}
             />
           )}
         </>

@@ -126,6 +126,12 @@ type parser struct {
 	// Wave 6 #31: queued `-attach FILE` entries draining onto the
 	// next output's `Attachments` slice.
 	pendingAttachments []pipeline.Attachment
+	// Wave 11 #64: cover art path detected from the
+	// `-attach FILE -metadata:s:v:0 comment=Cover` pattern. When the
+	// parser sees `-attach FILE` followed by (or preceded by)
+	// `-metadata:s:v:0 comment=Cover`, the attachment is routed here
+	// instead of pendingAttachments. Drained to Output.CoverArt.
+	pendingCoverArt string
 	hwAccel            string
 	hwDevice           string
 	hwOutFmt           string
@@ -1322,9 +1328,28 @@ func (p *parser) parse() (*pipeline.Config, error) {
 				out.InterlacedEncode = true
 				p.pendingInterlaced = false
 			}
+			// Wave 11 #64: promote the first pending attachment to
+			// Output.CoverArt when the user passed
+			// `-attach FILE -metadata:s:v:0 comment=Cover`, which
+			// mirrors the fftools cover-art idiom.
+			if len(p.pendingAttachments) > 0 {
+				if ss, ok := p.streamSpecs["v:0"]; ok && ss.Metadata["comment"] == "Cover" {
+					p.pendingCoverArt = p.pendingAttachments[0].Path
+					p.pendingAttachments = p.pendingAttachments[1:]
+					delete(ss.Metadata, "comment")
+					if len(ss.Metadata) == 0 && ss.Disposition == "" {
+						delete(p.streamSpecs, "v:0")
+					}
+					p.warn(fmt.Sprintf("-attach %q -metadata:s:v:0 comment=Cover detected; routing to Output.CoverArt (Wave 11 #64).", p.pendingCoverArt))
+				}
+			}
 			if len(p.pendingAttachments) > 0 {
 				out.Attachments = append(out.Attachments, p.pendingAttachments...)
 				p.pendingAttachments = nil
+			}
+			if p.pendingCoverArt != "" {
+				out.CoverArt = p.pendingCoverArt
+				p.pendingCoverArt = ""
 			}
 			if len(p.containerMeta) > 0 {
 				out.Metadata = p.containerMeta

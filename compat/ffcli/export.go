@@ -670,6 +670,13 @@ func (e *exporter) buildOutput(out pipeline.Output) {
 		}
 	}
 
+	// Cover art (Wave 11 #64): -attach FILE -metadata:s:v:0 comment=Cover.
+	// This mirrors the fftools idiom for embedding cover art into MP4/M4A/MKV.
+	if out.CoverArt != "" {
+		e.add("-attach", out.CoverArt)
+		e.add("-metadata:s:v:0", "comment=Cover")
+	}
+
 	// HLS options.
 	if out.HLS != nil {
 		e.add("-f", "hls")
