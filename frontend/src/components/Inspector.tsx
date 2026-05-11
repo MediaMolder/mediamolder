@@ -3,7 +3,7 @@ import type { ReactNode } from 'react';
 import type { FlowEdge, FlowNode } from '../lib/jsonAdapter';
 import { displayUrl, nodeDisplayLabel, nodeDisplaySublabel } from '../lib/jsonAdapter';
 import { displayName, lookupFriendlyName, useNamingMode } from '../lib/friendlyNames';
-import type { Chapter, EncoderOverride, Input, NodeDef, Output, ProbeResponse, ProbedStream, StreamSpec } from '../lib/jobTypes';
+import type { Chapter, EncoderOverride, HardwareDevice, Input, NodeDef, Output, ProbeResponse, ProbedStream, StreamSpec } from '../lib/jobTypes';
 import { type BSFEntry, parseBSFChain, serializeBSFChain } from '../lib/bsf';
 import { MEDIA_FILE_EXTENSIONS } from '../lib/mediaExtensions';
 import { FileBrowser, type BrowseMode } from './FileBrowser';
@@ -30,9 +30,12 @@ interface Props {
    *  onChange so the caller can use a functional setNodes update and avoid
    *  overwriting concurrent URL changes made by the same event batch. */
   onProbedData: (nodeId: string, probed: ProbedStream[] | undefined) => void;
+  /** Named hardware-acceleration device contexts available in the current
+   *  job config. Passed to NodeForm to populate the device picker. (Wave 10 #60) */
+  hwDevices?: HardwareDevice[];
 }
 
-export function Inspector({ node, nodes, edges, onChange, onDelete, onSelectNode, onProbedData }: Props) {
+export function Inspector({ node, nodes, edges, onChange, onDelete, onSelectNode, onProbedData, hwDevices = [] }: Props) {
   if (!node) {
     return (
       <div className="inspector">
@@ -110,6 +113,7 @@ export function Inspector({ node, nodes, edges, onChange, onDelete, onSelectNode
         <NodeForm
           def={ref.def}
           padHints={resolveUpstreamPad(nodes, edges, node.id)}
+          hwDevices={hwDevices}
           onChange={(def) =>
             onChange(updateRef(node, { kind: 'node', def }, nodeDisplayLabel(def), nodeDisplaySublabel(def)))
           }
@@ -884,9 +888,10 @@ function TagField({
 }
 
 /* ---------- Graph node form ---------- */
-function NodeForm({ def, onChange, padHints }: { def: NodeDef; onChange: (next: NodeDef) => void; padHints?: Record<string, number> }) {
+function NodeForm({ def, onChange, padHints, hwDevices = [] }: { def: NodeDef; onChange: (next: NodeDef) => void; padHints?: Record<string, number>; hwDevices?: HardwareDevice[] }) {
   const isFilter =
     def.type === 'filter' || def.type === 'filter_source' || def.type === 'filter_sink';
+  const showDevicePicker = isFilter || def.type === 'encoder';
   return (
     <>
       {isFilter ? (
@@ -903,6 +908,46 @@ function NodeForm({ def, onChange, padHints }: { def: NodeDef; onChange: (next: 
           value={def.processor ?? ''}
           onChange={(v) => onChange({ ...def, processor: v || undefined })}
         />
+      )}
+      {showDevicePicker && (
+        <div style={{ marginBottom: 12 }}>
+          <label>Hardware device</label>
+          <select
+            value={def.device ?? ''}
+            onChange={(e) => onChange({ ...def, device: e.target.value || undefined })}
+            style={{ display: 'block', width: '100%', marginTop: 4, marginBottom: 4 }}
+          >
+            <option value="">(none — software)</option>
+            {hwDevices.map((d) => (
+              <option key={d.name} value={d.name}>{d.name} [{d.type}]</option>
+            ))}
+          </select>
+          {hwDevices.length === 0 && (
+            <div style={{ fontSize: 11, color: 'var(--text-dim)' }}>
+              No hardware devices defined. Add entries under{' '}
+              <code>hardware_devices</code> in your job config.
+            </div>
+          )}
+          {isFilter && (
+            <label style={{ display: 'flex', alignItems: 'flex-start', gap: 6, marginTop: 6, cursor: def.device ? 'pointer' : 'not-allowed', opacity: def.device ? 1 : 0.5 }}>
+              <input
+                type="checkbox"
+                checked={def.auto_map_hw ?? false}
+                disabled={!def.device}
+                onChange={(e) => onChange({ ...def, auto_map_hw: e.target.checked || undefined })}
+                style={{ marginTop: 2, flexShrink: 0 }}
+              />
+              <span>
+                Auto-map to hardware filter (<code>auto_map_hw</code>)
+                <div style={{ fontSize: 11, color: 'var(--text-dim)', fontWeight: 'normal', marginTop: 2 }}>
+                  Promotes the sw filter name (e.g. <code>scale</code>) to its hw
+                  equivalent (e.g. <code>scale_cuda</code>) and inserts
+                  hwupload/hwdownload at device boundaries. Requires a device.
+                </div>
+              </span>
+            </label>
+          )}
+        </div>
       )}
       {def.type === 'encoder' && <EncoderForm def={def} onChange={onChange} />}
       {isFilter && <FilterForm def={def} onChange={onChange} padHints={padHints} />}

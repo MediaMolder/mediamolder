@@ -74,6 +74,19 @@ export interface FlowNodeData extends Record<string, unknown> {
    * graph adapter on JSON load via the curation lookup table.
    */
   friendlyName?: string;
+  /**
+   * Hardware device name when this node runs on a named accelerator
+   * (NodeDef.device). Injected by app.tsx decoratedNodes; drives the
+   * GPU badge in MMNode. Editor-only. (Wave 10 #60)
+   */
+  hwDevice?: string;
+  /**
+   * True when this software filter sits adjacent to a hardware node
+   * in the graph, implying implicit hwdownload/hwupload round-trips.
+   * Injected by app.tsx decoratedNodes; drives the warning badge in
+   * MMNode. Editor-only. (Wave 10 #60)
+   */
+  hwRoundTrip?: boolean;
 }
 
 export interface FlowEdgeData extends Record<string, unknown> {

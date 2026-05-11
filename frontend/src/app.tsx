@@ -654,13 +654,51 @@ function Editor() {
   }, [run.metrics, run.errors]);
 
   const decoratedNodes = useMemo<FlowNode[]>(
-    () =>
-      nodes.map((n) => {
+    () => {
+      // Identify which graph nodes are HW-accelerated (have NodeDef.device set).
+      const hwNodeIds = new Set<string>();
+      for (const n of nodes) {
+        if (n.data.ref.kind === 'node' && n.data.ref.def.device) {
+          hwNodeIds.add(n.id);
+        }
+      }
+      // Build undirected adjacency so round-trip detection is O(edges).
+      const neighbors = new Map<string, Set<string>>();
+      const addEdge = (a: string, b: string) => {
+        if (!neighbors.has(a)) neighbors.set(a, new Set());
+        neighbors.get(a)!.add(b);
+      };
+      for (const e of edges) {
+        addEdge(e.source, e.target);
+        addEdge(e.target, e.source);
+      }
+
+      return nodes.map((n) => {
         const r = runByNode.get(n.id);
-        if (!r) return n;
-        return { ...n, data: { ...n.data, run: r } } as FlowNode;
-      }),
-    [nodes, runByNode],
+        const ref = n.data.ref;
+        let hwDevice: string | undefined;
+        let hwRoundTrip: boolean | undefined;
+
+        if (ref.kind === 'node') {
+          const def = ref.def;
+          hwDevice = def.device || undefined;
+          // SW filter adjacent to any HW node → implicit round-trip warning.
+          if (!hwDevice && (def.type === 'filter' || def.type === 'filter_source' || def.type === 'filter_sink')) {
+            for (const nb of neighbors.get(n.id) ?? []) {
+              if (hwNodeIds.has(nb)) { hwRoundTrip = true; break; }
+            }
+          }
+        }
+
+        const updates: Record<string, unknown> = {};
+        if (r) updates.run = r;
+        if (hwDevice !== undefined) updates.hwDevice = hwDevice;
+        if (hwRoundTrip !== undefined) updates.hwRoundTrip = hwRoundTrip;
+        if (Object.keys(updates).length === 0) return n;
+        return { ...n, data: { ...n.data, ...updates } } as FlowNode;
+      });
+    },
+    [nodes, runByNode, edges],
   );
 
   /* Compute inferred technical attributes for each edge so MMEdge can render
@@ -902,7 +940,7 @@ function Editor() {
       </div>
 
       {showInspector && (
-      <Inspector node={selectedNode} nodes={nodes} edges={edges} onChange={onNodeUpdate} onDelete={onNodeDelete} onSelectNode={setSelectedId} onProbedData={onProbedData} />
+      <Inspector node={selectedNode} nodes={nodes} edges={edges} onChange={onNodeUpdate} onDelete={onNodeDelete} onSelectNode={setSelectedId} onProbedData={onProbedData} hwDevices={job.hardware_devices ?? []} />
       )}
       <RunDock visible={showRunPanel}>
         <RunPanel run={run} nodeKinds={nodeKinds} onClose={() => setShowRunPanel(false)} />

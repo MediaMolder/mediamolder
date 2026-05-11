@@ -105,6 +105,20 @@ export function MMNode({ id, data, selected }: NodeProps & { data: FlowNodeData 
       ) : (
         data.sublabel && <div className="mm-node-sub">{data.sublabel}</div>
       )}
+      {(data.hwDevice || data.hwRoundTrip) && (
+        <div className="mm-node-hw-row">
+          {data.hwDevice && (
+            <span className="hw-badge" title={`Hardware device: ${data.hwDevice}`}>
+              ⊞ {data.hwDevice}
+            </span>
+          )}
+          {data.hwRoundTrip && (
+            <span className="hw-warn-badge" title="SW filter adjacent to HW node — forces hwdownload/hwupload round-trips">
+              ⚠ sw/hw
+            </span>
+          )}
+        </div>
+      )}
       {run && (run.frames !== undefined || run.errors !== undefined) && (
         <div className="mm-node-run">
           {run.frames !== undefined && <span>{run.frames} pkt</span>}

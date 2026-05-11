@@ -1318,18 +1318,22 @@ already works in degraded form via per-filter spellings.
     `hwupload` / `hwdownload` at device boundaries. 21 filter
     mappings covering CUDA, VAAPI, QSV, VideoToolbox, Vulkan, and
     OpenCL. 16 tests. (Wave 10 #58, complete)
-59. **Per-input `-hwaccel`** (§2.1) — Promotes the global hwaccel
+59. ✅ **Per-input `-hwaccel`** (§2.1) — Promotes the global hwaccel
     knob to per-input granularity (`Input.HWAccel`,
     `Input.HWAccelDevice`, `Input.HWAccelOutputFormat`).
     `av.FrameDecoder` interface unifies sw/hw decoders in the source
     handler. `compat/ffcli` latches the flags per-input at the `-i`
     site (matching FFmpeg semantics). Schema + TypeScript types updated.
     12 tests. (Wave 10 #59, complete)
-60. **Hardware-filter mapping indicator + multi-device picker
+60. ✅ **Hardware-filter mapping indicator + multi-device picker
     (GUI)** (§2.8, §3.5.6) — Surfaces which filters will run on
     GPU once `hw_accel` is set, warns when a software filter is
     forcing a hwdownload/hwupload round-trip, and exposes a
-    device picker on every encoder/filter node.
+    device picker on every encoder/filter node. Purple GPU badge
+    on nodes with `NodeDef.device`; amber ⚠ sw/hw badge on SW
+    filters adjacent to HW nodes; `auto_map_hw` checkbox in
+    Inspector; `FlowNodeData.hwDevice` / `hwRoundTrip` injected
+    by `decoratedNodes`. (Wave 10 #60, complete)
 
 ### 6.11 Wave 11 — "live capture, device palette & remaining parity"
 
