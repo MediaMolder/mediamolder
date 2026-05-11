@@ -173,6 +173,7 @@ filters by intent:
 | Format conversion | `format`, `setdar`, `setsar`, `pixfmt`-related |
 | Metadata & inspection | `metadata`, `signalstats`, `cropdetect` |
 | Hardware acceleration | `*_qsv`, `*_cuda`, `*_vaapi`, `*_videotoolbox` |
+| **Routing** | `split`, `asplit`, `overlay`, `hstack`, `vstack`, `xstack`, `amerge`, `amix`, `concat` |
 | Subtitles | `subtitles`, `ass` |
 | Audio: format & routing | `aresample`, `aformat`, `pan`, `amerge` |
 | Audio: dynamics & loudness | `loudnorm`, `acompressor`, `alimiter` |
@@ -223,6 +224,20 @@ Populated at runtime from `GET /api/nodes`, which lists every libavfilter,
 libavcodec encoder, demuxer/muxer, and registered Go processor available in
 the binary you are running. Drag any entry onto the canvas to spawn a
 configured node.
+
+#### Hardware button
+
+At the very top of the palette — above the search box and segmented controls —
+is the **Hardware** button.  It shows the result of the startup hardware probe:
+
+| State | Label |
+|-------|-------|
+| Probe in progress | `Hardware …` |
+| ≥ 1 usable backend | `Hardware  N available` (with a coloured badge) |
+| No usable backends | `Hardware  Software only` |
+
+Clicking the button opens the **Hardware Capabilities dialog** — see
+[§ Hardware Capabilities dialog](#hardware-capabilities-dialog) below.
 
 Two segmented controls sit above the search box and tailor the palette to
 your audience:
@@ -365,6 +380,42 @@ image's geometry and pixel format.
 
 The probed metadata is invalidated when the URL changes; click
 **Get properties** again after editing the path.
+
+### Hardware Capabilities dialog
+
+Opened by the **Hardware** button at the top of the palette.  The dialog
+reflects the hardware probe run at startup (`GET /api/hwaccel`).
+
+#### Backend cards
+
+Each successfully opened backend has a card that shows:
+
+- **Device name** — human-readable GPU or accelerator label (e.g.
+  `NVIDIA GeForce RTX 4090`, `Apple VideoToolbox`).
+- **Backend label** — canonical type string (NVIDIA CUDA, Apple VideoToolbox,
+  Intel QSV, AMD/Intel VAAPI, …).
+- **Codec chip rows** — `Video encode`, `Video decode`, `Audio encode`, and
+  `Audio decode` rows with a chip for every codec the backend reports.
+  The `V`/`A` prefix on the row label appears only when a backend has both
+  video and audio codecs. Amber chips with a `⚠` icon indicate codecs the
+  backend lists but whose hardware support could not be confirmed.
+- **Advanced** — expandable section with supported software pixel formats and
+  (when the backend imposes a limit) the maximum encode resolution.
+
+#### Unavailable backends
+
+Any backend the probe tried but could not open appears below the cards in an
+**Unavailable backends** list with the error message.
+
+#### Device-picker visibility
+
+The **Hardware device** picker in the Inspector is shown only for:
+- Hardware-accelerated filters (those that carry `AVFILTER_FLAG_HWDEVICE` in
+  libavfilter — i.e. `scale_cuda`, `scale_vaapi`, `libplacebo`, etc.), and
+- Hardware encoder nodes (`h264_nvenc`, `hevc_videotoolbox`, etc.).
+
+It is intentionally *not* shown for ordinary software filters (`scale`,
+`loudnorm`, …), even when a hardware device is declared in the job config.
 
 ### Inspector
 

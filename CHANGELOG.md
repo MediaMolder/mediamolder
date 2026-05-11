@@ -6,6 +6,52 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 ## [Unreleased]
 
 ### Added
+- **Hardware acceleration: routing filters in palette (commit `3be0306`).**
+  Nine multi-stream routing filters — `split`, `asplit`, `overlay`, `hstack`,
+  `vstack`, `xstack`, `amerge`, `amix`, `concat` — are now listed in a
+  **Filters › Routing** palette subcategory with friendly display labels.
+
+- **Hardware acceleration: device picker hidden for software filters (commit `3be0306`).**
+  The **Hardware device** dropdown in the Inspector is now shown only for
+  hardware-accelerated filters (identified by `AVFILTER_FLAG_HWDEVICE`) and
+  hardware encoders — not for ordinary software filters.
+
+- **Hardware acceleration: GPU display name + HW filter list in `/api/hwaccel`
+  (commit `8702664`).**
+  `DeviceCapabilities.DisplayName` carries the human-readable device label
+  (e.g. `"NVIDIA GeForce RTX 4090"` for CUDA, the device type string for
+  VideoToolbox).  `DeviceCapabilities.Filters` lists the libavfilter filters
+  that carry `AVFILTER_FLAG_HWDEVICE` and target the same backend.  Both fields
+  are forwarded through `hwAccelEntry` to the REST response and `HWAccelProbe`
+  TypeScript type.
+
+- **Hardware acceleration: Hardware dialog in GUI palette (commit `256e325`).**
+  A new **Hardware** button at the top of the left palette opens a modal dialog
+  showing one card per detected backend.  Each card displays the device name,
+  backend label, and chip groups for video-encode, video-decode, audio-encode,
+  and audio-decode codecs.  An **Available hardware** count badge appears on the
+  button when at least one backend is usable; "Software only" is shown when
+  none are.  An **Unavailable** accordion lists backends the probe attempted but
+  could not open.
+
+- **Hardware acceleration: VideoToolbox encoder visibility fix (commit `56af22c`).**
+  `h264_videotoolbox`, `hevc_videotoolbox`, `prores_videotoolbox`, and similar
+  encoders declare hardware support via `AV_CODEC_HW_CONFIG_METHOD_HW_FRAMES_CTX`
+  rather than `HW_DEVICE_CTX`.  The C helper `mm_codec_supports_hw` now OR-tests
+  both flags, making these codecs visible in the hardware probe for the first
+  time.
+
+- **Hardware acceleration: `media_type` field on HW codecs (commit `56af22c`).**
+  `HWCodecInfo` and the JSON API now carry a `media_type` field (`"video"` or
+  `"audio"`).  The Hardware dialog uses this to route codecs into separate
+  video-encode / video-decode / audio-encode / audio-decode chip rows.
+
+- **Hardware acceleration: suppress INT\_MAX max-resolution sentinel (commit `56af22c`).**
+  `AVHWFramesConstraints.max_width/max_height` is set to `INT_MAX` by backends
+  (including VideoToolbox) to mean "no limit".  The C helper now returns −1 for
+  uncapped dimensions instead of a nonsensical ~2 billion pixel value, so the
+  Hardware dialog omits the max-resolution row rather than showing garbage.
+
 - **Wave 11 #67: RTP/RTSP/RTMP/SRT/RIST URL-scheme validation + GUI affordance.**
   `pipeline/network_url.go` adds `urlScheme`, `isNetworkInput`, and
   `networkInputWarnings` helpers. `NormalizeConfig` (in `pipeline/normalize.go`)
