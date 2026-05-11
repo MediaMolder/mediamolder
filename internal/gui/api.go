@@ -102,6 +102,30 @@ func handleListNodes(w http.ResponseWriter, _ *http.Request) {
 		})
 	}
 
+	// Routing filters — multi-IO filters (fan-out, fan-in, composition)
+	// that are too common to omit from the palette. Exposed under
+	// "Filters / Routing". The canvas represents N pads via a single
+	// per-stream-type handle; multiple edges may originate from (fan-out)
+	// or converge on (fan-in) the same handle, ordered by connection
+	// sequence.
+	for _, f := range av.ListFilters() {
+		if _, ok := routingFilters[f.Name]; !ok {
+			continue
+		}
+		_, label := classifyFilter(f.Name, f.Description)
+		out = append(out, NodeCatalogEntry{
+			Category:    "Filters",
+			Subcategory: "Routing",
+			Type:        "filter",
+			Name:        f.Name,
+			Label:       label,
+			Description: f.Description,
+			Streams:      filterStreams(f),
+			NumInputs:   f.NumInputs,
+			NumOutputs:  f.NumOutputs,
+		})
+	}
+
 	// Virtual source / sink filters (Wave 8 #44). These libavfilter
 	// nodes have zero inputs (source) or zero outputs (sink) and would
 	// otherwise be filtered out by the 1→1 rule above. They land under
@@ -495,6 +519,23 @@ var virtualSourceFilters = map[string]struct{}{
 var virtualSinkFilters = map[string]struct{}{
 	"nullsink":  {},
 	"anullsink": {},
+}
+
+// routingFilters is the curated set of multi-IO libavfilter nodes exposed
+// under "Filters / Routing" in the palette. Fan-out filters (split, asplit)
+// have 1 static input and dynamic outputs; fan-in / composition filters
+// (overlay, hstack, etc.) have multiple inputs and 1 static output. The
+// canvas represents N pads via a single per-stream-type handle.
+var routingFilters = map[string]struct{}{
+	"split":   {},
+	"asplit":  {},
+	"overlay": {},
+	"hstack":  {},
+	"vstack":  {},
+	"xstack":  {},
+	"amerge":  {},
+	"amix":    {},
+	"concat":  {},
 }
 
 func virtualFilterLabel(name string) string {
