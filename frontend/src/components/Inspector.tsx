@@ -728,6 +728,65 @@ function InputForm({
           <code>-hwaccel</code> — selects the hardware decode API for this input.
         </div>
 
+        {/* Inline stream-level HW decode scope hint. */}
+        {(() => {
+          if (!def.hwaccel || !probed || probed.length === 0) return null;
+          const probe = availableHWAccels?.find((p) => p.type === def.hwaccel);
+          // When probe data is available use its codec list; otherwise assume
+          // video-only acceleration (true for all shipping hwaccel backends).
+          const hwDecoderNames = probe?.codecs
+            ?.filter((c) => c.role === 'decode')
+            .map((c) => c.name.toLowerCase()) ?? null;
+
+          const videoStreams = probed.filter((s) => s.type === 'video');
+          const audioStreams = probed.filter((s) => s.type === 'audio');
+
+          const willAccelerate = (s: ProbedStream) => {
+            if (!hwDecoderNames) return s.type === 'video'; // fallback: video only
+            return hwDecoderNames.some(
+              (n) => s.codec && (n === s.codec.toLowerCase() || n.startsWith(s.codec.toLowerCase())),
+            );
+          };
+
+          const hwVideo = videoStreams.filter(willAccelerate);
+          const hwAudio = audioStreams.filter(willAccelerate);
+          const swVideo = videoStreams.filter((s) => !willAccelerate(s));
+          const swAudio = audioStreams.filter((s) => !willAccelerate(s));
+
+          const parts: string[] = [];
+          if (hwVideo.length > 0) {
+            const tag = hwVideo.map((s) => s.codec ?? 'video').join(', ');
+            parts.push(`video (${tag})`);
+          }
+          if (hwAudio.length > 0) {
+            const tag = hwAudio.map((s) => s.codec ?? 'audio').join(', ');
+            parts.push(`audio (${tag})`);
+          }
+          const swParts: string[] = [];
+          if (swVideo.length > 0) swParts.push('video');
+          if (swAudio.length > 0) swParts.push('audio');
+
+          return (
+            <div style={{ fontSize: 11, marginBottom: 6 }}>
+              {parts.length > 0 ? (
+                <span>
+                  <span style={{ color: 'var(--accent, #4caf50)' }}>HW decode:</span>{' '}
+                  {parts.join(', ')}
+                </span>
+              ) : (
+                <span style={{ color: 'var(--text-dim)' }}>
+                  No streams in this input match a supported HW decoder.
+                </span>
+              )}
+              {swParts.length > 0 && parts.length > 0 && (
+                <span style={{ color: 'var(--text-dim)' }}>
+                  {' '}· SW fallback: {swParts.join(', ')}
+                </span>
+              )}
+            </div>
+          );
+        })()}
+
         {/* Capability summary for the selected accelerator. */}
         {(() => {
           if (!def.hwaccel || def.hwaccel === 'auto' || !availableHWAccels) return null;
