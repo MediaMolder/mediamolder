@@ -959,6 +959,70 @@ func (p *parser) parse() (*pipeline.Config, error) {
 				return nil, fmt.Errorf("-readrate_catchup: invalid value %q (want non-negative float)", v)
 			}
 			p.pendingReadCatchup, p.pendingReadCatchupSet = f, true
+		// Wave 11 #67: per-input network-protocol AVOptions.
+		// These are demuxer AVOptions that must appear before -i in the
+		// FFmpeg command line, so they are latched into pendingFileOpts
+		// where they end up in Input.Options after drainTypedInputDemuxer
+		// (which does not drain them — they intentionally stay in
+		// Options as AVDict passthrough to libavformat).
+		case arg == "-rtsp_transport":
+			// RTSP transport mode: tcp / udp / udp_multicast / http.
+			// Mirrors fftools/ffmpeg_opt.c reading from the demuxer AVOption.
+			if !p.hasMore() {
+				return nil, fmt.Errorf("-rtsp_transport requires an argument")
+			}
+			if p.pendingFileOpts == nil {
+				p.pendingFileOpts = make(map[string]any)
+			}
+			p.pendingFileOpts["rtsp_transport"] = p.next()
+		case arg == "-stimeout":
+			// RTSP socket timeout in microseconds (libavformat rtsp.c).
+			if !p.hasMore() {
+				return nil, fmt.Errorf("-stimeout requires an argument")
+			}
+			if p.pendingFileOpts == nil {
+				p.pendingFileOpts = make(map[string]any)
+			}
+			p.pendingFileOpts["stimeout"] = p.next()
+		case arg == "-listen_timeout":
+			// SRT listener-mode connection timeout in microseconds.
+			if !p.hasMore() {
+				return nil, fmt.Errorf("-listen_timeout requires an argument")
+			}
+			if p.pendingFileOpts == nil {
+				p.pendingFileOpts = make(map[string]any)
+			}
+			p.pendingFileOpts["listen_timeout"] = p.next()
+		case arg == "-timeout":
+			// General network I/O timeout in microseconds (rtmp, http, …).
+			// Note: -timeout is also a valid output-side muxer option for some
+			// muxers; here it is captured as a per-input option because it
+			// appears before -i in canonical FFmpeg command lines.
+			if !p.hasMore() {
+				return nil, fmt.Errorf("-timeout requires an argument")
+			}
+			if p.pendingFileOpts == nil {
+				p.pendingFileOpts = make(map[string]any)
+			}
+			p.pendingFileOpts["timeout"] = p.next()
+		case arg == "-rw_timeout":
+			// Protocol-level read/write timeout in microseconds (libavformat).
+			if !p.hasMore() {
+				return nil, fmt.Errorf("-rw_timeout requires an argument")
+			}
+			if p.pendingFileOpts == nil {
+				p.pendingFileOpts = make(map[string]any)
+			}
+			p.pendingFileOpts["rw_timeout"] = p.next()
+		case arg == "-mode":
+			// SRT connection mode: caller / listener / rendezvous.
+			if !p.hasMore() {
+				return nil, fmt.Errorf("-mode requires an argument")
+			}
+			if p.pendingFileOpts == nil {
+				p.pendingFileOpts = make(map[string]any)
+			}
+			p.pendingFileOpts["mode"] = p.next()
 		case arg == "-metadata" || strings.HasPrefix(arg, "-metadata:"):
 			// FFmpeg `-metadata [SPEC] key=value`. Without a spec the
 			// value lands on the container; with `:s:<type>:<idx>` it
