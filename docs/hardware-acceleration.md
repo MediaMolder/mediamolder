@@ -199,13 +199,87 @@ for _, p := range probes {
 }
 ```
 
+## Per-Input Hardware-Accelerated Decoding (Wave 10 #59)
+
+Three fields on each `Input` mirror FFmpeg's per-input `-hwaccel`, `-hwaccel_device`, and `-hwaccel_output_format` flags:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `hwaccel` | string | Hardware acceleration backend: `"cuda"`, `"vaapi"`, `"qsv"`, `"videotoolbox"`, `"d3d11va"`, `"dxva2"`, `"vulkan"`, `"opencl"`, `"auto"`, etc. |
+| `hwaccel_device` | string | Name of a pre-declared `hardware_devices` entry. The pipeline reuses its `AVHWDeviceContext` instead of opening a transient one. Omit to let the pipeline open a transient context. |
+| `hwaccel_output_format` | string | Pixel format for decoder output. Use a software format (`"nv12"`, `"yuv420p"`, …) for automatic CPU transfer, or a hardware surface name (`"cuda"`, `"vaapi"`, `"qsv"`, …) to keep frames on the GPU for zero-copy filter chains. |
+
+**Validation rules:**
+- `hwaccel_device` and `hwaccel_output_format` require `hwaccel` to be non-empty.
+- `hwaccel_device` must match a declared `hardware_devices[].name` entry.
+
+**Example — per-input CUDA decode with explicit GPU surface output:**
+
+```json
+{
+  "schema_version": "1.1",
+  "hardware_devices": [
+    { "name": "gpu0", "type": "cuda", "device": "0" }
+  ],
+  "inputs": [
+    {
+      "id": "src",
+      "url": "input.mp4",
+      "hwaccel": "cuda",
+      "hwaccel_device": "gpu0",
+      "hwaccel_output_format": "cuda",
+      "streams": [
+        {"input_index": 0, "type": "video", "track": 0},
+        {"input_index": 0, "type": "audio", "track": 0}
+      ]
+    }
+  ],
+  "graph": { "nodes": [], "edges": [
+    {"from": "src:v:0", "to": "out:v", "type": "video"},
+    {"from": "src:a:0", "to": "out:a", "type": "audio"}
+  ]},
+  "outputs": [{ "id": "out", "url": "output.mp4", "codec_video": "h264_nvenc", "codec_audio": "aac" }]
+}
+```
+
+Setting `hwaccel_output_format` to `"cuda"` keeps decoded frames in GPU memory so a downstream `scale_cuda` or `h264_nvenc` encoder receives them without a host↔device round-trip.
+
+**Example — VAAPI decode with auto CPU transfer (for software filters):**
+
+```json
+{
+  "inputs": [{
+    "id": "src",
+    "url": "input.mp4",
+    "hwaccel": "vaapi",
+    "hwaccel_device": "vaapi0",
+    "hwaccel_output_format": "nv12"
+  }]
+}
+```
+
+`"nv12"` is a software format, so the pipeline sets `AutoTransfer: true` on the decoder, which instructs libav to copy frames from the GPU surface to system RAM automatically. This enables downstream software filters.
+
+**Multiple inputs, mixed acceleration:**
+
+```json
+{
+  "inputs": [
+    { "id": "hd", "url": "hd.mp4", "hwaccel": "cuda", "hwaccel_device": "gpu0", "hwaccel_output_format": "cuda", "streams": [{"input_index": 0, "type": "video", "track": 0}] },
+    { "id": "bg", "url": "bg.mp4", "streams": [{"input_index": 0, "type": "video", "track": 0}] }
+  ]
+}
+```
+
+`"hd"` decodes on the GPU; `"bg"` uses the software decoder. Each input is independent.
+
 ## FFmpeg CLI Equivalents
 
 | FFmpeg CLI | MediaMolder JSON |
 |-----------|------------------|
-| `-hwaccel cuda` | `"hw_accel": "cuda"` |
-| `-hwaccel_device 0` | `"hw_device": "0"` |
-| `-hwaccel_output_format cuda` | Automatic when device is set |
+| `-hwaccel cuda -i input.mp4` | `"inputs": [{"hwaccel": "cuda", "url": "input.mp4"}]` |
+| `-hwaccel_device 0 -i input.mp4` | `"inputs": [{"hwaccel_device": "gpu0", "url": "input.mp4"}]` |
+| `-hwaccel_output_format cuda -i input.mp4` | `"inputs": [{"hwaccel_output_format": "cuda", "url": "input.mp4"}]` |
 | `-c:v h264_nvenc` | `"codec_video": "h264_nvenc"` |
 | `-c:v h264_vaapi` | `"codec_video": "h264_vaapi"` |
 | `-c:v h264_qsv` | `"codec_video": "h264_qsv"` |

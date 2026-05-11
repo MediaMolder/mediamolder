@@ -100,7 +100,7 @@ func (r *graphRunner) handleSource(ctx context.Context, node *graph.Node, outs [
 		f.SetPTS(pts * int64(si.TimeBase[0]) * int64(si.SampleRate) / int64(si.TimeBase[1]))
 	}
 
-	receiveAll := func(dec *av.DecoderContext, si av.StreamInfo) error {
+	receiveAll := func(dec av.FrameDecoder, si av.StreamInfo) error {
 		var indices []int
 		switch si.Type {
 		case av.MediaTypeVideo:
@@ -461,6 +461,25 @@ func (r *graphRunner) handleCopy(ctx context.Context, node *graph.Node, ins []<-
 
 // ---------- Resource pre-opening ----------
 
+// isSwPixFmtName reports whether name is a software (system-RAM) pixel
+// format — i.e. the caller should auto-transfer hw frames to SW after
+// decode. Hardware-surface names ("cuda", "vaapi", "qsv",
+// "videotoolbox", "d3d11va", "dxva2", "opencl") and the empty string
+// keep frames in GPU memory. This mirrors FFmpeg's
+// -hwaccel_output_format semantics: any format not on the hw-surface
+// list triggers automatic hw→sw transfer. (Wave 10 #59)
+func isSwPixFmtName(name string) bool {
+	if name == "" {
+		return false
+	}
+	switch strings.ToLower(name) {
+	case "cuda", "vaapi", "qsv", "videotoolbox", "d3d11va", "dxva2", "opencl", "vulkan":
+		return false
+	default:
+		return true
+	}
+}
+
 func (r *graphRunner) openSource(cfg Input, srcNode *graph.Node, decOpts av.DecoderOptions) (*sourceResources, error) {
 	var inputOpts map[string]string
 	if len(cfg.Options) > 0 {
@@ -622,9 +641,44 @@ func (r *graphRunner) openSource(cfg Input, srcNode *graph.Node, decOpts av.Deco
 		}
 	}
 
-	decoders := make(map[int]*av.DecoderContext)
+	decoders := make(map[int]av.FrameDecoder)
 	subDecoders := make(map[int]*av.SubtitleDecoderContext)
 	streams := make(map[int]av.StreamInfo)
+
+	// Resolve the hardware device for per-input hwaccel (Wave 10 #59).
+	// A non-empty cfg.HWAccel triggers the hw decoder path for video
+	// streams. cfg.HWAccelDevice may name a pre-opened hardware_devices
+	// entry (r.hwDevices[name]) or be empty (open on first use below).
+	var resolvedHWDev *av.HWDeviceContext
+	var ownedHWDev *av.HWDeviceContext // non-nil only when we opened it ourselves
+	defer func() {
+		if ownedHWDev != nil {
+			// On the success path this is set to nil before the
+			// function returns; here we handle all error paths.
+			ownedHWDev.Close()
+		}
+	}()
+	if cfg.HWAccel != "" && cfg.HWAccel != "none" {
+		if cfg.HWAccelDevice != "" {
+			if ctx, ok := r.hwDevices[cfg.HWAccelDevice]; ok {
+				resolvedHWDev = ctx
+			}
+			// validate() already ensures cfg.HWAccelDevice names a declared entry,
+			// so a missing lookup here is a programming error — leave resolvedHWDev nil
+			// and fall back to software decoding.
+		} else {
+			// No named device: open a transient context.
+			dt := av.ParseHWDeviceType(cfg.HWAccel)
+			if dt != av.HWDeviceNone {
+				var openErr error
+				ownedHWDev, openErr = av.OpenHWDevice(dt, "")
+				if openErr == nil {
+					resolvedHWDev = ownedHWDev
+				}
+				// On error: log and fall back to software decode.
+			}
+		}
+	}
 
 	// Resolve the selector list (handles All / Optional / Negate /
 	// Program — Wave 2 #9 + #10) into the concrete set of input
@@ -663,18 +717,47 @@ func (r *graphRunner) openSource(cfg Input, srcNode *graph.Node, decOpts av.Deco
 			}
 			subDecoders[si.Index] = subDec
 		default:
-			dec, err := av.OpenDecoderWithOptions(input, si.Index, decOpts)
-			if err != nil {
-				for _, d := range decoders {
-					d.Close()
+			// Use hardware-accelerated decoder when HWAccel is set on
+			// this input and a device context is available (Wave 10 #59).
+			// Only video streams benefit from GPU decode; audio stays on
+			// the software path (mirrors FFmpeg: -hwaccel never applies
+			// to audio decoders).
+			if resolvedHWDev != nil && si.Type == av.MediaTypeVideo {
+				// Determine whether to auto-transfer frames to SW.
+				// Software-format names (nv12, p010le, yuv420p, …) signal
+				// that the caller wants system-RAM frames; hw-surface names
+				// (cuda, vaapi, qsv, …) or empty keep frames on the GPU.
+				autoTransfer := isSwPixFmtName(cfg.HWAccelOutputFormat)
+				hwDec, err := av.OpenHWDecoder(input, si.Index, resolvedHWDev, av.HWDecoderOptions{
+					AutoTransfer: autoTransfer,
+					ThreadCount:  decOpts.ThreadCount,
+					ThreadType:   decOpts.ThreadType,
+				})
+				if err != nil {
+					for _, d := range decoders {
+						d.Close()
+					}
+					for _, d := range subDecoders {
+						d.Close()
+					}
+					input.Close()
+					return nil, fmt.Errorf("open hw decoder for %s stream %d: %w", typ, si.Index, err)
 				}
-				for _, d := range subDecoders {
-					d.Close()
+				decoders[si.Index] = hwDec
+			} else {
+				dec, err := av.OpenDecoderWithOptions(input, si.Index, decOpts)
+				if err != nil {
+					for _, d := range decoders {
+						d.Close()
+					}
+					for _, d := range subDecoders {
+						d.Close()
+					}
+					input.Close()
+					return nil, fmt.Errorf("open decoder for %s stream %d: %w", typ, si.Index, err)
 				}
-				input.Close()
-				return nil, fmt.Errorf("open decoder for %s stream %d: %w", typ, si.Index, err)
+				decoders[si.Index] = dec
 			}
-			decoders[si.Index] = dec
 		}
 		streams[si.Index] = si
 	}
@@ -759,8 +842,10 @@ func (r *graphRunner) openSource(cfg Input, srcNode *graph.Node, decOpts av.Deco
 		streamLoopRemaining: cfg.StreamLoop,
 		pacer:               pacer,
 		concatCleanup:       concatCleanup,
+		ownedHWDev:          ownedHWDev,
 	}
 	concatCleanup = nil // ownership transferred to res.Close()
+	ownedHWDev = nil    // ownership transferred to res.Close()
 	return res, nil
 }
 

@@ -72,6 +72,9 @@
         "read_rate": { "type": "number", "minimum": 0, "description": "Pace packet reads to (read_rate × realtime). 0 = unpaced; 1.0 mirrors ffmpeg `-re`." },
         "read_rate_initial_burst": { "type": "number", "minimum": 0, "description": "Seconds of media time read unpaced at the start of the input. Defaults to 0.5s when read_rate is non-zero." },
         "read_rate_catchup": { "type": "number", "minimum": 0, "description": "Multiplier used to recover from a pacing lag; must be >= read_rate when set." },
+        "hwaccel": { "type": "string", "description": "Hardware acceleration API for decoding video streams in this input. Mirrors FFmpeg's per-input -hwaccel flag (e.g. \"cuda\", \"vaapi\", \"qsv\", \"videotoolbox\"). Empty = software decode. (Wave 10 #59)" },
+        "hwaccel_device": { "type": "string", "description": "Name of a hardware_devices entry to use for decoding this input. Mirrors FFmpeg's per-input -hwaccel_device flag. Ignored when hwaccel is empty. (Wave 10 #59)" },
+        "hwaccel_output_format": { "type": "string", "description": "Pixel format produced by the hardware decoder. Mirrors FFmpeg's per-input -hwaccel_output_format flag. Software formats (nv12, yuv420p, …) trigger automatic hw→sw transfer; hardware formats (cuda, vaapi, …) keep frames on the GPU. (Wave 10 #59)" },
         "streams": {
           "type": "array",
           "items": { "$ref": "#/$defs/stream_select" }
