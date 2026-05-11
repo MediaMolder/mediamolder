@@ -120,7 +120,7 @@ func handleListNodes(w http.ResponseWriter, _ *http.Request) {
 			Name:        f.Name,
 			Label:       label,
 			Description: f.Description,
-			Streams:      filterStreams(f),
+			Streams:     filterStreams(f),
 			NumInputs:   f.NumInputs,
 			NumOutputs:  f.NumOutputs,
 		})
