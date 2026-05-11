@@ -93,7 +93,7 @@
         "input_index": { "type": "integer", "minimum": 0 },
         "type": {
           "type": "string",
-          "enum": ["video", "audio", "subtitle", "data"]
+          "enum": ["video", "audio", "subtitle", "data", "attachment"]
         },
         "track": { "type": "integer", "minimum": 0 },
         "all": { "type": "boolean", "default": false },

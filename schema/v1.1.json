@@ -93,7 +93,7 @@
         "input_index": { "type": "integer", "minimum": 0 },
         "type": {
           "type": "string",
-          "enum": ["video", "audio", "subtitle", "data"]
+          "enum": ["video", "audio", "subtitle", "data", "attachment"]
         },
         "track": { "type": "integer", "minimum": 0 },
         "all": { "type": "boolean", "default": false },
@@ -280,7 +280,7 @@
       "required": ["type", "index"],
       "additionalProperties": false,
       "properties": {
-        "type": { "type": "string", "enum": ["v", "a", "s", "d"], "description": "Media type letter: v=video, a=audio, s=subtitle, d=data." },
+        "type": { "type": "string", "enum": ["v", "a", "s", "d", "t"], "description": "Media type letter: v=video, a=audio, s=subtitle, d=data, t=attachment." },
         "index": { "type": "integer", "minimum": 0, "description": "0-based index within the media type, matching FFmpeg's `s:<type>:<idx>` resolution rule." },
         "metadata": { "type": "object", "additionalProperties": { "type": "string" }, "description": "Per-stream key/value metadata (e.g. `language=eng`, `title=Director Commentary`). Mirrors `-metadata:s:<type>:<idx>`." },
         "disposition": { "type": "string", "description": "`+`-separated list of AV_DISPOSITION_* flag names (e.g. `default`, `default+forced`, `hearing_impaired`). Mirrors `-disposition:s:<type>:<idx>`. Empty string leaves the disposition untouched." },

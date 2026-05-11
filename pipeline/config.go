@@ -356,7 +356,7 @@ type ConcatEntry struct {
 // missing match a silent skip rather than a fatal error.
 type StreamSelect struct {
 	InputIndex int    `json:"input_index"`
-	Type       string `json:"type"`  // "video", "audio", "subtitle", "data"
+	Type       string `json:"type"`  // "video", "audio", "subtitle", "data", "attachment"
 	Track      int    `json:"track"` // zero-based track number within the type
 	// All, when true, selects every stream of `Type` rather than the
 	// single track at `Track`. Mirrors FFmpeg's no-index form
@@ -1371,9 +1371,9 @@ func validate(cfg *Config) error {
 				return fmt.Errorf("input %q streams[%d] missing type", inp.ID, j)
 			}
 			switch s.Type {
-			case "video", "audio", "subtitle", "data":
+			case "video", "audio", "subtitle", "data", "attachment":
 			default:
-				return fmt.Errorf("input %q streams[%d]: invalid type %q (want video|audio|subtitle|data)", inp.ID, j, s.Type)
+				return fmt.Errorf("input %q streams[%d]: invalid type %q (want video|audio|subtitle|data|attachment)", inp.ID, j, s.Type)
 			}
 			if !s.All && s.Track < 0 {
 				return fmt.Errorf("input %q streams[%d]: negative track %d (use all=true for the no-index form)", inp.ID, j, s.Track)
@@ -1579,7 +1579,7 @@ func validate(cfg *Config) error {
 	// Edge types must be valid.
 	validTypes := map[string]bool{
 		"video": true, "audio": true, "subtitle": true, "data": true,
-		"metadata": true,
+		"attachment": true, "metadata": true,
 	}
 	for i, e := range cfg.Graph.Edges {
 		if !validTypes[e.Type] {

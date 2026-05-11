@@ -23,6 +23,8 @@ func fakeStream(idx int, typ string) av.StreamInfo {
 		ct = av.MediaTypeSubtitle
 	case "data":
 		ct = av.MediaTypeData
+	case "attachment":
+		ct = av.MediaTypeAttachment
 	}
 	return av.StreamInfo{Index: idx, Type: ct}
 }
@@ -183,6 +185,42 @@ func TestStreamSelectValidation_BadType(t *testing.T) {
 	}
 	if err := validate(cfg); err == nil {
 		t.Fatal("expected validation error")
+	}
+}
+
+func TestResolveStreamSelection_AttachmentAllSelects(t *testing.T) {
+	all := []av.StreamInfo{
+		fakeStream(0, "video"),
+		fakeStream(1, "attachment"),
+		fakeStream(2, "attachment"),
+	}
+	sel, err := resolveStreamSelection([]StreamSelect{
+		{Type: "video", Track: 0},
+		{Type: "attachment", All: true},
+	}, all, nil)
+	if err != nil {
+		t.Fatalf("unexpected: %v", err)
+	}
+	if got, want := sel, []int{0, 1, 2}; !equalInts(got, want) {
+		t.Errorf("got %v, want %v", got, want)
+	}
+}
+
+func TestStreamSelectValidation_AttachmentTypeAccepted(t *testing.T) {
+	cfg := &Config{
+		SchemaVersion: "1.1",
+		Inputs: []Input{{
+			ID: "in", URL: "x.mkv",
+			Streams: []StreamSelect{{Type: "attachment", All: true}},
+		}},
+		Outputs: []Output{{ID: "out", URL: "y.mkv"}},
+		Graph:   GraphDef{Nodes: []NodeDef{}, Edges: []EdgeDef{}},
+	}
+	if err := validate(cfg); err != nil {
+		// validation may fail for graph reasons, but NOT for "invalid type"
+		if strings.Contains(err.Error(), "invalid type") {
+			t.Fatalf("attachment type rejected: %v", err)
+		}
 	}
 }
 
