@@ -171,7 +171,7 @@ Legend: ✅ supported · ⚠️ partial · ❌ missing
 | `-map_metadata`, `-map_chapters`                                  | ✅    | `metadata_reader` / `metadata_writer` graph nodes connected by a `metadata` edge route container metadata or chapters from any input into any output (Wave 2 #11); `Input.MapMetadata` / `Input.MapChapters` shorthand still works for single-input cases. `compat/ffcli` parses both flags into the node pair. |
 | Chapter writing API                                               | ✅    | `Output.Chapters []ChapterInfo`; `metadata_writer` with `section=chapters` routes `AVChapter` entries from any input. |
 | Attachments (fonts for ASS, cover art)                            | ✅    | `Output.Attachments []Attachment` ({path, filename?, mimetype?}); muxed as `AVMEDIA_TYPE_ATTACHMENT` streams in matroska / mkv / webm. ffcli `-attach FILE`. (Wave 6 #31) |
-| Cover art / thumbnail embed in MP4/M4A                            | ❌    | Common end-user request (Wave 11 #64) |
+| Cover art / thumbnail embed in MP4/M4A                            | ✅    | `Output.CoverArt string`; `AVMEDIA_TYPE_VIDEO` stream with `AV_DISPOSITION_ATTACHED_PIC`; allow-list: mp4/m4a/mov/mp3/mkv; GUI file-picker; `compat/ffcli` import/export. (Wave 11 #64) |
 | Multiple outputs in one pipeline                                  | ✅    | Multiple `Output` entries |
 | **`tee` muxer / single-pass multi-format** (`mp4 + hls + dash`)   | ✅    | `Output.Kind="tee"` + typed `Output.Targets[]`; Wave 1 #5. |
 | HLS muxer (`hls_time`, `hls_playlist_type`, EXT-X-MAP, byte-range, low-latency) | ✅ | `Output.HLS *HLSOptions` typed (full hlsenc table); Wave 3 #12. |
@@ -1375,7 +1375,7 @@ already works in degraded form via per-filter spellings.
     Typed AVDict option fields for common capture knobs: `framerate`,
     `video_size`, `pixel_format`, `sample_rate`.
 
-64. **Cover art / thumbnail embed in MP4/M4A** (§2.5) —
+64. **Cover art / thumbnail embed in MP4/M4A** (§2.5) ✅ —
     `Output.CoverArt string` path field; materialised as an
     `AVMEDIA_TYPE_VIDEO` stream carrying `AV_DISPOSITION_ATTACHED_PIC`
     before `avformat_write_header`. Validator rejects containers that
@@ -1383,6 +1383,9 @@ already works in degraded form via per-filter spellings.
     GUI: file-picker in the output inspector (shown only when format
     is in the allow-list). `compat/ffcli` maps
     `-attach FILE -metadata:s:v:0 comment=Cover` to the new field.
+    CGO helper in `av/cover_art.go`; validation in
+    `pipeline/cover_art.go`; schemas and TypeScript types updated.
+    (Wave 11 #64, commit pending)
 
 65. **Per-input `-map` of attachment streams** (§2.2) —
     Extend `StreamSelect` with `type: "attachment"` (maps to

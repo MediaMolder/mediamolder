@@ -669,6 +669,15 @@ type Output struct {
 	// table is written instead. The container must support chapters
 	// (matroska, mp4, ogg, ffmetadata, …) for them to surface.
 	Chapters []Chapter `json:"chapters,omitempty"`
+	// CoverArt is the path to an image file (JPEG, PNG, or any format
+	// decodable by libavformat) that is embedded as cover art into the
+	// output container. Materialised as an AVMEDIA_TYPE_VIDEO stream
+	// with AV_DISPOSITION_ATTACHED_PIC before avformat_write_header,
+	// mirroring `-i cover.jpg -map 1:v -c:v:1 copy -disposition:v:1
+	// attached_pic`. Supported containers (validated by
+	// validateCoverArt): mp4, m4a, mov, ipod, mp3, mkv / matroska.
+	// Wave 11 #64.
+	CoverArt string `json:"cover_art,omitempty"`
 	// Attachments lists files muxed into the container as
 	// `AVMEDIA_TYPE_ATTACHMENT` streams (matroska / mkv / webm only).
 	// Mirrors the FFmpeg `-attach FILE` CLI: each entry's content
@@ -1546,6 +1555,9 @@ func validate(cfg *Config) error {
 			return err
 		}
 		if err := validateAttachments(out); err != nil {
+			return err
+		}
+		if err := validateCoverArt(out); err != nil {
 			return err
 		}
 	}

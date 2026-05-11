@@ -280,6 +280,13 @@ export interface Output {
   /** Files muxed into the container as `AVMEDIA_TYPE_ATTACHMENT`
    *  streams (matroska / mkv / webm only). Mirrors FFmpeg `-attach`. */
   attachments?: Attachment[];
+  /** Path to a cover-art image (JPEG / PNG / any libavformat-decodable
+   *  format) embedded as an `AVMEDIA_TYPE_VIDEO` stream with
+   *  `AV_DISPOSITION_ATTACHED_PIC` before `avformat_write_header`.
+   *  Supported containers: mp4 / m4a / mov / mp3 / mkv.
+   *  Mirrors `-i cover.jpg -map 1:v -c:v:1 copy
+   *  -disposition:v:1 attached_pic`. Wave 11 #64. */
+  cover_art?: string;
   /** Output discriminator. `""` / `"file"` open a single muxer at
    *  `url`; `"tee"` switches to libavformat's built-in tee muxer to
    *  fan one encoded stream out to N targets (`url` / `format` are
