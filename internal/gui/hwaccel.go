@@ -11,11 +11,22 @@ import (
 	"github.com/MediaMolder/MediaMolder/av"
 )
 
+// hwCodecInfo mirrors av.HWCodecInfo for the JSON API.
+type hwCodecInfo struct {
+	Name string `json:"name"` // e.g. "h264_cuvid", "hevc_vaapi"
+	Role string `json:"role"` // "encode" or "decode"
+}
+
 // hwAccelEntry is the JSON shape returned by GET /api/hwaccel.
 type hwAccelEntry struct {
-	Type      string `json:"type"`
-	Available bool   `json:"available"`
-	Error     string `json:"error,omitempty"`
+	Type      string       `json:"type"`
+	Available bool         `json:"available"`
+	Error     string       `json:"error,omitempty"`
+	// Populated only when Available is true:
+	SWFormats []string     `json:"sw_formats,omitempty"` // software pixel formats
+	MaxWidth  int          `json:"max_width,omitempty"`  // 0 = not reported
+	MaxHeight int          `json:"max_height,omitempty"` // 0 = not reported
+	Codecs    []hwCodecInfo `json:"codecs,omitempty"`     // codecs in FFmpeg registry
 }
 
 var (
@@ -37,6 +48,18 @@ func probeHWAccelOnce() []hwAccelEntry {
 			}
 			if p.Err != "" {
 				entry.Error = p.Err
+			}
+			if p.Available {
+				caps := p.Capabilities
+				entry.SWFormats = caps.SWFormats
+				entry.MaxWidth = caps.MaxWidth
+				entry.MaxHeight = caps.MaxHeight
+				if len(caps.Codecs) > 0 {
+					entry.Codecs = make([]hwCodecInfo, len(caps.Codecs))
+					for i, c := range caps.Codecs {
+						entry.Codecs[i] = hwCodecInfo{Name: c.Name, Role: c.Role}
+					}
+				}
 			}
 			hwAccelResult = append(hwAccelResult, entry)
 		}

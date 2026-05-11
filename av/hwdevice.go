@@ -253,13 +253,17 @@ func ListHWDeviceTypes() []HWDeviceType {
 
 // HWDeviceProbe holds the result of probing a single hardware device type.
 type HWDeviceProbe struct {
-	Type      HWDeviceType
-	Available bool
-	Err       string // non-empty when Available == false
+	Type         HWDeviceType
+	Available    bool
+	Err          string // non-empty when Available == false
+	// Capabilities is populated only when Available is true.
+	Capabilities DeviceCapabilities
 }
 
 // ProbeHWDevices returns all hardware device types compiled into FFmpeg with
 // each one probed for runtime availability by calling av_hwdevice_ctx_create.
+// For available devices, DeviceCapabilities is also populated via
+// av_hwdevice_get_hwframe_constraints and the static codec registry.
 func ProbeHWDevices() []HWDeviceProbe {
 	types := ListHWDeviceTypes()
 	out := make([]HWDeviceProbe, len(types))
@@ -268,8 +272,9 @@ func ProbeHWDevices() []HWDeviceProbe {
 		if err != nil {
 			out[i] = HWDeviceProbe{Type: t, Err: err.Error()}
 		} else {
+			caps := ctx.QueryCapabilities()
 			_ = ctx.Close()
-			out[i] = HWDeviceProbe{Type: t, Available: true}
+			out[i] = HWDeviceProbe{Type: t, Available: true, Capabilities: caps}
 		}
 	}
 	return out
