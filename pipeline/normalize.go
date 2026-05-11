@@ -57,6 +57,7 @@ type NormalizeWarning struct {
 func NormalizeConfig(cfg *Config) (*graph.Def, []NormalizeWarning, error) {
 	def := configToGraphDef(cfg)
 	warnings := detectEncoderShorthandAmbiguity(cfg, def)
+	warnings = append(warnings, networkInputWarnings(cfg.Inputs)...)
 	return def, warnings, nil
 }
 
