@@ -603,6 +603,12 @@ export interface JobConfig {
    *  is opened via av_hwdevice_ctx_create at pipeline start. Nodes reference
    *  a device by name via NodeDef.device. Mirrors ffmpeg's -init_hw_device. */
   hardware_devices?: HardwareDevice[];
+  /** Directories searched when resolving relative model-file paths that
+   *  appear directly in filter params (e.g. arnndn model=rnnoise.rnnn,
+   *  sofalizer sofa=file.sofa). Checked in declaration order after the
+   *  pipeline file's own directory. $asset: references bypass this check.
+   *  (Wave 11 #66) */
+  filter_asset_paths?: string[];
 }
 
 /** A named media-asset entry in `JobConfig.assets`. The symbolic name

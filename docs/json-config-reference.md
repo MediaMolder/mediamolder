@@ -12,6 +12,7 @@ MediaMolder pipelines are defined as JSON files conforming to schema v1.0, v1.1,
 | `outputs`        | array    | yes      | Output sinks                             |
 | `global_options` | object   | no       | Global pipeline options                  |
 | `copy_ts`        | bool     | no       | Preserve original demuxer timestamps end-to-end (FFmpeg `-copyts`). Suppresses the implicit `-ts_offset` after `-ss` and switches output-side `ss`/`to` to absolute timeline values. |
+| `filter_asset_paths` | array of string | no | Search directories for resolving relative model-file paths in filter params. See [Filter model paths](#filter-model-paths-filter_asset_paths). |
 
 Use `"1.1"` when the graph contains `go_processor` nodes. Use `"1.2"` when the graph stores editor-side data under `graph.ui` (e.g. node positions written by `mediamolder gui`); v1.2 is otherwise a strict superset of v1.1, and the runtime accepts all three versions interchangeably. Stream-copy nodes (`type: "copy"`) work under any of the three versions.
 
@@ -201,6 +202,48 @@ Typed mirror of the [`libavformat/dashenc.c`](../../ffmpeg/libavformat/dashenc.c
 | `flags`             | array of string | `-dash_flags`           | Per-flag list joined with `+`. |
 
 End-to-end smoke examples: [testdata/examples/41_hls_vod.json](../testdata/examples/41_hls_vod.json) and [testdata/examples/42_dash_basic.json](../testdata/examples/42_dash_basic.json). For ABR ladders, declare one explicit encoder graph node per rendition (see [testdata/examples/35_abr_ladder.json](../testdata/examples/35_abr_ladder.json)) and bind them to the master playlist via `hls.master_pl_name` + `hls.var_stream_map` or `dash.adaptation_sets`.
+
+## Filter model paths (`filter_asset_paths`)
+
+Some libavfilter filters accept file-path option values — most notably
+`arnndn` (`model=rnnoise.rnnn`) and `sofalizer` (`sofa=file.sofa`).
+`filter_asset_paths` is an array of directories that the validator
+searches when resolving *relative* paths that appear directly in a
+filter node's `params` map (keys matching `model`, `sofa`, `*_model`,
+`*_sofa`).
+
+**Resolution order** (first match wins):
+
+1. Absolute paths — checked directly via `os.Stat`.
+2. Each directory listed in `filter_asset_paths` (in declaration order).
+3. The directory of the pipeline JSON file itself (only when loaded via
+   `ParseConfigFile`; not available when the config is embedded in a
+   larger JSON blob parsed by `ParseConfig`).
+4. The process working directory.
+
+**`$asset:<name>` values** are handled by the Assets registry and are
+not subject to this check.
+
+If a model-bearing param cannot be resolved, `ParseConfigFile` returns
+an error naming the param, the value, and the list of directories
+searched. No error is raised when the pipeline is parsed without a
+file path (`ParseConfig`) and `filter_asset_paths` is empty.
+
+```json
+{
+  "filter_asset_paths": ["/opt/models/rnnoise", "./models"],
+  "graph": {
+    "nodes": [
+      { "id": "dn", "type": "filter", "filter": "arnndn",
+        "params": { "model": "cb.rnnn" } }
+    ]
+  }
+}
+```
+
+The GUI Inspector renders a text-field + **Browse…** button (backed by
+the local file browser) for any filter option whose name matches the
+model-bearing suffix heuristic.
 
 ## GlobalOptions
 
