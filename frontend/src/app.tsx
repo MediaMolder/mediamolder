@@ -98,6 +98,9 @@ function Editor() {
   const [job, setJob] = useState<JobConfig>(EMPTY_JOB);
   const [nodes, setNodes] = useState<FlowNode[]>([]);
   const [edges, setEdges] = useState<FlowEdge[]>([]);
+  // null = probe not yet returned (show all options as fallback);
+  // string[] = available accelerator names from /api/hwaccel
+  const [availableHWAccels, setAvailableHWAccels] = useState<string[] | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedEdgeIds, setSelectedEdgeIds] = useState<string[]>([]);
   // Node label density (persisted). 'verbose' shows the full heading +
@@ -131,6 +134,16 @@ function Editor() {
   const [showMinimap, setShowMinimap] = useStoredBool('mm.view.minimap', true);
   const canvasRef = useRef<HTMLDivElement>(null);
   const rf = useReactFlow();
+
+  /* ---------- Hardware acceleration probe ---------- */
+  useEffect(() => {
+    fetch('/api/hwaccel')
+      .then((r) => (r.ok ? r.json() : []))
+      .then((list: Array<{ type: string; available: boolean }>) => {
+        setAvailableHWAccels(list.filter((e) => e.available).map((e) => e.type));
+      })
+      .catch(() => setAvailableHWAccels(null));
+  }, []);
 
   /* ---------- Examples ---------- */
   useEffect(() => {
@@ -940,7 +953,7 @@ function Editor() {
       </div>
 
       {showInspector && (
-      <Inspector node={selectedNode} nodes={nodes} edges={edges} onChange={onNodeUpdate} onDelete={onNodeDelete} onSelectNode={setSelectedId} onProbedData={onProbedData} hwDevices={job.hardware_devices ?? []} />
+      <Inspector node={selectedNode} nodes={nodes} edges={edges} onChange={onNodeUpdate} onDelete={onNodeDelete} onSelectNode={setSelectedId} onProbedData={onProbedData} hwDevices={job.hardware_devices ?? []} availableHWAccels={availableHWAccels} />
       )}
       <RunDock visible={showRunPanel}>
         <RunPanel run={run} nodeKinds={nodeKinds} onClose={() => setShowRunPanel(false)} />
