@@ -372,6 +372,39 @@ The right-hand panel shows a typed form for the selected node. Codec, filter,
 and processor parameters surface as editable fields; arbitrary key/value pairs
 can be added for less common options.
 
+#### Hardware device picker (filter and encoder nodes)
+
+Every **filter** and **encoder** node has a **Hardware device** dropdown at the
+top of its Inspector form. The dropdown lists every `hardware_devices` entry
+declared in the job config (e.g. `gpu0 [cuda]`, `igpu [qsv]`). Select an
+entry to set `NodeDef.device` on the node; select `(none — software)` to clear
+it and keep the node on the CPU path.
+
+For filter nodes, an **Auto-map to hardware filter** checkbox appears beneath
+the picker (only enabled when a device is selected). Checking it sets
+`auto_map_hw: true`, which:
+- promotes the software filter name to its hardware equivalent
+  (e.g. `scale` → `scale_cuda` on a CUDA device), and
+- auto-inserts `hwupload`/`hwdownload` nodes at device boundaries.
+
+If the job config has no `hardware_devices` entries the picker shows only
+`(none — software)` with a hint to add devices.
+
+#### Canvas HW indicator badges
+
+Two visual badges appear on canvas nodes to reflect hardware state:
+
+- **Purple `⊞ <device>` chip** — shown on any filter or encoder with
+  `NodeDef.device` set. Hovering reveals `Hardware device: <name>`.
+- **Yellow `⚠ sw/hw` chip** — shown on a software filter (no `device`)
+  that is adjacent to at least one hardware-accelerated node in the graph.
+  This warns that the runtime must implicitly insert an
+  `hwdownload`/`hwupload` round-trip at that boundary, which costs memory
+  bandwidth and can reduce the benefit of hardware acceleration. To
+  eliminate the warning either assign the same device to the filter and
+  enable `auto_map_hw`, or reorder the graph so software filters are
+  grouped away from the HW chain.
+
 #### Encoder nodes
 
 Selecting an **encoder** node loads its option schema from

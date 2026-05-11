@@ -332,3 +332,23 @@ for _, p := range av.ProbeHWDevices() {
 - Ensure frames are not being transferred host↔device unnecessarily
 - Use zero-copy path: set `hw_accel` in global options
 - Check that the hardware encoder is receiving frames in the GPU pixel format
+
+## GUI: Device Picker and HW Indicator Badges (Wave 10 #60)
+
+When using the visual graph editor, hardware device assignment is surfaced directly on the canvas and in the Inspector panel.
+
+### Device picker in the Inspector
+
+Selecting a **filter** or **encoder** node opens the Inspector, which shows a **Hardware device** dropdown listing every `hardware_devices` entry defined in the job config (e.g. `gpu0 [cuda]`). Choosing an entry sets `NodeDef.device` on that node. Selecting `(none — software)` clears the assignment.
+
+For filter nodes, an **Auto-map to hardware filter** checkbox appears below the picker (enabled only when a device is selected). Checking it sets `auto_map_hw: true`, which promotes the software filter name to its hardware equivalent (e.g. `scale` → `scale_cuda`) and automatically inserts `hwupload`/`hwdownload` nodes at device boundaries.
+
+If no `hardware_devices` entries have been declared, the picker renders with only the `(none — software)` option and a hint to add entries to the job config.
+
+### Canvas badges
+
+Each graph node that has `NodeDef.device` set shows a small **purple chip** bearing the device name (e.g. `⊞ gpu0`). Hovering the chip shows the full tooltip `Hardware device: <name>`.
+
+A **yellow ⚠ sw/hw** warning badge is shown on software filter nodes (no `device`) that are adjacent — via the graph's edges — to at least one hardware-accelerated node. This indicates that the pipeline will be forced to perform an implicit `hwdownload` + `hwupload` round-trip at that boundary, which costs memory bandwidth and can negate the performance benefit of HW acceleration. To eliminate the warning, either:
+1. Assign the same device to the filter and enable `auto_map_hw`, or
+2. Reorder the graph so software filters are grouped together away from the HW chain.

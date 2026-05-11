@@ -599,6 +599,38 @@ button.danger:hover { background: rgba(185, 74, 74, 0.15); }
   margin-top: 4px;
 }
 
+/* HW device + round-trip warning badges (Wave 10 #60) */
+.mm-node .mm-node-hw-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+.mm-node .hw-badge {
+  display: inline-block;
+  font-size: 9px;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: rgba(167, 139, 250, 0.2);
+  color: #c4b5fd;
+  border: 1px solid rgba(167, 139, 250, 0.4);
+  letter-spacing: 0.3px;
+  white-space: nowrap;
+}
+.mm-node .hw-warn-badge {
+  display: inline-block;
+  font-size: 9px;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: rgba(245, 158, 11, 0.15);
+  color: #fbbf24;
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  letter-spacing: 0.3px;
+  white-space: nowrap;
+}
+
 /* Stream-typed handles */
 .react-flow__handle.handle-video    { background: var(--video); }
 .react-flow__handle.handle-audio    { background: var(--audio); }
