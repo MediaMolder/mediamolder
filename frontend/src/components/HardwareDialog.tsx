@@ -26,11 +26,6 @@ function backendLabel(type: string): string {
   return BACKEND_LABEL[type.toLowerCase()] ?? type.toUpperCase();
 }
 
-// Capitalise "encode" / "decode" for display
-function roleLabel(role: string): string {
-  return role === 'encode' ? 'Encode' : role === 'decode' ? 'Decode' : role;
-}
-
 // Best human-readable name for a codec: palette friendly-name first, then the
 // raw FFmpeg name with spaces instead of underscores.
 function codecLabel(name: string): string {
@@ -39,11 +34,25 @@ function codecLabel(name: string): string {
 
 type Codec = NonNullable<HWAccelProbe['codecs']>[number];
 
-// Group codecs by role
-function groupCodecs(codecs: HWAccelProbe['codecs']): { encode: Codec[]; decode: Codec[] } {
-  const encode = (codecs ?? []).filter((c) => c.role === 'encode');
-  const decode = (codecs ?? []).filter((c) => c.role === 'decode');
-  return { encode, decode };
+interface CodecGroups {
+  videoEncode: Codec[];
+  videoDecode: Codec[];
+  audioEncode: Codec[];
+  audioDecode: Codec[];
+}
+
+// Group codecs by (media_type, role). Codecs without media_type default to
+// video (all CUDA/VAAPI/QSV codecs are video; MediaType was added in a later
+// probe version).
+function groupCodecs(codecs: HWAccelProbe['codecs']): CodecGroups {
+  const all = codecs ?? [];
+  const isAudio = (c: Codec) => c.media_type === 'audio';
+  return {
+    videoEncode: all.filter((c) => !isAudio(c) && c.role === 'encode'),
+    videoDecode: all.filter((c) => !isAudio(c) && c.role === 'decode'),
+    audioEncode: all.filter((c) => isAudio(c) && c.role === 'encode'),
+    audioDecode: all.filter((c) => isAudio(c) && c.role === 'decode'),
+  };
 }
 
 interface ChipProps { label: string; note?: string }
@@ -60,8 +69,9 @@ function Chip({ label, note }: ChipProps) {
 
 interface CardProps { probe: HWAccelProbe }
 function DeviceCard({ probe }: CardProps) {
-  const { encode, decode } = groupCodecs(probe.codecs);
+  const { videoEncode, videoDecode, audioEncode, audioDecode } = groupCodecs(probe.codecs);
   const filters = probe.filters ?? [];
+  const hasAudio = audioEncode.length > 0 || audioDecode.length > 0;
 
   const deviceName = probe.display_name || backendLabel(probe.type);
   const backendName = probe.display_name ? backendLabel(probe.type) : null;
@@ -69,6 +79,10 @@ function DeviceCard({ probe }: CardProps) {
   const maxRes = (probe.max_width && probe.max_height)
     ? `${probe.max_width} × ${probe.max_height}`
     : null;
+
+  // When the backend has audio codecs too, prefix labels with "V" / "A".
+  const venc = hasAudio ? 'V Encode' : 'Encode';
+  const vdec = hasAudio ? 'V Decode' : 'Decode';
 
   return (
     <section className="hw-card">
@@ -86,23 +100,43 @@ function DeviceCard({ probe }: CardProps) {
         <span className="hw-card-ok">✓ Available</span>
       </div>
 
-      {(encode.length > 0 || decode.length > 0 || filters.length > 0) && (
+      {(videoEncode.length > 0 || videoDecode.length > 0 || audioEncode.length > 0 || audioDecode.length > 0 || filters.length > 0) && (
         <div className="hw-card-body">
-          {encode.length > 0 && (
+          {videoEncode.length > 0 && (
             <div className="hw-row">
-              <span className="hw-row-label">{roleLabel('encode')}</span>
+              <span className="hw-row-label">{venc}</span>
               <div className="hw-row-chips">
-                {encode.map((c) => (
+                {videoEncode.map((c) => (
                   <Chip key={c.name} label={codecLabel(c.name)} note={c.note} />
                 ))}
               </div>
             </div>
           )}
-          {decode.length > 0 && (
+          {videoDecode.length > 0 && (
             <div className="hw-row">
-              <span className="hw-row-label">{roleLabel('decode')}</span>
+              <span className="hw-row-label">{vdec}</span>
               <div className="hw-row-chips">
-                {decode.map((c) => (
+                {videoDecode.map((c) => (
+                  <Chip key={c.name} label={codecLabel(c.name)} note={c.note} />
+                ))}
+              </div>
+            </div>
+          )}
+          {audioEncode.length > 0 && (
+            <div className="hw-row">
+              <span className="hw-row-label">A Encode</span>
+              <div className="hw-row-chips">
+                {audioEncode.map((c) => (
+                  <Chip key={c.name} label={codecLabel(c.name)} note={c.note} />
+                ))}
+              </div>
+            </div>
+          )}
+          {audioDecode.length > 0 && (
+            <div className="hw-row">
+              <span className="hw-row-label">A Decode</span>
+              <div className="hw-row-chips">
+                {audioDecode.map((c) => (
                   <Chip key={c.name} label={codecLabel(c.name)} note={c.note} />
                 ))}
               </div>

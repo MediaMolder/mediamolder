@@ -689,6 +689,8 @@ export interface HWAccelProbe {
   codecs?: Array<{
     name: string;
     role: 'encode' | 'decode';
+    /** "video", "audio", "subtitle", "data", or absent for older probes. */
+    media_type?: string;
     /** Non-empty when the codec is supported but with profile/feature gaps at this GPU. */
     note?: string;
   }>;
