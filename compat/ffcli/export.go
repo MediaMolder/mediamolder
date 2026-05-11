@@ -241,6 +241,18 @@ func (e *exporter) buildInput(idx int, in pipeline.Input) {
 	if in.HWAccelOutputFormat != "" {
 		e.add("-hwaccel_output_format", in.HWAccelOutputFormat)
 	}
+	// Wave 11 #67: network-protocol AVOptions (RTSP, SRT, RTMP, …).
+	// These are demuxer AVOptions that must appear before -i.
+	// The set is fixed so the export is deterministic and round-trippable.
+	for _, key := range []string{
+		"rtsp_transport", "stimeout",  // RTSP
+		"mode", "listen_timeout",      // SRT
+		"timeout", "rw_timeout",       // RTMP / general
+	} {
+		if v, ok := in.Options[key]; ok {
+			e.add("-"+key, fmt.Sprint(v))
+		}
+	}
 	// -map_metadata is per-output in FFmpeg; it is emitted when building
 	// outputs (addOutputFlags), not before -i.
 	e.add("-i", in.URL)
