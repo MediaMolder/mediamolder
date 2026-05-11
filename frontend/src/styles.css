@@ -1189,6 +1189,39 @@ button.danger:hover { background: rgba(185, 74, 74, 0.15); }
 }
 .hw-adv-key { color: var(--text-dim); }
 .hw-adv-val { font-family: ui-monospace, monospace; color: var(--text); word-break: break-all; }
+/* Codec capability tables inside the Advanced section */
+.hw-caps-section {
+  margin-top: 8px;
+}
+.hw-caps-title {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-dim);
+  margin-bottom: 4px;
+}
+.hw-caps-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+  font-family: ui-monospace, monospace;
+}
+.hw-caps-table th {
+  text-align: left;
+  color: var(--text-dim);
+  font-weight: normal;
+  padding: 1px 6px 3px 0;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+.hw-caps-table td {
+  padding: 2px 6px 2px 0;
+  color: var(--text);
+  vertical-align: top;
+}
+.hw-caps-table tbody tr:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
 /* Unavailable backends accordion */
 .hw-unavail-section {
   margin-top: 4px;

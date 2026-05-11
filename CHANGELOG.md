@@ -6,6 +6,29 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 ## [Unreleased]
 
 ### Added
+- **Hardware dialog (Phase 3).**
+  A **Hardware** button in the node palette opens a modal listing all hardware
+  acceleration backends probed at startup.  Each available backend shows a
+  device card with:
+  - GPU marketing name (e.g. `NVIDIA GeForce RTX 4090`, `Apple M3 Pro`) and
+    backend/architecture badge.
+  - Encode / decode codec chips with ⚠ icons for limitation notes.
+  - Hardware-accelerated filter chips using friendly display names
+    (via new `friendlyFilterName()` helper in `lib/friendlyNames.ts`).
+  - **Advanced** section (collapsed by default) with: max resolution, SW pixel
+    formats, static caps (max NVDEC sessions, VT max encode resolution), and
+    per-codec capability tables for NVENC (max resolution, MB/s ceiling, engine
+    count, level range, B-frames, feature flags, max bitrate), NVDEC (max
+    resolution, chroma, bit depth, output format mask), and AMF (max resolution,
+    max concurrent streams).
+  - Unavailable backends collapsed in a secondary accordion with their error
+    messages.
+  The dialog re-uses `availableHWAccels` fetched at startup — no additional
+  network request on open.  Files: `components/HardwareDialog.tsx`,
+  `components/Palette.tsx` (Hardware button), `app.tsx` (dialog mount),
+  `lib/friendlyNames.ts` (`friendlyFilterName`), `styles.css`
+  (`hw-caps-table` rules).
+
 - **Hardware acceleration: full codec capability details in `/api/hwaccel` (Phase 2).**
   The `HWAccelProbe` JSON response now includes per-device capability records:
   - `nvenc_caps`: per-codec NVENC encoder caps (max resolution, max macroblock
