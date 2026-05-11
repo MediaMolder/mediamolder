@@ -92,8 +92,8 @@ import (
 //	'aprh' = 0x61707268  ProRes RAW HQ
 //	'av01' = 0x61763031  AV1
 type vtCodecEntry struct {
-	name      string // MediaMolder/LibAV codec name
-	inLibAV   bool   // true when LibAV's registry already covers this via VT
+	name    string // MediaMolder/LibAV codec name
+	inLibAV bool   // true when LibAV's registry already covers this via VT
 }
 
 var vtCodecTypes = map[uint32]vtCodecEntry{
@@ -107,7 +107,7 @@ var vtCodecTypes = map[uint32]vtCodecEntry{
 	0x61703478: {"prores_videotoolbox", true}, // ProRes 4444 XQ
 	0x6170726e: {"prores_raw_vt", false},      // ProRes RAW — not in LibAV
 	0x61707268: {"prores_raw_hq_vt", false},   // ProRes RAW HQ — not in LibAV
-	0x61763031: {"av1_videotoolbox", false},    // AV1 — check if LibAV has it
+	0x61763031: {"av1_videotoolbox", false},   // AV1 — check if LibAV has it
 }
 
 // vtDecodeTypes lists CMVideoCodecType values to test with

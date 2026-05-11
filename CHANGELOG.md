@@ -6,6 +6,21 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 ## [Unreleased]
 
 ### Added
+- **Hardware acceleration: per-backend GPU marketing names in `/api/hwaccel`.**
+  `QueryCapabilities()` now resolves a human-readable device name for every
+  hardware backend:
+  - **CUDA**: `cuDeviceGetName` via `libcuda.so` dlopen (e.g. `"NVIDIA GeForce RTX 4090"`).
+  - **VideoToolbox**: IORegistry `AGXAccelerator` model property via IOKit
+    (`av/vt_displayname_darwin.go`, e.g. `"Apple M3 Pro"`).
+  - **VA-API**: sysfs PCI-ID lookup (`/sys/class/drm/renderD128/device/`) with a
+    ~50-entry embedded table covering Intel Arc / Gen12–13, AMD RDNA 1–3, AMD iGPU,
+    and virtio-gpu (`av/vaapi_displayname_linux.go`).
+  - **QSV**: falls back to the VA-API name for the default DRI node on Linux;
+    `"Intel GPU (QSV)"` on other platforms.
+  `HWDeviceContext` now stores the `device` path string so the VA-API lookup has a
+  concrete DRI node to query.  Platform stubs (`_other.go`) ensure the package
+  compiles on all three platforms.
+
 - **VT-native ProRes RAW decoder (this commit).**
   `av.VTDecoderContext` implements `FrameDecoder` using `VTDecompressionSession`
   directly, bypassing LibAV's codec registry.  The pipeline source handler now

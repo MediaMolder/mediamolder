@@ -245,12 +245,12 @@ var nvCaps = []nvCapEntry{
 		minMajor: 8, minMinor: 9, // Ada Lovelace+
 	},
 	// ── NVDEC decoders (cuvid) ────────────────────────────────────────────
-	{name: "h264_cuvid", minMajor: 3, minMinor: 0},   // Kepler+
-	{name: "mpeg2_cuvid", minMajor: 3, minMinor: 0},  // Kepler+
-	{name: "mpeg4_cuvid", minMajor: 5, minMinor: 0},  // Maxwell+
-	{name: "vc1_cuvid", minMajor: 3, minMinor: 0},    // Kepler+
-	{name: "mjpeg_cuvid", minMajor: 5, minMinor: 0},  // Maxwell+
-	{name: "vp8_cuvid", minMajor: 5, minMinor: 0},    // Maxwell+
+	{name: "h264_cuvid", minMajor: 3, minMinor: 0},  // Kepler+
+	{name: "mpeg2_cuvid", minMajor: 3, minMinor: 0}, // Kepler+
+	{name: "mpeg4_cuvid", minMajor: 5, minMinor: 0}, // Maxwell+
+	{name: "vc1_cuvid", minMajor: 3, minMinor: 0},   // Kepler+
+	{name: "mjpeg_cuvid", minMajor: 5, minMinor: 0}, // Maxwell+
+	{name: "vp8_cuvid", minMajor: 5, minMinor: 0},   // Maxwell+
 	{name: "mpeg1video_cuvid", minMajor: 3, minMinor: 0},
 	{
 		name:     "hevc_cuvid",
@@ -262,8 +262,8 @@ var nvCaps = []nvCapEntry{
 			return "4:2:2 decode requires Turing (SM 7.5+)"
 		},
 	},
-	{name: "vp9_cuvid", minMajor: 6, minMinor: 0},  // Pascal+
-	{name: "av1_cuvid", minMajor: 8, minMinor: 0},  // Ampere+
+	{name: "vp9_cuvid", minMajor: 6, minMinor: 0}, // Pascal+
+	{name: "av1_cuvid", minMajor: 8, minMinor: 0}, // Ampere+
 }
 
 // nvCapsIndex maps codec name → *nvCapEntry for O(1) lookup.
