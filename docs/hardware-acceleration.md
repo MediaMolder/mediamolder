@@ -357,6 +357,66 @@ for _, d := range devices {
 }
 ```
 
+## Device probe + seek guard (Wave 11 #62)
+
+### Probing a device input (`POST /api/probe`)
+
+`POST /api/probe` accepts an optional `format` field in the JSON body.
+When supplied, `avformat_open_input` is forced to use that input-format
+demuxer (e.g. `"dshow"` or `"v4l2"`) so the URL is interpreted as a
+device specifier rather than a filename:
+
+```json
+{
+  "url": "video=Integrated Camera",
+  "format": "dshow",
+  "options": {"video_size": "1280x720", "framerate": "30"}
+}
+```
+
+The probe call runs under a **2-second timeout** (same goroutine pattern as
+`GET /api/devices`). HTTP 504 is returned when the device is unavailable.
+
+### Seek guard for device inputs
+
+Device demuxers (`dshow`, `avfoundation`, `v4l2`, `gdigrab`, `x11grab`,
+`decklink`) do not support `avformat_seek_file`. Attempting to seek a
+live device input returns an error or blocks indefinitely.
+
+`isDeviceFormat(name string) bool` in `pipeline/handlers_source.go`
+identifies these demuxers:
+
+```go
+func isDeviceFormat(name string) bool {
+    switch name {
+    case "dshow", "avfoundation", "v4l2", "gdigrab", "x11grab", "decklink":
+        return true
+    }
+    return false
+}
+```
+
+The seek step in `openSource` — which honours `-ss` / `-t` / `-to` by
+calling `input.SeekFile(targetUS)` — is now skipped for both `lavfi` and
+all device formats. Any `-ss` value on a device input is ignored at open
+time and instead converted to the per-packet stop-check (the same path
+already used for lavfi). This matches FFmpeg's own behaviour.
+
+### Device palette entries (`GET /api/nodes`)
+
+`handleListNodes` emits one or more `device_input` catalog entries using
+`runtime.GOOS` dispatch so only the platform-appropriate capture formats
+appear in the GUI palette:
+
+| OS      | Entries |
+|---------|---------|
+| Windows | `dshow` (camera/mic), `gdigrab` (screen capture) |
+| macOS   | `avfoundation` (camera/mic/screen) |
+| Linux   | `v4l2` (camera) |
+
+Each entry carries `Type: "device_input"` so the frontend can render a
+dedicated device inspector form (Wave 11 #63).
+
 ## Troubleshooting
 
 ### "av_hwdevice_ctx_create: Cannot allocate memory"

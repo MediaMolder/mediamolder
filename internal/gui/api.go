@@ -6,6 +6,7 @@ package gui
 import (
 	"encoding/json"
 	"net/http"
+	"runtime"
 	"sort"
 	"strings"
 
@@ -160,6 +161,57 @@ func handleListNodes(w http.ResponseWriter, _ *http.Request) {
 		Description: "Input.Kind=\"lavfi\" — opens a libavfilter graph spec (e.g. anullsrc=r=48000:cl=stereo, color=black:s=1920x1080:r=30) as a top-level input via FFmpeg's lavfi virtual demuxer.",
 	})
 
+	// Per-platform device capture inputs (Wave 11 #62).
+	// Only the native capture formats for the running OS are exposed.
+	// The device-name combobox (Wave 11 #63) populates from GET /api/devices?format=<fmt>.
+	switch runtime.GOOS {
+	case "windows":
+		out = append(out,
+			NodeCatalogEntry{
+				Category:    "Sources",
+				Subcategory: "Device capture",
+				Type:        "device_input",
+				Name:        "dshow",
+				Label:       "DirectShow (camera / mic)",
+				Description: "Capture from a DirectShow device (webcam, microphone, capture card). URL format: video=\"Device Name\" or audio=\"Device Name\".",
+				Streams:     []string{"video", "audio"},
+				Common:      true,
+			},
+			NodeCatalogEntry{
+				Category:    "Sources",
+				Subcategory: "Device capture",
+				Type:        "device_input",
+				Name:        "gdigrab",
+				Label:       "GDI grab (screen capture)",
+				Description: "Capture the Windows desktop or a specific window via GDI. URL: \"desktop\" or \"title=Window Title\".",
+				Streams:     []string{"video"},
+				Common:      true,
+			},
+		)
+	case "darwin":
+		out = append(out, NodeCatalogEntry{
+			Category:    "Sources",
+			Subcategory: "Device capture",
+			Type:        "device_input",
+			Name:        "avfoundation",
+			Label:       "AVFoundation (camera / mic / screen)",
+			Description: "Capture from an AVFoundation device on macOS. URL format: \"<video_index>:<audio_index>\", e.g. \"0:0\" for default camera + mic.",
+			Streams:     []string{"video", "audio"},
+			Common:      true,
+		})
+	default: // Linux and other POSIX
+		out = append(out, NodeCatalogEntry{
+			Category:    "Sources",
+			Subcategory: "Device capture",
+			Type:        "device_input",
+			Name:        "v4l2",
+			Label:       "V4L2 (Video for Linux)",
+			Description: "Capture from a Video4Linux2 device. URL: /dev/video0 (or another V4L2 device node).",
+			Streams:     []string{"video"},
+			Common:      true,
+		})
+	}
+
 	// Encoders from libavcodec.
 	for _, c := range av.ListCodecs() {
 		if !c.IsEncoder {
@@ -207,7 +259,7 @@ func handleListNodes(w http.ResponseWriter, _ *http.Request) {
 	for i := range out {
 		applyCuration(&out[i])
 		switch out[i].Type {
-		case "input", "output", "copy", "filter_source", "filter_sink", "lavfi_input":
+		case "input", "output", "copy", "filter_source", "filter_sink", "lavfi_input", "device_input":
 			// These are synthetic palette built-ins — always Common.
 			out[i].Common = true
 		}

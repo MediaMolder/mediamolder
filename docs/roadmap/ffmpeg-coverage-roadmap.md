@@ -1351,18 +1351,18 @@ already works in degraded form via per-filter spellings.
     `avdevice_register_all()` is called once via `sync.Once`.
     (Wave 11 #61, complete)
 
-62. **Device probe + seek guard** (§2.1) —
-    Extend `POST /api/probe` to accept an optional `format` string
-    field; opens the device URL with
-    `av.OpenInputWithFormat(url, format, opts)` under a 2-second
-    deadline context, then calls `avformat_find_stream_info` and
-    closes. In `pipeline/handlers_source.go`, add an
-    `isDeviceFormat()` helper
-    (`{"dshow", "avfoundation", "v4l2", "gdigrab", "x11grab", "decklink"}`)
-    and extend the existing seek-skip guard so that device inputs are
-    never seeked (same pattern already applied for `lavfi`). Per-platform
-    palette entries emitted by `/api/nodes` using `runtime.GOOS`
-    dispatch.
+62. ✅ **Device probe + seek guard** (§2.1) —
+    `POST /api/probe` now accepts an optional `"format"` field; passes
+    it to `av.OpenInputWithFormat(url, format, opts)` under a 2-second
+    goroutine+context timeout (HTTP 504 on expiry). `isDeviceFormat()`
+    helper added to `pipeline/handlers_source.go` with the set
+    `{"dshow", "avfoundation", "v4l2", "gdigrab", "x11grab", "decklink"}`;
+    the existing seek-skip guard (`timing.haveStart && formatName != "lavfi"`)
+    is extended to `&& !isDeviceFormat(formatName)` so device inputs are
+    never seeked (matches FFmpeg behaviour). Per-platform `device_input`
+    palette entries emitted by `handleListNodes` via `runtime.GOOS`:
+    Windows → `dshow` + `gdigrab`; macOS → `avfoundation`; Linux → `v4l2`.
+    (Wave 11 #62, complete)
 
 63. **Device picker + Inspector form (frontend)** (§2.1, §2.8) —
     A `DeviceInput` palette entry per platform
