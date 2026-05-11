@@ -6,6 +6,26 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 ## [Unreleased]
 
 ### Added
+- **Wave 11 #67: RTP/RTSP/RTMP/SRT/RIST URL-scheme validation + GUI affordance.**
+  `pipeline/network_url.go` adds `urlScheme`, `isNetworkInput`, and
+  `networkInputWarnings` helpers. `NormalizeConfig` (in `pipeline/normalize.go`)
+  now emits `NormalizeWarning`s for two advisory conditions: `rtsp://` or
+  `rtsps://` inputs that have no `rtsp_transport` set
+  (`Code: "input.rtsp.no_transport"`) and SRT listener-mode inputs without a
+  `listen_timeout` (`Code: "input.srt.listener_no_timeout"`). Warnings (not hard
+  errors) because libavformat will still attempt to open. `compat/ffcli`: the
+  parser now routes six per-input network flags (`-rtsp_transport`, `-stimeout`,
+  `-listen_timeout`, `-timeout`, `-rw_timeout`, `-mode`) from the default
+  `globalOpts` fallthrough to `pendingFileOpts → Input.Options`; `export.go`
+  emits the same keys as ordered `-<key> <value>` flags before `-i`; the
+  `drainTypedInputDemuxer` drop-list was extended to prevent these keys from
+  leaking into output encoder opts. GUI (`Inspector.tsx`): `InputForm` now shows
+  a coloured **RTSP / SRT / RTMP** scheme badge when the URL is a network stream
+  and renders scheme-specific option fields: `rtsp_transport` select + `stimeout`
+  input for RTSP/RTSPS; `mode` select + `listen_timeout` input for SRT; `timeout`
+  input for RTMP variants. All controls write to `Input.Options` (AVDict
+  passthrough — no schema changes required).
+
 - **Wave 11 #64: Cover art / thumbnail embedding (`Output.CoverArt`).** New `Output.CoverArt string` field (JSON: `cover_art`) selects an image file (JPEG / PNG / any libavformat-decodable format) for embedding into the output container as an `AVMEDIA_TYPE_VIDEO` stream with `AV_DISPOSITION_ATTACHED_PIC`, matching the `ffmpeg -i cover.jpg -map 1:v -c:v:1 copy -disposition:v:1 attached_pic` pattern. The CGO helper `av.(*OutputFormatContext).AddCoverArt(path)` in `av/cover_art.go` opens the image via `avformat_open_input`, creates the new video stream, copies `AVCodecParameters`, and reads the first video frame; it returns the stream index and an `*av.Packet` that must be written after `avformat_write_header`. `pipeline/handlers_sink.go` calls `AddCoverArt` before `WriteHeaderWithOptions` and writes the returned packet immediately after. `validateCoverArt` in `pipeline/cover_art.go` rejects unsupported containers with an actionable error (allowed: `mp4`, `m4a`, `mov`, `ipod`, `mp3`, `mkv`, `matroska`). `compat/ffcli` imports `-attach FILE -metadata:s:v:0 comment=Cover` and exports `Output.CoverArt` back to the same flags. GUI: `Inspector.tsx` shows a **Cover art** file-picker in `OutputForm` when the format is in the allow-list. Schemas (`v1.0.json`, `v1.1.json`) and TypeScript types (`frontend/src/lib/jobTypes.ts`) updated.
 
 - **Wave 11 #63: Device picker + Inspector form.** Frontend support for capture-device inputs. `spawnNodeFrom` in `frontend/src/lib/spawn.ts` now handles `entry.type === 'device_input'` — creates an `Input` with `format` set to the demuxer name (`dshow`, `v4l2`, etc.) and pre-populates `streams[]` from the palette entry. `MMNode.describeKind` gains a `device_input` arm (`"Capture device / Demux"`). `Inspector.tsx` adds `isDeviceInput(def)` (checks `def.format` against `{"dshow", "avfoundation", "v4l2", "gdigrab", "decklink"}`) and routes matching inputs to the new `DeviceInputForm` instead of `InputForm`. `DeviceInputForm` provides: a **Device type** dropdown (`video` / `audio` for dshow/avfoundation; `screen` for gdigrab); an async **Device name combobox** that calls `GET /api/devices?format=<fmt>` on mount and builds the platform-appropriate URL on selection (`video="<name>"` for dshow, device index for avfoundation, raw path for v4l2, `desktop` for gdigrab); a **Device URL** field for manual override; a **Test connection** button (POSTs to `/api/probe` with `format` field — Wave 11 #62); and **Capture options** fields (`framerate`, `video_size`, `pixel_format`, `sample_rate`) written to `Input.options` as AVDict entries. Graphs loaded from JSON with a device-format `Input.format` are automatically routed to `DeviceInputForm`.

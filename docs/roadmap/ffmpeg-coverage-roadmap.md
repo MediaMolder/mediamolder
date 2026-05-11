@@ -1413,14 +1413,16 @@ already works in degraded form via per-filter spellings.
     + `FilterForm.tsx` `ModelFileInput` updated.
     (Wave 11 #66)
 
-67. **RTP/RTSP/RTMP/SRT/RIST URL-scheme validation + GUI affordance** (§2.7) —
-    `pipeline.Validate()` inspects `Input.URL` scheme and emits a
-    structured error for known-bad option combos (e.g. `rtsp://`
-    without `rtsp_transport` when `Input.Options` is empty).
-    GUI: URL-scheme icon in the input inspector;
-    `rtsp_transport` dropdown (`tcp` / `udp` / `udp_multicast` / `http`)
-    and `stimeout` field for RTSP; `listen_timeout` and `mode` for SRT.
+67. ✅ **RTP/RTSP/RTMP/SRT/RIST URL-scheme validation + GUI affordance** (§2.7) —
+    `pipeline/network_url.go` — `urlScheme`, `isNetworkInput`, `networkInputWarnings`;
+    `NormalizeConfig` emits advisory `NormalizeWarning`s for RTSP without
+    `rtsp_transport` and SRT listener without `listen_timeout`.
+    `compat/ffcli` parses and exports `-rtsp_transport`, `-stimeout`, `-mode`,
+    `-listen_timeout`, `-timeout`, `-rw_timeout` as per-input `Options`.
+    GUI: scheme badge in `InputForm`; `rtsp_transport` select + `stimeout` for
+    RTSP/RTSPS; `mode` select + `listen_timeout` for SRT; `timeout` for RTMP.
     NDI and Decklink remain AVDict-passthrough only (§6.13).
+    (Wave 11 #67)
 
 ### 6.12 Cross-cutting accelerators (parallel with all waves)
 
