@@ -93,18 +93,11 @@ const (
 )
 
 func (t HWDeviceType) String() string {
-	switch t {
-	case HWDeviceCUDA:
-		return "cuda"
-	case HWDeviceVAAPI:
-		return "vaapi"
-	case HWDeviceQSV:
-		return "qsv"
-	case HWDeviceVideoToolbox:
-		return "videotoolbox"
-	default:
+	name := C.av_hwdevice_get_type_name(C.enum_AVHWDeviceType(t))
+	if name == nil {
 		return "none"
 	}
+	return C.GoString(name)
 }
 
 // ParseHWDeviceType parses a hardware device type name string.
@@ -256,4 +249,28 @@ func ListHWDeviceTypes() []HWDeviceType {
 		types = append(types, HWDeviceType(t))
 	}
 	return types
+}
+
+// HWDeviceProbe holds the result of probing a single hardware device type.
+type HWDeviceProbe struct {
+	Type      HWDeviceType
+	Available bool
+	Err       string // non-empty when Available == false
+}
+
+// ProbeHWDevices returns all hardware device types compiled into FFmpeg with
+// each one probed for runtime availability by calling av_hwdevice_ctx_create.
+func ProbeHWDevices() []HWDeviceProbe {
+	types := ListHWDeviceTypes()
+	out := make([]HWDeviceProbe, len(types))
+	for i, t := range types {
+		ctx, err := OpenHWDevice(t, "")
+		if err != nil {
+			out[i] = HWDeviceProbe{Type: t, Err: err.Error()}
+		} else {
+			_ = ctx.Close()
+			out[i] = HWDeviceProbe{Type: t, Available: true}
+		}
+	}
+	return out
 }
