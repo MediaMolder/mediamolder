@@ -50,7 +50,7 @@ A review of typical production FFmpeg usage (animated `drawtext`, two-pass `loud
 | **Two-pass `loudnorm`**                                        | ✅ Done — `Output.LoudnormPass` / `Output.LoudnormStatsFile` carry the EBU R128 shuttle. Pass 1 sets `print_format=json`+`stats_file` on every loudnorm filter so libavfilter writes input_i/tp/lra/thresh/target_offset to a JSON file (`af_loudnorm.c::uninit`); pass 2 reads it and injects `measured_I/TP/LRA/thresh`+`offset` AVOptions. No FFmpeg flag — orchestration sugar above the manual two-run recipe. |
 | **`setsar` / `setdar` and explicit SAR/DAR encoding**          | ✅ Done — `Output.SAR` / `Output.DAR` shorthand with canonical SD shapes auto-derived; Wave 3 #15. |
 | **Audio channel manipulation** (`pan`, `channelsplit`, `channelmap`, `join`, `amerge`, `amix=weights=…`) | Multi-track downmix / upmix / language-track splitting. |
-| **Speech denoise model files** (`arnndn=model=cb.rnnn`)        | Filter takes a model path; we have no fixture/asset story for filter-side data files. Same problem as YOLO model paths but for filters rather than processors. |
+| **Speech denoise model files** (`arnndn=model=cb.rnnn`)        | ✅ Done — `filter_asset_paths []string` field + validator + GUI `ModelFileInput`; resolves model paths relative to pipeline file and `filter_asset_paths` dirs. (Wave 11 #66) |
 | **HDR tonemap via `zscale`**                                   | Depends on libzimg in the build (separate from libswscale). Build-tag and feature-detection story missing. |
 | **`minterpolate` motion-compensated frame interpolation**      | Requires VFR awareness and fps targets — touches the same FrameRate/TimeBase plumbing as xfade. |
 | **Lossless intermediate codecs** (FFV1, ProRes, DNxHD/DNxHR, HuffYUV) | Multi-pass editorial workflows (decode → lossless intermediate → grade → final encode). Encoder availability + container compatibility validation. |
@@ -127,7 +127,7 @@ Legend: ✅ supported · ⚠️ partial · ❌ missing
 | **Filter expression engine** (`t`, `n`, `frame`, `tw`, `th`, `text_w`, `text_h`, `w`, `h`, `enable=between(t,2,8)`, arithmetic) | ✅ | Strings reach libavfilter intact; `GET /api/filters/{name}/eval-expression` validator (§5#7); `expression: true` AVOption flag bit + curated per-filter variable registry (Wave 4 #19); syntax-highlighted `ExpressionInput` GUI control with cookbook + live validation (Wave 4 #20). |
 | **Mixed labelled + unlabelled `-filter_complex` outputs**   | ✅    | `compat/ffcli.NormalizeFilterComplex` rewrites dangling pads to synthetic `[mm_fc_out_N]`/`[mm_fc_in_0]` labels; idempotent (Wave 7 #40). Full `-filter_complex` parse → node+edge wiring deferred to Wave 8 #53. |
 | `setsar`, `setdar` (SAR/DAR overrides)                      | ✅    | `Output.SAR` / `Output.DAR` shorthand; `compat/ffcli` rewrites legacy `-aspect`. Wave 3 #15. |
-| `arnndn` (RNNoise) and other model-file filters             | ⚠️    | Filter runs if model path is correct; no fixture story for filter-side data files |
+| `arnndn` (RNNoise) and other model-file filters             | ✅    | `filter_asset_paths []string` on `pipeline.Config`; validator resolves relative model-file params (`model=`, `sofa=`, `*_model`, `*_sofa`) against pipeline file dir + search dirs; GUI Inspector renders `ModelFileInput` (text + Browse…) for model-bearing option names. (Wave 11 #66) |
 | `zscale` + `tonemap` (HDR)                                  | ✅    | Validator (`pipeline.validateFilterAvailability`) rejects unknown / unbuilt filters with an actionable hint (`zscale` → `--enable-libzimg`, `tonemap_opencl` → `--enable-opencl`, …) instead of waiting for a runtime "filter not found". Palette (`/api/nodes`) only lists filters reported by `av.ListFilters()`, so unbuilt entries are absent automatically. (Wave 7 #42) |
 | `minterpolate` (motion-compensated interpolation)           | ✅    | Frame-rate / time-base plumbing done in §5 #1; the AVOption miner (§4 #19) exposes `mi_mode` / `mc_mode` / `me_mode` / `me` (and `vsbmc`) as typed `int` options carrying their named constants — the GUI Inspector renders them as enum dropdowns. (Wave 7 #43) |
 | Audio channel manipulation: `pan`, `channelsplit`, `channelmap`, `join`, `amerge`, `amix=weights` | ✅ | Backend works (Wave 7 #41); GUI channel-routing matrix done (Wave 8 #49): `PanForm` gain matrix, `ChannelMapForm` source dropdowns, `ChannelSplitForm` layout selector, `JoinForm` stream+channel pickers, `AMergeForm` input count, `AMixForm` weighted mix |
@@ -1374,7 +1374,7 @@ already works in degraded form via per-filter spellings.
     Typed AVDict option fields for common capture knobs: `framerate`,
     `video_size`, `pixel_format`, `sample_rate`.
 
-64. **Cover art / thumbnail embed in MP4/M4A** (§2.5) ✅ —
+64.  ✅ **Cover art / thumbnail embed in MP4/M4A** (§2.5) —
     `Output.CoverArt string` path field; materialised as an
     `AVMEDIA_TYPE_VIDEO` stream carrying `AV_DISPOSITION_ATTACHED_PIC`
     before `avformat_write_header`. Validator rejects containers that
@@ -1386,7 +1386,7 @@ already works in degraded form via per-filter spellings.
     `pipeline/cover_art.go`; schemas and TypeScript types updated.
     (Wave 11 #64, commit `688d208`)
 
-65. **Per-input `-map` of attachment streams** (§2.2) —
+65.  ✅ **Per-input `-map` of attachment streams** (§2.2) —
     Extend `StreamSelect` with `type: "attachment"` (maps to
     `AVMEDIA_TYPE_ATTACHMENT`); `handleSource` treats attachment streams
     as copy-only (no decoder opened; data lives in `codecpar->extradata`);
@@ -1398,7 +1398,7 @@ already works in degraded form via per-filter spellings.
     `frontend/src/lib/jobTypes.ts`, `av/demux.go`, `graph/graph.go`
     updated.
 
-66. **Model-file filter fixture story** (§2.3) —
+66. ✅ **Model-file filter fixture story** (§2.3) —
     Standardise how filter parameters that reference on-disk model
     files are expressed and validated (`arnndn=model=rnnoise.rnnn`,
     `sofalizer=sofa=file.sofa`). Add a
@@ -1408,6 +1408,10 @@ already works in degraded form via per-filter spellings.
     model-path story in `processors/`). GUI: file-picker appears in
     the Inspector when a filter option name matches known model-bearing
     suffixes (`_model`, `_sofa`, `model`, `sofa`).
+    `pipeline/filter_model_paths.go` + `ParseConfigFile` basedir
+    threading; `schema/v1.{0,1}.json` + `frontend/src/lib/jobTypes.ts`
+    + `FilterForm.tsx` `ModelFileInput` updated.
+    (Wave 11 #66)
 
 67. **RTP/RTSP/RTMP/SRT/RIST URL-scheme validation + GUI affordance** (§2.7) —
     `pipeline.Validate()` inspects `Input.URL` scheme and emits a

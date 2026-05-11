@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 )
@@ -71,6 +72,13 @@ type Config struct {
 	// Mirrors FFmpeg's global `-init_hw_device type[=name][:device]` flag
 	// (fftools/ffmpeg_opt.c::opt_init_hw_device). (Wave 10 #56)
 	HardwareDevices []HardwareDevice `json:"hardware_devices,omitempty"`
+	// FilterAssetPaths is a list of directories searched when resolving
+	// relative model-file paths that appear directly in filter params
+	// (e.g. arnndn model=rnnoise.rnnn, sofalizer sofa=file.sofa).
+	// Searched in declaration order after the pipeline file's own
+	// directory; $asset:<name> references bypass this mechanism.
+	// (Wave 11 #66)
+	FilterAssetPaths []string `json:"filter_asset_paths,omitempty"`
 }
 
 // Input describes a single input source.
@@ -1292,7 +1300,16 @@ func ParseConfigFile(path string) (*Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read config %q: %w", path, err)
 	}
-	return ParseConfig(data)
+	cfg, err := ParseConfig(data)
+	if err != nil {
+		return nil, err
+	}
+	// Validate filter model paths relative to the pipeline file's directory.
+	// (Wave 11 #66)
+	if err := validateFilterModelPaths(cfg, filepath.Dir(path)); err != nil {
+		return nil, err
+	}
+	return cfg, nil
 }
 
 // validate performs semantic validation beyond what JSON unmarshaling checks.
