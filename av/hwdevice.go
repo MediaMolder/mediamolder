@@ -118,6 +118,9 @@ func (t HWDeviceType) HWPixelFormat() int {
 type HWDeviceContext struct {
 	ref        *C.AVBufferRef
 	deviceType HWDeviceType
+	// device is the device path string passed to OpenHWDevice (e.g. "/dev/dri/renderD128").
+	// Empty string means the platform default was used.
+	device string
 }
 
 // OpenHWDevice creates a hardware device context of the given type.
@@ -136,7 +139,7 @@ func OpenHWDevice(deviceType HWDeviceType, device string) (*HWDeviceContext, err
 		return nil, fmt.Errorf("av_hwdevice_ctx_create(%s, %q): %w", deviceType, device, newErr(ret))
 	}
 
-	return &HWDeviceContext{ref: ref, deviceType: deviceType}, nil
+	return &HWDeviceContext{ref: ref, deviceType: deviceType, device: device}, nil
 }
 
 // Close releases the hardware device context.

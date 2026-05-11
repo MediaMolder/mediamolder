@@ -14,17 +14,17 @@ import (
 
 // hwCodecInfo mirrors av.HWCodecInfo for the JSON API.
 type hwCodecInfo struct {
-	Name      string `json:"name"`                // e.g. "h264_cuvid", "hevc_vaapi"
-	Role      string `json:"role"`                // "encode" or "decode"
+	Name      string `json:"name"`                 // e.g. "h264_cuvid", "hevc_vaapi"
+	Role      string `json:"role"`                 // "encode" or "decode"
 	MediaType string `json:"media_type,omitempty"` // "video", "audio", etc.
 	Note      string `json:"note,omitempty"`       // capability limitation at this GPU, if any
 }
 
 // hwAccelEntry is the JSON shape returned by GET /api/hwaccel.
 type hwAccelEntry struct {
-	Type        string `json:"type"`
-	Available   bool   `json:"available"`
-	Error       string `json:"error,omitempty"`
+	Type      string `json:"type"`
+	Available bool   `json:"available"`
+	Error     string `json:"error,omitempty"`
 	// Populated only when Available is true:
 	DisplayName string        `json:"display_name,omitempty"` // e.g. "NVIDIA GeForce RTX 3060 Ti"
 	SWFormats   []string      `json:"sw_formats,omitempty"`   // software pixel formats

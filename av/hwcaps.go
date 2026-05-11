@@ -230,10 +230,23 @@ func (d *HWDeviceContext) QueryCapabilities() DeviceCapabilities {
 
 	// For VideoToolbox, augment the LibAV registry scan with a direct
 	// platform probe that can reveal codecs LibAV cannot represent
-	// (e.g. ProRes RAW encode/decode on Apple Silicon).
+	// (e.g. ProRes RAW encode/decode on Apple Silicon), and populate the
+	// marketing GPU name via IORegistry.
 	if d.deviceType == HWDeviceVideoToolbox {
 		vtCaps := QueryVTCapabilities()
 		caps.Codecs = mergeVTCodecs(caps.Codecs, vtCaps)
+		caps.DisplayName = queryVTDisplayName()
+	}
+
+	// VAAPI: resolve PCI-ID to a human-readable device name.
+	if d.deviceType == HWDeviceVAAPI {
+		caps.DisplayName = queryVAAPIDisplayName(d.device)
+	}
+
+	// QSV: derive display name from the underlying render node (Linux) or
+	// use a generic Intel fallback on other platforms.
+	if d.deviceType == HWDeviceQSV {
+		caps.DisplayName = queryQSVDisplayName()
 	}
 
 	// Hardware-accelerated filters for this device type.

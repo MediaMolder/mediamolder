@@ -298,13 +298,13 @@ type NVENCCodecCaps struct {
 	MaxBFrames int `json:"max_bframes"`
 
 	// Feature-support flags.
-	Support10Bit          bool `json:"support_10bit"`
-	SupportYUV444         bool `json:"support_yuv444"`
-	SupportLossless       bool `json:"support_lossless"`
-	SupportLookahead      bool `json:"support_lookahead"`
-	SupportTemporalAQ     bool `json:"support_temporal_aq"`
-	SupportWeightedPred   bool `json:"support_weighted_pred"`
-	SupportBFrameRef      bool `json:"support_bframe_ref"`
+	Support10Bit        bool `json:"support_10bit"`
+	SupportYUV444       bool `json:"support_yuv444"`
+	SupportLossless     bool `json:"support_lossless"`
+	SupportLookahead    bool `json:"support_lookahead"`
+	SupportTemporalAQ   bool `json:"support_temporal_aq"`
+	SupportWeightedPred bool `json:"support_weighted_pred"`
+	SupportBFrameRef    bool `json:"support_bframe_ref"`
 }
 
 // nvencCodecNames maps CGo array index → FFmpeg codec name.
