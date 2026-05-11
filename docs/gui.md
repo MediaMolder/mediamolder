@@ -1044,7 +1044,7 @@ Unknown codecs or missing format fields produce no warning (no opinion).
 
 ### FFmpeg CLI export
 
-**Show CLI** (toolbar button, enabled when the canvas is non-empty) converts
+**-> FFmpeg** (toolbar button, enabled when the canvas is non-empty) converts
 the current graph back to an equivalent `ffmpeg …` command line. It posts the
 serialised `JobConfig` to `POST /api/export-cmd` and displays the result in a
 modal panel with a **Copy** button.
