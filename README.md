@@ -218,13 +218,16 @@ the encoder node in the resulting graph; `-c:v copy` / `-c:a copy`
 produce a stream-copy node. The same parser is exposed in the GUI via
 the **Import FFmpeg command** toolbar button (`POST /api/convert-cmd`).
 
-List available codecs, filters, or formats:
+List available codecs, filters, formats, or hardware devices:
 ```sh
 mediamolder list-codecs
 mediamolder list-filters
 mediamolder list-formats
 mediamolder list-processors
 mediamolder list-codecs --json   # JSON output
+mediamolder list-hw-devices      # probe which HW accelerators are available
+mediamolder list-hw-devices --json   # machine-readable output
+mediamolder list-hw-devices --all    # include unavailable devices
 ```
 
 ## Go processor nodes

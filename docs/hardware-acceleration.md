@@ -138,6 +138,12 @@ fg, err := av.NewHWVideoFilterGraph(av.HWVideoFilterGraphConfig{
 
 // List available HW device types.
 types := av.ListHWDeviceTypes()
+
+// Probe which device types are actually usable on this host.
+probes := av.ProbeHWDevices()
+for _, p := range probes {
+    fmt.Printf("%s: available=%v\n", p.Type, p.Available)
+}
 ```
 
 ## FFmpeg CLI Equivalents
@@ -150,6 +156,39 @@ types := av.ListHWDeviceTypes()
 | `-c:v h264_nvenc` | `"codec_video": "h264_nvenc"` |
 | `-c:v h264_vaapi` | `"codec_video": "h264_vaapi"` |
 | `-c:v h264_qsv` | `"codec_video": "h264_qsv"` |
+
+## Detecting available hardware
+
+Use the `list-hw-devices` subcommand to probe which accelerators are usable on the current host:
+
+```sh
+# Text table — available devices only (default)
+mediamolder list-hw-devices
+
+# Include devices that failed to open (shows error reason)
+mediamolder list-hw-devices --all
+
+# Machine-readable JSON array
+mediamolder list-hw-devices --json
+```
+
+Example JSON output:
+```json
+[
+  {"type": "cuda",    "available": true},
+  {"type": "d3d11va", "available": true},
+  {"type": "qsv",     "available": false, "error": "av_hwdevice_ctx_create(qsv): Unknown error occurred"}
+]
+```
+
+From Go code, use `av.ProbeHWDevices()`:
+```go
+for _, p := range av.ProbeHWDevices() {
+    if p.Available {
+        fmt.Println(p.Type, "is available")
+    }
+}
+```
 
 ## Troubleshooting
 
