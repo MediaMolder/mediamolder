@@ -1,0 +1,62 @@
+// Copyright (C) 2026 Thomas Vaughan
+// SPDX-License-Identifier: LGPL-2.1-or-later
+
+package gui
+
+import (
+	"encoding/json"
+	"net/http"
+	"sync"
+
+	"github.com/MediaMolder/MediaMolder/av"
+)
+
+// hwAccelEntry is the JSON shape returned by GET /api/hwaccel.
+type hwAccelEntry struct {
+	Type      string `json:"type"`
+	Available bool   `json:"available"`
+	Error     string `json:"error,omitempty"`
+}
+
+var (
+	hwAccelOnce   sync.Once
+	hwAccelResult []hwAccelEntry
+)
+
+// probeHWAccelOnce runs av.ProbeHWDevices exactly once and caches the result.
+// Hardware availability does not change while the process is running, so
+// re-probing on every request is unnecessary and wastes time.
+func probeHWAccelOnce() []hwAccelEntry {
+	hwAccelOnce.Do(func() {
+		probes := av.ProbeHWDevices()
+		hwAccelResult = make([]hwAccelEntry, 0, len(probes))
+		for _, p := range probes {
+			entry := hwAccelEntry{
+				Type:      p.Type.String(),
+				Available: p.Available,
+			}
+			if p.Err != "" {
+				entry.Error = p.Err
+			}
+			hwAccelResult = append(hwAccelResult, entry)
+		}
+	})
+	return hwAccelResult
+}
+
+// handleListHWAccel implements GET /api/hwaccel.
+//
+// Returns all hardware acceleration types compiled into the linked FFmpeg
+// together with their runtime availability (probed once via
+// av_hwdevice_ctx_create). The result is cached after the first probe so
+// subsequent requests are instantaneous. A warm-up goroutine in NewServer
+// ensures the probe runs in the background at startup, not on the first
+// browser request.
+func handleListHWAccel(w http.ResponseWriter, _ *http.Request) {
+	result := probeHWAccelOnce()
+	if result == nil {
+		result = []hwAccelEntry{} // return [] not null
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(result)
+}

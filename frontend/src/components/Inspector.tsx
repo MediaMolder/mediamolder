@@ -33,9 +33,14 @@ interface Props {
   /** Named hardware-acceleration device contexts available in the current
    *  job config. Passed to NodeForm to populate the device picker. (Wave 10 #60) */
   hwDevices?: HardwareDevice[];
+  /** Accelerator names confirmed available on this machine by the startup
+   *  probe (GET /api/hwaccel). null = probe not yet returned; show all
+   *  options as a fallback so the UI is still usable before the response
+   *  arrives. */
+  availableHWAccels?: string[] | null;
 }
 
-export function Inspector({ node, nodes, edges, onChange, onDelete, onSelectNode, onProbedData, hwDevices = [] }: Props) {
+export function Inspector({ node, nodes, edges, onChange, onDelete, onSelectNode, onProbedData, hwDevices = [], availableHWAccels = null }: Props) {
   if (!node) {
     return (
       <div className="inspector">
@@ -102,6 +107,7 @@ export function Inspector({ node, nodes, edges, onChange, onDelete, onSelectNode
           onChange={(def) => onChange(updateRef(node, { kind: 'input', def }, def.id, displayUrl(def.url)))}
           onProbed={(probed) => onProbedData(node.id, probed)}
           hwDevices={hwDevices}
+          availableHWAccels={availableHWAccels}
         />
       )}
       {ref.kind === 'output' && (
@@ -547,18 +553,35 @@ function DeviceInputForm({
 }
 
 /* ---------- Input form ---------- */
+
+// All hardware accelerator options in display order. Filtered at render time
+// by the availableHWAccels list returned from GET /api/hwaccel.
+const HW_ACCELS: Array<{ value: string; label: string }> = [
+  { value: 'cuda',         label: 'cuda (NVIDIA NVDEC)' },
+  { value: 'vaapi',        label: 'vaapi (Intel/AMD VA-API)' },
+  { value: 'videotoolbox', label: 'videotoolbox (Apple)' },
+  { value: 'qsv',          label: 'qsv (Intel Quick Sync)' },
+  { value: 'd3d11va',      label: 'd3d11va (Windows Direct3D 11)' },
+  { value: 'dxva2',        label: 'dxva2 (Windows DXVA2)' },
+  { value: 'auto',         label: 'auto' },
+];
+
 function InputForm({
   def,
   probed,
   onChange,
   onProbed,
   hwDevices = [],
+  availableHWAccels = null,
 }: {
   def: Input;
   probed?: ProbedStream[];
   onChange: (next: Input) => void;
   onProbed: (next: ProbedStream[] | undefined) => void;
   hwDevices?: HardwareDevice[];
+  /** null = probe not yet returned; show all options. string[] = probe
+   *  result; show only available accelerators. */
+  availableHWAccels?: string[] | null;
 }) {
   const [probing, setProbing] = useState(false);
   const [probeError, setProbeError] = useState<string | null>(null);
@@ -660,20 +683,47 @@ function InputForm({
       {/* Wave 10 #59: per-input hardware-accelerated decoding. */}
       <div style={{ marginTop: 12, marginBottom: 4 }}>
         <label>HW decode accelerator</label>
-        <select
-          value={def.hwaccel ?? ''}
-          onChange={(e) => onChange({ ...def, hwaccel: e.target.value || undefined })}
-          style={{ display: 'block', width: '100%', marginTop: 4, marginBottom: 4 }}
-        >
-          <option value="">(none — software decode)</option>
-          <option value="cuda">cuda (NVIDIA NVDEC)</option>
-          <option value="vaapi">vaapi (Intel/AMD VA-API)</option>
-          <option value="videotoolbox">videotoolbox (Apple)</option>
-          <option value="qsv">qsv (Intel Quick Sync)</option>
-          <option value="d3d11va">d3d11va (Windows Direct3D 11)</option>
-          <option value="dxva2">dxva2 (Windows DXVA2)</option>
-          <option value="auto">auto</option>
-        </select>
+        {(() => {
+          // null → probe not yet returned → show everything as fallback.
+          // string[] → show only confirmed-available types (+ auto when any present).
+          const available = availableHWAccels;
+          const filtered = available === null
+            ? HW_ACCELS
+            : HW_ACCELS.filter((a) =>
+                a.value === 'auto'
+                  ? available.length > 0
+                  : available.includes(a.value),
+              );
+          // If the job was authored on a different machine, the current value
+          // may not appear in `filtered`. Preserve it as a disabled option so
+          // the user can see the configured value without it silently vanishing.
+          const currentMissing =
+            def.hwaccel &&
+            available !== null &&
+            !filtered.some((a) => a.value === def.hwaccel);
+          return (
+            <select
+              value={def.hwaccel ?? ''}
+              onChange={(e) => onChange({ ...def, hwaccel: e.target.value || undefined })}
+              style={{ display: 'block', width: '100%', marginTop: 4, marginBottom: 4 }}
+            >
+              <option value="">(none — software decode)</option>
+              {currentMissing && (
+                <option value={def.hwaccel} disabled>
+                  {def.hwaccel} (not available on this machine)
+                </option>
+              )}
+              {filtered.map((a) => (
+                <option key={a.value} value={a.value}>{a.label}</option>
+              ))}
+            </select>
+          );
+        })()}
+        {availableHWAccels !== null && availableHWAccels.length === 0 && (
+          <div style={{ fontSize: 11, color: 'var(--text-dim)', marginBottom: 4 }}>
+            No hardware accelerators detected on this machine.
+          </div>
+        )}
         <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: -2, marginBottom: 6 }}>
           <code>-hwaccel</code> — selects the hardware decode API for this input.
         </div>
