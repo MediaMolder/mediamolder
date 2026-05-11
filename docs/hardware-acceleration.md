@@ -317,6 +317,46 @@ for _, p := range av.ProbeHWDevices() {
 }
 ```
 
+## Listing capture devices (`GET /api/devices`) (Wave 11 #61)
+
+The REST API exposes `GET /api/devices?format=<fmt>` to enumerate the
+capture devices available for a given libavdevice input format.
+
+| Platform | Default format | Examples |
+|----------|---------------|---------|
+| Windows  | `dshow`        | `video="Integrated Camera"`, `audio="Microphone (Realtek)"` |
+| macOS    | `avfoundation` | `0` (first camera), `1` (second camera), `:0` (default mic) |
+| Linux    | `v4l2`         | `/dev/video0`, `/dev/video1` |
+
+**Request:**
+```
+GET /api/devices?format=dshow
+GET /api/devices?format=avfoundation
+GET /api/devices?format=v4l2
+GET /api/devices            ← uses the platform default
+```
+
+**Response** — JSON array of `{name, description}` objects:
+```json
+[
+  {"name": "video=Integrated Camera", "description": "Integrated Camera"},
+  {"name": "audio=Microphone (Realtek HD Audio)", "description": "Microphone (Realtek HD Audio)"}
+]
+```
+
+The endpoint applies a **2-second timeout**. On Windows, dshow COM enumeration can block indefinitely when a device is locked by another process; the timeout returns HTTP 504 rather than hanging.
+
+From Go code, use `av.ListDevices(format)`:
+```go
+devices, err := av.ListDevices("dshow")
+if err != nil {
+    log.Fatal(err)
+}
+for _, d := range devices {
+    fmt.Printf("%s — %s\n", d.Name, d.Description)
+}
+```
+
 ## Troubleshooting
 
 ### "av_hwdevice_ctx_create: Cannot allocate memory"
