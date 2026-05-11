@@ -271,6 +271,23 @@ func (p *parser) parse() (*pipeline.Config, error) {
 				in.SubtitleCharenc = p.pendingSubCharenc
 				p.pendingSubCharenc, p.pendingSubCharencSet = "", false
 			}
+			// Wave 10 #59: per-input hwaccel flags. In FFmpeg, -hwaccel,
+			// -hwaccel_device, and -hwaccel_output_format are per-input
+			// flags that apply to the immediately following -i. Latch the
+			// buffered values and clear them so they don't bleed into
+			// subsequent -i arguments.
+			if p.hwAccel != "" {
+				in.HWAccel = p.hwAccel
+				p.hwAccel = ""
+			}
+			if p.hwDevice != "" {
+				in.HWAccelDevice = p.hwDevice
+				p.hwDevice = ""
+			}
+			if p.hwOutFmt != "" {
+				in.HWAccelOutputFormat = p.hwOutFmt
+				p.hwOutFmt = ""
+			}
 			p.inputs = append(p.inputs, in)
 		case arg == "-c:v" || arg == "-vcodec":
 			if !p.hasMore() {
@@ -1412,12 +1429,10 @@ func (p *parser) parse() (*pipeline.Config, error) {
 	if p.filterCxThreads > 0 {
 		cfg.FilterComplexThreads = p.filterCxThreads
 	}
-	if p.hwAccel != "" {
-		cfg.GlobalOptions.HardwareAccel = p.hwAccel
-	}
-	if p.hwDevice != "" {
-		cfg.GlobalOptions.HardwareDevice = p.hwDevice
-	}
+	// Note: p.hwAccel / p.hwDevice / p.hwOutFmt are drained per-input
+	// at the -i processing site (Wave 10 #59). Any remaining value
+	// means the user placed -hwaccel after the last -i, which is
+	// a no-op in FFmpeg — discard silently.
 	if len(p.initHWDevices) > 0 {
 		cfg.HardwareDevices = p.initHWDevices
 	}

@@ -23,7 +23,7 @@ import (
 // sourceResources holds a demuxer and its per-stream decoders.
 type sourceResources struct {
 	input       *av.InputFormatContext
-	decoders    map[int]*av.DecoderContext         // keyed by stream index
+	decoders    map[int]av.FrameDecoder            // keyed by stream index; sw or hw decoder
 	subDecoders map[int]*av.SubtitleDecoderContext // keyed by stream index
 	streams     map[int]av.StreamInfo              // keyed by stream index
 	cfg         Input
@@ -78,6 +78,12 @@ type sourceResources struct {
 	// input kind. Invoked from Close() after the demuxer has
 	// shut down so libavformat is no longer reading the file.
 	concatCleanup func()
+	// ownedHWDev is the hardware device context opened by openSource
+	// for per-input hwaccel when cfg.HWAccelDevice is empty (i.e. no
+	// pre-declared hardware_devices entry was matched). When non-nil,
+	// Close() frees it after all decoders have been closed.
+	// (Wave 10 #59)
+	ownedHWDev *av.HWDeviceContext
 }
 
 func (s *sourceResources) Close() {
@@ -89,6 +95,10 @@ func (s *sourceResources) Close() {
 	}
 	if s.input != nil {
 		s.input.Close()
+	}
+	if s.ownedHWDev != nil {
+		s.ownedHWDev.Close()
+		s.ownedHWDev = nil
 	}
 	if s.concatCleanup != nil {
 		s.concatCleanup()

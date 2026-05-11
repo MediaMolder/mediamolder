@@ -95,6 +95,19 @@ export interface Input {
    *  `-readrate_catchup`); must be >= read_rate when set. Defaults
    *  to read_rate × 1.05 when unset and read_rate is non-zero. */
   read_rate_catchup?: number;
+  /** Hardware acceleration API for decoding video streams in this input.
+   *  Mirrors FFmpeg's per-input -hwaccel flag (e.g. "cuda", "vaapi",
+   *  "qsv", "videotoolbox"). Empty = software decode. (Wave 10 #59) */
+  hwaccel?: string;
+  /** Name of a hardware_devices entry to use for decoding this input.
+   *  Mirrors FFmpeg's per-input -hwaccel_device flag. Ignored when
+   *  hwaccel is empty. (Wave 10 #59) */
+  hwaccel_device?: string;
+  /** Pixel format produced by the hardware decoder. Mirrors FFmpeg's
+   *  per-input -hwaccel_output_format flag. Software formats (nv12,
+   *  yuv420p, …) trigger automatic hw→sw transfer; hardware formats
+   *  (cuda, vaapi, …) keep frames on the GPU. (Wave 10 #59) */
+  hwaccel_output_format?: string;
   streams: StreamSelect[];
   options?: Record<string, unknown>;
 }

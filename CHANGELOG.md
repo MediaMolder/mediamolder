@@ -6,6 +6,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 ## [Unreleased]
 
 ### Added
+- **Wave 10 #59: Per-input hardware-accelerated decoding (`Input.HWAccel` / `Input.HWAccelDevice` / `Input.HWAccelOutputFormat`).** Promotes the global `hw_accel` knob to per-input granularity. Three new `Input` fields — `hwaccel`, `hwaccel_device`, `hwaccel_output_format` — mirror FFmpeg's per-input `-hwaccel`, `-hwaccel_device`, and `-hwaccel_output_format` flags. When `hwaccel` is non-empty the pipeline opens the video decoder for that input via `av.OpenHWDecoder` instead of the software path; `hwaccel_device` may name a pre-declared `hardware_devices` entry (reusing its `AVHWDeviceContext`) or be omitted (transient context opened at input-open time); `hwaccel_output_format` controls whether frames are transferred automatically to system RAM (e.g. `"nv12"`, `"yuv420p"`) or kept on the GPU (`"cuda"`, `"vaapi"`, `"qsv"`, …) for zero-copy filter chains. The new `av.FrameDecoder` interface unifies `*av.DecoderContext` (software) and `*av.HWDecoderContext` (hardware) so the source handler dispatches uniformly regardless of path. `compat/ffcli` now correctly latches `-hwaccel` / `-hwaccel_device` / `-hwaccel_output_format` per-input at the `-i` processing site (matching FFmpeg's actual CLI semantics); `-hwaccel_output_format` was previously silently discarded — now exported correctly. Schema (`v1.0.json`, `v1.1.json`) and TypeScript types (`frontend/src/lib/jobTypes.ts`) updated. 12 new tests.
+
 - **Wave 10 #58: Hardware filter auto-mapping (`auto_map_hw`).** Per-node
   opt-in flag on `pipeline.NodeDef` (JSON: `auto_map_hw`). When `true`,
   `expandHWFilterMappings` (called just before `expandImplicitEncoders`)

@@ -284,6 +284,32 @@ type Input struct {
 	// ignored when ReadRate is zero. Rejected by validate when
 	// `0 < ReadRateCatchup < ReadRate`.
 	ReadRateCatchup float64 `json:"read_rate_catchup,omitempty"`
+	// HWAccel names the hardware-acceleration method to use when
+	// decoding streams from this input. Mirrors FFmpeg's per-input
+	// `-hwaccel METHOD` flag (e.g. "cuda", "vaapi", "qsv",
+	// "videotoolbox", "none"). When non-empty the pipeline opens the
+	// decoder via av.OpenHWDecoder instead of the software path,
+	// using the HardwareDevice named by HWAccelDevice (or the first
+	// matching device in Config.HardwareDevices when HWAccelDevice
+	// is empty). Empty = software decoding (the default). (Wave 10 #59)
+	HWAccel string `json:"hwaccel,omitempty"`
+	// HWAccelDevice names a HardwareDevice entry (from
+	// Config.HardwareDevices) whose opened AVHWDeviceContext is used
+	// for hardware-accelerated decoding of this input. Mirrors
+	// FFmpeg's per-input `-hwaccel_device DEV` flag. Empty = use the
+	// first Config.HardwareDevices entry whose Type matches HWAccel,
+	// or let libavcodec pick (if no matching entry exists). Ignored
+	// when HWAccel is empty. (Wave 10 #59)
+	HWAccelDevice string `json:"hwaccel_device,omitempty"`
+	// HWAccelOutputFormat pins the pixel format of frames produced by
+	// the hardware decoder, controlling whether frames stay in GPU
+	// memory ("cuda", "vaapi_vld", "nv12", …) or are automatically
+	// transferred to system RAM ("yuv420p", "nv12"). Mirrors FFmpeg's
+	// per-input `-hwaccel_output_format FMT` flag. Empty = let
+	// libavcodec choose (frames remain in GPU memory when HWAccel is
+	// set, which is usually what you want for zero-copy filter chains).
+	// Ignored when HWAccel is empty. (Wave 10 #59)
+	HWAccelOutputFormat string `json:"hwaccel_output_format,omitempty"`
 }
 
 // ConcatEntry is one row of the libavformat concat-demuxer playlist.
@@ -1303,6 +1329,13 @@ func validate(cfg *Config) error {
 	if cfg.StartAtZero && !cfg.CopyTS {
 		return fmt.Errorf("start_at_zero requires copy_ts=true (it modulates -copyts behaviour; see fftools/ffmpeg_demux.c)")
 	}
+	// Pre-build hw device name set for use by both input and node validation.
+	hwDeviceNames := make(map[string]bool, len(cfg.HardwareDevices))
+	for _, hd := range cfg.HardwareDevices {
+		if hd.Name != "" {
+			hwDeviceNames[hd.Name] = true
+		}
+	}
 	// All input IDs must be unique.
 	seen := map[string]bool{}
 	for i, inp := range cfg.Inputs {
@@ -1357,6 +1390,16 @@ func validate(cfg *Config) error {
 		}
 		if inp.ReadRateCatchup > 0 && inp.ReadRate > 0 && inp.ReadRateCatchup < inp.ReadRate {
 			return fmt.Errorf("input %q: read_rate_catchup %g must be >= read_rate %g (mirrors fftools/ffmpeg_demux.c)", inp.ID, inp.ReadRateCatchup, inp.ReadRate)
+		}
+		// Validate HWAccel fields (Wave 10 #59).
+		if inp.HWAccelDevice != "" && inp.HWAccel == "" {
+			return fmt.Errorf("input %q: hwaccel_device requires hwaccel to be set", inp.ID)
+		}
+		if inp.HWAccelOutputFormat != "" && inp.HWAccel == "" {
+			return fmt.Errorf("input %q: hwaccel_output_format requires hwaccel to be set", inp.ID)
+		}
+		if inp.HWAccelDevice != "" && !hwDeviceNames[inp.HWAccelDevice] {
+			return fmt.Errorf("input %q: hwaccel_device %q does not match any hardware_devices entry", inp.ID, inp.HWAccelDevice)
 		}
 	}
 	// All output IDs must be unique.
@@ -1607,15 +1650,15 @@ func validate(cfg *Config) error {
 		}
 	}
 	// Validate hardware_devices (Wave 10 #56).
-	hwDeviceNames := make(map[string]bool, len(cfg.HardwareDevices))
+	hwDeviceNamesSeen := make(map[string]bool, len(cfg.HardwareDevices))
 	for i, hd := range cfg.HardwareDevices {
 		if hd.Name == "" {
 			return fmt.Errorf("hardware_devices[%d]: name must not be empty", i)
 		}
-		if hwDeviceNames[hd.Name] {
+		if hwDeviceNamesSeen[hd.Name] {
 			return fmt.Errorf("duplicate hardware_devices name %q", hd.Name)
 		}
-		hwDeviceNames[hd.Name] = true
+		hwDeviceNamesSeen[hd.Name] = true
 		if hd.Type == "" {
 			return fmt.Errorf("hardware_devices[%d] %q: type must not be empty", i, hd.Name)
 		}

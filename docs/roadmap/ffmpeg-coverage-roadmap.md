@@ -89,7 +89,7 @@ Legend: ✅ supported · ⚠️ partial · ❌ missing
 | `image2` glob pattern (`-i 'frames/*.png'`)                 | ✅    | `Input.PatternType` (`""`/`"none"`/`"sequence"`/`"glob"`/`"glob_sequence"`); validated against the libavformat enum |
 | `concat` demuxer (listfile)                                 | ✅    | `Input.Kind = "concat"` + `Input.ConcatList []ConcatEntry` (file/duration/inpoint/outpoint/metadata). `pipeline.materialiseConcatList` writes an `ffconcat 1.0` listfile to a temp path, opened with `format="concat"`; cleanup runs at input close. Apostrophes/newlines in filenames are rejected up front |
 | Device capture (`-f avfoundation`, `-f dshow`, `-f v4l2`)   | ⚠️    | Works through AVDict; no GUI palette, no probe (Wave 11 #61–63) |
-| `-hwaccel`, `-hwaccel_device`, `-hwaccel_output_format`     | ⚠️    | Global only; not per-input |
+| `-hwaccel`, `-hwaccel_device`, `-hwaccel_output_format`     | ✅    | Per-input via `Input.HWAccel`, `Input.HWAccelDevice`, `Input.HWAccelOutputFormat`; `hwaccel_device` may name a pre-declared `hardware_devices` entry. (Wave 10 #59) |
 
 ### 2.2 Stream selection / mapping
 
@@ -1318,9 +1318,13 @@ already works in degraded form via per-filter spellings.
     `hwupload` / `hwdownload` at device boundaries. 21 filter
     mappings covering CUDA, VAAPI, QSV, VideoToolbox, Vulkan, and
     OpenCL. 16 tests. (Wave 10 #58, complete)
-59. **Per-input `-hwaccel`** (§2.1) — Promote the global hwaccel
+59. **Per-input `-hwaccel`** (§2.1) — Promotes the global hwaccel
     knob to per-input granularity (`Input.HWAccel`,
     `Input.HWAccelDevice`, `Input.HWAccelOutputFormat`).
+    `av.FrameDecoder` interface unifies sw/hw decoders in the source
+    handler. `compat/ffcli` latches the flags per-input at the `-i`
+    site (matching FFmpeg semantics). Schema + TypeScript types updated.
+    12 tests. (Wave 10 #59, complete)
 60. **Hardware-filter mapping indicator + multi-device picker
     (GUI)** (§2.8, §3.5.6) — Surfaces which filters will run on
     GPU once `hw_accel` is set, warns when a software filter is

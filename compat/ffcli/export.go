@@ -124,6 +124,8 @@ func (e *exporter) buildGlobal() {
 		e.add("-init_hw_device", o.HardwareDevice)
 	}
 	if o.HardwareAccel != "" {
+		// Legacy global hw_accel from GlobalOptions is still exported
+		// for backward compatibility when per-input HWAccel is not set.
 		e.add("-hwaccel", o.HardwareAccel)
 	}
 	if e.cfg.FilterComplexThreads > 0 {
@@ -227,6 +229,17 @@ func (e *exporter) buildInput(idx int, in pipeline.Input) {
 	}
 	if v, ok := in.Options["to"]; ok {
 		e.add("-to", fmt.Sprint(v))
+	}
+	// Per-input hardware-accelerated decode flags (Wave 10 #59).
+	// These must appear before -i in the FFmpeg command line.
+	if in.HWAccel != "" {
+		e.add("-hwaccel", in.HWAccel)
+	}
+	if in.HWAccelDevice != "" {
+		e.add("-hwaccel_device", in.HWAccelDevice)
+	}
+	if in.HWAccelOutputFormat != "" {
+		e.add("-hwaccel_output_format", in.HWAccelOutputFormat)
 	}
 	// -map_metadata is per-output in FFmpeg; it is emitted when building
 	// outputs (addOutputFlags), not before -i.
