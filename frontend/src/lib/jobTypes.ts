@@ -677,6 +677,8 @@ export interface HWAccelProbe {
   type: string;
   available: boolean;
   error?: string;
+  /** Marketing name of the physical device, e.g. "NVIDIA GeForce RTX 3060 Ti". */
+  display_name?: string;
   /** Software pixel formats the device can transfer to/from (e.g. "nv12", "p010le"). */
   sw_formats?: string[];
   /** Maximum frame width reported by the device; 0 = not reported. */
@@ -690,6 +692,8 @@ export interface HWAccelProbe {
     /** Non-empty when the codec is supported but with profile/feature gaps at this GPU. */
     note?: string;
   }>;
+  /** Names of libavfilter filters that support this hardware backend (e.g. scale_cuda). */
+  filters?: string[];
   /** CUDA compute capability string, e.g. "8.9". Present only for CUDA devices. */
   cuda_sm?: string;
   /** CUDA GPU architecture name, e.g. "Ada Lovelace". Present only for CUDA devices. */

@@ -25,6 +25,12 @@ package av
 //     if (!pads) return AVMEDIA_TYPE_UNKNOWN;
 //     return avfilter_pad_get_type(pads, idx);
 // }
+// // Returns 1 when the filter advertises AVFILTER_FLAG_HWDEVICE, meaning it
+// // can accept a hardware device context reference (scale_cuda, yadif_cuda,
+// // overlay_cuda, libplacebo, scale_vaapi, etc.).
+// static int filter_is_hw(const AVFilter *f) {
+//     return (f->flags & AVFILTER_FLAG_HWDEVICE) ? 1 : 0;
+// }
 // // Muxer iteration wrapper.
 // static const AVOutputFormat *next_muxer(void **opaque) {
 //     return av_muxer_iterate(opaque);
@@ -105,6 +111,10 @@ type FilterInfo struct {
 	// dynamic-pad filters as media-type-agnostic.
 	InputTypes  []string
 	OutputTypes []string
+	// SupportsHWDevice is true when the filter advertises AVFILTER_FLAG_HWDEVICE,
+	// meaning it can consume a hardware device context (e.g. scale_cuda, yadif_cuda,
+	// scale_vaapi, libplacebo). These filters benefit from a device being attached.
+	SupportsHWDevice bool
 }
 
 // ListFilters returns all available filters.
@@ -125,6 +135,7 @@ func ListFilters() []FilterInfo {
 		info.NumOutputs = int(C.avfilter_filter_pad_count(f, 1))
 		info.InputTypes = padTypes(f, 0, info.NumInputs)
 		info.OutputTypes = padTypes(f, 1, info.NumOutputs)
+		info.SupportsHWDevice = C.filter_is_hw(f) != 0
 		out = append(out, info)
 	}
 	return out

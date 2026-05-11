@@ -56,13 +56,14 @@ package av
 //     return *((mm_CUcontext *)dev->hwctx);
 // }
 //
-// // ── Query SM (compute capability) major.minor ─────────────────────────
-// // Returns 0 on success, -1 when CUDA driver is unavailable or any
-// // query fails.  Thread-safe (dlopen/dlclose are per-call; the CUDA
-// // context is already open so no expensive initialisation occurs).
-// static int mm_cuda_sm_version(AVBufferRef *ref, int *maj, int *min) {
+// // ── Shared helper: open CUDA driver lib and get device from context ───
+// // Fills *dev_out with the CUdevice for the context in *ref.
+// // Returns a live mm_dl_t on success (caller must mm_dlclose it),
+// // or NULL on failure.
+// static mm_dl_t mm_cuda_open_get_device(AVBufferRef *ref,
+//                                         mm_CUdevice *dev_out) {
 //     mm_CUcontext ctx = mm_get_cuda_ctx(ref);
-//     if (!ctx) return -1;
+//     if (!ctx) return NULL;
 //
 //     mm_dl_t lib;
 // #ifdef _WIN32
@@ -71,39 +72,71 @@ package av
 //     lib = mm_dlopen("libcuda.so.1");
 //     if (!lib) lib = mm_dlopen("libcuda.so");
 // #endif
-//     if (!lib) return -1;
+//     if (!lib) return NULL;
 //
 //     typedef mm_CUresult (*pfnPush)(mm_CUcontext);
 //     typedef mm_CUresult (*pfnGetDev)(mm_CUdevice *);
-//     typedef mm_CUresult (*pfnGetAttr)(int *, int, mm_CUdevice);
 //     typedef mm_CUresult (*pfnPop)(mm_CUcontext *);
 //
-//     pfnPush    push    = (pfnPush)   mm_dlsym(lib, "cuCtxPushCurrent_v2");
-//     pfnGetDev  getDev  = (pfnGetDev) mm_dlsym(lib, "cuCtxGetDevice");
-//     pfnGetAttr getAttr = (pfnGetAttr)mm_dlsym(lib, "cuDeviceGetAttribute");
-//     pfnPop     pop     = (pfnPop)    mm_dlsym(lib, "cuCtxPopCurrent_v2");
+//     pfnPush   push   = (pfnPush)  mm_dlsym(lib, "cuCtxPushCurrent_v2");
+//     pfnGetDev getDev = (pfnGetDev)mm_dlsym(lib, "cuCtxGetDevice");
+//     pfnPop    pop    = (pfnPop)   mm_dlsym(lib, "cuCtxPopCurrent_v2");
 //
-//     if (!getDev || !getAttr) { mm_dlclose(lib); return -1; }
+//     if (!getDev) { mm_dlclose(lib); return NULL; }
 //
 //     if (push) push(ctx);
+//     mm_CUresult r = getDev(dev_out);
+//     if (pop) pop(NULL);
 //
-//     int ret = -1;
+//     if (r != 0) { mm_dlclose(lib); return NULL; }
+//     return lib;
+// }
+//
+// // ── Query SM (compute capability) major.minor ─────────────────────────
+// // Returns 0 on success, -1 when CUDA driver is unavailable or any
+// // query fails.  Thread-safe (dlopen/dlclose are per-call; the CUDA
+// // context is already open so no expensive initialisation occurs).
+// static int mm_cuda_sm_version(AVBufferRef *ref, int *maj, int *min) {
 //     mm_CUdevice dev = 0;
-//     if (getDev(&dev) == 0) {
+//     mm_dl_t lib = mm_cuda_open_get_device(ref, &dev);
+//     if (!lib) return -1;
+//
+//     typedef mm_CUresult (*pfnGetAttr)(int *, int, mm_CUdevice);
+//     pfnGetAttr getAttr = (pfnGetAttr)mm_dlsym(lib, "cuDeviceGetAttribute");
+//     int ret = -1;
+//     if (getAttr) {
 //         int a = 0, b = 0;
 //         if (getAttr(&a, MM_CU_CC_MAJOR, dev) == 0 &&
 //             getAttr(&b, MM_CU_CC_MINOR, dev) == 0) {
 //             *maj = a; *min = b; ret = 0;
 //         }
 //     }
+//     mm_dlclose(lib);
+//     return ret;
+// }
 //
-//     if (pop) pop(NULL);
+// // ── Query GPU marketing name via cuDeviceGetName ───────────────────────
+// // Writes a NUL-terminated string into buf[0..len-1].
+// // Returns 0 on success, -1 on failure.
+// static int mm_cuda_device_name(AVBufferRef *ref, char *buf, int len) {
+//     mm_CUdevice dev = 0;
+//     mm_dl_t lib = mm_cuda_open_get_device(ref, &dev);
+//     if (!lib) return -1;
+//
+//     typedef mm_CUresult (*pfnGetName)(char *, int, mm_CUdevice);
+//     pfnGetName getName = (pfnGetName)mm_dlsym(lib, "cuDeviceGetName");
+//     int ret = -1;
+//     if (getName && getName(buf, len, dev) == 0) ret = 0;
 //     mm_dlclose(lib);
 //     return ret;
 // }
 import "C"
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+	"unsafe"
+)
 
 // queryCUDASMVersion returns the CUDA compute capability (SM major, minor)
 // by dlopen-ing the CUDA driver at runtime against the already-open device
@@ -115,6 +148,23 @@ func queryCUDASMVersion(d *HWDeviceContext) (int, int, error) {
 		return 0, 0, fmt.Errorf("CUDA SM version query unavailable")
 	}
 	return int(maj), int(min), nil
+}
+
+// queryCUDADisplayName returns the marketing name of the GPU associated with
+// the open CUDA device context (e.g. "NVIDIA GeForce RTX 3060 Ti").
+// Returns an error when CUDA is unavailable or the context is not CUDA.
+func queryCUDADisplayName(d *HWDeviceContext) (string, error) {
+	const bufLen = 256
+	buf := make([]byte, bufLen)
+	cbuf := (*C.char)(unsafe.Pointer(&buf[0]))
+	if C.mm_cuda_device_name(d.ref, cbuf, C.int(bufLen)) != 0 {
+		return "", fmt.Errorf("CUDA device name query unavailable")
+	}
+	name := strings.TrimRight(C.GoString(cbuf), "\x00")
+	if name == "" {
+		return "", fmt.Errorf("empty CUDA device name")
+	}
+	return name, nil
 }
 
 // nvidiaArchName maps a compute capability SM version to the NVIDIA

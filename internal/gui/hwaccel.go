@@ -14,21 +14,23 @@ import (
 
 // hwCodecInfo mirrors av.HWCodecInfo for the JSON API.
 type hwCodecInfo struct {
-	Name string `json:"name"`            // e.g. "h264_cuvid", "hevc_vaapi"
-	Role string `json:"role"`            // "encode" or "decode"
+	Name string `json:"name"`           // e.g. "h264_cuvid", "hevc_vaapi"
+	Role string `json:"role"`           // "encode" or "decode"
 	Note string `json:"note,omitempty"` // capability limitation at this GPU, if any
 }
 
 // hwAccelEntry is the JSON shape returned by GET /api/hwaccel.
 type hwAccelEntry struct {
-	Type      string        `json:"type"`
-	Available bool          `json:"available"`
-	Error     string        `json:"error,omitempty"`
+	Type        string `json:"type"`
+	Available   bool   `json:"available"`
+	Error       string `json:"error,omitempty"`
 	// Populated only when Available is true:
-	SWFormats   []string      `json:"sw_formats,omitempty"`  // software pixel formats
-	MaxWidth    int           `json:"max_width,omitempty"`   // 0 = not reported
-	MaxHeight   int           `json:"max_height,omitempty"`  // 0 = not reported
-	Codecs      []hwCodecInfo `json:"codecs,omitempty"`      // codecs supported by this GPU
+	DisplayName string        `json:"display_name,omitempty"` // e.g. "NVIDIA GeForce RTX 3060 Ti"
+	SWFormats   []string      `json:"sw_formats,omitempty"`   // software pixel formats
+	MaxWidth    int           `json:"max_width,omitempty"`    // 0 = not reported
+	MaxHeight   int           `json:"max_height,omitempty"`   // 0 = not reported
+	Codecs      []hwCodecInfo `json:"codecs,omitempty"`       // codecs supported by this GPU
+	Filters     []string      `json:"filters,omitempty"`      // HW-accelerated filter names
 	// CUDA-specific (empty for non-CUDA backends):
 	CUDASMVersion string `json:"cuda_sm,omitempty"`   // e.g. "8.9"
 	CUDAArch      string `json:"cuda_arch,omitempty"` // e.g. "Ada Lovelace"
@@ -56,6 +58,7 @@ func probeHWAccelOnce() []hwAccelEntry {
 			}
 			if p.Available {
 				caps := p.Capabilities
+				entry.DisplayName = caps.DisplayName
 				entry.SWFormats = caps.SWFormats
 				entry.MaxWidth = caps.MaxWidth
 				entry.MaxHeight = caps.MaxHeight
@@ -65,6 +68,7 @@ func probeHWAccelOnce() []hwAccelEntry {
 						entry.Codecs[i] = hwCodecInfo{Name: c.Name, Role: c.Role, Note: c.Note}
 					}
 				}
+				entry.Filters = caps.Filters
 				if caps.CUDAArch != "" {
 					entry.CUDASMVersion = fmt.Sprintf("%d.%d", caps.CUDASMMajor, caps.CUDASMMinor)
 					entry.CUDAArch = caps.CUDAArch

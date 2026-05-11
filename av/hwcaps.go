@@ -110,6 +110,12 @@ type HWCodecInfo struct {
 // combining runtime constraints from av_hwdevice_get_hwframe_constraints with
 // a filtered/annotated scan of the FFmpeg codec registry.
 type DeviceCapabilities struct {
+	// DisplayName is a human-readable marketing name for the physical device,
+	// e.g. "NVIDIA GeForce RTX 3060 Ti" (CUDA), "Apple GPU" (VideoToolbox),
+	// or "/dev/dri/renderD128" (VAAPI fallback). Empty when the backend
+	// cannot report a name.
+	DisplayName string
+
 	// SWFormats lists the software pixel formats the device can transfer
 	// frames to/from (AVHWFramesConstraints.valid_sw_formats). Empty when
 	// the backend does not implement the constraints API (e.g. VideoToolbox,
@@ -128,6 +134,12 @@ type DeviceCapabilities struct {
 	// For other backends (VAAPI, VideoToolbox, QSV) this is the full
 	// FFmpeg registry scan without filtering.
 	Codecs []HWCodecInfo
+
+	// Filters lists the names of libavfilter filters that advertise
+	// AVFILTER_FLAG_HWDEVICE and whose naming suffix matches this device
+	// type (e.g. scale_cuda, yadif_cuda for CUDA; scale_vaapi for VAAPI;
+	// libplacebo for Vulkan). Always populated when the device is available.
+	Filters []string
 
 	// CUDASMMajor / CUDASMMinor are the CUDA compute capability (e.g. 8, 9
 	// for Ada Lovelace).  Both are 0 for non-CUDA devices or when the SM
@@ -170,6 +182,9 @@ func (d *HWDeviceContext) QueryCapabilities() DeviceCapabilities {
 	// Codec list: static registry scan, refined for CUDA with per-GPU filtering.
 	staticCodecs := ListHWCodecs(d.deviceType)
 	if d.deviceType == HWDeviceCUDA {
+		if name, err := queryCUDADisplayName(d); err == nil {
+			caps.DisplayName = name
+		}
 		if smMaj, smMin, err := queryCUDASMVersion(d); err == nil {
 			caps.CUDASMMajor = smMaj
 			caps.CUDASMMinor = smMin
@@ -182,6 +197,9 @@ func (d *HWDeviceContext) QueryCapabilities() DeviceCapabilities {
 	} else {
 		caps.Codecs = staticCodecs
 	}
+
+	// Hardware-accelerated filters for this device type.
+	caps.Filters = FilterHWAccels(d.deviceType)
 
 	return caps
 }
@@ -204,6 +222,54 @@ func ListHWCodecs(t HWDeviceType) []HWCodecInfo {
 	for _, line := range lines {
 		if i := strings.IndexByte(line, ':'); i > 0 {
 			out = append(out, HWCodecInfo{Name: line[:i], Role: line[i+1:]})
+		}
+	}
+	return out
+}
+
+// hwFilterSuffixes maps each device type to the filter-name suffixes and
+// exact names that identify hardware-accelerated filters for that backend.
+// Used by FilterHWAccels to avoid coupling list.go to hwcaps.go.
+var hwFilterSuffixes = map[HWDeviceType][]string{
+	HWDeviceCUDA:         {"_cuda"},
+	HWDeviceVAAPI:        {"_vaapi"},
+	HWDeviceQSV:          {"_qsv"},
+	HWDeviceVideoToolbox: {"_videotoolbox"},
+}
+
+// hwFilterExact lists filter names that are hardware-accelerated but do not
+// follow the _backend suffix convention (e.g. libplacebo uses Vulkan).
+var hwFilterExact = map[string]HWDeviceType{
+	"libplacebo": HWDeviceType(-1), // matches any Vulkan-capable device; -1 = wildcard
+}
+
+// FilterHWAccels returns the names of libavfilter filters that both
+// advertise AVFILTER_FLAG_HWDEVICE and belong to the given device type
+// (by name suffix or exact-match table). The list is derived from the
+// live libavfilter registry so only filters compiled into the running
+// binary are returned.
+func FilterHWAccels(t HWDeviceType) []string {
+	suffixes := hwFilterSuffixes[t]
+	var out []string
+	for _, f := range ListFilters() {
+		if !f.SupportsHWDevice {
+			continue
+		}
+		matched := false
+		for _, suf := range suffixes {
+			if strings.HasSuffix(f.Name, suf) {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			if devType, ok := hwFilterExact[f.Name]; ok {
+				// -1 = wildcard (libplacebo); include for any HW device type.
+				matched = devType == t || devType == HWDeviceType(-1)
+			}
+		}
+		if matched {
+			out = append(out, f.Name)
 		}
 	}
 	return out
