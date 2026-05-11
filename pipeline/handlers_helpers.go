@@ -190,6 +190,8 @@ func portTypeToAVMediaType(pt graph.PortType) av.MediaType {
 		return av.MediaTypeAudio
 	case graph.PortSubtitle:
 		return av.MediaTypeSubtitle
+	case graph.PortAttachment:
+		return av.MediaTypeAttachment
 	default:
 		return av.MediaTypeUnknown
 	}

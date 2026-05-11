@@ -13,11 +13,12 @@ import (
 type PortType string
 
 const (
-	PortVideo    PortType = "video"
-	PortAudio    PortType = "audio"
-	PortSubtitle PortType = "subtitle"
-	PortData     PortType = "data"
-	PortMetadata PortType = "metadata" // routes container/stream metadata or chapters (Wave 2 #11)
+	PortVideo      PortType = "video"
+	PortAudio      PortType = "audio"
+	PortSubtitle   PortType = "subtitle"
+	PortData       PortType = "data"
+	PortAttachment PortType = "attachment" // AVMEDIA_TYPE_ATTACHMENT streams (fonts, cover art); copy-only (Wave 11 #65)
+	PortMetadata   PortType = "metadata"   // routes container/stream metadata or chapters (Wave 2 #11)
 )
 
 // NodeKind classifies a node in the processing graph.

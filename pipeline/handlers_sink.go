@@ -155,6 +155,12 @@ func (w *sinkWriter) processOne(i int, pkt *av.Packet, dstTB [2]int, rs *sinkRes
 	if lim := w.limitForChan(i); lim > 0 && st.written >= lim {
 		return false, false, nil
 	}
+	// Attachment data is carried in codecpar->extradata and written by
+	// WriteHeader; the muxer ignores per-packet writes for attachment
+	// streams. Drop the packet here so WritePacket is never called.
+	if i < len(w.node.Inbound) && w.node.Inbound[i].Type == graph.PortAttachment {
+		return false, false, nil
+	}
 	pkt.SetStreamIndex(i)
 	if rs != nil {
 		pkt.Rescale(rs.srcTB, rs.dstTB)

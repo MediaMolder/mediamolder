@@ -1028,6 +1028,8 @@ func streamTypeLetter(t string) string {
 		return "s"
 	case "data":
 		return "d"
+	case "attachment":
+		return "t"
 	}
 	return t
 }

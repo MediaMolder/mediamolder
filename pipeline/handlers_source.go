@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -34,10 +35,11 @@ func (r *graphRunner) handleSource(ctx context.Context, node *graph.Node, outs [
 	// forwarded to a downstream copy node).
 	type typeOuts struct{ frame, copy []int }
 	byType := map[graph.PortType]*typeOuts{
-		graph.PortVideo:    {},
-		graph.PortAudio:    {},
-		graph.PortSubtitle: {},
-		graph.PortData:     {},
+		graph.PortVideo:      {},
+		graph.PortAudio:      {},
+		graph.PortSubtitle:   {},
+		graph.PortData:       {},
+		graph.PortAttachment: {},
 	}
 	for i, e := range node.Outbound {
 		bucket := byType[e.Type]
@@ -299,6 +301,8 @@ func (r *graphRunner) handleSource(ctx context.Context, node *graph.Node, outs [
 			portType = graph.PortSubtitle
 		case av.MediaTypeData:
 			portType = graph.PortData
+		case av.MediaTypeAttachment:
+			portType = graph.PortAttachment
 		}
 		if bucket := byType[portType]; bucket != nil && len(bucket.copy) > 0 {
 			if err := sendPacketCopies(pkt, bucket.copy); err != nil {
@@ -713,8 +717,10 @@ func (r *graphRunner) openSource(cfg Input, srcNode *graph.Node, decOpts av.Deco
 		si := streamByIdx[idx]
 		typ := si.Type.String()
 		switch {
-		case copyOnly[typ]:
+		case copyOnly[typ] || typ == "attachment":
 			// Stream-copy only: don't open a decoder.
+			// Attachment data lives in codecpar->extradata and is written
+			// by WriteHeader; no packet decoding is needed.
 		case typ == "subtitle":
 			subDec, err := av.OpenSubtitleDecoderWithOptions(input, si.Index, av.SubtitleDecoderOptions{
 				Charenc: cfg.SubtitleCharenc,
@@ -877,10 +883,35 @@ func (r *graphRunner) copySourceFor(copyNode *graph.Node) (*av.InputFormatContex
 		return nil, 0, [2]int{}, fmt.Errorf("copy node %q: source %q has no resources", copyNode.ID, from.ID)
 	}
 	mt := portTypeToAVMediaType(in.Type)
-	for idx, si := range src.streams {
-		if si.Type == mt {
-			return src.input, idx, si.TimeBase, nil
+
+	// Parse the 0-based track index from the source port name ("v:0", "t:2", …).
+	// When the port is "default" or carries no index, fall back to track 0.
+	wantTrack := 0
+	if parts := strings.SplitN(in.FromPort, ":", 2); len(parts) == 2 {
+		if n, err := strconv.Atoi(parts[1]); err == nil && n >= 0 {
+			wantTrack = n
 		}
 	}
-	return nil, 0, [2]int{}, fmt.Errorf("copy node %q: source %q has no %v stream", copyNode.ID, from.ID, in.Type)
+
+	// Collect and sort stream indices for deterministic resolution when
+	// there are multiple streams of the same type (e.g. several attachment
+	// streams or audio tracks).
+	indices := make([]int, 0, len(src.streams))
+	for idx := range src.streams {
+		indices = append(indices, idx)
+	}
+	sort.Ints(indices)
+
+	track := 0
+	for _, idx := range indices {
+		si := src.streams[idx]
+		if si.Type != mt {
+			continue
+		}
+		if track == wantTrack {
+			return src.input, idx, si.TimeBase, nil
+		}
+		track++
+	}
+	return nil, 0, [2]int{}, fmt.Errorf("copy node %q: source %q has no %v stream (track %d)", copyNode.ID, from.ID, in.Type, wantTrack)
 }
