@@ -24,6 +24,7 @@ import { MMEdge } from './components/MMEdge';
 import { RunPanel } from './components/RunPanel';
 import { RunDock } from './components/RunDock';
 import { HelpDialog } from './components/HelpDialog';
+import { HardwareDialog } from './components/HardwareDialog';
 import { ImportFFmpegDialog } from './components/ImportFFmpegDialog';
 import { ExportFFmpegDialog } from './components/ExportFFmpegDialog';
 import { AssetManager } from './components/AssetManager';
@@ -625,6 +626,7 @@ function Editor() {
 
   /* ---------- Help dialog ---------- */
   const [helpOpen, setHelpOpen] = useState(false);
+  const [showHWDialog, setShowHWDialog] = useState(false);
   const [importFFmpegOpen, setImportFFmpegOpen] = useState(false);
   const [showExportCmd, setShowExportCmd] = useState(false);
   const [showAssetManager, setShowAssetManager] = useState(false);
@@ -882,7 +884,7 @@ function Editor() {
         </button>
       </div>
 
-      {showPalette && <Palette />}
+      {showPalette && <Palette hwProbes={availableHWAccels} onHardwareClick={() => setShowHWDialog(true)} />}
 
       <div
         className="canvas"
@@ -959,6 +961,7 @@ function Editor() {
         <RunPanel run={run} nodeKinds={nodeKinds} onClose={() => setShowRunPanel(false)} />
       </RunDock>
       <HelpDialog open={helpOpen} onClose={() => setHelpOpen(false)} />
+      <HardwareDialog open={showHWDialog} probes={availableHWAccels} onClose={() => setShowHWDialog(false)} />
       <ImportFFmpegDialog
         open={importFFmpegOpen}
         onClose={() => setImportFFmpegOpen(false)}
