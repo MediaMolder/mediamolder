@@ -437,6 +437,7 @@ The `mediamolder gui` HTTP server (§18) is intended for **localhost use only** 
 - `mediamolder migrate [--from=N --to=N] config.json` — migrate a config payload between schema versions.
 - `mediamolder probe <url>` — probe a media file and print stream metadata as JSON.
 - `mediamolder list-codecs`, `list-filters`, `list-formats` — enumerate libav* capabilities.
+- `mediamolder list-hw-devices` — probe which hardware acceleration devices (CUDA, VAAPI, QSV, D3D11VA, …) are available on the host. Flags: `--json` (machine-readable array), `--all` (include unavailable devices).
 - `mediamolder list-processors` — enumerate registered Go processor types (see §19).
 - `mediamolder gui [--host=127.0.0.1] [--port=8080] [--no-open] [--examples=DIR] [--dev]` — serve the browser-based visual editor (see §18).
 - `mediamolder version` — print version, FFmpeg configuration, and licence type.
