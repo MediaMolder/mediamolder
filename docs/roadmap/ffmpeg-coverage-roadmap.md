@@ -1339,15 +1339,17 @@ already works in degraded form via per-filter spellings.
 
 **Targets:** the ⚠️/❌ items in §2.1, §2.2, §2.5, §2.7 not addressed by any earlier wave — device capture GUI, cover art embedding, attachment stream mapping, model-file filter assets, and network-source schema validation.
 
-61. **`av.ListDevices` + `GET /api/devices` endpoint** (§2.1, §2.7) —
+61. ✅ **`av.ListDevices` + `GET /api/devices` endpoint** (§2.1, §2.7) —
     CGO wrapper around `avdevice_list_input_sources()` in `av/list.go`
     (alongside `ListFilters`/`ListCodecs`). Returns
     `[]DeviceInfo{Name, Description}` per enumerated device. New REST
-    endpoint `GET /api/devices?format=<fmt>` (registered in
-    `internal/gui/api.go`) dispatches per format: `dshow` on Windows,
-    `avfoundation` on macOS, `v4l2` on Linux. Guard with a 2-second
-    context timeout — Windows dshow enumeration can block on an
-    in-use device.
+    endpoint `GET /api/devices?format=<fmt>` in
+    `internal/gui/devices.go` (registered in `internal/gui/server.go`)
+    dispatches per format: `dshow` on Windows, `avfoundation` on
+    macOS, `v4l2` on Linux. Guards with a 2-second context timeout —
+    Windows dshow enumeration can block on an in-use device.
+    `avdevice_register_all()` is called once via `sync.Once`.
+    (Wave 11 #61, complete)
 
 62. **Device probe + seek guard** (§2.1) —
     Extend `POST /api/probe` to accept an optional `format` string
