@@ -1501,7 +1501,16 @@ function TagField({
 function NodeForm({ def, onChange, padHints, hwDevices = [] }: { def: NodeDef; onChange: (next: NodeDef) => void; padHints?: Record<string, number>; hwDevices?: HardwareDevice[] }) {
   const isFilter =
     def.type === 'filter' || def.type === 'filter_source' || def.type === 'filter_sink';
-  const showDevicePicker = isFilter || def.type === 'encoder';
+  // Show the device picker only for filters (which may use hw context for
+  // scale_cuda etc.) and for hardware encoders.  Software-only encoders
+  // (libx264, libx265, libopus, aac, …) have no use for a device context.
+  // Always show when a device is already set so existing config is visible.
+  const isHWEncoder = def.type === 'encoder' && (() => {
+    if (def.device) return true; // already configured — always show
+    const codec = String(def.params?.codec ?? '');
+    return /_(nvenc|qsv|vaapi|videotoolbox|amf|vulkan|v4l2m2m|mmal|rkmpp)$/.test(codec);
+  })();
+  const showDevicePicker = isFilter || isHWEncoder;
   return (
     <>
       {isFilter ? (
