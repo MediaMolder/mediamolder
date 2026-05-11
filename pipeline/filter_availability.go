@@ -45,13 +45,13 @@ func builtInFilters() map[string]struct{} {
 //   - configure (`enabled libfoo` gates).
 var optionalFilterLibs = map[string]string{
 	// ── CUDA / NVCC ────────────────────────────────────────────────────────
-	"chromakey_cuda":   "--enable-cuda-nvcc",
-	"colorspace_cuda":  "--enable-cuda-nvcc",
-	"hwupload_cuda":    "--enable-cuda-nvcc",
-	"overlay_cuda":     "--enable-cuda-nvcc",
-	"scale_cuda":       "--enable-cuda-nvcc",
-	"thumbnail_cuda":   "--enable-cuda-nvcc",
-	"yadif_cuda":       "--enable-cuda-nvcc",
+	"chromakey_cuda":  "--enable-cuda-nvcc",
+	"colorspace_cuda": "--enable-cuda-nvcc",
+	"hwupload_cuda":   "--enable-cuda-nvcc",
+	"overlay_cuda":    "--enable-cuda-nvcc",
+	"scale_cuda":      "--enable-cuda-nvcc",
+	"thumbnail_cuda":  "--enable-cuda-nvcc",
+	"yadif_cuda":      "--enable-cuda-nvcc",
 
 	// ── CUDA + libnpp (NVIDIA Performance Primitives) ─────────────────────
 	// scale_npp and transpose_npp require both the CUDA compiler and the
@@ -79,14 +79,14 @@ var optionalFilterLibs = map[string]string{
 	"vpp_qsv":         "--enable-libmfx (or --enable-libvpl for oneVPL)",
 
 	// ── Vulkan ─────────────────────────────────────────────────────────────
-	"avgblur_vulkan":    "--enable-vulkan",
-	"blend_vulkan":      "--enable-vulkan",
-	"chromaber_vulkan":  "--enable-vulkan",
-	"flip_vulkan":       "--enable-vulkan",
-	"overlay_vulkan":    "--enable-vulkan",
-	"rotate_vulkan":     "--enable-vulkan",
-	"scale_vulkan":      "--enable-vulkan",
-	"transpose_vulkan":  "--enable-vulkan",
+	"avgblur_vulkan":   "--enable-vulkan",
+	"blend_vulkan":     "--enable-vulkan",
+	"chromaber_vulkan": "--enable-vulkan",
+	"flip_vulkan":      "--enable-vulkan",
+	"overlay_vulkan":   "--enable-vulkan",
+	"rotate_vulkan":    "--enable-vulkan",
+	"scale_vulkan":     "--enable-vulkan",
+	"transpose_vulkan": "--enable-vulkan",
 
 	// ── OpenCL ─────────────────────────────────────────────────────────────
 	"afir_opencl":        "--enable-opencl",
@@ -111,27 +111,27 @@ var optionalFilterLibs = map[string]string{
 	"xfade_opencl":       "--enable-opencl",
 
 	// ── VideoToolbox (macOS) ───────────────────────────────────────────────
-	"scale_vt":            "--enable-videotoolbox",
+	"scale_vt":             "--enable-videotoolbox",
 	"tonemap_videotoolbox": "--enable-videotoolbox",
 
 	// ── Optional libraries ─────────────────────────────────────────────────
-	"arnndn":    "--enable-librnnoise (built into libavfilter when present)",
-	"ass":       "--enable-libass",
-	"frei0r":    "--enable-frei0r",
-	"frei0r_src": "--enable-frei0r",
-	"ladspa":    "--enable-ladspa",
-	"libplacebo": "--enable-libplacebo",
-	"libvmaf":   "--enable-libvmaf",
+	"arnndn":       "--enable-librnnoise (built into libavfilter when present)",
+	"ass":          "--enable-libass",
+	"frei0r":       "--enable-frei0r",
+	"frei0r_src":   "--enable-frei0r",
+	"ladspa":       "--enable-ladspa",
+	"libplacebo":   "--enable-libplacebo",
+	"libvmaf":      "--enable-libvmaf",
 	"libvmaf_cuda": "--enable-libvmaf --enable-cuda-nvcc",
-	"lv2":       "--enable-lv2",
-	"ocr":       "--enable-libtesseract",
-	"sab":       "--enable-libgsm (or libavfilter built without --disable-filter=sab)",
-	"signature": "--enable-libavfilter (filter is gated by CONFIG_SIGNATURE_FILTER; usually present)",
-	"smbprotect": "--enable-libsmbclient",
-	"sofalizer": "--enable-libmysofa",
-	"subtitles": "--enable-libass",
-	"vmafmotion": "--enable-libvmaf",
-	"zscale":    "--enable-libzimg",
+	"lv2":          "--enable-lv2",
+	"ocr":          "--enable-libtesseract",
+	"sab":          "--enable-libgsm (or libavfilter built without --disable-filter=sab)",
+	"signature":    "--enable-libavfilter (filter is gated by CONFIG_SIGNATURE_FILTER; usually present)",
+	"smbprotect":   "--enable-libsmbclient",
+	"sofalizer":    "--enable-libmysofa",
+	"subtitles":    "--enable-libass",
+	"vmafmotion":   "--enable-libvmaf",
+	"zscale":       "--enable-libzimg",
 }
 
 // filterAvailabilityError returns an error describing why the named

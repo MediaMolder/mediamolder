@@ -94,7 +94,7 @@ func TestFilterAvailabilityCache(t *testing.T) {
 // requires libnpp) mentions libnpp specifically.
 func TestHardwareFilterHints_CUDA(t *testing.T) {
 	for _, tc := range []struct {
-		filter  string
+		filter   string
 		wantHint string
 	}{
 		{"scale_cuda", "cuda-nvcc"},
@@ -210,4 +210,3 @@ func TestScaleNppVsScaleCuda(t *testing.T) {
 		t.Errorf("scale_cuda error should NOT mention libnpp (only cuda-nvcc), got: %v", cudaErr)
 	}
 }
-
