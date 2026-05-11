@@ -765,8 +765,26 @@ func (r *graphRunner) openSource(cfg Input, srcNode *graph.Node, decOpts av.Deco
 				}
 				decoders[si.Index] = hwDec
 			} else {
-				dec, err := av.OpenDecoderWithOptions(input, si.Index, decOpts)
-				if err != nil {
+				dec, libavErr := av.OpenDecoderWithOptions(input, si.Index, decOpts)
+				switch {
+				case libavErr == nil:
+					decoders[si.Index] = dec
+				case av.IsVTCodec(si.CodecTag):
+					// LibAV has no codec for this tag (e.g. ProRes RAW 'aprn'/
+					// 'aprh'); try the VideoToolbox-native path instead.
+					vtDec, vtErr := av.OpenVTDecoder(input, si.Index)
+					if vtErr != nil {
+						for _, d := range decoders {
+							d.Close()
+						}
+						for _, d := range subDecoders {
+							d.Close()
+						}
+						input.Close()
+						return nil, fmt.Errorf("open decoder for %s stream %d: no LibAV decoder (%v); VT decoder: %w", typ, si.Index, libavErr, vtErr)
+					}
+					decoders[si.Index] = vtDec
+				default:
 					for _, d := range decoders {
 						d.Close()
 					}
@@ -774,9 +792,8 @@ func (r *graphRunner) openSource(cfg Input, srcNode *graph.Node, decOpts av.Deco
 						d.Close()
 					}
 					input.Close()
-					return nil, fmt.Errorf("open decoder for %s stream %d: %w", typ, si.Index, err)
+					return nil, fmt.Errorf("open decoder for %s stream %d: %w", typ, si.Index, libavErr)
 				}
-				decoders[si.Index] = dec
 			}
 		}
 		streams[si.Index] = si

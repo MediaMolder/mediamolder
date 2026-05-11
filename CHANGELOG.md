@@ -6,6 +6,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 ## [Unreleased]
 
 ### Added
+- **VT-native ProRes RAW decoder (this commit).**
+  `av.VTDecoderContext` implements `FrameDecoder` using `VTDecompressionSession`
+  directly, bypassing LibAV's codec registry.  The pipeline source handler now
+  falls back to this path when `OpenDecoderWithOptions` fails and the stream's
+  four-CC tag is `'aprn'` (ProRes RAW) or `'aprh'` (ProRes RAW HQ) — both
+  confirmed as hardware-decodable on Apple Silicon via `VTIsHardwareDecodeSupported`.
+  Output frames are P010 (10-bit biplanar NV12) matching the hardware's native
+  decode depth.  `IsVTCodec(codecTag)` is the public predicate; the function
+  is a no-op on non-Darwin platforms.
+
+### Added
 - **Hardware acceleration: routing filters in palette (commit `3be0306`).**
   Nine multi-stream routing filters — `split`, `asplit`, `overlay`, `hstack`,
   `vstack`, `xstack`, `amerge`, `amix`, `concat` — are now listed in a

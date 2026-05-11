@@ -574,12 +574,16 @@ version of the scan, which caused VideoToolbox encoders to be invisible.
 
 Because LibAV's codec registry is static (compiled in at build time —
 `avcodec_register` was removed in FFmpeg 5.0), any codec not compiled into
-your FFmpeg build will not appear.  In particular, **ProRes RAW encode and
-hardware-accelerated ProRes RAW decode** are not representable in the LibAV
-codec registry at all and will never appear in this dialog regardless of the
-hardware present.  A future MediaMolder-native VideoToolbox path for ProRes
-RAW is planned (see
-[roadmap/hardware.md](roadmap/) for status).
+your FFmpeg build will not appear.  In particular, **ProRes RAW encode** is
+not representable in the LibAV codec registry.
+
+**ProRes RAW decode** (`'aprn'` / `'aprh'`) is now handled by a
+MediaMolder-native `VTDecompressionSession` path that activates automatically
+when LibAV reports no decoder for a stream with those codec tags.  On Apple
+Silicon macOS the pipeline will decode ProRes RAW files to P010 (10-bit NV12)
+frames without any additional configuration.  ProRes RAW *encoding* via
+VideoToolbox is not yet supported (Apple's VT encode API does not expose
+ProRes RAW).
 
 ## GUI: Device Picker and HW Indicator Badges (Wave 10 #60)
 
