@@ -89,6 +89,7 @@ const (
 	HWDeviceVAAPI        HWDeviceType = HWDeviceType(C.AV_HWDEVICE_TYPE_VAAPI)
 	HWDeviceQSV          HWDeviceType = HWDeviceType(C.AV_HWDEVICE_TYPE_QSV)
 	HWDeviceVideoToolbox HWDeviceType = HWDeviceType(C.AV_HWDEVICE_TYPE_VIDEOTOOLBOX)
+	HWDeviceAMF          HWDeviceType = HWDeviceType(C.AV_HWDEVICE_TYPE_AMF)
 	HWDeviceNone         HWDeviceType = HWDeviceType(C.AV_HWDEVICE_TYPE_NONE)
 )
 
@@ -267,18 +268,49 @@ type HWDeviceProbe struct {
 // each one probed for runtime availability by calling av_hwdevice_ctx_create.
 // For available devices, DeviceCapabilities is also populated via
 // av_hwdevice_get_hwframe_constraints and the static codec registry.
+//
+// AMD AMF is additionally probed via a standalone libamfrt64.so.1 dlopen even
+// when FFmpeg was not compiled with --enable-amf, so AMD users on mixed-driver
+// setups still see their GPU.
 func ProbeHWDevices() []HWDeviceProbe {
 	types := ListHWDeviceTypes()
-	out := make([]HWDeviceProbe, len(types))
-	for i, t := range types {
+	out := make([]HWDeviceProbe, 0, len(types)+1)
+	ffmpegHasAMF := false
+	for _, t := range types {
 		ctx, err := OpenHWDevice(t, "")
 		if err != nil {
-			out[i] = HWDeviceProbe{Type: t, Err: err.Error()}
+			out = append(out, HWDeviceProbe{Type: t, Err: err.Error()})
 		} else {
 			caps := ctx.QueryCapabilities()
 			_ = ctx.Close()
-			out[i] = HWDeviceProbe{Type: t, Available: true, Capabilities: caps}
+			out = append(out, HWDeviceProbe{Type: t, Available: true, Capabilities: caps})
+		}
+		if t == HWDeviceAMF {
+			ffmpegHasAMF = true
 		}
 	}
+
+	// Standalone AMF probe: covers systems where FFmpeg is compiled without
+	// --enable-amf but the AMD AMF runtime (libamfrt64.so.1) is installed.
+	if !ffmpegHasAMF {
+		amfCaps := QueryAMFCaps()
+		if amfCaps != nil {
+			caps := DeviceCapabilities{
+				DisplayName: "AMD GPU (AMF)",
+				Codecs:      ListHWCodecs(HWDeviceAMF),
+				Filters:     FilterHWAccels(HWDeviceAMF),
+				AMFCaps:     amfCaps,
+			}
+			caps.StaticCaps = QueryStaticCaps(caps)
+			out = append(out, HWDeviceProbe{
+				Type: HWDeviceAMF, Available: true, Capabilities: caps,
+			})
+		} else {
+			out = append(out, HWDeviceProbe{
+				Type: HWDeviceAMF, Err: "AMF runtime not found (libamfrt64.so.1)",
+			})
+		}
+	}
+
 	return out
 }

@@ -35,6 +35,14 @@ type hwAccelEntry struct {
 	// CUDA-specific (empty for non-CUDA backends):
 	CUDASMVersion string `json:"cuda_sm,omitempty"`   // e.g. "8.9"
 	CUDAArch      string `json:"cuda_arch,omitempty"` // e.g. "Ada Lovelace"
+	// NVIDIA NVENC per-codec encoder hardware capabilities (CUDA only).
+	NVENCCaps []av.NVENCCodecCaps `json:"nvenc_caps,omitempty"`
+	// NVIDIA NVDEC per-codec decoder hardware capabilities (CUDA only).
+	NVDECCaps []av.NVDECCodecCaps `json:"nvdec_caps,omitempty"`
+	// AMD AMF per-codec encoder capabilities (AMF only).
+	AMFCaps []av.AMFCodecCaps `json:"amf_caps,omitempty"`
+	// Static / lookup-table derived caps (max bitrate, session counts, VT limits).
+	StaticCaps *av.HWStaticCaps `json:"static_caps,omitempty"`
 }
 
 var (
@@ -73,6 +81,18 @@ func probeHWAccelOnce() []hwAccelEntry {
 				if caps.CUDAArch != "" {
 					entry.CUDASMVersion = fmt.Sprintf("%d.%d", caps.CUDASMMajor, caps.CUDASMMinor)
 					entry.CUDAArch = caps.CUDAArch
+				}
+				if len(caps.NVENCCaps) > 0 {
+					entry.NVENCCaps = caps.NVENCCaps
+				}
+				if len(caps.NVDECCaps) > 0 {
+					entry.NVDECCaps = caps.NVDECCaps
+				}
+				if len(caps.AMFCaps) > 0 {
+					entry.AMFCaps = caps.AMFCaps
+				}
+				if sc := caps.StaticCaps; sc.NVDECMaxSessions > 0 || len(sc.NVENCMaxBitrateKbps) > 0 || sc.VTMaxWidth > 0 {
+					entry.StaticCaps = &sc
 				}
 			}
 			hwAccelResult = append(hwAccelResult, entry)

@@ -6,6 +6,21 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 ## [Unreleased]
 
 ### Added
+- **Hardware acceleration: full codec capability details in `/api/hwaccel` (Phase 2).**
+  The `HWAccelProbe` JSON response now includes per-device capability records:
+  - `nvenc_caps`: per-codec NVENC encoder caps (max resolution, max macroblock
+    throughput, B-frame support, 10-bit, lossless, lookahead, temporal AQ, etc.)
+    queried at runtime from `libnvidia-encode` via `nvEncGetEncodeCaps`.
+  - `nvdec_caps`: per-codec NVDEC decoder caps (chroma format, bit-depth, session
+    count, output format mask, resolution limits) via `cuvidGetDecoderCaps`.
+  - `amf_caps`: per-codec AMD AMF encoder caps (max concurrent streams, resolution
+    range) queried via a standalone `dlopen("libamfrt64.so.1")` probe using raw
+    vtable dispatch against the public AMF SDK 1.4.36 ABI.  Works even when FFmpeg
+    was compiled without `--enable-amf` (`CONFIG_AMF=0`).
+  - `static_caps`: vendor-published and empirically-verified look-up table data:
+    NVDEC maximum simultaneous sessions per GPU generation; NVENC maximum bitrate
+    per codec/generation; VideoToolbox maximum encode resolution per Apple chip family.
+
 - **Hardware acceleration: per-backend GPU marketing names in `/api/hwaccel`.**
   `QueryCapabilities()` now resolves a human-readable device name for every
   hardware backend:

@@ -700,4 +700,40 @@ export interface HWAccelProbe {
   cuda_sm?: string;
   /** CUDA GPU architecture name, e.g. "Ada Lovelace". Present only for CUDA devices. */
   cuda_arch?: string;
+  /** NVIDIA NVENC per-codec encoder capabilities. Present only for CUDA devices with NVENC. */
+  nvenc_caps?: Array<{
+    codec_name: string;
+    max_width: number; max_height: number; min_width: number; min_height: number;
+    mb_per_sec_max: number;
+    num_encoder_engines: number;
+    level_max: number; level_min: number;
+    max_bframes: number;
+    support_10bit: boolean; support_yuv444: boolean; support_lossless: boolean;
+    support_lookahead: boolean; support_temporal_aq: boolean;
+    support_weighted_pred: boolean; support_bframe_ref: boolean;
+  }>;
+  /** NVIDIA NVDEC per-codec decoder capabilities. Present only for CUDA devices with NVDEC. */
+  nvdec_caps?: Array<{
+    codec_name: string;
+    chroma_fmt: string;
+    bit_depth: number;
+    num_nvdecs: number;
+    output_format_mask: number;
+    max_width: number; max_height: number; min_width: number; min_height: number;
+    max_mb_count: number;
+  }>;
+  /** AMD AMF per-codec encoder capabilities. Present only for AMF devices. */
+  amf_caps?: Array<{
+    codec_name: string;
+    max_num_of_streams: number;
+    min_width: number; max_width: number;
+    min_height: number; max_height: number;
+  }>;
+  /** Static / table-derived caps: max bitrate, session counts, VT resolution limits. */
+  static_caps?: {
+    nvdec_max_sessions?: number;
+    nvenc_max_bitrate_kbps?: Record<string, number>;
+    vt_max_width?: number;
+    vt_max_height?: number;
+  };
 }
