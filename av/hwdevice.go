@@ -253,9 +253,9 @@ func ListHWDeviceTypes() []HWDeviceType {
 
 // HWDeviceProbe holds the result of probing a single hardware device type.
 type HWDeviceProbe struct {
-	Type         HWDeviceType
-	Available    bool
-	Err          string // non-empty when Available == false
+	Type      HWDeviceType
+	Available bool
+	Err       string // non-empty when Available == false
 	// Capabilities is populated only when Available is true.
 	Capabilities DeviceCapabilities
 }

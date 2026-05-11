@@ -116,8 +116,8 @@ func TestExportRTSPTransport(t *testing.T) {
 		SchemaVersion: "1.1",
 		Inputs: []pipeline.Input{
 			{
-				ID: "cam",
-				URL: "rtsp://192.168.1.100/stream",
+				ID:      "cam",
+				URL:     "rtsp://192.168.1.100/stream",
 				Options: map[string]any{"rtsp_transport": "tcp"},
 				Streams: []pipeline.StreamSelect{{InputIndex: 0, Type: "video"}},
 			},
