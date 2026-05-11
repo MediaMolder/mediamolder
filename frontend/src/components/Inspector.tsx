@@ -101,6 +101,7 @@ export function Inspector({ node, nodes, edges, onChange, onDelete, onSelectNode
           probed={node.data.probed}
           onChange={(def) => onChange(updateRef(node, { kind: 'input', def }, def.id, displayUrl(def.url)))}
           onProbed={(probed) => onProbedData(node.id, probed)}
+          hwDevices={hwDevices}
         />
       )}
       {ref.kind === 'output' && (
@@ -551,11 +552,13 @@ function InputForm({
   probed,
   onChange,
   onProbed,
+  hwDevices = [],
 }: {
   def: Input;
   probed?: ProbedStream[];
   onChange: (next: Input) => void;
   onProbed: (next: ProbedStream[] | undefined) => void;
+  hwDevices?: HardwareDevice[];
 }) {
   const [probing, setProbing] = useState(false);
   const [probeError, setProbeError] = useState<string | null>(null);
@@ -654,6 +657,60 @@ function InputForm({
         Leave empty for the UTF-8 default. Applies to SRT, ASS, SSA; ignored
         for bitmap subtitles (PGS, DVB).
       </div>
+      {/* Wave 10 #59: per-input hardware-accelerated decoding. */}
+      <div style={{ marginTop: 12, marginBottom: 4 }}>
+        <label>HW decode accelerator</label>
+        <select
+          value={def.hwaccel ?? ''}
+          onChange={(e) => onChange({ ...def, hwaccel: e.target.value || undefined })}
+          style={{ display: 'block', width: '100%', marginTop: 4, marginBottom: 4 }}
+        >
+          <option value="">(none — software decode)</option>
+          <option value="cuda">cuda (NVIDIA NVDEC)</option>
+          <option value="vaapi">vaapi (Intel/AMD VA-API)</option>
+          <option value="videotoolbox">videotoolbox (Apple)</option>
+          <option value="qsv">qsv (Intel Quick Sync)</option>
+          <option value="d3d11va">d3d11va (Windows Direct3D 11)</option>
+          <option value="dxva2">dxva2 (Windows DXVA2)</option>
+          <option value="auto">auto</option>
+        </select>
+        <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: -2, marginBottom: 6 }}>
+          <code>-hwaccel</code> — selects the hardware decode API for this input.
+        </div>
+
+        {def.hwaccel && (
+          <>
+            <label>HW device</label>
+            <select
+              value={def.hwaccel_device ?? ''}
+              onChange={(e) => onChange({ ...def, hwaccel_device: e.target.value || undefined })}
+              style={{ display: 'block', width: '100%', marginTop: 4, marginBottom: 4 }}
+            >
+              <option value="">(auto)</option>
+              {hwDevices.map((d) => (
+                <option key={d.name} value={d.name}>{d.name} [{d.type}]</option>
+              ))}
+            </select>
+            <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: -2, marginBottom: 6 }}>
+              <code>-hwaccel_device</code> — reuse a named device context from{' '}
+              <code>hardware_devices</code>, or leave empty for a transient context.
+            </div>
+
+            <label>HW output pixel format</label>
+            <input
+              value={def.hwaccel_output_format ?? ''}
+              onChange={(e) => onChange({ ...def, hwaccel_output_format: e.target.value || undefined })}
+              placeholder="e.g. cuda, nv12, yuv420p (empty = transfer to RAM)"
+            />
+            <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: -4, marginBottom: 4 }}>
+              <code>-hwaccel_output_format</code> — keep frames on the GPU (e.g.{' '}
+              <code>cuda</code>) for zero-copy filter chains, or use a software
+              format to transfer automatically.
+            </div>
+          </>
+        )}
+      </div>
+
       <TimingFields
         kind="input"
         options={def.options}
