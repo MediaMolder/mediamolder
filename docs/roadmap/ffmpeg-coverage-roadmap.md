@@ -1311,7 +1311,7 @@ already works in degraded form via per-filter spellings.
     (`scale_vt`). All hardware filter references in a config produce
     actionable `--enable-xxx` rebuild hints. Tests: 7 new targeted
     subtests plus `TestScaleNppVsScaleCuda`. (Wave 10 #57, complete)
-58. **Hardware filter auto-mapping** (`scale` ↔ `scale_cuda` /
+58. ✅ **Hardware filter auto-mapping** (`scale` ↔ `scale_cuda` /
     `scale_npp` / `scale_qsv` / `scale_vt`) (§2.3) — Opt-in
     per-node `auto_map_hw` flag promotes a sw-filter name to its hw
     equivalent based on the node's `device` type; inserts
