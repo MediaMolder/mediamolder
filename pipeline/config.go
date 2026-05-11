@@ -63,6 +63,12 @@ type Config struct {
 	// drawtext= / subtitles=, RNNoise models for arnndn=, LUT files for
 	// lut3d= / haldclut=. (Wave 8 #51)
 	Assets map[string]AssetRef `json:"assets,omitempty"`
+	// HardwareDevices declares named hardware-acceleration device contexts
+	// that nodes may reference via NodeDef.Device. Each entry is opened
+	// via av_hwdevice_ctx_create at pipeline start and closed on teardown.
+	// Mirrors FFmpeg's global `-init_hw_device type[=name][:device]` flag
+	// (fftools/ffmpeg_opt.c::opt_init_hw_device). (Wave 10 #56)
+	HardwareDevices []HardwareDevice `json:"hardware_devices,omitempty"`
 }
 
 // Input describes a single input source.
@@ -400,6 +406,12 @@ type NodeDef struct {
 	// the buffersink media type is set correctly. Valid values: "video",
 	// "audio", "subtitle", "data". (Wave 7 #37)
 	OutputMediaType string `json:"output_media_type,omitempty"`
+	// Device, when set, names an entry in Config.HardwareDevices whose
+	// opened av.HWDeviceContext is used for hardware-accelerated
+	// encode / decode / filter on this node. Mirrors the per-stream device
+	// binding that FFmpeg expresses via `-init_hw_device` + per-codec
+	// AVOption (hwaccel_device). (Wave 10 #56)
+	Device string `json:"device,omitempty"`
 }
 
 // EdgeDef describes a directed edge between two nodes.
@@ -1153,6 +1165,22 @@ type EncoderOverride struct {
 	Options map[string]any `json:"options,omitempty"`
 }
 
+// HardwareDevice declares a named hardware-acceleration device context that
+// can be referenced by name from encoder, decoder, and filter nodes via
+// NodeDef.Device. Mirrors FFmpeg's `-init_hw_device type[=name][:device]`
+// (fftools/ffmpeg_opt.c::opt_init_hw_device). The name is a user-chosen
+// label (e.g. "gpu0"); type is one of "cuda", "vaapi", "qsv",
+// "videotoolbox"; device is the OS-level device specifier (e.g.
+// "/dev/dri/renderD128", "0", or "" for the first available);
+// options are forwarded as AVDictionary entries to av_hwdevice_ctx_create.
+// (Wave 10 #56)
+type HardwareDevice struct {
+	Name    string         `json:"name"`
+	Type    string         `json:"type"`
+	Device  string         `json:"device,omitempty"`
+	Options map[string]any `json:"options,omitempty"`
+}
+
 // Options holds global pipeline options.
 type Options struct {
 	Threads        int    `json:"threads,omitempty"`
@@ -1558,6 +1586,26 @@ func validate(cfg *Config) error {
 		}
 		if !validKinds[ref.Kind] {
 			return fmt.Errorf("assets[%q]: kind %q is not valid; must be \"font\", \"model\", \"lut\", or \"other\"", name, ref.Kind)
+		}
+	}
+	// Validate hardware_devices (Wave 10 #56).
+	hwDeviceNames := make(map[string]bool, len(cfg.HardwareDevices))
+	for i, hd := range cfg.HardwareDevices {
+		if hd.Name == "" {
+			return fmt.Errorf("hardware_devices[%d]: name must not be empty", i)
+		}
+		if hwDeviceNames[hd.Name] {
+			return fmt.Errorf("duplicate hardware_devices name %q", hd.Name)
+		}
+		hwDeviceNames[hd.Name] = true
+		if hd.Type == "" {
+			return fmt.Errorf("hardware_devices[%d] %q: type must not be empty", i, hd.Name)
+		}
+	}
+	// Validate that NodeDef.Device references a declared hardware_device name.
+	for i, node := range cfg.Graph.Nodes {
+		if node.Device != "" && !hwDeviceNames[node.Device] {
+			return fmt.Errorf("node[%d] %q: device %q does not match any hardware_devices entry", i, node.ID, node.Device)
 		}
 	}
 	return nil

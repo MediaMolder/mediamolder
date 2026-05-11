@@ -129,6 +129,10 @@ type parser struct {
 	hwAccel            string
 	hwDevice           string
 	hwOutFmt           string
+	// initHWDevices holds entries parsed from -init_hw_device flags.
+	// Each -init_hw_device type[=name][:device] produces one entry.
+	// Drained into Config.HardwareDevices at the end of parse(). (Wave 10 #56)
+	initHWDevices []pipeline.HardwareDevice
 	globalOpts         map[string]string
 	// Container-level metadata collected from `-metadata key=value`
 	// (no specifier). Latched onto the next output.
@@ -1026,6 +1030,22 @@ func (p *parser) parse() (*pipeline.Config, error) {
 				return nil, fmt.Errorf("-hwaccel_output_format requires an argument")
 			}
 			p.hwOutFmt = p.next()
+		case arg == "-init_hw_device":
+			// Syntax: type[=name][:device[,key=value...]]
+			// Examples:
+			//   cuda                  → name="cuda",  type="cuda",  device=""
+			//   cuda=gpu0             → name="gpu0",  type="cuda",  device=""
+			//   vaapi=va:/dev/dri/renderD128 → name="va", type="vaapi", device="/dev/dri/renderD128"
+			//   cuda=gpu0:0           → name="gpu0",  type="cuda",  device="0"
+			if !p.hasMore() {
+				return nil, fmt.Errorf("-init_hw_device requires an argument")
+			}
+			spec := p.next()
+			hd, err := parseInitHWDevice(spec)
+			if err != nil {
+				return nil, fmt.Errorf("-init_hw_device %q: %w", spec, err)
+			}
+			p.initHWDevices = append(p.initHWDevices, hd)
 		// ---- Video encoder options ----
 		case arg == "-crf" || arg == "-qp" || arg == "-preset" || arg == "-tune" ||
 			arg == "-profile:v" || arg == "-level" || arg == "-g" || arg == "-bf" ||
@@ -1398,6 +1418,9 @@ func (p *parser) parse() (*pipeline.Config, error) {
 	if p.hwDevice != "" {
 		cfg.GlobalOptions.HardwareDevice = p.hwDevice
 	}
+	if len(p.initHWDevices) > 0 {
+		cfg.HardwareDevices = p.initHWDevices
+	}
 	return cfg, nil
 }
 
@@ -1545,4 +1568,51 @@ func copyAnyMap(m map[string]any) map[string]any {
 		out[k] = v
 	}
 	return out
+}
+
+// parseInitHWDevice parses an -init_hw_device argument string into a
+// pipeline.HardwareDevice. FFmpeg's syntax (fftools/ffmpeg_opt.c::opt_init_hw_device):
+//
+//	type[=name][:device[,key=value...]]
+//
+// Examples:
+//
+//	"cuda"                         → {Name:"cuda",  Type:"cuda",  Device:""}
+//	"cuda=gpu0"                    → {Name:"gpu0",  Type:"cuda",  Device:""}
+//	"cuda=gpu0:0"                  → {Name:"gpu0",  Type:"cuda",  Device:"0"}
+//	"vaapi=va:/dev/dri/renderD128" → {Name:"va",    Type:"vaapi", Device:"/dev/dri/renderD128"}
+func parseInitHWDevice(spec string) (pipeline.HardwareDevice, error) {
+	if spec == "" {
+		return pipeline.HardwareDevice{}, fmt.Errorf("empty specification")
+	}
+	// Split off device specifier at the first ':'.
+	devicePart := ""
+	typeAndName := spec
+	if idx := strings.IndexByte(spec, ':'); idx >= 0 {
+		typeAndName = spec[:idx]
+		// Only take the device path — drop any trailing ",key=value" options
+		// (we do not currently parse key=value options into HardwareDevice.Options).
+		devicePart = spec[idx+1:]
+		if comma := strings.IndexByte(devicePart, ','); comma >= 0 {
+			devicePart = devicePart[:comma]
+		}
+	}
+	// Split type from optional name at '='.
+	hwType := typeAndName
+	hwName := typeAndName
+	if idx := strings.IndexByte(typeAndName, '='); idx >= 0 {
+		hwType = typeAndName[:idx]
+		hwName = typeAndName[idx+1:]
+	}
+	if hwType == "" {
+		return pipeline.HardwareDevice{}, fmt.Errorf("device type must not be empty")
+	}
+	if hwName == "" {
+		return pipeline.HardwareDevice{}, fmt.Errorf("device name must not be empty")
+	}
+	return pipeline.HardwareDevice{
+		Name:   hwName,
+		Type:   hwType,
+		Device: devicePart,
+	}, nil
 }

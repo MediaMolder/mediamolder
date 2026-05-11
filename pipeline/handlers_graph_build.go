@@ -59,6 +59,7 @@ func configToGraphDef(cfg *Config) *graph.Def {
 			Processor:       node.Processor,
 			Params:          params,
 			OutputMediaType: omt,
+			Device:          node.Device,
 			Internal:        internal,
 		})
 	}

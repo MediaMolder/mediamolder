@@ -109,7 +109,18 @@ func (e *exporter) buildGlobal() {
 	if o.ThreadType != "" {
 		e.add("-thread_type", o.ThreadType)
 	}
-	if o.HardwareDevice != "" {
+	// Emit named hardware device contexts as -init_hw_device flags (Wave 10 #56).
+	// These supersede the legacy GlobalOptions.HardwareDevice single-device path.
+	for _, hd := range e.cfg.HardwareDevices {
+		spec := hd.Type + "=" + hd.Name
+		if hd.Device != "" {
+			spec += ":" + hd.Device
+		}
+		e.add("-init_hw_device", spec)
+	}
+	// Legacy single-device path: emit GlobalOptions.HardwareDevice only when
+	// no named HardwareDevices are declared (backwards compatibility).
+	if o.HardwareDevice != "" && len(e.cfg.HardwareDevices) == 0 {
 		e.add("-init_hw_device", o.HardwareDevice)
 	}
 	if o.HardwareAccel != "" {

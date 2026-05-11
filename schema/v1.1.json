@@ -35,6 +35,11 @@
       "type": "object",
       "description": "Named asset registry. Each key is a symbolic asset name referenced in filter params as \"$asset:<name>\"; the runtime substitutes the resolved filesystem path before building the libavfilter graph. Typical use-cases: fonts for drawtext=/subtitles=, ML models for arnndn=, LUT files for lut3d=/haldclut=.",
       "additionalProperties": { "$ref": "#/$defs/asset_ref" }
+    },
+    "hardware_devices": {
+      "type": "array",
+      "description": "Named hardware-acceleration device contexts. Each entry is opened via av_hwdevice_ctx_create at pipeline start and referenced from nodes by name via the \"device\" field. Mirrors ffmpeg's -init_hw_device. (Wave 10 #56)",
+      "items": { "$ref": "#/$defs/hardware_device" }
     }
   },
   "$defs": {
@@ -146,7 +151,8 @@
           "enum": ["video", "audio", "subtitle", "data"],
           "description": "Declared output media type. Required for cross-media-type filters (showwavespic, showspectrumpic, showvolume, ...) where the output type cannot be inferred from the inbound edge type. Auto-filled from a curated registry when omitted."
         },
-        "error_policy": { "$ref": "#/$defs/error_policy" }
+        "error_policy": { "$ref": "#/$defs/error_policy" },
+        "device": { "type": "string", "description": "Name of a hardware_devices entry whose opened AVHWDeviceContext is used for HW-accelerated encode/decode/filter on this node. (Wave 10 #56)" }
       },
       "if": {
         "properties": { "type": { "const": "go_processor" } }
@@ -407,6 +413,17 @@
         "path": { "type": "string", "minLength": 1, "description": "Filesystem path of the asset (absolute or relative to working directory / MEDIAMOLDER_ASSET_PATH)." },
         "kind": { "type": "string", "enum": ["font", "model", "lut", "other"], "description": "Asset type for GUI classification: font (TTF/OTF), model (ML model file), lut (.cube/.3dl), other." },
         "desc": { "type": "string", "description": "Optional human-readable label shown in the GUI asset registry." }
+      }
+    },
+    "hardware_device": {
+      "type": "object",
+      "required": ["name", "type"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "description": "Symbolic label for the device (e.g. \"gpu0\"). Referenced from NodeDef.device." },
+        "type": { "type": "string", "description": "Hardware device type: \"cuda\", \"vaapi\", \"qsv\", \"videotoolbox\", etc. Passed to av_hwdevice_find_type_by_name." },
+        "device": { "type": "string", "description": "OS-level device specifier (e.g. \"/dev/dri/renderD128\", \"0\"). Empty string selects the first available device." },
+        "options": { "type": "object", "additionalProperties": true, "description": "Extra AVDictionary entries forwarded to av_hwdevice_ctx_create." }
       }
     }
   }

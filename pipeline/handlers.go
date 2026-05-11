@@ -183,6 +183,11 @@ type graphRunner struct {
 	// files via the codec's `stats` AVOption). Keyed by encoder
 	// node ID. Populated by createEncoder and closed in close().
 	passLogFiles map[string]*os.File
+	// hwDevices holds opened hardware-acceleration device contexts keyed
+	// by the symbolic name declared in Config.HardwareDevices. Populated
+	// by runGraph before any nodes are opened; closed in close().
+	// (Wave 10 #56)
+	hwDevices map[string]*av.HWDeviceContext
 }
 
 func newGraphRunner(cfg *Config, pipe *Pipeline) *graphRunner {
@@ -195,6 +200,7 @@ func newGraphRunner(cfg *Config, pipe *Pipeline) *graphRunner {
 		sinks:        make(map[string]*sinkResources),
 		goProcessors: make(map[string]processors.Processor),
 		passLogFiles: make(map[string]*os.File),
+		hwDevices:    make(map[string]*av.HWDeviceContext),
 	}
 }
 
@@ -223,6 +229,16 @@ func (r *graphRunner) resolveThreadType(node *graph.Node) string {
 	return r.cfg.GlobalOptions.ThreadType
 }
 
+// resolveHWDevice returns the *av.HWDeviceContext for a node using the hierarchy:
+// per-node NodeDef.device name (looked up in hwDevices) > nil (CPU path).
+// Mirrors the resolveThreadCount/resolveThreadType pattern. (Wave 10 #56)
+func (r *graphRunner) resolveHWDevice(node *graph.Node) *av.HWDeviceContext {
+	if node.Device != "" {
+		return r.hwDevices[node.Device]
+	}
+	return nil
+}
+
 func (r *graphRunner) close() {
 	for _, s := range r.sources {
 		s.Close()
@@ -245,6 +261,9 @@ func (r *graphRunner) close() {
 				_ = b.Close()
 			}
 		}
+	}
+	for _, d := range r.hwDevices {
+		_ = d.Close()
 	}
 	// Sinks are finalized by the caller (muxer.Close for atomic rename).
 }
