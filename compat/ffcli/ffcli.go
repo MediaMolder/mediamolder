@@ -133,7 +133,7 @@ type parser struct {
 	// Each -init_hw_device type[=name][:device] produces one entry.
 	// Drained into Config.HardwareDevices at the end of parse(). (Wave 10 #56)
 	initHWDevices []pipeline.HardwareDevice
-	globalOpts         map[string]string
+	globalOpts    map[string]string
 	// Container-level metadata collected from `-metadata key=value`
 	// (no specifier). Latched onto the next output.
 	containerMeta map[string]string
