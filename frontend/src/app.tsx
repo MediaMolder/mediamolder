@@ -42,7 +42,7 @@ import { spawnNodeFrom, type PaletteEntry } from './lib/spawn';
 import { useJobRun } from './lib/useJobRun';
 import { inferEdgeAttributes, summariseAttributes } from './lib/streamAttrs';
 import { fetchCatalog, indexStreams } from './lib/nodeCatalog';
-import type { JobConfig, ProbedStream, StreamType } from './lib/jobTypes';
+import type { HWAccelProbe, JobConfig, ProbedStream, StreamType } from './lib/jobTypes';
 
 const NODE_TYPES = { mmNode: MMNode };
 const EDGE_TYPES = { mmEdge: MMEdge };
@@ -99,8 +99,8 @@ function Editor() {
   const [nodes, setNodes] = useState<FlowNode[]>([]);
   const [edges, setEdges] = useState<FlowEdge[]>([]);
   // null = probe not yet returned (show all options as fallback);
-  // string[] = available accelerator names from /api/hwaccel
-  const [availableHWAccels, setAvailableHWAccels] = useState<string[] | null>(null);
+  // HWAccelProbe[] = full probe results from /api/hwaccel
+  const [availableHWAccels, setAvailableHWAccels] = useState<HWAccelProbe[] | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedEdgeIds, setSelectedEdgeIds] = useState<string[]>([]);
   // Node label density (persisted). 'verbose' shows the full heading +
@@ -139,8 +139,8 @@ function Editor() {
   useEffect(() => {
     fetch('/api/hwaccel')
       .then((r) => (r.ok ? r.json() : []))
-      .then((list: Array<{ type: string; available: boolean }>) => {
-        setAvailableHWAccels(list.filter((e) => e.available).map((e) => e.type));
+      .then((list: HWAccelProbe[]) => {
+        setAvailableHWAccels(list);
       })
       .catch(() => setAvailableHWAccels(null));
   }, []);

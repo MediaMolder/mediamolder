@@ -666,3 +666,21 @@ export interface ProbeResponse {
   url: string;
   streams: ProbedStream[];
 }
+
+/** Runtime hardware-acceleration probe result from GET /api/hwaccel.
+ *  Codecs is a static registry scan (what FFmpeg was compiled with).
+ *  SWFormats / MaxWidth / MaxHeight come from av_hwdevice_get_hwframe_constraints
+ *  and are backend-specific — VideoToolbox and CUDA return partial data. */
+export interface HWAccelProbe {
+  type: string;
+  available: boolean;
+  error?: string;
+  /** Software pixel formats the device can transfer to/from (e.g. "nv12", "p010le"). */
+  sw_formats?: string[];
+  /** Maximum frame width reported by the device; 0 = not reported. */
+  max_width?: number;
+  /** Maximum frame height reported by the device; 0 = not reported. */
+  max_height?: number;
+  /** All codecs in the FFmpeg registry claiming HW_DEVICE_CTX support. */
+  codecs?: Array<{ name: string; role: 'encode' | 'decode' }>;
+}

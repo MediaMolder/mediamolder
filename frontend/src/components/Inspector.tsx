@@ -3,7 +3,7 @@ import type { ReactNode } from 'react';
 import type { FlowEdge, FlowNode } from '../lib/jsonAdapter';
 import { displayUrl, nodeDisplayLabel, nodeDisplaySublabel } from '../lib/jsonAdapter';
 import { displayName, lookupFriendlyName, useNamingMode } from '../lib/friendlyNames';
-import type { Chapter, EncoderOverride, HardwareDevice, Input, NodeDef, Output, ProbeResponse, ProbedStream, StreamSpec } from '../lib/jobTypes';
+import type { Chapter, EncoderOverride, HWAccelProbe, HardwareDevice, Input, NodeDef, Output, ProbeResponse, ProbedStream, StreamSpec } from '../lib/jobTypes';
 import { type BSFEntry, parseBSFChain, serializeBSFChain } from '../lib/bsf';
 import { MEDIA_FILE_EXTENSIONS } from '../lib/mediaExtensions';
 import { FileBrowser, type BrowseMode } from './FileBrowser';
@@ -33,11 +33,11 @@ interface Props {
   /** Named hardware-acceleration device contexts available in the current
    *  job config. Passed to NodeForm to populate the device picker. (Wave 10 #60) */
   hwDevices?: HardwareDevice[];
-  /** Accelerator names confirmed available on this machine by the startup
-   *  probe (GET /api/hwaccel). null = probe not yet returned; show all
-   *  options as a fallback so the UI is still usable before the response
-   *  arrives. */
-  availableHWAccels?: string[] | null;
+  /** Accelerator probe results from GET /api/hwaccel. null = probe not yet
+   *  returned; show all options as a fallback. The richer HWAccelProbe type
+   *  carries SW format lists and codec enumerations used to annotate the
+   *  dropdown and show a capability summary. */
+  availableHWAccels?: HWAccelProbe[] | null;
 }
 
 export function Inspector({ node, nodes, edges, onChange, onDelete, onSelectNode, onProbedData, hwDevices = [], availableHWAccels = null }: Props) {
@@ -579,9 +579,9 @@ function InputForm({
   onChange: (next: Input) => void;
   onProbed: (next: ProbedStream[] | undefined) => void;
   hwDevices?: HardwareDevice[];
-  /** null = probe not yet returned; show all options. string[] = probe
-   *  result; show only available accelerators. */
-  availableHWAccels?: string[] | null;
+  /** null = probe not yet returned; show all options. HWAccelProbe[] =
+   *  full probe results including SW formats and codec lists. */
+  availableHWAccels?: HWAccelProbe[] | null;
 }) {
   const [probing, setProbing] = useState(false);
   const [probeError, setProbeError] = useState<string | null>(null);
@@ -685,21 +685,21 @@ function InputForm({
         <label>HW decode accelerator</label>
         {(() => {
           // null → probe not yet returned → show everything as fallback.
-          // string[] → show only confirmed-available types (+ auto when any present).
-          const available = availableHWAccels;
-          const filtered = available === null
+          // HWAccelProbe[] → filter to confirmed-available types.
+          const probes = availableHWAccels;
+          const availableTypes = probes?.filter((p) => p.available).map((p) => p.type) ?? null;
+          const filtered = availableTypes === null
             ? HW_ACCELS
             : HW_ACCELS.filter((a) =>
                 a.value === 'auto'
-                  ? available.length > 0
-                  : available.includes(a.value),
+                  ? availableTypes.length > 0
+                  : availableTypes.includes(a.value),
               );
-          // If the job was authored on a different machine, the current value
-          // may not appear in `filtered`. Preserve it as a disabled option so
-          // the user can see the configured value without it silently vanishing.
+          // If the job was authored on a different machine, preserve the
+          // current value as a disabled option so it's visible but not selectable.
           const currentMissing =
             def.hwaccel &&
-            available !== null &&
+            availableTypes !== null &&
             !filtered.some((a) => a.value === def.hwaccel);
           return (
             <select
@@ -727,6 +727,55 @@ function InputForm({
         <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: -2, marginBottom: 6 }}>
           <code>-hwaccel</code> — selects the hardware decode API for this input.
         </div>
+
+        {/* Capability summary for the selected accelerator. */}
+        {(() => {
+          if (!def.hwaccel || def.hwaccel === 'auto' || !availableHWAccels) return null;
+          const probe = availableHWAccels.find((p) => p.type === def.hwaccel);
+          if (!probe?.available) return null;
+          const decoders = probe.codecs?.filter((c) => c.role === 'decode') ?? [];
+          const encoders = probe.codecs?.filter((c) => c.role === 'encode') ?? [];
+          const hasCaps = decoders.length > 0 || encoders.length > 0 ||
+                          (probe.sw_formats?.length ?? 0) > 0 ||
+                          probe.max_width;
+          if (!hasCaps) return null;
+          return (
+            <div style={{
+              fontSize: 11,
+              background: 'var(--panel-bg, rgba(255,255,255,0.04))',
+              border: '1px solid var(--border, rgba(255,255,255,0.1))',
+              borderRadius: 4,
+              padding: '6px 8px',
+              marginBottom: 8,
+              lineHeight: 1.6,
+            }}>
+              {decoders.length > 0 && (
+                <div>
+                  <strong>Decoders:</strong>{' '}
+                  {decoders.map((c) => c.name).join(', ')}
+                </div>
+              )}
+              {encoders.length > 0 && (
+                <div>
+                  <strong>Encoders:</strong>{' '}
+                  {encoders.map((c) => c.name).join(', ')}
+                </div>
+              )}
+              {(probe.sw_formats?.length ?? 0) > 0 && (
+                <div>
+                  <strong>SW formats:</strong>{' '}
+                  {probe.sw_formats!.join(', ')}
+                </div>
+              )}
+              {(probe.max_width ?? 0) > 0 && (
+                <div>
+                  <strong>Max resolution:</strong>{' '}
+                  {probe.max_width}×{probe.max_height}
+                </div>
+              )}
+            </div>
+          );
+        })()}
 
         {def.hwaccel && (
           <>
