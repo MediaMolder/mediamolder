@@ -481,6 +481,13 @@ export function effectivePresetDefault(
 }
 
 const cache = new Map<string, Promise<EncoderInfo>>();
+// Resolved values stored separately for synchronous access.
+const resolvedCache = new Map<string, EncoderInfo>();
+
+/** Synchronously return the cached EncoderInfo if it has already resolved, or undefined. */
+export function getEncoderInfoSync(name: string): EncoderInfo | undefined {
+  return resolvedCache.get(name);
+}
 
 /** Fetch (and cache) the encoder option schema for a given encoder name. */
 export function fetchEncoderInfo(name: string): Promise<EncoderInfo> {
@@ -494,6 +501,7 @@ export function fetchEncoderInfo(name: string): Promise<EncoderInfo> {
     return (await r.json()) as EncoderInfo;
   });
   cache.set(name, p);
+  p.then((info) => resolvedCache.set(name, info));
   // On failure, drop the cached promise so the user can retry.
   p.catch(() => cache.delete(name));
   return p;
