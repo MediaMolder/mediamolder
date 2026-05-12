@@ -18,6 +18,12 @@ import type { EdgeDef, JobConfig, NodeDef, ProbedStream, StreamType, UIPosition 
 export const INPUT_PREFIX = '__in__';
 export const OUTPUT_PREFIX = '__out__';
 
+/**
+ * Filters that accept N audio input streams and produce one merged stream.
+ * These nodes render individual numbered audio input pads.
+ */
+export const MULTI_AUDIO_INPUT_FILTERS = new Set(['amerge', 'amix', 'join', 'concat']);
+
 const STREAM_LETTER: Record<StreamType, string> = {
   video: 'v',
   audio: 'a',
@@ -84,6 +90,12 @@ export interface FlowNodeData extends Record<string, unknown> {
    * outputs, dynamic-pad filters, and unknown go_processors).
    */
   streams?: string[];
+  /**
+   * For input nodes: number of individual audio source handles to render.
+   * 1 = single unlabelled handle (unknown / single track). Set by
+   * configToFlow (edge scan on JSON load) and onProbedData (after probing).
+   */
+  audioTrackCount?: number;
   /**
    * Set on synthetic "ghost" nodes inserted by the GUI to visualise the
    * implicit demuxer / decoder / encoder / muxer stages that the runtime
@@ -379,6 +391,16 @@ export function configToFlow(cfg: JobConfig, opts: ConvertOptions = {}): {
 
   cfg.inputs.forEach((inp) => {
     const id = INPUT_PREFIX + inp.id;
+    // Scan edges to find how many distinct audio tracks this input exposes.
+    // Gives MMNode enough information to render per-track source handles even
+    // before the user clicks "Get Properties".
+    const audioTrackCount = cfg.graph.edges
+      .filter((e) => endpointHead(e.from) === inp.id && e.type === 'audio')
+      .reduce((max, e) => {
+        const parts = e.from.split(':');
+        const track = Number(parts[2] ?? 0);
+        return Math.max(max, Number.isFinite(track) ? track + 1 : 1);
+      }, 1);
     nodes.push({
       id,
       type: 'mmNode',
@@ -388,6 +410,7 @@ export function configToFlow(cfg: JobConfig, opts: ConvertOptions = {}): {
         label: inp.id,
         sublabel: displayUrl(inp.url),
         ref: { kind: 'input', def: inp },
+        ...(audioTrackCount > 1 ? { audioTrackCount } : {}),
       },
     });
   });
@@ -429,18 +452,44 @@ export function configToFlow(cfg: JobConfig, opts: ConvertOptions = {}): {
     });
   });
 
+  // Per-(target, streamType) slot counter: used to assign numbered handle
+  // IDs to edges that converge on a multi-input filter (amerge, amix, …).
+  const targetSlots = new Map<string, number>();
+
   const edges: FlowEdge[] = cfg.graph.edges.map((e, idx) => {
     const fromHead = endpointHead(e.from);
     const toHead = endpointHead(e.to);
     const sourceId = inputIds.has(fromHead) ? INPUT_PREFIX + fromHead : fromHead;
     const targetId = outputIds.has(toHead) ? OUTPUT_PREFIX + toHead : toHead;
+
+    // For audio edges from input nodes, encode the track index in the
+    // handle ID so each track maps to its own visual dot on the node.
+    // Non-audio streams and non-input sources use the plain type string.
+    let sourceHandle: string = e.type;
+    if (inputIds.has(fromHead) && e.type === 'audio') {
+      const parts = e.from.split(':');
+      const track = Number(parts[2] ?? 0);
+      sourceHandle = `audio:${Number.isFinite(track) ? track : 0}`;
+    }
+
+    // For audio edges into multi-input filter nodes, assign consecutive
+    // slot indices so the edges wire to numbered input pads.
+    let targetHandle: string = e.type;
+    const targetNode = cfg.graph.nodes.find((n) => n.id === toHead);
+    if (e.type === 'audio' && MULTI_AUDIO_INPUT_FILTERS.has(targetNode?.filter ?? '')) {
+      const slotKey = `${targetId}:audio`;
+      const slot = targetSlots.get(slotKey) ?? 0;
+      targetSlots.set(slotKey, slot + 1);
+      targetHandle = `audio:${slot}`;
+    }
+
     return {
       id: `e${idx}-${sourceId}-${targetId}-${e.type}`,
       type: 'mmEdge',
       source: sourceId,
       target: targetId,
-      sourceHandle: e.type,
-      targetHandle: e.type,
+      sourceHandle,
+      targetHandle,
       className: `edge-${e.type}`,
       data: {
         streamType: e.type,
@@ -541,10 +590,15 @@ function deriveEndpoint(
 ): string {
   if (!flowId) return '';
   const node = nodes.find((n) => n.id === flowId);
-  const stream = (handle as StreamType) || 'video';
+  // Handle may be "audio:2" (per-track) or "audio" (single). Extract the
+  // base stream type and, for input sources, the track index.
+  const baseType = (handle ?? '').split(':')[0] || 'video';
+  const stream = baseType as StreamType;
   const letter = STREAM_LETTER[stream] ?? 'v';
   if (node?.data.kind === 'input' && side === 'source') {
-    return `${node.data.label}:${letter}:0`;
+    const trackStr = (handle ?? '').split(':')[1];
+    const track = trackStr !== undefined ? parseInt(trackStr, 10) : 0;
+    return `${node.data.label}:${letter}:${isNaN(track) ? 0 : track}`;
   }
   if (node?.data.kind === 'output' && side === 'target') {
     return `${node.data.label}:${letter}`;

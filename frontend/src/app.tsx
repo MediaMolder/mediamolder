@@ -249,8 +249,11 @@ function Editor() {
   );
 
   /* ---------- Connection (with stream-type validation) ---------- */
+  // Handles may carry a track suffix (e.g. "audio:2") — compare base types.
+  const baseStreamType = (h: string | null | undefined) => (h ?? '').split(':')[0];
   const isValidConnection = useCallback((c: Connection | FlowEdge) => {
-    return c.sourceHandle != null && c.sourceHandle === c.targetHandle;
+    const src = baseStreamType(c.sourceHandle);
+    return src !== '' && src === baseStreamType(c.targetHandle);
   }, []);
 
   const onConnect = useCallback(
@@ -260,21 +263,27 @@ function Editor() {
       // identity in `nodes` state and the resulting edge would be
       // unanchored.
       if (c.source?.startsWith('__ghost__') || c.target?.startsWith('__ghost__')) return;
-      const stream = (c.sourceHandle as StreamType) || 'video';
+      // Base stream type from the handle (strip ":N" track suffix).
+      const stream = (baseStreamType(c.sourceHandle) as StreamType) || 'video';
       const sourceNode = nodes.find((n) => n.id === c.source);
       markDirty();
       setEdges((es) => {
-        // For edges originating from an input node, auto-assign the next
-        // unused track index so that consecutive drags from the same
-        // audio/video handle produce in0:a:0, in0:a:1, in0:a:2, … rather
-        // than always defaulting to :0. This lets users wire multi-track
-        // sources (e.g. 16 mono audio streams) to separate filter inputs
-        // (e.g. amerge) without editing the JSON by hand.
+        // For input nodes: the handle ID encodes the track index directly
+        // ("audio:2" → in0:a:2). For single-handle input nodes (probed data
+        // not yet available) fall back to auto-increment so a second drag
+        // still gets a distinct track.
         let rawFrom = '';
         if (sourceNode?.data.kind === 'input') {
+          const trackStr = (c.sourceHandle ?? '').split(':')[1];
           const letter = stream === 'audio' ? 'a' : stream === 'video' ? 'v' : stream === 'subtitle' ? 's' : 'd';
-          const track = nextInputTrack(sourceNode.data.label as string, stream, es);
-          rawFrom = `${sourceNode.data.label}:${letter}:${track}`;
+          if (trackStr !== undefined) {
+            // Per-track handle — track is encoded in the handle id.
+            rawFrom = `${sourceNode.data.label}:${letter}:${parseInt(trackStr, 10)}`;
+          } else {
+            // Single-handle fallback: assign the next unused track index.
+            const track = nextInputTrack(sourceNode.data.label as string, stream, es);
+            rawFrom = `${sourceNode.data.label}:${letter}:${track}`;
+          }
         }
         const newEdge: FlowEdge = {
           id: `e-${Date.now()}-${es.length}`,
@@ -333,6 +342,9 @@ function Editor() {
     const streams = probed
       ? [...new Set(probed.map((s) => s.type as string))]
       : undefined;
+    // Number of distinct audio tracks in the probed result (drives per-track
+    // handle rendering in MMNode).
+    const audioTrackCount = probed ? probed.filter((s) => s.type === 'audio').length : undefined;
     setNodes((ns) => ns.map((n) => {
       if (n.id !== nodeId) return n;
       // Rebuild def.streams from probe results so the serialised JSON only
@@ -356,14 +368,22 @@ function Editor() {
           ref,
           probed,
           streams,
+          ...(audioTrackCount !== undefined && audioTrackCount > 1
+            ? { audioTrackCount }
+            : { audioTrackCount: undefined }),
         },
       };
     }));
-    // Remove edges whose sourceHandle is no longer in the probed stream set.
-    // (streams === undefined means unrestricted — keep all edges.)
+    // Remove edges whose sourceHandle base type is no longer in the probed
+    // stream set. Handles may carry a track suffix ("audio:2") — compare
+    // base stream type, not the full handle string.
     if (streams !== undefined) {
       setEdges((es) =>
-        es.filter((e) => e.source !== nodeId || e.sourceHandle == null || streams.includes(e.sourceHandle)),
+        es.filter((e) => {
+          if (e.source !== nodeId || e.sourceHandle == null) return true;
+          const base = e.sourceHandle.split(':')[0];
+          return streams.includes(base);
+        }),
       );
     }
     markDirty();
@@ -918,6 +938,7 @@ function Editor() {
           isValidConnection={isValidConnection}
           onSelectionChange={onSelectionChange}
           deleteKeyCode={null /* handled manually so inputs aren't hijacked */}
+          edgesReconnectable={false}
           fitView
           proOptions={{ hideAttribution: true }}
         >

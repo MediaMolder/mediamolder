@@ -637,6 +637,20 @@ button.danger:hover { background: rgba(185, 74, 74, 0.15); }
 .react-flow__handle.handle-subtitle { background: var(--subtitle); }
 .react-flow__handle.handle-data     { background: var(--data); }
 
+/* Per-track / per-slot handle labels (source side: right of node; target side: left) */
+.handle-track-label {
+  position: absolute;
+  font-size: 7px;
+  line-height: 1;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--audio);
+  pointer-events: none;
+  user-select: none;
+  transform: translateY(-50%);
+}
+.handle-track-label--src { right: 10px; text-align: right; }
+.handle-track-label--tgt { left: 10px;  text-align: left; }
+
 /* Stream-typed edges */
 .react-flow__edge.edge-video    .react-flow__edge-path { stroke: var(--video);    stroke-width: 2; }
 .react-flow__edge.edge-audio    .react-flow__edge-path { stroke: var(--audio);    stroke-width: 2; }
