@@ -3,9 +3,7 @@
 // The path itself carries no text label (it would clutter dense graphs).
 // Instead, hovering the edge — or clicking it — opens a popover at the
 // midpoint that lists every known technical attribute for the stream
-// (pix_fmt, width×height, color_space, bit_rate, ...). The full attribute
-// list (with the node that established each value) is also available in
-// the native `title` tooltip on the popover.
+// (pix_fmt, width×height, color_space, bit_rate, ...).
 
 import { useState } from 'react';
 import { BaseEdge, EdgeLabelRenderer, getBezierPath, useReactFlow, useStore, type EdgeProps } from '@xyflow/react';
@@ -42,10 +40,6 @@ export function MMEdge(props: EdgeProps) {
   const inv = zoom > 0 ? 1 / zoom : 1;
   const rf = useReactFlow();
 
-  const tooltip = attrs.length
-    ? attrs.map((a) => `${a.key}: ${a.value}  (from ${a.source})`).join('\n')
-    : 'No technical attributes known for this connection.';
-
   return (
     <>
       <BaseEdge id={id} path={edgePath} markerEnd={markerEnd} style={style} />
@@ -66,7 +60,6 @@ export function MMEdge(props: EdgeProps) {
         <EdgeLabelRenderer>
           <div
             className="mm-edge-popover nodrag nopan"
-            title={tooltip}
             style={{ transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px) scale(${inv})` }}
             onMouseEnter={() => setHover(true)}
             onMouseLeave={() => setHover(false)}
