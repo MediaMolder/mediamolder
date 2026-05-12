@@ -12,6 +12,7 @@
 
 import type { FlowEdge, FlowNode } from './jsonAdapter';
 import type { Input, NodeDef, Output, ProbedStream, StreamType } from './jobTypes';
+import { findOption, getEncoderInfoSync, rolesFor } from './encoderSchema';
 
 export interface EdgeAttribute {
   /** Canonical key, e.g. "pix_fmt", "width", "sample_rate". */
@@ -200,12 +201,26 @@ function attrsFromGraphNode(node: NodeDef, type: StreamType): Record<string, str
     }
   }
 
-  // Encoder nodes: declare the codec.
+  // Encoder nodes: declare the codec and bitrate.
   if (node.type === 'encoder') {
     const codec = node.filter ?? get('codec');
     if (codec) out['codec'] = codec;
     const br = get('b') ?? get('bitrate') ?? get('bit_rate');
-    if (br) out['bit_rate'] = formatBitRateString(br);
+    if (br) {
+      out['bit_rate'] = formatBitRateString(br);
+    } else if (codec) {
+      // No explicit bitrate — fall back to the encoder's default if the
+      // schema has already been fetched (synchronous cache peek).
+      const info = getEncoderInfoSync(codec);
+      if (info) {
+        const roles = rolesFor(codec, info.options);
+        const brOpt = findOption(info.options, roles.bit_rate);
+        const defVal = brOpt?.default?.int;
+        if (defVal !== undefined && defVal > 0) {
+          out['bit_rate'] = formatBitRate(defVal) + ' (default)';
+        }
+      }
+    }
   }
 
   return out;
@@ -317,6 +332,12 @@ export function inferEdgeAttributes(
     }
     // Stop when we have everything we display for this stream type.
     if (keysFor(type).every((k) => k in result)) break;
+    // Encoder nodes define a new encoded stream. Input characteristics
+    // (especially bit_rate) must not propagate through an encoder boundary
+    // to its output edge — doing so produces misleading values such as
+    // showing the source file's bitrate instead of the encoder's target.
+    const ref = n.data.ref;
+    if (ref?.kind === 'node' && (ref.def as NodeDef).type === 'encoder') break;
     // Otherwise keep walking upstream.
     const incoming = incomingByNode.get(nid) ?? [];
     for (const inc of incoming) queue.push(inc.source);
