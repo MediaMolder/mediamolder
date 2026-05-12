@@ -30,34 +30,106 @@ func (r *graphRunner) handleSource(ctx context.Context, node *graph.Node, outs [
 	// only elapsed-time and processed-media-time.
 	r.pipe.Metrics().Node(node.ID).SetMediaDuration(src.mediaDuration)
 
-	// Map edge type → output channel indices, split between "frame"
-	// outs (decode → av.Frame) and "copy" outs (raw demuxer packets
-	// forwarded to a downstream copy node).
-	type typeOuts struct{ frame, copy []int }
-	byType := map[graph.PortType]*typeOuts{
-		graph.PortVideo:      {},
-		graph.PortAudio:      {},
-		graph.PortSubtitle:   {},
-		graph.PortData:       {},
-		graph.PortAttachment: {},
+	// Build per-stream-index routing maps so that each outbound edge
+	// receives only the frames/packets from the specific source stream
+	// it requested (e.g. "a:6" → decoder for the 7th audio stream
+	// only). Using a single type-keyed bucket is wrong when two edges
+	// request different tracks from the same source: both would be
+	// sent the same *av.Frame pointer, the first consumer would free
+	// it, and the second would read freed memory.
+	//
+	// streamIdxToFrameChans[absIdx] = outbound channel indices that
+	//   want decoded frames from the stream at position absIdx.
+	// streamIdxToCopyChans[absIdx] = outbound channel indices that
+	//   want raw packets forwarded from the stream at position absIdx.
+	//
+	// Build a (MediaType, trackPos) → absStreamIdx map first by
+	// sorting selected stream indices per type; the Nth index in
+	// ascending order is track N.
+	typeStreamsSorted := make(map[av.MediaType][]int)
+	for idx, si := range src.streams {
+		typeStreamsSorted[si.Type] = append(typeStreamsSorted[si.Type], idx)
 	}
+	for t := range typeStreamsSorted {
+		sort.Ints(typeStreamsSorted[t])
+	}
+	type mtTrack struct {
+		mt    av.MediaType
+		track int
+	}
+	trackToStreamIdx := make(map[mtTrack]int)
+	for mt, indices := range typeStreamsSorted {
+		for trackPos, streamIdx := range indices {
+			trackToStreamIdx[mtTrack{mt, trackPos}] = streamIdx
+		}
+	}
+	// portEdgeTrack extracts the 0-based track number from a FromPort
+	// key.  "a:6" → 6, "v:0" → 0, "default" or bare type letter → 0.
+	portEdgeTrack := func(fromPort string) int {
+		if parts := strings.SplitN(fromPort, ":", 2); len(parts) == 2 {
+			if n, err := strconv.Atoi(parts[1]); err == nil {
+				return n
+			}
+		}
+		return 0
+	}
+	portTypeToMT := func(pt graph.PortType) av.MediaType {
+		switch pt {
+		case graph.PortVideo:
+			return av.MediaTypeVideo
+		case graph.PortAudio:
+			return av.MediaTypeAudio
+		case graph.PortSubtitle:
+			return av.MediaTypeSubtitle
+		case graph.PortData:
+			return av.MediaTypeData
+		case graph.PortAttachment:
+			return av.MediaTypeAttachment
+		default:
+			return av.MediaTypeUnknown
+		}
+	}
+	streamIdxToFrameChans := make(map[int][]int)
+	streamIdxToCopyChans := make(map[int][]int)
 	for i, e := range node.Outbound {
-		bucket := byType[e.Type]
-		if bucket == nil {
+		mt := portTypeToMT(e.Type)
+		if mt == av.MediaTypeUnknown {
+			continue
+		}
+		trackN := portEdgeTrack(e.FromPort)
+		streamIdx, ok := trackToStreamIdx[mtTrack{mt, trackN}]
+		if !ok {
 			continue
 		}
 		if e.To != nil && e.To.Kind == graph.KindCopy {
-			bucket.copy = append(bucket.copy, i)
+			streamIdxToCopyChans[streamIdx] = append(streamIdxToCopyChans[streamIdx], i)
 		} else {
-			bucket.frame = append(bucket.frame, i)
+			streamIdxToFrameChans[streamIdx] = append(streamIdxToFrameChans[streamIdx], i)
 		}
 	}
 
+	// sendFrame delivers f to each listed output channel. When more
+	// than one channel is listed (multiple consumers of the same
+	// stream) the frame is cloned for all but the last recipient so
+	// each consumer owns an independent reference.
 	sendFrame := func(f *av.Frame, indices []int) error {
-		for _, idx := range indices {
+		for i, idx := range indices {
+			toSend := f
+			if i < len(indices)-1 {
+				// Not the last recipient — clone so the
+				// earlier consumer can safely close its copy.
+				var err error
+				toSend, err = f.Clone()
+				if err != nil {
+					return err
+				}
+			}
 			select {
-			case outs[idx] <- f:
+			case outs[idx] <- toSend:
 			case <-ctx.Done():
+				if toSend != f {
+					toSend.Close()
+				}
 				return ctx.Err()
 			}
 		}
@@ -103,13 +175,7 @@ func (r *graphRunner) handleSource(ctx context.Context, node *graph.Node, outs [
 	}
 
 	receiveAll := func(dec av.FrameDecoder, si av.StreamInfo) error {
-		var indices []int
-		switch si.Type {
-		case av.MediaTypeVideo:
-			indices = byType[graph.PortVideo].frame
-		case av.MediaTypeAudio:
-			indices = byType[graph.PortAudio].frame
-		}
+		indices := streamIdxToFrameChans[si.Index]
 		if len(indices) == 0 {
 			return nil
 		}
@@ -290,44 +356,33 @@ func (r *graphRunner) handleSource(ctx context.Context, node *graph.Node, outs [
 			r.pipe.Metrics().Node(node.ID).AdvanceMediaPTS(ptsNs)
 		}
 
-		// Route to copy outs first (per stream type).
-		var portType graph.PortType
-		switch si.Type {
-		case av.MediaTypeVideo:
-			portType = graph.PortVideo
-		case av.MediaTypeAudio:
-			portType = graph.PortAudio
-		case av.MediaTypeSubtitle:
-			portType = graph.PortSubtitle
-		case av.MediaTypeData:
-			portType = graph.PortData
-		case av.MediaTypeAttachment:
-			portType = graph.PortAttachment
-		}
-		if bucket := byType[portType]; bucket != nil && len(bucket.copy) > 0 {
-			if err := sendPacketCopies(pkt, bucket.copy); err != nil {
+		// Route to copy outs (per stream index).
+		if copyChans := streamIdxToCopyChans[si.Index]; len(copyChans) > 0 {
+			if err := sendPacketCopies(pkt, copyChans); err != nil {
 				return err
 			}
 		}
 
 		// Handle subtitle streams via subtitle decoder.
-		if subDec != nil && len(byType[graph.PortSubtitle].frame) > 0 {
-			sub, got, err := subDec.Decode(pkt)
-			if err != nil {
-				return err
-			}
-			if got {
-				for _, idx := range byType[graph.PortSubtitle].frame {
-					select {
-					case outs[idx] <- sub:
-					case <-ctx.Done():
-						sub.Close()
-						return ctx.Err()
+		if subDec != nil {
+			if subChans := streamIdxToFrameChans[si.Index]; len(subChans) > 0 {
+				sub, got, err := subDec.Decode(pkt)
+				if err != nil {
+					return err
+				}
+				if got {
+					for _, idx := range subChans {
+						select {
+						case outs[idx] <- sub:
+						case <-ctx.Done():
+							sub.Close()
+							return ctx.Err()
+						}
 					}
 				}
+				r.pipe.Metrics().Node(node.ID).RecordLatency(time.Since(frameStart))
+				continue
 			}
-			r.pipe.Metrics().Node(node.ID).RecordLatency(time.Since(frameStart))
-			continue
 		}
 
 		if dec == nil {
@@ -336,12 +391,11 @@ func (r *graphRunner) handleSource(ctx context.Context, node *graph.Node, outs [
 			continue
 		}
 		// If no downstream node consumes decoded frames of this
-		// stream type, skip the decoder entirely. Otherwise packets
-		// pile up in the decoder's internal queue until SendPacket
+		// stream, skip the decoder entirely. Otherwise packets pile
+		// up in the decoder's internal queue until SendPacket
 		// returns EAGAIN and the source aborts with averror(-35).
-		// (A copy-only consumer was already serviced above via
-		// sendPacketCopies.)
-		if bucket := byType[portType]; bucket == nil || len(bucket.frame) == 0 {
+		// (Copy consumers were already serviced above.)
+		if len(streamIdxToFrameChans[si.Index]) == 0 {
 			r.pipe.Metrics().Node(node.ID).RecordLatency(time.Since(frameStart))
 			continue
 		}
@@ -354,22 +408,12 @@ func (r *graphRunner) handleSource(ctx context.Context, node *graph.Node, outs [
 		r.pipe.Metrics().Node(node.ID).RecordLatency(time.Since(frameStart))
 	}
 
-	// Flush every decoder that actually had packets pushed through it
-	// (i.e. has at least one downstream frame consumer).
+	// Flush every decoder that has at least one downstream frame
+	// consumer (per-stream routing, not per-type).
 	for idx, dec := range src.decoders {
 		si := src.streams[idx]
-		var portType graph.PortType
-		switch si.Type {
-		case av.MediaTypeVideo:
-			portType = graph.PortVideo
-		case av.MediaTypeAudio:
-			portType = graph.PortAudio
-		case av.MediaTypeSubtitle:
-			portType = graph.PortSubtitle
-		case av.MediaTypeData:
-			portType = graph.PortData
-		}
-		if bucket := byType[portType]; bucket == nil || len(bucket.frame) == 0 {
+		chans := streamIdxToFrameChans[si.Index]
+		if len(chans) == 0 {
 			continue
 		}
 		if err := dec.Flush(); err != nil && !av.IsEOF(err) && !av.IsEAgain(err) {
@@ -388,20 +432,12 @@ func (r *graphRunner) handleSource(ctx context.Context, node *graph.Node, outs [
 				}
 				return err
 			}
-			switch si.Type {
-			case av.MediaTypeVideo:
-				if err := sendFrame(f, byType[graph.PortVideo].frame); err != nil {
-					f.Close()
-					return err
-				}
-			case av.MediaTypeAudio:
+			if si.Type == av.MediaTypeAudio {
 				rescaleAudioPTS(f, si)
-				if err := sendFrame(f, byType[graph.PortAudio].frame); err != nil {
-					f.Close()
-					return err
-				}
-			default:
+			}
+			if err := sendFrame(f, chans); err != nil {
 				f.Close()
+				return err
 			}
 		}
 	}
