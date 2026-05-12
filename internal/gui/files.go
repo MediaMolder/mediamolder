@@ -339,11 +339,12 @@ func handleReadFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	abs = filepath.Clean(abs)
-	if !isWithinAnyRoot(abs, roots) {
+	safe, ok := sanitizePathAnyRoot(abs, roots)
+	if !ok {
 		writeJSONError(w, http.StatusBadRequest, errors.New("path is outside allowed roots"))
 		return
 	}
-	info, err := os.Stat(abs)
+	info, err := os.Stat(safe)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			writeJSONError(w, http.StatusNotFound, err)
@@ -356,9 +357,9 @@ func handleReadFile(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, errors.New("path is a directory"))
 		return
 	}
-	data, err := os.ReadFile(abs)
+	data, err := os.ReadFile(safe)
 	if err != nil {
-		writeJSONError(w, http.StatusForbidden, fmt.Errorf("read %q: %w", abs, err))
+		writeJSONError(w, http.StatusForbidden, fmt.Errorf("read %q: %w", safe, err))
 		return
 	}
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
@@ -396,18 +397,19 @@ func handleWriteFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	abs = filepath.Clean(abs)
-	if !isWithinAnyRoot(abs, roots) {
+	safe, ok := sanitizePathAnyRoot(abs, roots)
+	if !ok {
 		writeJSONError(w, http.StatusBadRequest, errors.New("path is outside allowed roots"))
 		return
 	}
 	// Parent directory must exist.
-	if _, err := os.Stat(filepath.Dir(abs)); err != nil {
+	if _, err := os.Stat(filepath.Dir(safe)); err != nil {
 		writeJSONError(w, http.StatusBadRequest, fmt.Errorf("parent directory does not exist: %w", err))
 		return
 	}
 	// Write atomically: temp file in the same directory (guarantees
 	// same filesystem for the rename), then rename over the target.
-	dir := filepath.Dir(abs)
+	dir := filepath.Dir(safe)
 	tmp, err := os.CreateTemp(dir, ".mm-save-*")
 	if err != nil {
 		writeJSONError(w, http.StatusInternalServerError, fmt.Errorf("create temp file: %w", err))
@@ -425,7 +427,7 @@ func handleWriteFile(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusInternalServerError, fmt.Errorf("close: %w", err))
 		return
 	}
-	if err := os.Rename(tmpName, abs); err != nil {
+	if err := os.Rename(tmpName, safe); err != nil {
 		_ = os.Remove(tmpName)
 		writeJSONError(w, http.StatusInternalServerError, fmt.Errorf("rename: %w", err))
 		return
@@ -443,6 +445,23 @@ func defaultRoots() []string {
 		}
 	}
 	return uniqueStrings(out)
+}
+
+// sanitizePathAnyRoot validates that path (already absolute and cleaned)
+// lies within one of the supplied absolute-and-cleaned root directories.
+// It returns the path re-derived as filepath.Join(root, rel), so the
+// returned value is not derived directly from user input and is safe to
+// pass to file-system operations.
+// Returns ("", false) if path is outside every root.
+func sanitizePathAnyRoot(path string, roots []string) (string, bool) {
+	for _, root := range roots {
+		rel, err := filepath.Rel(root, path)
+		if err != nil || strings.HasPrefix(rel, "..") {
+			continue
+		}
+		return filepath.Join(root, rel), true
+	}
+	return "", false
 }
 
 // isWithinAnyRoot reports whether path resolves inside one of the supplied
