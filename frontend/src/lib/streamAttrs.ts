@@ -12,7 +12,7 @@
 
 import type { FlowEdge, FlowNode } from './jsonAdapter';
 import type { Input, NodeDef, Output, ProbedStream, StreamType } from './jobTypes';
-import { findOption, getEncoderInfoSync, rolesFor } from './encoderSchema';
+import { findOption, getEncoderInfoSync, primaryMeta, rolesFor } from './encoderSchema';
 
 export interface EdgeAttribute {
   /** Canonical key, e.g. "pix_fmt", "width", "sample_rate". */
@@ -321,21 +321,25 @@ function attrsFromGraphNode(node: NodeDef, type: StreamType): Record<string, str
           const defaultRc = roles.default_rc ?? (roles.crf ? 'crf' : roles.qp ? 'qp' : 'bitrate');
           if ((defaultRc === 'crf') && roles.crf) {
             const crfOpt = findOption(info.options, roles.crf);
-            const defRaw = crfOpt?.default?.float ?? crfOpt?.default?.int;
-            // Negative defaults (e.g. -1) are libav sentinels meaning
-            // "use the codec's internal default" — don't show a number.
-            const defVal = (defRaw !== undefined && defRaw >= 0) ? defRaw : undefined;
             const label  = roles.crf === 'cq' ? 'CQ' : roles.crf === 'global_quality' ? 'ICQ' : 'CRF';
-            out['rate_control'] = defVal !== undefined
-              ? `${label} ${defVal} (default)`
-              : `${label} (default)`;
+            if (crfOpt) {
+              const meta = primaryMeta(codec, crfOpt);
+              out['rate_control'] = meta.default
+                ? `${label} ${meta.default} (default)`
+                : `${label} (default)`;
+            } else {
+              out['rate_control'] = `${label} (default)`;
+            }
           } else if (defaultRc === 'qp' && roles.qp) {
             const qpOpt = findOption(info.options, roles.qp);
-            const defRaw = qpOpt?.default?.int;
-            const defVal = (defRaw !== undefined && defRaw >= 0) ? defRaw : undefined;
-            out['rate_control'] = defVal !== undefined
-              ? `QP ${defVal} (default)`
-              : 'QP (default)';
+            if (qpOpt) {
+              const meta = primaryMeta(codec, qpOpt);
+              out['rate_control'] = meta.default
+                ? `QP ${meta.default} (default)`
+                : 'QP (default)';
+            } else {
+              out['rate_control'] = 'QP (default)';
+            }
           } else if (defaultRc === 'bitrate' && roles.bit_rate) {
             const brOpt = findOption(info.options, roles.bit_rate);
             const defVal = brOpt?.default?.int;
