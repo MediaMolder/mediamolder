@@ -1,5 +1,8 @@
+import { Fragment } from 'react';
 import { Handle, Position, type NodeProps } from '@xyflow/react';
 import type { FlowNodeData } from '../lib/jsonAdapter';
+import { MULTI_AUDIO_INPUT_FILTERS } from '../lib/jsonAdapter';
+import type { NodeDef } from '../lib/jobTypes';
 import { displayName, lookupFriendlyName, useNamingMode } from '../lib/friendlyNames';
 
 const STREAM_HANDLES = ['video', 'audio', 'subtitle', 'data'] as const;
@@ -14,6 +17,11 @@ export interface MMNodeRunData {
 
 export const INSPECTOR_OPEN_EVENT = 'mm.inspector.open';
 export const URL_BROWSE_EVENT = 'mm.url.browse';
+
+// Vertical spacing constants (px).
+const SLOT_PITCH = 12;   // gap between distinct stream types (unchanged)
+const TRACK_PITCH = 10;  // gap between per-track handles of the same type
+const AUDIO_BASE = 16 + STREAM_HANDLES.indexOf('audio') * SLOT_PITCH; // 28
 
 export function MMNode({ id, data, selected }: NodeProps & { data: FlowNodeData & { run?: MMNodeRunData } }) {
   const naming = useNamingMode();
@@ -35,6 +43,49 @@ export function MMNode({ id, data, selected }: NodeProps & { data: FlowNodeData 
       ? STREAM_HANDLES
       : STREAM_HANDLES.filter((t) => data.streams!.includes(t));
 
+  // Per-track source handle count for input nodes.
+  // Prefer the stored audioTrackCount (set by configToFlow on load and
+  // onProbedData after probing) over recomputing from raw probed data.
+  const audioSrcCount: number = (() => {
+    if (!isInput) return 1;
+    if (typeof data.audioTrackCount === 'number' && data.audioTrackCount > 1) return data.audioTrackCount;
+    if (Array.isArray(data.probed)) {
+      const n = (data.probed as { type?: string }[]).filter((s) => s.type === 'audio').length;
+      if (n > 1) return n;
+    }
+    return 1;
+  })();
+
+  // Per-slot input handle count for multi-input filter nodes (amerge etc.).
+  const audioTgtCount: number = (() => {
+    if (isInput || isOutput) return 1;
+    const ref = data.ref;
+    if (ref?.kind !== 'node') return 1;
+    const def = ref.def as NodeDef;
+    if (!MULTI_AUDIO_INPUT_FILTERS.has(def.filter ?? '')) return 1;
+    const n = Number(def.params?.inputs ?? def.params?.nb_inputs ?? 2);
+    return Number.isFinite(n) && n >= 2 ? n : 2;
+  })();
+
+  const maxAudioSlots = Math.max(audioSrcCount, audioTgtCount);
+
+  // Slot top values. Audio expands vertically when multi-track/multi-input;
+  // other stream types shift down accordingly so handles stay below audio.
+  const slotTop = (t: StreamHandle, trackIdx = 0): number => {
+    switch (t) {
+      case 'video': return 16;
+      case 'audio': return AUDIO_BASE + trackIdx * TRACK_PITCH;
+      case 'subtitle': return AUDIO_BASE + maxAudioSlots * TRACK_PITCH;
+      case 'data': return AUDIO_BASE + maxAudioSlots * TRACK_PITCH + SLOT_PITCH;
+      default: return 16;
+    }
+  };
+
+  // Ensure the node container is tall enough to contain all handle dots.
+  const nodeMinHeight = maxAudioSlots > 1
+    ? slotTop('data') + 12
+    : undefined;
+
   const classes = [
     'mm-node',
     selected ? 'selected' : '',
@@ -45,28 +96,42 @@ export function MMNode({ id, data, selected }: NodeProps & { data: FlowNodeData 
     .filter(Boolean)
     .join(' ');
 
-  // Each stream type gets a fixed vertical slot (video=0, audio=1, …) so that
-  // the same media type lines up across every node, even when a node only
-  // exposes a subset of the four handles. Without this, a single-stream
-  // node (e.g. an audio-only encoder) would draw its audio handle in
-  // slot 0, but a multi-stream demuxer would draw audio in slot 1, and the
-  // edge between them would render as a slanted line that misses both
-  // endpoint dots.
-  const slotTop = (t: StreamHandle) => 16 + STREAM_HANDLES.indexOf(t) * 12;
-
   return (
-    <div className={classes}>
+    <div className={classes} style={nodeMinHeight ? { minHeight: nodeMinHeight } : undefined}>
+      {/* Target (left) handles */}
       {!isInput &&
-        supported.map((t) => (
-          <Handle
-            key={`tgt-${t}`}
-            type="target"
-            position={Position.Left}
-            id={t}
-            className={`handle-${t}`}
-            style={{ top: slotTop(t) }}
-          />
-        ))}
+        supported.flatMap((t) => {
+          if (t === 'audio' && audioTgtCount > 1) {
+            return Array.from({ length: audioTgtCount }, (_, i) => (
+              <Fragment key={`tgt-audio-${i}`}>
+                <span
+                  className="handle-track-label handle-track-label--tgt"
+                  style={{ top: slotTop('audio', i) }}
+                  aria-hidden="true"
+                >
+                  {i}
+                </span>
+                <Handle
+                  type="target"
+                  position={Position.Left}
+                  id={`audio:${i}`}
+                  className="handle-audio"
+                  style={{ top: slotTop('audio', i) }}
+                />
+              </Fragment>
+            ));
+          }
+          return [
+            <Handle
+              key={`tgt-${t}`}
+              type="target"
+              position={Position.Left}
+              id={t}
+              className={`handle-${t}`}
+              style={{ top: slotTop(t) }}
+            />,
+          ];
+        })}
 
       <div className="mm-node-type">
         <span>{describeKind(data.kind, supported)}</span>
@@ -127,17 +192,40 @@ export function MMNode({ id, data, selected }: NodeProps & { data: FlowNodeData 
         </div>
       )}
 
+      {/* Source (right) handles */}
       {!isOutput &&
-        supported.map((t) => (
-          <Handle
-            key={`src-${t}`}
-            type="source"
-            position={Position.Right}
-            id={t}
-            className={`handle-${t}`}
-            style={{ top: slotTop(t) }}
-          />
-        ))}
+        supported.flatMap((t) => {
+          if (t === 'audio' && audioSrcCount > 1) {
+            return Array.from({ length: audioSrcCount }, (_, i) => (
+              <Fragment key={`src-audio-${i}`}>
+                <span
+                  className="handle-track-label handle-track-label--src"
+                  style={{ top: slotTop('audio', i) }}
+                  aria-hidden="true"
+                >
+                  a:{i}
+                </span>
+                <Handle
+                  type="source"
+                  position={Position.Right}
+                  id={`audio:${i}`}
+                  className="handle-audio"
+                  style={{ top: slotTop('audio', i) }}
+                />
+              </Fragment>
+            ));
+          }
+          return [
+            <Handle
+              key={`src-${t}`}
+              type="source"
+              position={Position.Right}
+              id={t}
+              className={`handle-${t}`}
+              style={{ top: slotTop(t) }}
+            />,
+          ];
+        })}
     </div>
   );
 }
