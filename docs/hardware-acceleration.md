@@ -213,6 +213,21 @@ Three fields on each `Input` mirror FFmpeg's per-input `-hwaccel`, `-hwaccel_dev
 - `hwaccel_device` and `hwaccel_output_format` require `hwaccel` to be non-empty.
 - `hwaccel_device` must match a declared `hardware_devices[].name` entry.
 
+**`hwaccel_output_format` defaults to automatic CPU transfer.**
+When `hwaccel_output_format` is omitted the pipeline sets `AutoTransfer = true`
+on the decoder, which instructs libav to copy frames from the GPU surface to
+system RAM automatically.  This ensures downstream software filters and encoders
+(libx264, prores, …) always receive CPU frames with correct stride.  To keep
+frames on the GPU for a zero-copy chain, set `hwaccel_output_format` to the
+hardware surface name explicitly (e.g. `"cuda"`, `"vaapi"`).
+
+**GUI scope hint.**
+After setting `hwaccel` in the Input Inspector the **Acceleration** panel shows
+a one-line summary of where decoding will happen for each stream type —
+for example *HW decode: video (prores_ap4x) · SW fallback: audio*.  The hint
+is computed from the probed stream list and the selected backend; it updates
+live as you change the `hwaccel` field.
+
 **Example — per-input CUDA decode with explicit GPU surface output:**
 
 ```json
