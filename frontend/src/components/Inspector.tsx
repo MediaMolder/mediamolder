@@ -29,7 +29,7 @@ interface Props {
   /** Called when probe results arrive for an input node.  Kept separate from
    *  onChange so the caller can use a functional setNodes update and avoid
    *  overwriting concurrent URL changes made by the same event batch. */
-  onProbedData: (nodeId: string, probed: ProbedStream[] | undefined) => void;
+  onProbedData: (nodeId: string, response: ProbeResponse | undefined) => void;
   /** Named hardware-acceleration device contexts available in the current
    *  job config. Passed to NodeForm to populate the device picker. (Wave 10 #60) */
   hwDevices?: HardwareDevice[];
@@ -97,7 +97,7 @@ export function Inspector({ node, nodes, edges, onChange, onDelete, onSelectNode
           def={ref.def}
           probed={node.data.probed}
           onChange={(def) => onChange(updateRef(node, { kind: 'input', def }, def.id, displayUrl(def.url)))}
-          onProbed={(probed) => onProbedData(node.id, probed)}
+          onProbed={(resp) => onProbedData(node.id, resp)}
         />
       )}
       {ref.kind === 'input' && !isDeviceInput(ref.def) && (
@@ -105,7 +105,7 @@ export function Inspector({ node, nodes, edges, onChange, onDelete, onSelectNode
           def={ref.def}
           probed={node.data.probed}
           onChange={(def) => onChange(updateRef(node, { kind: 'input', def }, def.id, displayUrl(def.url)))}
-          onProbed={(probed) => onProbedData(node.id, probed)}
+          onProbed={(resp) => onProbedData(node.id, resp)}
           hwDevices={hwDevices}
           availableHWAccels={availableHWAccels}
         />
@@ -386,7 +386,7 @@ function DeviceInputForm({
   def: Input;
   probed?: ProbedStream[];
   onChange: (next: Input) => void;
-  onProbed: (next: ProbedStream[] | undefined) => void;
+  onProbed: (next: ProbeResponse | undefined) => void;
 }) {
   const format = def.format ?? 'dshow';
 
@@ -430,7 +430,7 @@ function DeviceInputForm({
       });
       if (!r.ok) throw new Error((await r.text()) || `HTTP ${r.status}`);
       const resp = (await r.json()) as ProbeResponse;
-      onProbed(resp.streams);
+      onProbed(resp);
     } catch (err) {
       setProbeError((err as Error).message);
       onProbed(undefined);
@@ -577,7 +577,7 @@ function InputForm({
   def: Input;
   probed?: ProbedStream[];
   onChange: (next: Input) => void;
-  onProbed: (next: ProbedStream[] | undefined) => void;
+  onProbed: (next: ProbeResponse | undefined) => void;
   hwDevices?: HardwareDevice[];
   /** null = probe not yet returned; show all options. HWAccelProbe[] =
    *  full probe results including SW formats and codec lists. */
@@ -600,7 +600,7 @@ function InputForm({
         throw new Error(body || `HTTP ${r.status}`);
       }
       const resp = (await r.json()) as ProbeResponse;
-      onProbed(resp.streams);
+      onProbed(resp);
     } catch (err) {
       setProbeError((err as Error).message);
       onProbed(undefined);
