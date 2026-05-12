@@ -371,10 +371,10 @@ function attrsFromInput(inp: Input, type: StreamType, probed?: ProbedStream[]): 
         const s = asString(v);
         if (s !== undefined) out[k] = s;
       };
-      set('codec', ps.codec);
-      if (ps.profile) set('profile', ps.profile);
-      if (ps.level) set('level', ps.level);
-      if (ps.bit_rate) set('bit_rate', formatBitRate(ps.bit_rate));
+      // codec / profile / level / bit_rate are compressed-stream properties.
+      // Every edge leaving an input node carries *decoded* frames, so these
+      // must not appear here (they would be as misleading as showing "prores"
+      // on a raw-YUV decoded-frame edge).
       if (ps.bit_depth) set('bit_depth', `${ps.bit_depth} bit`);
       if (type === 'video') {
         set('width', ps.width);
