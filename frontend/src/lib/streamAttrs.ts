@@ -503,10 +503,12 @@ export function inferEdgeAttributes(
   // For decoded video streams all compressed-bitrate attrs have been
   // blocked by the null sentinel. Compute the uncompressed rate from
   // first principles: w × h × fps × bits_per_pixel.
-  // Note: we intentionally ignore blocked.has('bit_rate') here — that flag
-  // means an upstream compressed rate was suppressed, which is *exactly*
-  // the case where we want to substitute the decoded rate.
-  if (type === 'video' && !('bit_rate' in result)) {
+  // Skip when the edge source is an encoder — its output is a compressed
+  // bitstream, not decoded frames, so the decoded rate formula is wrong.
+  const sourceNode = nodeById.get(edge.source);
+  const sourceIsEncoder = sourceNode?.data.ref.kind === 'node'
+    && sourceNode.data.ref.def.type === 'encoder';
+  if (type === 'video' && !('bit_rate' in result) && !sourceIsEncoder) {
     const w = result['width'] ? parseInt(result['width'].value, 10) : NaN;
     const h = result['height'] ? parseInt(result['height'].value, 10) : NaN;
     const fpsStr = result['frame_rate']?.value;
@@ -523,7 +525,7 @@ export function inferEdgeAttributes(
 
   // For decoded audio streams compute the uncompressed rate from
   // first principles: sample_rate × channels × bits_per_sample.
-  if (type === 'audio' && !('bit_rate' in result)) {
+  if (type === 'audio' && !('bit_rate' in result) && !sourceIsEncoder) {
     const srStr = result['sample_rate']?.value;
     const sr = srStr ? parseInt(srStr, 10) : NaN;
     const chStr = result['channels']?.value;
