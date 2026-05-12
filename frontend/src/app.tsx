@@ -1140,6 +1140,7 @@ function Editor() {
           mode={browseIsInput ? 'open' : 'save'}
           title={browseIsInput ? 'Choose input file' : 'Choose output file'}
           filter={browseIsInput ? MEDIA_FILE_EXTENSIONS : undefined}
+          warnExtensions={browseIsInput ? undefined : MEDIA_FILE_EXTENSIONS}
           initialPath={browseInitialDir}
           defaultFilename={browseIsInput ? undefined : 'output.mp4'}
           onClose={() => setBrowseNodeId(null)}
