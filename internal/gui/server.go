@@ -44,6 +44,8 @@ func NewServer(opts Options) (*http.Server, error) {
 	mux.HandleFunc("GET /api/hwaccel", handleListHWAccel)
 	mux.HandleFunc("GET /api/files", handleListDir)
 	mux.HandleFunc("POST /api/files/mkdir", handleMkdir)
+	mux.HandleFunc("GET /api/file", handleReadFile)
+	mux.HandleFunc("PUT /api/file", handleWriteFile)
 	mux.HandleFunc("POST /api/probe", handleProbe)
 	mux.HandleFunc("POST /api/convert-cmd", handleConvertCmd)
 	mux.HandleFunc("POST /api/export-cmd", handleExportCmd)
