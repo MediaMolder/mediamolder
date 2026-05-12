@@ -138,7 +138,11 @@ func (m *jobManager) gcLocked() {
 // recent history buffer. Caller must drain the channel; if it blocks too long
 // the publisher will drop events for that subscriber.
 func (j *runningJob) subscribe() (<-chan jobEvent, func()) {
-	ch := make(chan jobEvent, 32)
+	// Channel must hold all history events plus the synthetic done event so
+	// that a late subscriber (e.g. after an SSE reconnect) always receives
+	// the done event. historyCap + 1 guarantees capacity for the full
+	// history replay and the closing done sentinel.
+	ch := make(chan jobEvent, historyCap+1)
 	j.mu.Lock()
 	// Replay history first so a late subscriber can catch up.
 	for _, e := range j.historyBuf {
