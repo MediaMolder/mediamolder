@@ -27,6 +27,31 @@ const STREAM_LETTER: Record<StreamType, string> = {
   attachment: 't',
 };
 
+/**
+ * Returns the next unused track index for the given input node id and stream
+ * type, given the current set of edges. Used by onConnect so that dragging
+ * multiple audio edges from an input node auto-assigns a:0, a:1, a:2, …
+ * rather than always defaulting to :0.
+ */
+export function nextInputTrack(
+  inputLabel: string,
+  streamType: StreamType,
+  edges: FlowEdge[],
+): number {
+  const letter = STREAM_LETTER[streamType] ?? 'v';
+  const prefix = `${inputLabel}:${letter}:`;
+  const used = new Set(
+    edges
+      .map((e) => e.data?.rawFrom ?? '')
+      .filter((f) => f.startsWith(prefix))
+      .map((f) => Number(f.slice(prefix.length)))
+      .filter((n) => Number.isFinite(n)),
+  );
+  let track = 0;
+  while (used.has(track)) track++;
+  return track;
+}
+
 const LETTER_STREAM: Record<string, StreamType> = {
   v: 'video',
   a: 'audio',
