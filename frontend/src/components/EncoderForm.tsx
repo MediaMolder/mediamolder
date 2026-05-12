@@ -201,6 +201,45 @@ export function EncoderForm({ def, onChange }: Props) {
         <strong>{prettyCodecFormat(info, codec)}</strong>
       </div>
 
+      {info.media_type === 'audio' && (
+        <>
+          <label style={{ display: 'flex', gap: 6, alignItems: 'flex-start' }}>
+            <input
+              type="checkbox"
+              checked={getParam('multi_input_audio') === 'true'}
+              onChange={(e) => {
+                if (e.target.checked) {
+                  setParam('multi_input_audio', 'true');
+                } else {
+                  setParam('multi_input_audio', '');
+                  setParam('audio_inputs', '');
+                }
+              }}
+              style={{ marginTop: 2, flexShrink: 0 }}
+            />
+            <span>
+              Accept multiple audio inputs
+              <div style={{ fontSize: 11, color: 'var(--text-dim)', fontWeight: 'normal', marginTop: 2 }}>
+                Renders N numbered audio target handles. The pipeline merges them
+                automatically before encoding. Use instead of an explicit amerge node.
+              </div>
+            </span>
+          </label>
+          {getParam('multi_input_audio') === 'true' && (
+            <>
+              <label>Number of inputs</label>
+              <input
+                type="number"
+                min={2}
+                max={32}
+                value={getParam('audio_inputs') || '2'}
+                onChange={(e) => setParam('audio_inputs', e.target.value === '2' ? '' : e.target.value)}
+              />
+            </>
+          )}
+        </>
+      )}
+
       {preset && (
         <PrimaryRow
           codec={codec}
