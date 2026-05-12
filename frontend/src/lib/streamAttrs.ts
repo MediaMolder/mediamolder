@@ -290,36 +290,55 @@ function attrsFromGraphNode(node: NodeDef, type: StreamType): Record<string, str
 
     // Quality/constant-rate-factor modes: CRF (libx264/libx265/libsvtav1/…),
     // CQ (nvenc), ICQ/global_quality (qsv), QP.
-    const crf = get('crf') ?? get('cq') ?? get('global_quality');
-    const qp  = get('qp')  ?? get('qp_i');
-    const br  = get('b')   ?? get('bitrate') ?? get('bit_rate');
-    const rcMode = get('rc_mode') ?? get('rc');
+    const crfExplicit = get('crf') ?? get('cq') ?? get('global_quality');
+    const qpExplicit  = get('qp')  ?? get('qp_i');
+    const br          = get('b')   ?? get('bitrate') ?? get('bit_rate');
+    const rcMode      = get('rc_mode') ?? get('rc');
 
-    if (crf !== undefined) {
+    if (crfExplicit !== undefined) {
       // CRF/CQ/ICQ encode — output bitrate is unknowable until encoding.
       const label = (get('crf') !== undefined ? 'CRF'
                   : get('cq')  !== undefined ? 'CQ'
                   : 'ICQ');
-      out['rate_control'] = `${label} ${crf}`;
-      out['bit_rate'] = null; // block upstream / schema default from showing
-    } else if (qp !== undefined) {
-      out['rate_control'] = `QP ${qp}`;
+      out['rate_control'] = `${label} ${crfExplicit}`;
+      out['bit_rate'] = null;
+    } else if (qpExplicit !== undefined) {
+      out['rate_control'] = `QP ${qpExplicit}`;
       out['bit_rate'] = null;
     } else if (br) {
       out['bit_rate'] = formatBitRateString(br);
       if (rcMode) out['rate_control'] = rcMode.toUpperCase();
-    } else if (codec) {
-      // No explicit rate control — check schema for a non-zero default bitrate.
-      const info = getEncoderInfoSync(codec);
-      if (info) {
-        const roles = rolesFor(codec, info.options);
-        const brOpt = findOption(info.options, roles.bit_rate);
-        const defVal = brOpt?.default?.int;
-        if (defVal !== undefined && defVal > 0) {
-          out['bit_rate'] = formatBitRate(defVal) + ' (default)';
-        } else {
-          // Schema reports no meaningful default (likely CRF-style encoder).
-          out['bit_rate'] = null;
+    } else {
+      // No explicit rate params. Always null bit_rate so the upstream
+      // decoded rate never leaks onto an encoder output edge.
+      out['bit_rate'] = null;
+      if (codec) {
+        // If the schema is already cached, determine the default RC mode
+        // and show it (e.g. libx264 defaults to CRF 23).
+        const info = getEncoderInfoSync(codec);
+        if (info) {
+          const roles = rolesFor(codec, info.options);
+          const defaultRc = roles.default_rc ?? (roles.crf ? 'crf' : roles.qp ? 'qp' : 'bitrate');
+          if ((defaultRc === 'crf') && roles.crf) {
+            const crfOpt = findOption(info.options, roles.crf);
+            const defVal = crfOpt?.default?.int ?? crfOpt?.default?.float;
+            const label  = roles.crf === 'cq' ? 'CQ' : roles.crf === 'global_quality' ? 'ICQ' : 'CRF';
+            out['rate_control'] = defVal !== undefined
+              ? `${label} ${defVal} (default)`
+              : `${label} (default)`;
+          } else if (defaultRc === 'qp' && roles.qp) {
+            const qpOpt = findOption(info.options, roles.qp);
+            const defVal = qpOpt?.default?.int;
+            out['rate_control'] = defVal !== undefined
+              ? `QP ${defVal} (default)`
+              : 'QP (default)';
+          } else if (defaultRc === 'bitrate' && roles.bit_rate) {
+            const brOpt = findOption(info.options, roles.bit_rate);
+            const defVal = brOpt?.default?.int;
+            if (defVal !== undefined && defVal > 0) {
+              out['bit_rate'] = formatBitRate(defVal) + ' (default)';
+            }
+          }
         }
       }
     }
