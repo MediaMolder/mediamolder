@@ -23,6 +23,12 @@ interface Props {
   title?: string;
   /** Optional comma-separated extension filter, e.g. "mp4,mkv,mov". */
   filter?: string;
+  /**
+   * In save mode: comma-separated list of extensions considered valid output
+   * formats. If the typed filename's extension is NOT in this list a warning
+   * is shown inline. Does not block saving.
+   */
+  warnExtensions?: string;
   /** Initial path to seed the browser with. Falls back to $HOME. */
   initialPath?: string;
   /** Default file name when saving. */
@@ -36,6 +42,7 @@ export function FileBrowser({
   mode,
   title,
   filter,
+  warnExtensions,
   initialPath,
   defaultFilename,
   onClose,
@@ -224,6 +231,24 @@ export function FileBrowser({
                   onChange={(e) => setFilename(e.target.value)}
                   placeholder="output.mp4"
                 />
+                {warnExtensions && (() => {
+                  const name = filename.trim();
+                  if (!name) return null;
+                  const dot = name.lastIndexOf('.');
+                  if (dot < 0) return (
+                    <div className="file-browser-ext-warn">
+                      ⚠ No file extension — FFmpeg needs one to choose the right muxer.
+                    </div>
+                  );
+                  const ext = name.slice(dot + 1).toLowerCase();
+                  const allowed = new Set(warnExtensions.split(',').map((s) => s.trim().toLowerCase()));
+                  if (!allowed.has(ext)) return (
+                    <div className="file-browser-ext-warn">
+                      ⚠ <strong>.{ext}</strong> is not a recognised media container. FFmpeg will likely fail when this job runs.
+                    </div>
+                  );
+                  return null;
+                })()}
               </div>
             )}
           </div>

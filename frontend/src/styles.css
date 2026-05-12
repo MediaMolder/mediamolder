@@ -1024,6 +1024,16 @@ button.danger:hover { background: rgba(185, 74, 74, 0.15); }
   padding: 4px 8px;
   font-size: 12px;
 }
+.file-browser-ext-warn {
+  grid-column: 2;
+  font-size: 11px;
+  color: #e8a020;
+  background: color-mix(in srgb, #e8a020 10%, transparent);
+  border: 1px solid color-mix(in srgb, #e8a020 35%, transparent);
+  border-radius: 4px;
+  padding: 4px 8px;
+  line-height: 1.4;
+}
 
 /* ---------- Help dialog ---------- */
 .help-content {
