@@ -321,7 +321,7 @@ function attrsFromGraphNode(node: NodeDef, type: StreamType): Record<string, str
           const defaultRc = roles.default_rc ?? (roles.crf ? 'crf' : roles.qp ? 'qp' : 'bitrate');
           if ((defaultRc === 'crf') && roles.crf) {
             const crfOpt = findOption(info.options, roles.crf);
-            const defVal = crfOpt?.default?.int ?? crfOpt?.default?.float;
+            const defVal = crfOpt?.default?.float ?? crfOpt?.default?.int;
             const label  = roles.crf === 'cq' ? 'CQ' : roles.crf === 'global_quality' ? 'ICQ' : 'CRF';
             out['rate_control'] = defVal !== undefined
               ? `${label} ${defVal} (default)`
