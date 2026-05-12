@@ -1,8 +1,8 @@
 import { Fragment } from 'react';
-import { Handle, Position, type NodeProps } from '@xyflow/react';
+import { Handle, Position, useEdges, useNodes, type NodeProps } from '@xyflow/react';
 import type { FlowNodeData } from '../lib/jsonAdapter';
 import { MULTI_AUDIO_INPUT_FILTERS } from '../lib/jsonAdapter';
-import type { NodeDef } from '../lib/jobTypes';
+import type { NodeDef, ProbedStream } from '../lib/jobTypes';
 import { displayName, lookupFriendlyName, useNamingMode } from '../lib/friendlyNames';
 
 const STREAM_HANDLES = ['video', 'audio', 'subtitle', 'data'] as const;
@@ -22,6 +22,29 @@ export const URL_BROWSE_EVENT = 'mm.url.browse';
 const SLOT_PITCH = 12;   // gap between distinct stream types (unchanged)
 const TRACK_PITCH = 10;  // gap between per-track handles of the same type
 const AUDIO_BASE = 16 + STREAM_HANDLES.indexOf('audio') * SLOT_PITCH; // 28
+
+// Named audio layouts with per-channel names in FFmpeg av_channel_layout_default order.
+const AUDIO_LAYOUTS: { name: string; channels: number; chNames: string[] }[] = [
+  { name: 'mono',   channels: 1, chNames: ['mono'] },
+  { name: 'stereo', channels: 2, chNames: ['FL', 'FR'] },
+  { name: '2.1',    channels: 3, chNames: ['FL', 'FR', 'LFE'] },
+  { name: '3.0',    channels: 3, chNames: ['FL', 'FR', 'FC'] },
+  { name: '4.0',    channels: 4, chNames: ['FL', 'FR', 'FC', 'BC'] },
+  { name: '5.0',    channels: 5, chNames: ['FL', 'FR', 'FC', 'BL', 'BR'] },
+  { name: '5.1',    channels: 6, chNames: ['FL', 'FR', 'FC', 'LFE', 'BL', 'BR'] },
+  { name: '6.1',    channels: 7, chNames: ['FL', 'FR', 'FC', 'LFE', 'BL', 'BR', 'BC'] },
+  { name: '7.1',    channels: 8, chNames: ['FL', 'FR', 'FC', 'LFE', 'BL', 'BR', 'SL', 'SR'] },
+];
+
+function layoutByName(name: string) {
+  return AUDIO_LAYOUTS.find((l) => l.name === name);
+}
+
+// Fallback: channel names by count (for auto/unrecognised layout names).
+function defaultChNames(n: number): string[] {
+  return AUDIO_LAYOUTS.find((l) => l.channels === n)?.chNames
+    ?? Array.from({ length: n }, (_, i) => `ch.${i + 1}`);
+}
 
 export function MMNode({ id, data, selected }: NodeProps & { data: FlowNodeData & { run?: MMNodeRunData } }) {
   const naming = useNamingMode();
@@ -56,20 +79,74 @@ export function MMNode({ id, data, selected }: NodeProps & { data: FlowNodeData 
     return 1;
   })();
 
-  // Per-slot input handle count for multi-input filter nodes (amerge etc.)
-  // and for audio encoder nodes with the multi_input_audio param set.
+  // Per-slot input handle count for multi-input filter nodes (amerge etc.).
+  // For audio encoders with channel_layout set, show one handle per channel.
   const audioTgtCount: number = (() => {
     if (isInput || isOutput) return 1;
     const ref = data.ref;
     if (ref?.kind !== 'node') return 1;
     const def = ref.def as NodeDef;
-    if (def.type === 'encoder' && def.params?.multi_input_audio) {
-      const n = Number(def.params?.audio_inputs ?? 2);
-      return Number.isFinite(n) && n >= 2 ? n : 2;
+    if (def.type === 'encoder') {
+      const layout = def.params?.channel_layout as string | undefined;
+      if (layout) {
+        const n = layoutByName(layout)?.channels ?? 0;
+        if (n >= 2) return n;
+      }
+      return 1;
     }
     if (!MULTI_AUDIO_INPUT_FILTERS.has(def.filter ?? '')) return 1;
     const n = Number(def.params?.inputs ?? def.params?.nb_inputs ?? 2);
     return Number.isFinite(n) && n >= 2 ? n : 2;
+  })();
+
+  // Channel names for per-handle encoder targets.
+  const encoderChNames: string[] | undefined = (() => {
+    if (audioTgtCount <= 1) return undefined;
+    const def = (data.ref?.kind === 'node' ? data.ref.def : undefined) as NodeDef | undefined;
+    if (def?.type !== 'encoder') return undefined;
+    const layout = def.params?.channel_layout as string | undefined;
+    return layout ? layoutByName(layout)?.chNames : undefined;
+  })();
+
+  // For encoder/filter nodes with a single audio target handle, compute the
+  // per-input channel assignment (amerge concatenates inputs in order, so each
+  // inbound edge maps to consecutive output channels).
+  const allEdges = useEdges();
+  const allNodes = useNodes();
+  const inboundAudioMappings: Array<{ trackLabel: string; outChans: string[] }> = (() => {
+    if (audioTgtCount > 1) return [];
+    const audioEdges = allEdges
+      .filter((e) => e.target === id && (e.targetHandle === 'audio' || e.targetHandle?.startsWith('audio:')))
+      .sort((a, b) => {
+        const trackNum = (e: typeof a) =>
+          parseInt((e.data as { rawFrom?: string } | undefined)?.rawFrom?.match(/:a:([0-9]+)$/)?.[1] ?? '0', 10);
+        return trackNum(a) - trackNum(b);
+      });
+    if (audioEdges.length < 2) return [];
+
+    // Look up channel count for each edge from the source node's probed data.
+    const edgeChannels = audioEdges.map((e) => {
+      const srcNode = allNodes.find((n) => n.id === e.source);
+      const probed = (srcNode?.data as { probed?: ProbedStream[] } | undefined)?.probed;
+      const trackIdx = parseInt((e.sourceHandle ?? '').replace(/^audio:/, ''), 10);
+      const audioStreams = probed?.filter((s) => s.type === 'audio') ?? [];
+      return audioStreams[trackIdx]?.channels ?? 1;
+    });
+
+    const totalChannels = edgeChannels.reduce((s, c) => s + c, 0);
+    const layoutNames = defaultChNames(totalChannels);
+    let offset = 0;
+    return audioEdges.map((e, i) => {
+      const raw: string = (e.data as { rawFrom?: string } | undefined)?.rawFrom ?? '';
+      const m = raw.match(/:a:([0-9]+)$/);
+      const trackLabel = m ? `a:${parseInt(m[1], 10) + 1}` : raw.split(':')[0];
+      const nCh = edgeChannels[i];
+      const outChans = layoutNames
+        ? layoutNames.slice(offset, offset + nCh)
+        : Array.from({ length: nCh }, (_, j) => `ch.${offset + j + 1}`);
+      offset += nCh;
+      return { trackLabel, outChans };
+    });
   })();
 
   const maxAudioSlots = Math.max(audioSrcCount, audioTgtCount);
@@ -114,7 +191,7 @@ export function MMNode({ id, data, selected }: NodeProps & { data: FlowNodeData 
                   style={{ top: slotTop('audio', i) }}
                   aria-hidden="true"
                 >
-                  {i}
+                  {encoderChNames?.[i] ?? i}
                 </span>
                 <Handle
                   type="target"
@@ -127,14 +204,26 @@ export function MMNode({ id, data, selected }: NodeProps & { data: FlowNodeData 
             ));
           }
           return [
-            <Handle
-              key={`tgt-${t}`}
-              type="target"
-              position={Position.Left}
-              id={t}
-              className={`handle-${t}`}
-              style={{ top: slotTop(t) }}
-            />,
+            <Fragment key={`tgt-${t}`}>
+              {t === 'audio' && inboundAudioMappings.length > 0 && (
+                <span
+                  className="handle-track-label handle-track-label--tgt"
+                  style={{ top: slotTop(t) }}
+                  title={inboundAudioMappings.map((m) => `${m.trackLabel} → ${m.outChans.join(', ')}`).join('\n')}
+                  aria-hidden="true"
+                >
+                  {inboundAudioMappings.map((m) => `${m.trackLabel}→${m.outChans.join(',')}`).join(' · ')}
+                </span>
+              )}
+              <Handle
+                key={`tgt-${t}`}
+                type="target"
+                position={Position.Left}
+                id={t}
+                className={`handle-${t}`}
+                style={{ top: slotTop(t) }}
+              />
+            </Fragment>,
           ];
         })}
 
@@ -201,14 +290,25 @@ export function MMNode({ id, data, selected }: NodeProps & { data: FlowNodeData 
       {!isOutput &&
         supported.flatMap((t) => {
           if (t === 'audio' && audioSrcCount > 1) {
-            return Array.from({ length: audioSrcCount }, (_, i) => (
+            const audioStreams = Array.isArray(data.probed)
+              ? (data.probed as ProbedStream[]).filter((s) => s.type === 'audio')
+              : [];
+            return Array.from({ length: audioSrcCount }, (_, i) => {
+              const s = audioStreams[i];
+              const parts = [s?.channel_layout, s?.language].filter(Boolean);
+              const meta = parts.join(' · ');
+              const fullTitle = s
+                ? [s.codec, s.channel_layout, s.language].filter(Boolean).join(' · ')
+                : undefined;
+              return (
               <Fragment key={`src-audio-${i}`}>
                 <span
                   className="handle-track-label handle-track-label--src"
                   style={{ top: slotTop('audio', i) }}
+                  title={fullTitle}
                   aria-hidden="true"
                 >
-                  a:{i + 1}
+                  a:{i + 1}{meta ? ` · ${meta}` : ''}
                 </span>
                 <Handle
                   type="source"
@@ -218,14 +318,19 @@ export function MMNode({ id, data, selected }: NodeProps & { data: FlowNodeData 
                   style={{ top: slotTop('audio', i) }}
                 />
               </Fragment>
-            ));
+              );
+            });
           }
+          // Input nodes: audio source handle must use "audio:0" to match
+          // the track-indexed sourceHandle that configToFlow assigns to
+          // edges coming from input nodes (even single-track ones).
+          const handleId = (isInput && t === 'audio') ? 'audio:0' : t;
           return [
             <Handle
               key={`src-${t}`}
               type="source"
               position={Position.Right}
-              id={t}
+              id={handleId}
               className={`handle-${t}`}
               style={{ top: slotTop(t) }}
             />,

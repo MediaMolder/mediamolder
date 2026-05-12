@@ -14,6 +14,31 @@ import (
 
 // ---------- Helpers ----------
 
+// audioLayoutChannels returns the channel count for a named FFmpeg channel
+// layout (e.g. "stereo" → 2, "5.1" → 6). Returns 0 for unrecognised names.
+func audioLayoutChannels(layout string) int {
+	switch layout {
+	case "mono":
+		return 1
+	case "stereo":
+		return 2
+	case "2.1", "3.0", "3.0(back)", "surround":
+		return 3
+	case "4.0", "quad", "quad(side)", "3.1":
+		return 4
+	case "5.0", "5.0(side)", "4.1":
+		return 5
+	case "5.1", "5.1(side)", "6.0", "6.0(front)", "hexagonal", "3.1.2":
+		return 6
+	case "6.1", "6.1(back)", "6.1(front)", "7.0", "7.0(front)":
+		return 7
+	case "7.1", "7.1(wide)", "7.1(wide-side)", "octagonal":
+		return 8
+	default:
+		return 0
+	}
+}
+
 func (r *graphRunner) findOutputConfig(id string) *Output {
 	for i := range r.cfg.Outputs {
 		if r.cfg.Outputs[i].ID == id {

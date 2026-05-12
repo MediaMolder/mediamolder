@@ -289,6 +289,11 @@ func (r *graphRunner) createEncoder(dag *graph.Graph, node *graph.Node) (*av.Enc
 		opts.SampleFmt = si.SampleFmt
 		opts.SampleRate = si.SampleRate
 		opts.Channels = si.Channels
+		if v := paramString(node.Params, "channel_layout"); v != "" {
+			if n := audioLayoutChannels(v); n > 0 {
+				opts.Channels = n
+			}
+		}
 	}
 
 	// Allow explicit param overrides.
@@ -447,12 +452,15 @@ func (r *graphRunner) createEncoder(dag *graph.Graph, node *graph.Node) (*av.Enc
 // and are read directly from the typed struct. Only the genuinely
 // authored, runtime-special-cased keys remain in this set.
 var encoderReservedParams = map[string]bool{
-	"codec":       true,
-	"width":       true,
-	"height":      true,
-	"bitrate":     true,
-	"threads":     true,
-	"thread_type": true,
+	"codec":             true,
+	"width":             true,
+	"height":            true,
+	"bitrate":           true,
+	"threads":           true,
+	"thread_type":       true,
+	"channel_layout":    true,
+	"multi_input_audio": true,
+	"audio_inputs":      true,
 }
 
 // collectEncoderExtraOpts returns a map of AVDictionary options to forward to
