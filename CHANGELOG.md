@@ -6,6 +6,57 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 ## [Unreleased]
 
 ### Added
+- **Per-track audio handles on input nodes and multi-input filter nodes (GUI).**
+  Once an input node is probed with **Get Properties**, it grows one audio
+  source handle per track, labelled `a:0`, `a:1`, … `a:N-1`.  Opening a
+  graph that already contains multi-track audio wiring reconstructs the
+  correct number of handles from the existing edges, so re-probing is not
+  required on load.
+
+  `amerge`, `amix`, `join`, and `concat` nodes now render numbered audio
+  *input* handles (`0`, `1`, …) matching their `inputs` / `nb_inputs`
+  parameter (default 2).  Changing the parameter in the Inspector
+  immediately re-renders the pads.
+
+  Each audio edge carries a per-track handle id (`"audio:2"`) which
+  `deriveEndpoint` maps directly to `in0:a:2` — no auto-increment guessing
+  for probed nodes.  Unprobed single-handle input nodes fall back to the
+  previous auto-increment behaviour.  `edgesReconnectable={false}` is set
+  on the ReactFlow canvas to prevent the reconnect gesture from
+  intercepting a second drag from the same handle.
+
+- **HW decode scope hint in the Input Inspector.**
+  The **Acceleration** panel of the Input form now shows a one-line summary
+  of where decoding will actually happen for each stream type once `hwaccel`
+  is set.  Example: *HW decode: video (prores_ap4x) · SW fallback: audio*.
+  The hint is synthesised from the probed stream list and the selected
+  `hwaccel` backend, letting the user confirm at a glance which streams go
+  to the GPU and which fall back to software before running.
+
+### Fixed
+- **Pipeline: skip decoder open for `data` and unknown stream types.**
+  When a source file contained streams with `AVMEDIA_TYPE_DATA` or
+  `AVMEDIA_TYPE_UNKNOWN` codec IDs the pipeline attempted to call
+  `avcodec_open2` on a null codec context and crashed.  The source handler
+  now logs these streams and skips the decode-open step, matching FFmpeg's
+  behaviour (`TestSourceHandler_DataStreamNoDecoder` regression test added).
+
+- **Pipeline: `hwaccel_output_format` unset no longer causes a stride=0
+  crash with VideoToolbox + software encoder.**
+  `av.OpenHWDecoder` previously left `AutoTransfer` as `false` when
+  `HWAccelOutputFormat` was empty, so VideoToolbox frames stayed on the
+  GPU surface.  Any downstream software encoder (libx264, prores, …) then
+  received a zero-stride hardware frame and either crashed or produced
+  corrupt output.  The pipeline now defaults `AutoTransfer = true` whenever
+  `hwaccel_output_format` is unset, matching FFmpeg's `-hwaccel_output_format`
+  implicit behaviour.
+
+- **GUI: auto-increment audio track index for multi-track input nodes.**
+  Dragging a second (or third, …) audio edge from a single-handle input
+  node now correctly increments the `in0:a:N` index so each edge targets a
+  distinct audio stream instead of all targeting `in0:a:0`.
+
+### Added
 - **Hardware dialog (Phase 3).**
   A **Hardware** button in the node palette opens a modal listing all hardware
   acceleration backends probed at startup.  Each available backend shows a

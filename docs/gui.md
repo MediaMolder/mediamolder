@@ -283,6 +283,15 @@ against FFmpeg drift by `internal/gui/curation_test.go`
 * Each node exposes one source and one target handle per stream type
   (video / audio / subtitle / data). Handles only accept connections of the
   same type — incompatible drags are rejected.
+* **Input nodes grow per-track audio handles** after **Get Properties** is
+  clicked.  A 16-track MOV shows 16 green dots labelled `a:0` … `a:15` on
+  the right edge instead of a single generic `audio` handle.  The handle
+  count is also inferred from existing edges when a saved graph is loaded,
+  so you do not need to re-probe after reopening a job.
+* **Multi-input filter nodes** (`amerge`, `amix`, `join`, `concat`) render
+  numbered audio input handles (`0`, `1`, …) on the left edge matching
+  their `inputs` / `nb_inputs` parameter (default 2).  Changing the
+  parameter in the Inspector immediately re-renders the pads.
 * Every non-implicit node has a small pencil (✎) button in its header
   that selects the node and force-opens the Inspector — useful when the
   Inspector panel has been hidden via the **View:** toggle. The button
@@ -380,6 +389,12 @@ image's geometry and pixel format.
 
 The probed metadata is invalidated when the URL changes; click
 **Get properties** again after editing the path.
+
+When `hwaccel` is set on the input, the **Acceleration** panel shows a
+one-line scope summary immediately below the backend field — for example:
+*HW decode: video (prores_ap4x) · SW fallback: audio*.  This lets you
+confirm at edit time which streams will actually go to the GPU before
+running the job.
 
 ### Hardware Capabilities dialog
 
