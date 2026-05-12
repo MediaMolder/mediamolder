@@ -112,6 +112,7 @@ func configToGraphDef(cfg *Config) *graph.Def {
 	}
 	expandHWFilterMappings(cfg, def)
 	expandImplicitEncoders(cfg, def)
+	spliceAudioMergeForMultiInputEncoders(def)
 	spliceAudioAdaptersForEncoders(def)
 	spliceAudioSyncForOutputs(cfg, def)
 	// Loudnorm two-pass shuttle: walk loudnorm filter nodes and stamp
@@ -157,6 +158,85 @@ var audioEncoderRequirements = map[string]audioEncoderRequirement{
 	"pcm_f32le":  {sampleFmt: "flt"},
 	"ac3":        {sampleFmt: "fltp", frameSize: 1536, hasFrameSz: true},
 	"eac3":       {sampleFmt: "fltp", frameSize: 1536, hasFrameSz: true},
+}
+
+// spliceAudioMergeForMultiInputEncoders inserts a synthetic amerge filter
+// in front of every encoder node that has params["multi_input_audio"] set
+// and more than one inbound audio edge. This lets users wire multiple audio
+// source handles directly to an audio encoder node and have the merge happen
+// transparently, without placing an explicit amerge node on the canvas.
+//
+// Synthetic nodes use the "__amerge__" prefix to avoid colliding with
+// user-supplied node IDs. The pass runs after expandImplicitEncoders and
+// before spliceAudioAdaptersForEncoders so the resulting single-input
+// encoder edge still gets the aformat/asetnsamples adapter when needed.
+func spliceAudioMergeForMultiInputEncoders(def *graph.Def) {
+	nodeByID := make(map[string]graph.NodeDef, len(def.Nodes))
+	for _, n := range def.Nodes {
+		nodeByID[n.ID] = n
+	}
+	head := func(ref string) string {
+		if i := strings.IndexByte(ref, ':'); i >= 0 {
+			return ref[:i]
+		}
+		return ref
+	}
+
+	// Collect encoder node IDs that opted into multi-input mode.
+	multiEncoders := make(map[string]bool)
+	for _, n := range def.Nodes {
+		if n.Type != "encoder" {
+			continue
+		}
+		v, _ := n.Params["multi_input_audio"].(string)
+		if v == "true" || v == "1" {
+			multiEncoders[n.ID] = true
+		}
+	}
+	if len(multiEncoders) == 0 {
+		return
+	}
+
+	// Group audio edge indices by target encoder ID.
+	encEdges := make(map[string][]int)
+	for i := range def.Edges {
+		e := &def.Edges[i]
+		if e.Type != "audio" {
+			continue
+		}
+		toID := head(e.To)
+		if multiEncoders[toID] {
+			encEdges[toID] = append(encEdges[toID], i)
+		}
+	}
+
+	var addedNodes []graph.NodeDef
+	var addedEdges []graph.EdgeDef
+	for encID, idxs := range encEdges {
+		if len(idxs) < 2 {
+			continue // single input — no merge needed
+		}
+		mergeID := "__amerge__" + encID
+		mergeNode := graph.NodeDef{
+			ID:     mergeID,
+			Type:   "filter",
+			Filter: fmt.Sprintf("amerge=inputs=%d", len(idxs)),
+			Internal: graph.Internal{
+				Generated: &graph.GeneratedNode{
+					By:     "spliceAudioMergeForMultiInputEncoders",
+					From:   encID,
+					Reason: fmt.Sprintf("auto-merge %d audio inputs for encoder %s", len(idxs), encID),
+				},
+			},
+		}
+		addedNodes = append(addedNodes, mergeNode)
+		for _, idx := range idxs {
+			def.Edges[idx].To = mergeID
+		}
+		addedEdges = append(addedEdges, graph.EdgeDef{From: mergeID, To: encID, Type: "audio"})
+	}
+	def.Nodes = append(def.Nodes, addedNodes...)
+	def.Edges = append(def.Edges, addedEdges...)
 }
 
 // spliceAudioAdaptersForEncoders rewrites edges that feed an audio

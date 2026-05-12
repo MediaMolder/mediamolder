@@ -56,12 +56,17 @@ export function MMNode({ id, data, selected }: NodeProps & { data: FlowNodeData 
     return 1;
   })();
 
-  // Per-slot input handle count for multi-input filter nodes (amerge etc.).
+  // Per-slot input handle count for multi-input filter nodes (amerge etc.)
+  // and for audio encoder nodes with the multi_input_audio param set.
   const audioTgtCount: number = (() => {
     if (isInput || isOutput) return 1;
     const ref = data.ref;
     if (ref?.kind !== 'node') return 1;
     const def = ref.def as NodeDef;
+    if (def.type === 'encoder' && def.params?.multi_input_audio) {
+      const n = Number(def.params?.audio_inputs ?? 2);
+      return Number.isFinite(n) && n >= 2 ? n : 2;
+    }
     if (!MULTI_AUDIO_INPUT_FILTERS.has(def.filter ?? '')) return 1;
     const n = Number(def.params?.inputs ?? def.params?.nb_inputs ?? 2);
     return Number.isFinite(n) && n >= 2 ? n : 2;

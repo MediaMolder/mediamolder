@@ -472,11 +472,16 @@ export function configToFlow(cfg: JobConfig, opts: ConvertOptions = {}): {
       sourceHandle = `audio:${Number.isFinite(track) ? track : 0}`;
     }
 
-    // For audio edges into multi-input filter nodes, assign consecutive
-    // slot indices so the edges wire to numbered input pads.
+    // For audio edges into multi-input filter nodes or encoder nodes with
+    // multi_input_audio set, assign consecutive slot indices so the edges
+    // wire to numbered input pads.
     let targetHandle: string = e.type;
     const targetNode = cfg.graph.nodes.find((n) => n.id === toHead);
-    if (e.type === 'audio' && MULTI_AUDIO_INPUT_FILTERS.has(targetNode?.filter ?? '')) {
+    const isMultiInputAudioTarget =
+      e.type === 'audio' &&
+      (MULTI_AUDIO_INPUT_FILTERS.has(targetNode?.filter ?? '') ||
+        (targetNode?.type === 'encoder' && targetNode?.params?.multi_input_audio));
+    if (isMultiInputAudioTarget) {
       const slotKey = `${targetId}:audio`;
       const slot = targetSlots.get(slotKey) ?? 0;
       targetSlots.set(slotKey, slot + 1);
