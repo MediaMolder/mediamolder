@@ -151,3 +151,38 @@ func TestIsSwPixFmtName(t *testing.T) {
 		}
 	}
 }
+
+// TestIsHwSurfaceFmtName verifies that the empty string is NOT treated as a
+// hw surface (so autoTransfer defaults to true, matching FFmpeg's -hwaccel
+// default behaviour), and that all known hw surface names are recognised.
+func TestIsHwSurfaceFmtName(t *testing.T) {
+	cases := []struct {
+		name string
+		want bool
+	}{
+		// Empty = "use default" = NOT a hw surface → autoTransfer will be true.
+		{"", false},
+		// Known hw surfaces.
+		{"cuda", true},
+		{"vaapi", true},
+		{"qsv", true},
+		{"videotoolbox", true},
+		{"d3d11va", true},
+		{"dxva2", true},
+		{"opencl", true},
+		{"vulkan", true},
+		// Case-insensitive.
+		{"CUDA", true},
+		{"VideoToolbox", true},
+		// SW pixel formats are not hw surfaces.
+		{"nv12", false},
+		{"yuv420p", false},
+		{"p010le", false},
+	}
+	for _, tc := range cases {
+		got := isHwSurfaceFmtName(tc.name)
+		if got != tc.want {
+			t.Errorf("isHwSurfaceFmtName(%q) = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
