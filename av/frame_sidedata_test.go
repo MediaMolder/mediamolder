@@ -180,4 +180,3 @@ func TestFrameSideDataTypeName(t *testing.T) {
 		}
 	}
 }
-

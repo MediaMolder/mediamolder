@@ -6,6 +6,212 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 ## [Unreleased]
 
 ### Added
+- **Per-track audio handles on input nodes and multi-input filter nodes (GUI).**
+  Once an input node is probed with **Get Properties**, it grows one audio
+  source handle per track, labelled `a:0`, `a:1`, … `a:N-1`.  Opening a
+  graph that already contains multi-track audio wiring reconstructs the
+  correct number of handles from the existing edges, so re-probing is not
+  required on load.
+
+  `amerge`, `amix`, `join`, and `concat` nodes now render numbered audio
+  *input* handles (`0`, `1`, …) matching their `inputs` / `nb_inputs`
+  parameter (default 2).  Changing the parameter in the Inspector
+  immediately re-renders the pads.
+
+  Each audio edge carries a per-track handle id (`"audio:2"`) which
+  `deriveEndpoint` maps directly to `in0:a:2` — no auto-increment guessing
+  for probed nodes.  Unprobed single-handle input nodes fall back to the
+  previous auto-increment behaviour.  `edgesReconnectable={false}` is set
+  on the ReactFlow canvas to prevent the reconnect gesture from
+  intercepting a second drag from the same handle.
+
+- **HW decode scope hint in the Input Inspector.**
+  The **Acceleration** panel of the Input form now shows a one-line summary
+  of where decoding will actually happen for each stream type once `hwaccel`
+  is set.  Example: *HW decode: video (prores_ap4x) · SW fallback: audio*.
+  The hint is synthesised from the probed stream list and the selected
+  `hwaccel` backend, letting the user confirm at a glance which streams go
+  to the GPU and which fall back to software before running.
+
+### Fixed
+- **Pipeline: skip decoder open for `data` and unknown stream types.**
+  When a source file contained streams with `AVMEDIA_TYPE_DATA` or
+  `AVMEDIA_TYPE_UNKNOWN` codec IDs the pipeline attempted to call
+  `avcodec_open2` on a null codec context and crashed.  The source handler
+  now logs these streams and skips the decode-open step, matching FFmpeg's
+  behaviour (`TestSourceHandler_DataStreamNoDecoder` regression test added).
+
+- **Pipeline: `hwaccel_output_format` unset no longer causes a stride=0
+  crash with VideoToolbox + software encoder.**
+  `av.OpenHWDecoder` previously left `AutoTransfer` as `false` when
+  `HWAccelOutputFormat` was empty, so VideoToolbox frames stayed on the
+  GPU surface.  Any downstream software encoder (libx264, prores, …) then
+  received a zero-stride hardware frame and either crashed or produced
+  corrupt output.  The pipeline now defaults `AutoTransfer = true` whenever
+  `hwaccel_output_format` is unset, matching FFmpeg's `-hwaccel_output_format`
+  implicit behaviour.
+
+- **GUI: auto-increment audio track index for multi-track input nodes.**
+  Dragging a second (or third, …) audio edge from a single-handle input
+  node now correctly increments the `in0:a:N` index so each edge targets a
+  distinct audio stream instead of all targeting `in0:a:0`.
+
+### Added
+- **Hardware dialog (Phase 3).**
+  A **Hardware** button in the node palette opens a modal listing all hardware
+  acceleration backends probed at startup.  Each available backend shows a
+  device card with:
+  - GPU marketing name (e.g. `NVIDIA GeForce RTX 4090`, `Apple M3 Pro`) and
+    backend/architecture badge.
+  - Encode / decode codec chips with ⚠ icons for limitation notes.
+  - Hardware-accelerated filter chips using friendly display names
+    (via new `friendlyFilterName()` helper in `lib/friendlyNames.ts`).
+  - **Advanced** section (collapsed by default) with: max resolution, SW pixel
+    formats, static caps (max NVDEC sessions, VT max encode resolution), and
+    per-codec capability tables for NVENC (max resolution, MB/s ceiling, engine
+    count, level range, B-frames, feature flags, max bitrate), NVDEC (max
+    resolution, chroma, bit depth, output format mask), and AMF (max resolution,
+    max concurrent streams).
+  - Unavailable backends collapsed in a secondary accordion with their error
+    messages.
+  The dialog re-uses `availableHWAccels` fetched at startup — no additional
+  network request on open.  Files: `components/HardwareDialog.tsx`,
+  `components/Palette.tsx` (Hardware button), `app.tsx` (dialog mount),
+  `lib/friendlyNames.ts` (`friendlyFilterName`), `styles.css`
+  (`hw-caps-table` rules).
+
+- **Hardware acceleration: full codec capability details in `/api/hwaccel` (Phase 2).**
+  The `HWAccelProbe` JSON response now includes per-device capability records:
+  - `nvenc_caps`: per-codec NVENC encoder caps (max resolution, max macroblock
+    throughput, B-frame support, 10-bit, lossless, lookahead, temporal AQ, etc.)
+    queried at runtime from `libnvidia-encode` via `nvEncGetEncodeCaps`.
+  - `nvdec_caps`: per-codec NVDEC decoder caps (chroma format, bit-depth, session
+    count, output format mask, resolution limits) via `cuvidGetDecoderCaps`.
+  - `amf_caps`: per-codec AMD AMF encoder caps (max concurrent streams, resolution
+    range) queried via a standalone `dlopen("libamfrt64.so.1")` probe using raw
+    vtable dispatch against the public AMF SDK 1.4.36 ABI.  Works even when FFmpeg
+    was compiled without `--enable-amf` (`CONFIG_AMF=0`).
+  - `static_caps`: vendor-published and empirically-verified look-up table data:
+    NVDEC maximum simultaneous sessions per GPU generation; NVENC maximum bitrate
+    per codec/generation; VideoToolbox maximum encode resolution per Apple chip family.
+
+- **Hardware acceleration: per-backend GPU marketing names in `/api/hwaccel`.**
+  `QueryCapabilities()` now resolves a human-readable device name for every
+  hardware backend:
+  - **CUDA**: `cuDeviceGetName` via `libcuda.so` dlopen (e.g. `"NVIDIA GeForce RTX 4090"`).
+  - **VideoToolbox**: IORegistry `AGXAccelerator` model property via IOKit
+    (`av/vt_displayname_darwin.go`, e.g. `"Apple M3 Pro"`).
+  - **VA-API**: sysfs PCI-ID lookup (`/sys/class/drm/renderD128/device/`) with a
+    ~50-entry embedded table covering Intel Arc / Gen12–13, AMD RDNA 1–3, AMD iGPU,
+    and virtio-gpu (`av/vaapi_displayname_linux.go`).
+  - **QSV**: falls back to the VA-API name for the default DRI node on Linux;
+    `"Intel GPU (QSV)"` on other platforms.
+  `HWDeviceContext` now stores the `device` path string so the VA-API lookup has a
+  concrete DRI node to query.  Platform stubs (`_other.go`) ensure the package
+  compiles on all three platforms.
+
+- **VT-native ProRes RAW decoder (this commit).**
+  `av.VTDecoderContext` implements `FrameDecoder` using `VTDecompressionSession`
+  directly, bypassing LibAV's codec registry.  The pipeline source handler now
+  falls back to this path when `OpenDecoderWithOptions` fails and the stream's
+  four-CC tag is `'aprn'` (ProRes RAW) or `'aprh'` (ProRes RAW HQ) — both
+  confirmed as hardware-decodable on Apple Silicon via `VTIsHardwareDecodeSupported`.
+  Output frames are P010 (10-bit biplanar NV12) matching the hardware's native
+  decode depth.  `IsVTCodec(codecTag)` is the public predicate; the function
+  is a no-op on non-Darwin platforms.
+
+### Added
+- **Hardware acceleration: routing filters in palette (commit `3be0306`).**
+  Nine multi-stream routing filters — `split`, `asplit`, `overlay`, `hstack`,
+  `vstack`, `xstack`, `amerge`, `amix`, `concat` — are now listed in a
+  **Filters › Routing** palette subcategory with friendly display labels.
+
+- **Hardware acceleration: device picker hidden for software filters (commit `3be0306`).**
+  The **Hardware device** dropdown in the Inspector is now shown only for
+  hardware-accelerated filters (identified by `AVFILTER_FLAG_HWDEVICE`) and
+  hardware encoders — not for ordinary software filters.
+
+- **Hardware acceleration: GPU display name + HW filter list in `/api/hwaccel`
+  (commit `8702664`).**
+  `DeviceCapabilities.DisplayName` carries the human-readable device label
+  (e.g. `"NVIDIA GeForce RTX 4090"` for CUDA, the device type string for
+  VideoToolbox).  `DeviceCapabilities.Filters` lists the libavfilter filters
+  that carry `AVFILTER_FLAG_HWDEVICE` and target the same backend.  Both fields
+  are forwarded through `hwAccelEntry` to the REST response and `HWAccelProbe`
+  TypeScript type.
+
+- **Hardware acceleration: Hardware dialog in GUI palette (commit `256e325`).**
+  A new **Hardware** button at the top of the left palette opens a modal dialog
+  showing one card per detected backend.  Each card displays the device name,
+  backend label, and chip groups for video-encode, video-decode, audio-encode,
+  and audio-decode codecs.  An **Available hardware** count badge appears on the
+  button when at least one backend is usable; "Software only" is shown when
+  none are.  An **Unavailable** accordion lists backends the probe attempted but
+  could not open.
+
+- **Hardware acceleration: VideoToolbox encoder visibility fix (commit `56af22c`).**
+  `h264_videotoolbox`, `hevc_videotoolbox`, `prores_videotoolbox`, and similar
+  encoders declare hardware support via `AV_CODEC_HW_CONFIG_METHOD_HW_FRAMES_CTX`
+  rather than `HW_DEVICE_CTX`.  The C helper `mm_codec_supports_hw` now OR-tests
+  both flags, making these codecs visible in the hardware probe for the first
+  time.
+
+- **Hardware acceleration: `media_type` field on HW codecs (commit `56af22c`).**
+  `HWCodecInfo` and the JSON API now carry a `media_type` field (`"video"` or
+  `"audio"`).  The Hardware dialog uses this to route codecs into separate
+  video-encode / video-decode / audio-encode / audio-decode chip rows.
+
+- **Hardware acceleration: suppress INT\_MAX max-resolution sentinel (commit `56af22c`).**
+  `AVHWFramesConstraints.max_width/max_height` is set to `INT_MAX` by backends
+  (including VideoToolbox) to mean "no limit".  The C helper now returns −1 for
+  uncapped dimensions instead of a nonsensical ~2 billion pixel value, so the
+  Hardware dialog omits the max-resolution row rather than showing garbage.
+
+- **Wave 11 #67: RTP/RTSP/RTMP/SRT/RIST URL-scheme validation + GUI affordance.**
+  `pipeline/network_url.go` adds `urlScheme`, `isNetworkInput`, and
+  `networkInputWarnings` helpers. `NormalizeConfig` (in `pipeline/normalize.go`)
+  now emits `NormalizeWarning`s for two advisory conditions: `rtsp://` or
+  `rtsps://` inputs that have no `rtsp_transport` set
+  (`Code: "input.rtsp.no_transport"`) and SRT listener-mode inputs without a
+  `listen_timeout` (`Code: "input.srt.listener_no_timeout"`). Warnings (not hard
+  errors) because libavformat will still attempt to open. `compat/ffcli`: the
+  parser now routes six per-input network flags (`-rtsp_transport`, `-stimeout`,
+  `-listen_timeout`, `-timeout`, `-rw_timeout`, `-mode`) from the default
+  `globalOpts` fallthrough to `pendingFileOpts → Input.Options`; `export.go`
+  emits the same keys as ordered `-<key> <value>` flags before `-i`; the
+  `drainTypedInputDemuxer` drop-list was extended to prevent these keys from
+  leaking into output encoder opts. GUI (`Inspector.tsx`): `InputForm` now shows
+  a coloured **RTSP / SRT / RTMP** scheme badge when the URL is a network stream
+  and renders scheme-specific option fields: `rtsp_transport` select + `stimeout`
+  input for RTSP/RTSPS; `mode` select + `listen_timeout` input for SRT; `timeout`
+  input for RTMP variants. All controls write to `Input.Options` (AVDict
+  passthrough — no schema changes required).
+
+- **Wave 11 #64: Cover art / thumbnail embedding (`Output.CoverArt`).** New `Output.CoverArt string` field (JSON: `cover_art`) selects an image file (JPEG / PNG / any libavformat-decodable format) for embedding into the output container as an `AVMEDIA_TYPE_VIDEO` stream with `AV_DISPOSITION_ATTACHED_PIC`, matching the `ffmpeg -i cover.jpg -map 1:v -c:v:1 copy -disposition:v:1 attached_pic` pattern. The CGO helper `av.(*OutputFormatContext).AddCoverArt(path)` in `av/cover_art.go` opens the image via `avformat_open_input`, creates the new video stream, copies `AVCodecParameters`, and reads the first video frame; it returns the stream index and an `*av.Packet` that must be written after `avformat_write_header`. `pipeline/handlers_sink.go` calls `AddCoverArt` before `WriteHeaderWithOptions` and writes the returned packet immediately after. `validateCoverArt` in `pipeline/cover_art.go` rejects unsupported containers with an actionable error (allowed: `mp4`, `m4a`, `mov`, `ipod`, `mp3`, `mkv`, `matroska`). `compat/ffcli` imports `-attach FILE -metadata:s:v:0 comment=Cover` and exports `Output.CoverArt` back to the same flags. GUI: `Inspector.tsx` shows a **Cover art** file-picker in `OutputForm` when the format is in the allow-list. Schemas (`v1.0.json`, `v1.1.json`) and TypeScript types (`frontend/src/lib/jobTypes.ts`) updated.
+
+- **Wave 11 #63: Device picker + Inspector form.** Frontend support for capture-device inputs. `spawnNodeFrom` in `frontend/src/lib/spawn.ts` now handles `entry.type === 'device_input'` — creates an `Input` with `format` set to the demuxer name (`dshow`, `v4l2`, etc.) and pre-populates `streams[]` from the palette entry. `MMNode.describeKind` gains a `device_input` arm (`"Capture device / Demux"`). `Inspector.tsx` adds `isDeviceInput(def)` (checks `def.format` against `{"dshow", "avfoundation", "v4l2", "gdigrab", "decklink"}`) and routes matching inputs to the new `DeviceInputForm` instead of `InputForm`. `DeviceInputForm` provides: a **Device type** dropdown (`video` / `audio` for dshow/avfoundation; `screen` for gdigrab); an async **Device name combobox** that calls `GET /api/devices?format=<fmt>` on mount and builds the platform-appropriate URL on selection (`video="<name>"` for dshow, device index for avfoundation, raw path for v4l2, `desktop` for gdigrab); a **Device URL** field for manual override; a **Test connection** button (POSTs to `/api/probe` with `format` field — Wave 11 #62); and **Capture options** fields (`framerate`, `video_size`, `pixel_format`, `sample_rate`) written to `Input.options` as AVDict entries. Graphs loaded from JSON with a device-format `Input.format` are automatically routed to `DeviceInputForm`.
+
+- **Wave 11 #62: Device probe + seek guard.** `POST /api/probe` now accepts an optional `"format"` field in the JSON body; calls `av.OpenInputWithFormat(url, format, opts)` under a 2-second goroutine+`context.WithTimeout` (returns HTTP 504 on expiry — same pattern as `GET /api/devices`). New `isDeviceFormat(name string) bool` helper in `pipeline/handlers_source.go` covers `{"dshow", "avfoundation", "v4l2", "gdigrab", "x11grab", "decklink"}`; the `openSource` seek step (which honours `-ss`) is now also skipped for device formats in addition to `lavfi`, preventing `avformat_seek_file` from blocking or erroring on live capture inputs. `handleListNodes` emits per-platform `device_input` catalog entries via `runtime.GOOS`: Windows → `dshow` (camera/mic) + `gdigrab` (screen); macOS → `avfoundation`; Linux → `v4l2`.
+
+- **Wave 11 #61: `av.ListDevices` + `GET /api/devices` endpoint.** CGO wrapper around `avdevice_list_input_sources()` in `av/list.go` (alongside `ListFilters`/`ListCodecs`). Returns `[]DeviceInfo{Name, Description}` per enumerated device. New REST endpoint `GET /api/devices?format=<fmt>` in `internal/gui/devices.go` dispatches per format: `dshow` on Windows, `avfoundation` on macOS, `v4l2` on Linux (platform default when `format` is omitted). Enumeration runs under a 2-second context timeout with the CGO call in a goroutine — Windows dshow COM enumeration can block indefinitely on in-use devices; the timeout returns HTTP 504 instead of hanging. `avdevice_register_all()` is called once via `sync.Once`. Route registered as `GET /api/devices` in `internal/gui/server.go`.
+
+- **Wave 10 #60: Hardware-filter mapping indicator + multi-device picker (GUI).** Surfaces hardware acceleration state directly in the graph editor. Every **filter** and **encoder** node in the Inspector now shows a **Hardware device** dropdown listing all `hardware_devices` entries from the job config; selecting one sets `NodeDef.device` on the node. Filter nodes also get an **Auto-map to hardware filter** checkbox (`auto_map_hw`) that is enabled only when a device is selected. On the canvas, a purple **⊞ `<device>`** badge appears on each HW-assigned node and an amber **⚠ sw/hw** badge appears on any software filter adjacent to a hardware node (indicating an implicit `hwdownload`/`hwupload` round-trip). Implemented via two new `FlowNodeData` fields (`hwDevice`, `hwRoundTrip`) computed in `app.tsx`'s `decoratedNodes` memo using the live edges graph. No backend changes.
+
+- **Wave 10 #59: Per-input hardware-accelerated decoding (`Input.HWAccel` / `Input.HWAccelDevice` / `Input.HWAccelOutputFormat`).** Promotes the global `hw_accel` knob to per-input granularity. Three new `Input` fields — `hwaccel`, `hwaccel_device`, `hwaccel_output_format` — mirror FFmpeg's per-input `-hwaccel`, `-hwaccel_device`, and `-hwaccel_output_format` flags. When `hwaccel` is non-empty the pipeline opens the video decoder for that input via `av.OpenHWDecoder` instead of the software path; `hwaccel_device` may name a pre-declared `hardware_devices` entry (reusing its `AVHWDeviceContext`) or be omitted (transient context opened at input-open time); `hwaccel_output_format` controls whether frames are transferred automatically to system RAM (e.g. `"nv12"`, `"yuv420p"`) or kept on the GPU (`"cuda"`, `"vaapi"`, `"qsv"`, …) for zero-copy filter chains. The new `av.FrameDecoder` interface unifies `*av.DecoderContext` (software) and `*av.HWDecoderContext` (hardware) so the source handler dispatches uniformly regardless of path. `compat/ffcli` now correctly latches `-hwaccel` / `-hwaccel_device` / `-hwaccel_output_format` per-input at the `-i` processing site (matching FFmpeg's actual CLI semantics); `-hwaccel_output_format` was previously silently discarded — now exported correctly. Schema (`v1.0.json`, `v1.1.json`) and TypeScript types (`frontend/src/lib/jobTypes.ts`) updated. 12 new tests.
+
+- **Wave 10 #58: Hardware filter auto-mapping (`auto_map_hw`).** Per-node
+  opt-in flag on `pipeline.NodeDef` (JSON: `auto_map_hw`). When `true`,
+  `expandHWFilterMappings` (called just before `expandImplicitEncoders`)
+  promotes the software filter name to its hardware equivalent based on
+  the node's `device` type (e.g. `"scale"` → `"scale_cuda"` on CUDA),
+  and inserts synthetic `hwupload` / `hwdownload` nodes at device
+  boundaries. 21 sw→hw filter mappings across CUDA, VAAPI, QSV,
+  VideoToolbox, Vulkan, and OpenCL. Validation rejects unsupported
+  pairings with an actionable error. `pipeline.HWFilterAlts()` exports
+  the full table for tooling. 16 new tests in
+  [pipeline/hw_filter_map_test.go](pipeline/hw_filter_map_test.go).
+  Schemas and frontend types updated.
+
 - **`av` package: frame side data API.** `av/frame_sidedata.go` exposes
   helpers to attach, read, and remove `AVFrameSideData` entries on any
   `av.Frame`:

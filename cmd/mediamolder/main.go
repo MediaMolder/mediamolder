@@ -45,6 +45,8 @@ func run(args []string) error {
 		return cmdExport(args[1:])
 	case "list-codecs":
 		return cmdListCodecs(args[1:])
+	case "list-hw-devices":
+		return cmdListHWDevices(args[1:])
 	case "list-filters":
 		return cmdListFilters(args[1:])
 	case "list-formats":
@@ -60,6 +62,8 @@ func run(args []string) error {
 		return nil
 	case "migrate":
 		return cmdMigrate(args[1:])
+	case "hwbench":
+		return cmdHWBench(args[1:])
 	case "help", "--help", "-h":
 		usage()
 		return nil
@@ -280,6 +284,46 @@ func cmdExport(args []string) error {
 	return nil
 }
 
+func cmdListHWDevices(args []string) error {
+	fs := flag.NewFlagSet("list-hw-devices", flag.ContinueOnError)
+	jsonOut := fs.Bool("json", false, "output as JSON")
+	showAll := fs.Bool("all", false, "include unavailable devices")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	probes := av.ProbeHWDevices()
+	if *jsonOut {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		type jsonProbe struct {
+			Type      string `json:"type"`
+			Available bool   `json:"available"`
+			Err       string `json:"error,omitempty"`
+		}
+		var out []jsonProbe
+		for _, p := range probes {
+			if !*showAll && !p.Available {
+				continue
+			}
+			out = append(out, jsonProbe{Type: p.Type.String(), Available: p.Available, Err: p.Err})
+		}
+		return enc.Encode(out)
+	}
+	any := false
+	for _, p := range probes {
+		if p.Available {
+			fmt.Printf("  %-16s available\n", p.Type.String())
+			any = true
+		} else if *showAll {
+			fmt.Printf("  %-16s unavailable  (%s)\n", p.Type.String(), p.Err)
+		}
+	}
+	if !any {
+		fmt.Println("  (no hardware acceleration available)")
+	}
+	return nil
+}
+
 func cmdListCodecs(args []string) error {
 	fs := flag.NewFlagSet("list-codecs", flag.ContinueOnError)
 	jsonOut := fs.Bool("json", false, "output as JSON")
@@ -437,6 +481,10 @@ Commands:
                          and render via ExportGraph instead of the shorthand path).
   migrate <config.json>  Validate config and pretty-print (v1.0 migration scaffolding).
   list-codecs            List available codecs.
+  list-hw-devices        Probe hardware acceleration devices (CUDA, VAAPI, QSV…).
+  hwbench                Benchmark encode/decode throughput and query HW capabilities.
+                         Flags: --device=TYPE, --codecs=LIST, --resolutions=LIST,
+                         --frames=N, --warmup=N, --output=FILE, --caps-only.
   list-filters           List available filters.
   list-formats           List available formats.
   list-processors        List registered go_processor processors.

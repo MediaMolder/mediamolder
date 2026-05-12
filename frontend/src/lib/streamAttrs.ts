@@ -12,6 +12,7 @@
 
 import type { FlowEdge, FlowNode } from './jsonAdapter';
 import type { Input, NodeDef, Output, ProbedStream, StreamType } from './jobTypes';
+import { findOption, getEncoderInfoSync, primaryMeta, rolesFor } from './encoderSchema';
 
 export interface EdgeAttribute {
   /** Canonical key, e.g. "pix_fmt", "width", "sample_rate". */
@@ -27,7 +28,7 @@ const VIDEO_KEYS = [
   'width', 'height', 'pix_fmt', 'frame_rate',
   'bit_depth', 'color_space', 'color_range', 'color_primaries', 'color_transfer',
   'sar', 'field_order',
-  'codec', 'profile', 'level', 'bit_rate',
+  'codec', 'profile', 'level', 'bit_rate', 'rate_control',
 ] as const;
 const AUDIO_KEYS = [
   'sample_rate', 'channels', 'channel_layout', 'sample_fmt', 'bit_depth',
@@ -43,6 +44,7 @@ function keysFor(type: StreamType): readonly string[] {
     case 'subtitle': return SUBTITLE_KEYS;
     case 'data': return DATA_KEYS;
     case 'metadata': return [];
+    case 'attachment': return [];
   }
 }
 
@@ -61,6 +63,7 @@ export function attrLabel(key: string): string {
     case 'color_primaries': return 'primaries';
     case 'color_transfer': return 'trc';
     case 'field_order': return 'field';
+    case 'rate_control': return 'rate control';
     default: return key;
   }
 }
@@ -104,11 +107,101 @@ export function formatBitRateString(s: string): string {
 }
 
 /**
+ * Derive the per-component bit depth from a pixel-format name.
+ * Handles high-bit-depth planar formats (yuv420p10le → 10, p010le → 10)
+ * and packed RGB exceptions (rgb48le → 16 per component). Returns 8 for
+ * all standard 8-bit formats (yuv420p, rgb24, nv12, rgba, …).
+ */
+function pixFmtBitDepth(pf: string): number {
+  // Packed RGB/RGBA where the suffix is total bits, not per-component.
+  const packedExceptions: Record<string, number> = {
+    rgb48le: 16, rgb48be: 16, bgr48le: 16, bgr48be: 16,
+    rgba64le: 16, rgba64be: 16, bgra64le: 16, bgra64be: 16,
+  };
+  if (pf in packedExceptions) return packedExceptions[pf];
+  // High-bit planar/semi-planar names end with NNle or NNbe (NN ≥ 10).
+  const m = pf.match(/(\d{2,})(le|be)$/);
+  if (m) return parseInt(m[1], 10);
+  // Everything else is 8-bit.
+  return 8;
+}
+
+/**
+ * Uncompressed bits-per-pixel for a pixel format.
+ * Based on chroma subsampling ratios and component depth.
+ * Returns undefined for unknown/exotic formats.
+ */
+function pixFmtBitsPerPixel(pf: string): number | undefined {
+  const known: Record<string, number> = {
+    // 4:2:0  8-bit (12 bpp)
+    yuv420p: 12, yuvj420p: 12, nv12: 12, nv21: 12,
+    // 4:2:0 10-bit (15 bpp)
+    yuv420p10le: 15, yuv420p10be: 15, p010le: 15, p010be: 15,
+    // 4:2:0 12-bit (18 bpp)
+    yuv420p12le: 18, yuv420p12be: 18,
+    // 4:2:2  8-bit (16 bpp)
+    yuv422p: 16, yuvj422p: 16, uyvy422: 16, yuyv422: 16, yvyu422: 16,
+    // 4:2:2 10-bit (20 bpp)
+    yuv422p10le: 20, yuv422p10be: 20, p210le: 20, p210be: 20,
+    // 4:2:2 12-bit (24 bpp)
+    yuv422p12le: 24, yuv422p12be: 24,
+    // 4:4:4  8-bit (24 bpp)
+    yuv444p: 24, yuvj444p: 24, gbrp: 24,
+    // 4:4:4 10-bit (30 bpp)
+    yuv444p10le: 30, yuv444p10be: 30, gbrp10le: 30, gbrp10be: 30,
+    // 4:4:4 12-bit (36 bpp)
+    yuv444p12le: 36, yuv444p12be: 36, gbrp12le: 36, gbrp12be: 36,
+    // 4:4:4 14-bit (42 bpp)
+    yuv444p14le: 42, yuv444p14be: 42,
+    // 4:4:4 16-bit (48 bpp)
+    yuv444p16le: 48, yuv444p16be: 48, gbrp16le: 48, gbrp16be: 48,
+    // 4:1:1  8-bit (9 bpp)
+    yuv411p: 9, yuvj411p: 9,
+    // Grayscale
+    gray: 8, gray8: 8, gray10le: 10, gray12le: 12, gray16le: 16, gray16be: 16,
+    // Packed RGB
+    rgb24: 24, bgr24: 24,
+    rgba: 32, argb: 32, bgra: 32, abgr: 32,
+    rgb48le: 48, rgb48be: 48, bgr48le: 48, bgr48be: 48,
+    rgba64le: 64, rgba64be: 64, bgra64le: 64, bgra64be: 64,
+  };
+  return known[pf];
+}
+
+/** Bits per sample for a libav sample_fmt name (packed and planar). */
+function sampleFmtBits(sf: string | undefined): number | undefined {
+  if (!sf) return undefined;
+  const known: Record<string, number> = {
+    u8: 8,  u8p: 8,
+    s16: 16, s16p: 16,
+    s32: 32, s32p: 32,
+    flt: 32, fltp: 32,
+    dbl: 64, dblp: 64,
+    s64: 64, s64p: 64,
+  };
+  return known[sf];
+}
+
+/**
+ * Parse a frame-rate string that may be a decimal ("23.976") or a
+ * rational ("24000/1001"). Returns NaN for unparseable input.
+ */
+function parseFrameRate(s: string): number {
+  const slash = s.indexOf('/');
+  if (slash !== -1) {
+    const num = parseFloat(s.slice(0, slash));
+    const den = parseFloat(s.slice(slash + 1));
+    return den > 0 ? num / den : NaN;
+  }
+  return parseFloat(s);
+}
+
+/**
  * Extract attributes that a single graph node establishes for the given
  * stream type. Returns a partial map; absent keys mean "not set by this node".
  */
-function attrsFromGraphNode(node: NodeDef, type: StreamType): Record<string, string> {
-  const out: Record<string, string> = {};
+function attrsFromGraphNode(node: NodeDef, type: StreamType): Record<string, string | null> {
+  const out: Record<string, string | null> = {};
   const p = node.params ?? {};
   const get = (k: string) => asString(p[k]);
 
@@ -133,7 +226,10 @@ function attrsFromGraphNode(node: NodeDef, type: StreamType): Record<string, str
           if (w) out['width'] = w;
           if (h) out['height'] = h;
           const pf = get('format') ?? get('pix_fmt');
-          if (pf) out['pix_fmt'] = pf;
+          if (pf) {
+            out['pix_fmt'] = pf;
+            out['bit_depth'] = `${pixFmtBitDepth(pf)} bit`;
+          }
           break;
         }
         case 'pad':
@@ -146,7 +242,11 @@ function attrsFromGraphNode(node: NodeDef, type: StreamType): Record<string, str
         }
         case 'format': {
           const pf = get('pix_fmts') ?? get('pix_fmt');
-          if (pf) out['pix_fmt'] = pf.split('|')[0];
+          if (pf) {
+            const resolved = pf.split('|')[0];
+            out['pix_fmt'] = resolved;
+            out['bit_depth'] = `${pixFmtBitDepth(resolved)} bit`;
+          }
           break;
         }
         case 'fps':
@@ -197,14 +297,82 @@ function attrsFromGraphNode(node: NodeDef, type: StreamType): Record<string, str
         }
       }
     }
+    // Decoded frames flowing through filter nodes have no codec identity
+    // and no compressed bit rate — block all of these from propagating
+    // upstream so the input's ProRes/h264/bitrate doesn't bleed through.
+    for (const k of ['codec', 'profile', 'level', 'bit_rate'] as const) {
+      if (!(k in out)) out[k] = null;
+    }
   }
 
-  // Encoder nodes: declare the codec.
+  // Encoder nodes: declare the codec, rate control mode, and bitrate.
   if (node.type === 'encoder') {
     const codec = node.filter ?? get('codec');
     if (codec) out['codec'] = codec;
-    const br = get('b') ?? get('bitrate') ?? get('bit_rate');
-    if (br) out['bit_rate'] = formatBitRateString(br);
+
+    // Quality/constant-rate-factor modes: CRF (libx264/libx265/libsvtav1/…),
+    // CQ (nvenc), ICQ/global_quality (qsv), QP.
+    const crfExplicit = get('crf') ?? get('cq') ?? get('global_quality');
+    const qpExplicit  = get('qp')  ?? get('qp_i');
+    const br          = get('b')   ?? get('bitrate') ?? get('bit_rate');
+    const rcMode      = get('rc_mode') ?? get('rc');
+
+    if (crfExplicit !== undefined) {
+      // CRF/CQ/ICQ encode — output bitrate is unknowable until encoding.
+      const label = (get('crf') !== undefined ? 'CRF'
+                  : get('cq')  !== undefined ? 'CQ'
+                  : 'ICQ');
+      out['rate_control'] = `${label} ${crfExplicit}`;
+      out['bit_rate'] = null;
+    } else if (qpExplicit !== undefined) {
+      out['rate_control'] = `QP ${qpExplicit}`;
+      out['bit_rate'] = null;
+    } else if (br) {
+      out['bit_rate'] = formatBitRateString(br);
+      if (rcMode) out['rate_control'] = rcMode.toUpperCase();
+    } else {
+      // No explicit rate params. Always null bit_rate so the upstream
+      // decoded rate never leaks onto an encoder output edge.
+      out['bit_rate'] = null;
+      if (codec) {
+        // If the schema is already cached, determine the default RC mode
+        // and show it (e.g. libx264 defaults to CRF 23).
+        const info = getEncoderInfoSync(codec);
+        if (info) {
+          const roles = rolesFor(codec, info.options);
+          const defaultRc = roles.default_rc ?? (roles.crf ? 'crf' : roles.qp ? 'qp' : 'bitrate');
+          if ((defaultRc === 'crf') && roles.crf) {
+            const crfOpt = findOption(info.options, roles.crf);
+            const label  = roles.crf === 'cq' ? 'CQ' : roles.crf === 'global_quality' ? 'ICQ' : 'CRF';
+            if (crfOpt) {
+              const meta = primaryMeta(codec, crfOpt);
+              out['rate_control'] = meta.default
+                ? `${label} ${meta.default} (default)`
+                : `${label} (default)`;
+            } else {
+              out['rate_control'] = `${label} (default)`;
+            }
+          } else if (defaultRc === 'qp' && roles.qp) {
+            const qpOpt = findOption(info.options, roles.qp);
+            if (qpOpt) {
+              const meta = primaryMeta(codec, qpOpt);
+              out['rate_control'] = meta.default
+                ? `QP ${meta.default} (default)`
+                : 'QP (default)';
+            } else {
+              out['rate_control'] = 'QP (default)';
+            }
+          } else if (defaultRc === 'bitrate' && roles.bit_rate) {
+            const brOpt = findOption(info.options, roles.bit_rate);
+            const defVal = brOpt?.default?.int;
+            if (defVal !== undefined && defVal > 0) {
+              out['bit_rate'] = formatBitRate(defVal) + ' (default)';
+            }
+          }
+        }
+      }
+    }
+    if (rcMode && !('rate_control' in out)) out['rate_control'] = rcMode.toUpperCase();
   }
 
   return out;
@@ -225,10 +393,10 @@ function attrsFromInput(inp: Input, type: StreamType, probed?: ProbedStream[]): 
         const s = asString(v);
         if (s !== undefined) out[k] = s;
       };
-      set('codec', ps.codec);
-      if (ps.profile) set('profile', ps.profile);
-      if (ps.level) set('level', ps.level);
-      if (ps.bit_rate) set('bit_rate', formatBitRate(ps.bit_rate));
+      // codec / profile / level / bit_rate are compressed-stream properties.
+      // Every edge leaving an input node carries *decoded* frames, so these
+      // must not appear here (they would be as misleading as showing "prores"
+      // on a raw-YUV decoded-frame edge).
       if (ps.bit_depth) set('bit_depth', `${ps.bit_depth} bit`);
       if (type === 'video') {
         set('width', ps.width);
@@ -269,7 +437,7 @@ function attrsFromOutput(out: Output, type: StreamType): Record<string, string> 
   return m;
 }
 
-function nodeAttrs(node: FlowNode, type: StreamType): Record<string, string> {
+function nodeAttrs(node: FlowNode, type: StreamType): Record<string, string | null> {
   const ref = node.data.ref;
   switch (ref.kind) {
     case 'input': return attrsFromInput(ref.def, type, node.data.probed);
@@ -299,6 +467,9 @@ export function inferEdgeAttributes(
   }
 
   const result: Record<string, EdgeAttribute> = {};
+  // Keys that a node explicitly cleared (null sentinel) — stop propagating
+  // them from further upstream nodes.
+  const blocked = new Set<string>();
   const visited = new Set<string>();
   const queue: string[] = [edge.source];
 
@@ -310,15 +481,60 @@ export function inferEdgeAttributes(
     if (!n) continue;
     const attrs = nodeAttrs(n, type);
     for (const [k, v] of Object.entries(attrs)) {
+      if (blocked.has(k)) continue;
+      if (v === null) {
+        blocked.add(k);
+        continue;
+      }
       if (!(k in result)) {
         result[k] = { key: k, value: v, source: n.data.label };
       }
     }
     // Stop when we have everything we display for this stream type.
-    if (keysFor(type).every((k) => k in result)) break;
-    // Otherwise keep walking upstream.
+    if (keysFor(type).every((k) => k in result || blocked.has(k))) break;
+    // Keep walking upstream so spatial attrs (width/height/fps/pix_fmt/…)
+    // propagate through encoder nodes. Compressed bitrate and codec identity
+    // are already blocked by the null sentinels emitted by filter nodes or
+    // by quality-mode encoder nodes above.
     const incoming = incomingByNode.get(nid) ?? [];
     for (const inc of incoming) queue.push(inc.source);
+  }
+
+  // For decoded video streams all compressed-bitrate attrs have been
+  // blocked by the null sentinel. Compute the uncompressed rate from
+  // first principles: w × h × fps × bits_per_pixel.
+  // Skip when the edge source is an encoder — its output is a compressed
+  // bitstream, not decoded frames, so the decoded rate formula is wrong.
+  const sourceNode = nodeById.get(edge.source);
+  const sourceIsEncoder = sourceNode?.data.ref.kind === 'node'
+    && sourceNode.data.ref.def.type === 'encoder';
+  if (type === 'video' && !('bit_rate' in result) && !sourceIsEncoder) {
+    const w = result['width'] ? parseInt(result['width'].value, 10) : NaN;
+    const h = result['height'] ? parseInt(result['height'].value, 10) : NaN;
+    const fpsStr = result['frame_rate']?.value;
+    const fps = fpsStr ? parseFrameRate(fpsStr) : NaN;
+    const pf = result['pix_fmt']?.value;
+    if (!isNaN(w) && !isNaN(h) && !isNaN(fps) && pf) {
+      const bpp = pixFmtBitsPerPixel(pf);
+      if (bpp !== undefined) {
+        const bps = w * h * fps * bpp;
+        result['bit_rate'] = { key: 'bit_rate', value: formatBitRate(bps) + ' (decoded)', source: 'calculated' };
+      }
+    }
+  }
+
+  // For decoded audio streams compute the uncompressed rate from
+  // first principles: sample_rate × channels × bits_per_sample.
+  if (type === 'audio' && !('bit_rate' in result) && !sourceIsEncoder) {
+    const srStr = result['sample_rate']?.value;
+    const sr = srStr ? parseInt(srStr, 10) : NaN;
+    const chStr = result['channels']?.value;
+    const ch = chStr ? parseInt(chStr, 10) : NaN;
+    const sf = result['sample_fmt']?.value;
+    const bps = sampleFmtBits(sf);
+    if (!isNaN(sr) && !isNaN(ch) && bps !== undefined) {
+      result['bit_rate'] = { key: 'bit_rate', value: formatBitRate(sr * ch * bps) + ' (decoded)', source: 'calculated' };
+    }
   }
 
   // Preserve the canonical display order.

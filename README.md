@@ -19,7 +19,10 @@ Version 1.x should be considered experimental.
 
 - **Deliver a modern media processing engine** that improves orchestration, usability, execution, observability, and reliability.
 - **Provide a fully declarative, version-controlled configuration model** using JSON pipeline files and native Go structs.
-- **Significantly improve usability with an intuitive graphical user interface**
+- **Significantly improve usability with an intuitive graphical user interface**,
+  including a live **Hardware Capabilities dialog** that shows every available
+  GPU/accelerator backend, its supported encode/decode codecs grouped by media
+  type, and any unavailable backends with diagnostic messages.
 - **Preserve all of FFmpeg’s modern media capabilities** (formats, codecs, filters, devices, bitstream filters) via direct, zero-overhead libav* bindings.
 	- Some older (obsolete) features will be deprecated.
 - **Support custom processor nodes** inside any media processing pipeline — no rebuilds, no C code, no cryptic filtergraph hacks (see below).
@@ -218,13 +221,16 @@ the encoder node in the resulting graph; `-c:v copy` / `-c:a copy`
 produce a stream-copy node. The same parser is exposed in the GUI via
 the **Import FFmpeg command** toolbar button (`POST /api/convert-cmd`).
 
-List available codecs, filters, or formats:
+List available codecs, filters, formats, or hardware devices:
 ```sh
 mediamolder list-codecs
 mediamolder list-filters
 mediamolder list-formats
 mediamolder list-processors
 mediamolder list-codecs --json   # JSON output
+mediamolder list-hw-devices      # probe which HW accelerators are available
+mediamolder list-hw-devices --json   # machine-readable output
+mediamolder list-hw-devices --all    # include unavailable devices
 ```
 
 ## Go processor nodes

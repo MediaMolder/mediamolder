@@ -35,6 +35,16 @@
       "type": "object",
       "description": "Named asset registry. Each key is a symbolic asset name referenced in filter params as \"$asset:<name>\"; the runtime substitutes the resolved filesystem path before building the libavfilter graph. Typical use-cases: fonts for drawtext=/subtitles=, ML models for arnndn=, LUT files for lut3d=/haldclut=.",
       "additionalProperties": { "$ref": "#/$defs/asset_ref" }
+    },
+    "hardware_devices": {
+      "type": "array",
+      "description": "Named hardware-acceleration device contexts. Each entry is opened via av_hwdevice_ctx_create at pipeline start and referenced from nodes by name via the \"device\" field. Mirrors ffmpeg's -init_hw_device. (Wave 10 #56)",
+      "items": { "$ref": "#/$defs/hardware_device" }
+    },
+    "filter_asset_paths": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Directories searched when resolving relative model-file paths that appear directly in filter params (e.g. arnndn model=rnnoise.rnnn, sofalizer sofa=file.sofa). Checked in declaration order after the pipeline file's own directory. Absolute param values are checked directly; $asset: references bypass this check. (Wave 11 #66)"
     }
   },
   "$defs": {
@@ -67,6 +77,9 @@
         "read_rate": { "type": "number", "minimum": 0, "description": "Pace packet reads to (read_rate × realtime). 0 = unpaced; 1.0 mirrors ffmpeg `-re`." },
         "read_rate_initial_burst": { "type": "number", "minimum": 0, "description": "Seconds of media time read unpaced at the start of the input. Defaults to 0.5s when read_rate is non-zero." },
         "read_rate_catchup": { "type": "number", "minimum": 0, "description": "Multiplier used to recover from a pacing lag; must be >= read_rate when set." },
+        "hwaccel": { "type": "string", "description": "Hardware acceleration API for decoding video streams in this input. Mirrors FFmpeg's per-input -hwaccel flag (e.g. \"cuda\", \"vaapi\", \"qsv\", \"videotoolbox\"). Empty = software decode. (Wave 10 #59)" },
+        "hwaccel_device": { "type": "string", "description": "Name of a hardware_devices entry to use for decoding this input. Mirrors FFmpeg's per-input -hwaccel_device flag. Ignored when hwaccel is empty. (Wave 10 #59)" },
+        "hwaccel_output_format": { "type": "string", "description": "Pixel format produced by the hardware decoder. Mirrors FFmpeg's per-input -hwaccel_output_format flag. Software formats (nv12, yuv420p, …) trigger automatic hw→sw transfer; hardware formats (cuda, vaapi, …) keep frames on the GPU. (Wave 10 #59)" },
         "streams": {
           "type": "array",
           "items": { "$ref": "#/$defs/stream_select" }
@@ -85,7 +98,7 @@
         "input_index": { "type": "integer", "minimum": 0 },
         "type": {
           "type": "string",
-          "enum": ["video", "audio", "subtitle", "data"]
+          "enum": ["video", "audio", "subtitle", "data", "attachment"]
         },
         "track": { "type": "integer", "minimum": 0 },
         "all": { "type": "boolean", "default": false },
@@ -143,7 +156,9 @@
           "enum": ["video", "audio", "subtitle", "data"],
           "description": "Declared output media type. Required for cross-media-type filters (showwavespic, showspectrumpic, showvolume, ...) where the output type cannot be inferred from the inbound edge type. Auto-filled from a curated registry when omitted."
         },
-        "error_policy": { "$ref": "#/$defs/error_policy" }
+        "error_policy": { "$ref": "#/$defs/error_policy" },
+        "device": { "type": "string", "description": "Name of a hardware_devices entry whose opened AVHWDeviceContext is used for HW-accelerated encode/decode/filter on this node. (Wave 10 #56)" },
+        "auto_map_hw": { "type": "boolean", "description": "Opt-in per-node hardware filter auto-mapping. When true, the sw filter name (e.g. \"scale\") is promoted to its hw equivalent (e.g. \"scale_cuda\") based on the device type, and hwupload/hwdownload nodes are inserted at device boundaries. Requires \"device\" to be set. (Wave 10 #58)" }
       }
     },
     "edge": {
@@ -196,6 +211,7 @@
         "streams": { "type": "array", "items": { "$ref": "#/$defs/stream_spec" }, "description": "Per-stream metadata + disposition overrides. Mirrors ffmpeg `-metadata:s:<type>:<idx> key=value` and `-disposition:s:<type>:<idx> flags`." },
         "chapters": { "type": "array", "items": { "$ref": "#/$defs/chapter" }, "description": "Explicit chapter table. Replaces any chapters mapped from inputs via `input.map_chapters`. Container must support chapters (matroska, mp4, ogg, ffmetadata, ...)." },
         "attachments": { "type": "array", "items": { "$ref": "#/$defs/attachment" }, "description": "Files muxed into the container as AVMEDIA_TYPE_ATTACHMENT streams (matroska / mkv / webm only). Mirrors FFmpeg `-attach FILE`." },
+        "cover_art": { "type": "string", "description": "Path to a cover-art image (JPEG / PNG / any libavformat-decodable format) embedded as an AVMEDIA_TYPE_VIDEO stream with AV_DISPOSITION_ATTACHED_PIC before avformat_write_header. Supported containers: mp4 / m4a / mov / ipod / mp3 / mkv / matroska. Mirrors `-i cover.jpg -map 1:v -c:v:1 copy -disposition:v:1 attached_pic`. Wave 11 #64." },
         "kind": { "type": "string", "enum": ["", "file", "tee"], "description": "Output discriminator. '' / 'file' open a single muxer at `url`; 'tee' uses libavformat's tee muxer to fan one encoded stream out to N targets. When 'tee', `targets` is required and `url` / `format` are ignored." },
         "targets": { "type": "array", "items": { "$ref": "#/$defs/tee_target" }, "description": "Slaves of a tee output (only valid when kind='tee'). Mirrors the FFmpeg `-f tee \"[opt=val]url|[opt=val]url\"` slaves grammar." },
         "pass": { "type": "integer", "minimum": 0, "maximum": 3, "description": "Two-pass video encoding bit-field. 0 = single-pass (default); 1 = analysis pass (-pass 1, AV_CODEC_FLAG_PASS1); 2 = final pass (-pass 2, AV_CODEC_FLAG_PASS2); 3 = both bits set. The job is run twice by the caller: once with pass=1, once with pass=2, against the same passlogfile prefix. Honoured only on video encoders." },
@@ -398,6 +414,17 @@
         "path": { "type": "string", "minLength": 1, "description": "Filesystem path of the asset (absolute or relative to working directory / MEDIAMOLDER_ASSET_PATH)." },
         "kind": { "type": "string", "enum": ["font", "model", "lut", "other"], "description": "Asset type for GUI classification: font (TTF/OTF), model (ML model file), lut (.cube/.3dl), other." },
         "desc": { "type": "string", "description": "Optional human-readable label shown in the GUI asset registry." }
+      }
+    },
+    "hardware_device": {
+      "type": "object",
+      "required": ["name", "type"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "description": "Symbolic label for the device (e.g. \"gpu0\"). Referenced from NodeDef.device." },
+        "type": { "type": "string", "description": "Hardware device type: \"cuda\", \"vaapi\", \"qsv\", \"videotoolbox\", etc. Passed to av_hwdevice_find_type_by_name." },
+        "device": { "type": "string", "description": "OS-level device specifier (e.g. \"/dev/dri/renderD128\", \"0\"). Empty string selects the first available device." },
+        "options": { "type": "object", "additionalProperties": true, "description": "Extra AVDictionary entries forwarded to av_hwdevice_ctx_create." }
       }
     }
   }

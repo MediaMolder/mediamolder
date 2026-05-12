@@ -13,11 +13,12 @@ import (
 type PortType string
 
 const (
-	PortVideo    PortType = "video"
-	PortAudio    PortType = "audio"
-	PortSubtitle PortType = "subtitle"
-	PortData     PortType = "data"
-	PortMetadata PortType = "metadata" // routes container/stream metadata or chapters (Wave 2 #11)
+	PortVideo      PortType = "video"
+	PortAudio      PortType = "audio"
+	PortSubtitle   PortType = "subtitle"
+	PortData       PortType = "data"
+	PortAttachment PortType = "attachment" // AVMEDIA_TYPE_ATTACHMENT streams (fonts, cover art); copy-only (Wave 11 #65)
+	PortMetadata   PortType = "metadata"   // routes container/stream metadata or chapters (Wave 2 #11)
 )
 
 // NodeKind classifies a node in the processing graph.
@@ -92,6 +93,14 @@ type NodeDef struct {
 	// output type cannot be inferred from the inbound edge type. Build
 	// rejects any outbound edge whose Type does not match. (Wave 7 #37)
 	OutputMediaType PortType
+	// Device names a HardwareDevice entry (from pipeline.Config.HardwareDevices)
+	// whose opened AVHWDeviceContext is used for this node. Empty = CPU path.
+	// (Wave 10 #56)
+	Device string
+	// AutoMapHW opts this filter node into the hardware filter
+	// auto-mapping pass in pipeline (expandHWFilterMappings). See
+	// pipeline.NodeDef.AutoMapHW for the full contract. (Wave 10 #58)
+	AutoMapHW bool
 	// Internal carries typed lowering output produced by
 	// pipeline.NormalizeConfig (Milestone B). It is the typed
 	// replacement for the historical __* sentinel keys in Params.
@@ -124,6 +133,10 @@ type Node struct {
 	// filters (e.g. showwavespic: audio in, video out). Empty when the
 	// downstream type matches the upstream type. (Wave 7 #37)
 	OutputMediaType PortType
+	// Device names the hardware-acceleration device context (from
+	// pipeline.Config.HardwareDevices) to use for this node. Empty = CPU path.
+	// (Wave 10 #56)
+	Device string
 	// Internal carries typed lowering output. Forwarded verbatim
 	// from NodeDef.Internal by Build. See internal_fields.go and
 	// pipeline.NormalizeConfig.
@@ -183,6 +196,9 @@ func Build(def *Def) (*Graph, error) {
 			return nil, err
 		}
 		g.Nodes[nd.ID].Internal = nd.Internal
+		if nd.Device != "" {
+			g.Nodes[nd.ID].Device = nd.Device
+		}
 		if nd.OutputMediaType != "" {
 			if kind != KindFilter {
 				return nil, fmt.Errorf("node %q: output_media_type only valid on filter nodes", nd.ID)

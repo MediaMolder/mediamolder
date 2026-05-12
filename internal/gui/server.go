@@ -40,8 +40,12 @@ func NewServer(opts Options) (*http.Server, error) {
 	mux.HandleFunc("GET /api/health", handleHealth)
 	mux.HandleFunc("GET /api/examples", makeExamplesHandler(opts.ExamplesDir))
 	mux.HandleFunc("GET /api/nodes", handleListNodes)
+	mux.HandleFunc("GET /api/devices", handleListDevices)
+	mux.HandleFunc("GET /api/hwaccel", handleListHWAccel)
 	mux.HandleFunc("GET /api/files", handleListDir)
 	mux.HandleFunc("POST /api/files/mkdir", handleMkdir)
+	mux.HandleFunc("GET /api/file", handleReadFile)
+	mux.HandleFunc("PUT /api/file", handleWriteFile)
 	mux.HandleFunc("POST /api/probe", handleProbe)
 	mux.HandleFunc("POST /api/convert-cmd", handleConvertCmd)
 	mux.HandleFunc("POST /api/export-cmd", handleExportCmd)
@@ -69,6 +73,10 @@ func NewServer(opts Options) (*http.Server, error) {
 			fmt.Fprintln(w, "mediamolder gui (dev mode): run `npm run dev` in frontend/ and open http://127.0.0.1:5173")
 		})
 	}
+
+	// Warm up the hardware-acceleration probe in the background so the
+	// first GET /api/hwaccel request does not stall the browser.
+	go probeHWAccelOnce()
 
 	return &http.Server{
 		Addr:              opts.Addr,

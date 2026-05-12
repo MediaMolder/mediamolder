@@ -59,6 +59,8 @@ func configToGraphDef(cfg *Config) *graph.Def {
 			Processor:       node.Processor,
 			Params:          params,
 			OutputMediaType: omt,
+			Device:          node.Device,
+			AutoMapHW:       node.AutoMapHW,
 			Internal:        internal,
 		})
 	}
@@ -108,7 +110,9 @@ func configToGraphDef(cfg *Config) *graph.Def {
 			Type: e.Type,
 		})
 	}
+	expandHWFilterMappings(cfg, def)
 	expandImplicitEncoders(cfg, def)
+	spliceAudioMergeForMultiInputEncoders(def)
 	spliceAudioAdaptersForEncoders(def)
 	spliceAudioSyncForOutputs(cfg, def)
 	// Loudnorm two-pass shuttle: walk loudnorm filter nodes and stamp
@@ -156,6 +160,74 @@ var audioEncoderRequirements = map[string]audioEncoderRequirement{
 	"eac3":       {sampleFmt: "fltp", frameSize: 1536, hasFrameSz: true},
 }
 
+// spliceAudioMergeForMultiInputEncoders inserts a synthetic amerge filter
+// in front of every encoder node that has more than one inbound audio edge.
+// This lets users wire multiple audio source handles directly to an audio
+// encoder node and have the merge happen transparently, without placing an
+// explicit amerge node on the canvas.
+//
+// Synthetic nodes use the "__amerge__" prefix to avoid colliding with
+// user-supplied node IDs. The pass runs after expandImplicitEncoders and
+// before spliceAudioAdaptersForEncoders so the resulting single-input
+// encoder edge still gets the aformat/asetnsamples adapter when needed.
+func spliceAudioMergeForMultiInputEncoders(def *graph.Def) {
+	head := func(ref string) string {
+		if i := strings.IndexByte(ref, ':'); i >= 0 {
+			return ref[:i]
+		}
+		return ref
+	}
+
+	// Collect all encoder node IDs.
+	encoders := make(map[string]bool)
+	for _, n := range def.Nodes {
+		if n.Type == "encoder" {
+			encoders[n.ID] = true
+		}
+	}
+
+	// Group audio edge indices by target encoder ID.
+	encEdges := make(map[string][]int)
+	for i := range def.Edges {
+		e := &def.Edges[i]
+		if e.Type != "audio" {
+			continue
+		}
+		toID := head(e.To)
+		if encoders[toID] {
+			encEdges[toID] = append(encEdges[toID], i)
+		}
+	}
+
+	var addedNodes []graph.NodeDef
+	var addedEdges []graph.EdgeDef
+	for encID, idxs := range encEdges {
+		if len(idxs) < 2 {
+			continue // single input — no merge needed
+		}
+		mergeID := "__amerge__" + encID
+		mergeNode := graph.NodeDef{
+			ID:     mergeID,
+			Type:   "filter",
+			Filter: fmt.Sprintf("amerge=inputs=%d", len(idxs)),
+			Internal: graph.Internal{
+				Generated: &graph.GeneratedNode{
+					By:     "spliceAudioMergeForMultiInputEncoders",
+					From:   encID,
+					Reason: fmt.Sprintf("auto-merge %d audio inputs for encoder %s", len(idxs), encID),
+				},
+			},
+		}
+		addedNodes = append(addedNodes, mergeNode)
+		for _, idx := range idxs {
+			def.Edges[idx].To = mergeID
+		}
+		addedEdges = append(addedEdges, graph.EdgeDef{From: mergeID, To: encID, Type: "audio"})
+	}
+	def.Nodes = append(def.Nodes, addedNodes...)
+	def.Edges = append(def.Edges, addedEdges...)
+}
+
 // spliceAudioAdaptersForEncoders rewrites edges that feed an audio
 // encoder directly from a source / decoder, inserting a synthetic
 // libavfilter node that conforms the stream to the encoder's sample
@@ -197,10 +269,21 @@ func spliceAudioAdaptersForEncoders(def *graph.Def) {
 		if !known {
 			continue
 		}
-		// Skip if the source is already a filter or processor: the
-		// user (or another splice pass) has set up the format chain.
+		// Skip only if the immediate upstream is a synthetic adapter
+		// already inserted by this pass or by spliceAudioSyncForOutputs
+		// (IDs start with "__aspl__" or "__async__"), or a go_processor
+		// that is assumed to own its output format.
+		// Do NOT skip for arbitrary user-placed filters (e.g. amerge,
+		// aresample, loudnorm): they do not guarantee the sample format
+		// or frame size the encoder requires, so the adapter must still
+		// be inserted.
 		if srcNode, ok := nodeByID[head(e.From)]; ok {
-			if srcNode.Type == "filter" || srcNode.Type == "go_processor" {
+			if srcNode.Type == "go_processor" {
+				continue
+			}
+			if srcNode.Type == "filter" &&
+				(strings.HasPrefix(head(e.From), "__aspl__") ||
+					strings.HasPrefix(head(e.From), "__async__")) {
 				continue
 			}
 		}

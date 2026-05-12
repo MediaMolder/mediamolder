@@ -56,11 +56,12 @@ import (
 type MediaType int
 
 const (
-	MediaTypeVideo    MediaType = MediaType(C.AVMEDIA_TYPE_VIDEO)
-	MediaTypeAudio    MediaType = MediaType(C.AVMEDIA_TYPE_AUDIO)
-	MediaTypeSubtitle MediaType = MediaType(C.AVMEDIA_TYPE_SUBTITLE)
-	MediaTypeData     MediaType = MediaType(C.AVMEDIA_TYPE_DATA)
-	MediaTypeUnknown  MediaType = MediaType(C.AVMEDIA_TYPE_UNKNOWN)
+	MediaTypeVideo      MediaType = MediaType(C.AVMEDIA_TYPE_VIDEO)
+	MediaTypeAudio      MediaType = MediaType(C.AVMEDIA_TYPE_AUDIO)
+	MediaTypeSubtitle   MediaType = MediaType(C.AVMEDIA_TYPE_SUBTITLE)
+	MediaTypeData       MediaType = MediaType(C.AVMEDIA_TYPE_DATA)
+	MediaTypeAttachment MediaType = MediaType(C.AVMEDIA_TYPE_ATTACHMENT)
+	MediaTypeUnknown    MediaType = MediaType(C.AVMEDIA_TYPE_UNKNOWN)
 )
 
 func (m MediaType) String() string {
@@ -73,6 +74,8 @@ func (m MediaType) String() string {
 		return "subtitle"
 	case MediaTypeData:
 		return "data"
+	case MediaTypeAttachment:
+		return "attachment"
 	default:
 		return "unknown"
 	}

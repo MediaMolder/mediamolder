@@ -201,6 +201,40 @@ export function EncoderForm({ def, onChange }: Props) {
         <strong>{prettyCodecFormat(info, codec)}</strong>
       </div>
 
+      {info.media_type === 'audio' && (
+        <>
+          <label>Input channel layout</label>
+          <select
+            value={getParam('channel_layout') || ''}
+            onChange={(e) => {
+              const v = e.target.value;
+              const next = { ...(def.params ?? {}) };
+              if (v === '') delete next['channel_layout']; else next['channel_layout'] = v;
+              delete next['multi_input_audio'];
+              delete next['audio_inputs'];
+              onChange({ ...def, params: next });
+            }}
+          >
+            <option value="">Auto (from source)</option>
+            <option value="mono">Mono</option>
+            <option value="stereo">Stereo — FL FR</option>
+            <option value="2.1">2.1 — FL FR LFE</option>
+            <option value="3.0">3.0 — FL FR FC</option>
+            <option value="4.0">4.0 — FL FR FC BC</option>
+            <option value="5.0">5.0 — FL FR FC BL BR</option>
+            <option value="5.1">5.1 — FL FR FC LFE BL BR</option>
+            <option value="6.1">6.1 — FL FR FC LFE BL BR BC</option>
+            <option value="7.1">7.1 — FL FR FC LFE BL BR SL SR</option>
+          </select>
+          {getParam('channel_layout') && (
+            <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 2 }}>
+              Renders one input handle per channel. Wire individual source tracks to each channel.
+              The pipeline merges them automatically before encoding.
+            </div>
+          )}
+        </>
+      )}
+
       {preset && (
         <PrimaryRow
           codec={codec}

@@ -112,7 +112,16 @@ var curatedNodes = map[string]NodeMeta{
 	"lowpass":     {Friendly: "Low-pass filter"},
 	"aresample":   {Friendly: "Resample audio", Aliases: []string{"sample rate"}},
 	"pan":         {Friendly: "Channel mix (pan)", Aliases: []string{"downmix", "channel"}},
-
+	// ── Filters: routing & composition ─────────────────────────────────────
+	"split":   {Friendly: "Split video", Aliases: []string{"duplicate", "fan-out", "tee"}},
+	"asplit":  {Friendly: "Split audio", Aliases: []string{"duplicate", "fan-out", "tee"}},
+	"overlay": {Friendly: "Overlay / picture-in-picture", Aliases: []string{"pip", "composite"}},
+	"hstack":  {Friendly: "Stack horizontal", Aliases: []string{"side by side"}},
+	"vstack":  {Friendly: "Stack vertical"},
+	"xstack":  {Friendly: "Stack grid"},
+	"amerge":  {Friendly: "Merge audio channels", Aliases: []string{"channel mix"}},
+	"amix":    {Friendly: "Mix audio", Aliases: []string{"mixdown", "blend"}},
+	"concat":  {Friendly: "Concatenate segments", Aliases: []string{"join", "append"}},
 	// ── Filters: format conversion ───────────────────────────────────
 	"format":  {Friendly: "Pixel format"},
 	"aformat": {Friendly: "Audio format"},

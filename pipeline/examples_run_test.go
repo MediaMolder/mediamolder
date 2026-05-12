@@ -111,11 +111,22 @@ func runExample(t *testing.T, jsonPath, name, inputAbs, subsrtAbs, subassAbs str
 		if !av.FindEncoder("h264_qsv") {
 			t.Skip("h264_qsv not available (no Intel QSV)")
 		}
+		// Codec may be compiled in but require Intel hardware to open.
+		// Probe the QSV device context to detect absence of Intel GPU.
+		dev, qsvErr := av.OpenHWDevice(av.HWDeviceQSV, "")
+		if qsvErr != nil {
+			t.Skipf("h264_qsv requires Intel QSV hardware: %v", qsvErr)
+		}
+		dev.Close()
 	}
 
 	// --- Skip: optional filters not compiled into this FFmpeg build ---
 	if strings.Contains(raw, `"drawtext"`) && !av.FindFilter("drawtext") {
 		t.Skip("drawtext filter not compiled in this FFmpeg build (requires libfreetype)")
+	}
+	if (strings.Contains(raw, `"subtitles"`) && !av.FindFilter("subtitles")) ||
+		(strings.Contains(raw, `"ass"`) && !av.FindFilter("ass")) {
+		t.Skip("subtitles/ass filter not compiled in this FFmpeg build (rebuild with --enable-libass)")
 	}
 
 	// --- Skip: YOLOv8 requires with_onnx build tag and model files ---
@@ -143,6 +154,25 @@ func runExample(t *testing.T, jsonPath, name, inputAbs, subsrtAbs, subassAbs str
 	// --- Template substitution ---
 	tmpDir := t.TempDir()
 
+	// filterTmpDir is a temp directory reachable via a relative path from
+	// the package CWD. Paths embedded in filtergraph option strings must not
+	// contain ':' because avfilter_graph_parse_ptr splits option values on
+	// all ':' characters before processing escape sequences. On Windows,
+	// t.TempDir() may be on a different drive (C:) than the package (E:),
+	// making a relative path impossible. In that case, create a local
+	// sub-directory within the package directory instead.
+	filterTmpDir := tmpDir
+	if cwd, cwdErr := os.Getwd(); cwdErr == nil {
+		if _, relErr := filepath.Rel(cwd, tmpDir); relErr != nil {
+			// Cross-drive or other error: create a local temp dir.
+			local, lerr := os.MkdirTemp(".", "testrun-")
+			if lerr == nil {
+				t.Cleanup(func() { os.RemoveAll(local) })
+				filterTmpDir = local
+			}
+		}
+	}
+
 	// Paths as forward-slash strings (accepted by FFmpeg and JSON)
 	inputFwd := filepath.ToSlash(inputAbs)
 
@@ -157,10 +187,16 @@ func runExample(t *testing.T, jsonPath, name, inputAbs, subsrtAbs, subassAbs str
 	raw = strings.ReplaceAll(raw, `"subs.srt"`, `"`+subsrtRel+`"`)
 	raw = strings.ReplaceAll(raw, `"subs.ass"`, `"`+subassRel+`"`)
 
-	// Metadata output files → redirect to tmpDir so tests don't litter cwd
-	for _, meta := range []string{"frame_info.jsonl", "scene_changes.jsonl", "detections.jsonl", "frame_metadata.txt"} {
+	// Metadata output files → redirect to tmpDir so tests don't litter cwd.
+	// frame_metadata.txt is embedded in a filter spec (metadata=mode=print:file=…)
+	// so it must use filterTmpDir (relative path, no Windows drive-letter colon).
+	for _, meta := range []string{"frame_info.jsonl", "scene_changes.jsonl", "detections.jsonl"} {
 		dest := filepath.ToSlash(filepath.Join(tmpDir, meta))
 		raw = strings.ReplaceAll(raw, `"`+meta+`"`, `"`+dest+`"`)
+	}
+	{
+		dest := filepath.ToSlash(filepath.Join(filterTmpDir, "frame_metadata.txt"))
+		raw = strings.ReplaceAll(raw, `"frame_metadata.txt"`, `"`+dest+`"`)
 	}
 
 	// ABR ladder has four named output variables; all others have one {{output}}
@@ -180,9 +216,10 @@ func runExample(t *testing.T, jsonPath, name, inputAbs, subsrtAbs, subassAbs str
 	// stats_out shuttle) does not pollute the package directory.
 	raw = strings.ReplaceAll(raw, "{{passlog}}", filepath.ToSlash(filepath.Join(tmpDir, "ffmpeg2pass")))
 
-	// Loudnorm shuttle stats prefix → tmpDir so pass-1 JSON does not
-	// pollute the package directory.
-	raw = strings.ReplaceAll(raw, "{{loudnorm_stats}}", filepath.ToSlash(filepath.Join(tmpDir, "mm-loudnorm")))
+	// Loudnorm shuttle stats prefix → filterTmpDir so pass-1 JSON does not
+	// pollute the package directory, and so the path has no drive-letter colon
+	// (see filterTmpDir comment above).
+	raw = strings.ReplaceAll(raw, "{{loudnorm_stats}}", filepath.ToSlash(filepath.Join(filterTmpDir, "mm-loudnorm")))
 
 	// --- Parse config ---
 	cfg, err := ParseConfig([]byte(raw))

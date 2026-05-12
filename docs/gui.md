@@ -173,6 +173,7 @@ filters by intent:
 | Format conversion | `format`, `setdar`, `setsar`, `pixfmt`-related |
 | Metadata & inspection | `metadata`, `signalstats`, `cropdetect` |
 | Hardware acceleration | `*_qsv`, `*_cuda`, `*_vaapi`, `*_videotoolbox` |
+| **Routing** | `split`, `asplit`, `overlay`, `hstack`, `vstack`, `xstack`, `amerge`, `amix`, `concat` |
 | Subtitles | `subtitles`, `ass` |
 | Audio: format & routing | `aresample`, `aformat`, `pan`, `amerge` |
 | Audio: dynamics & loudness | `loudnorm`, `acompressor`, `alimiter` |
@@ -224,6 +225,20 @@ libavcodec encoder, demuxer/muxer, and registered Go processor available in
 the binary you are running. Drag any entry onto the canvas to spawn a
 configured node.
 
+#### Hardware button
+
+At the very top of the palette — above the search box and segmented controls —
+is the **Hardware** button.  It shows the result of the startup hardware probe:
+
+| State | Label |
+|-------|-------|
+| Probe in progress | `Hardware …` |
+| ≥ 1 usable backend | `Hardware  N available` (with a coloured badge) |
+| No usable backends | `Hardware  Software only` |
+
+Clicking the button opens the **Hardware Capabilities dialog** — see
+[§ Hardware Capabilities dialog](#hardware-capabilities-dialog) below.
+
 Two segmented controls sit above the search box and tailor the palette to
 your audience:
 
@@ -268,6 +283,38 @@ against FFmpeg drift by `internal/gui/curation_test.go`
 * Each node exposes one source and one target handle per stream type
   (video / audio / subtitle / data). Handles only accept connections of the
   same type — incompatible drags are rejected.
+* **Input nodes grow per-track audio handles** after **Get Properties** is
+  clicked.  A 16-track MOV shows 16 green dots labelled `a:1` … `a:16` on
+  the right edge instead of a single generic `audio` handle.  The handle
+  count is also inferred from existing edges when a saved graph is loaded,
+  so you do not need to re-probe after reopening a job.
+
+  > **Track numbering — GUI vs. JSON**
+  >
+  > The GUI displays audio tracks with **1-based** labels (`a:1`, `a:2`, …,
+  > `a:16`) to match the conventions of video editing tools (Pro Tools,
+  > Resolve, Avid, etc.). Internally, and in the saved JSON, tracks are
+  > **0-based** — the same convention used by FFmpeg and libavformat. So
+  > what the canvas shows as `a:7` is stored in the JSON edge as
+  > `in0:a:6`, and `a:8` becomes `in0:a:7`.
+  >
+  > **Quick reference:**
+  >
+  > | GUI label | JSON edge endpoint |
+  > |-----------|--------------------|
+  > | `a:1`     | `<inputID>:a:0`    |
+  > | `a:7`     | `<inputID>:a:6`    |
+  > | `a:8`     | `<inputID>:a:7`    |
+  > | `a:16`    | `<inputID>:a:15`   |
+  >
+  > The mapping is always `JSON index = GUI number − 1`.
+  > Audio handle labels on the canvas also show codec, channel layout, and
+  > language metadata (e.g. `a:7 · 5.1 · eng`) after probing.
+
+* **Multi-input filter nodes** (`amerge`, `amix`, `join`, `concat`) render
+  numbered audio input handles (`0`, `1`, …) on the left edge matching
+  their `inputs` / `nb_inputs` parameter (default 2).  Changing the
+  parameter in the Inspector immediately re-renders the pads.
 * Every non-implicit node has a small pencil (✎) button in its header
   that selects the node and force-opens the Inspector — useful when the
   Inspector panel has been hidden via the **View:** toggle. The button
@@ -366,11 +413,86 @@ image's geometry and pixel format.
 The probed metadata is invalidated when the URL changes; click
 **Get properties** again after editing the path.
 
+When `hwaccel` is set on the input, the **Acceleration** panel shows a
+one-line scope summary immediately below the backend field — for example:
+*HW decode: video (prores_ap4x) · SW fallback: audio*.  This lets you
+confirm at edit time which streams will actually go to the GPU before
+running the job.
+
+### Hardware Capabilities dialog
+
+Opened by the **Hardware** button at the top of the palette.  The dialog
+reflects the hardware probe run at startup (`GET /api/hwaccel`).
+
+#### Backend cards
+
+Each successfully opened backend has a card that shows:
+
+- **Device name** — human-readable GPU or accelerator label (e.g.
+  `NVIDIA GeForce RTX 4090`, `Apple VideoToolbox`).
+- **Backend label** — canonical type string (NVIDIA CUDA, Apple VideoToolbox,
+  Intel QSV, AMD/Intel VAAPI, …).
+- **Codec chip rows** — `Video encode`, `Video decode`, `Audio encode`, and
+  `Audio decode` rows with a chip for every codec the backend reports.
+  The `V`/`A` prefix on the row label appears only when a backend has both
+  video and audio codecs. Amber chips with a `⚠` icon indicate codecs the
+  backend lists but whose hardware support could not be confirmed.
+- **Advanced** — expandable section with supported software pixel formats and
+  (when the backend imposes a limit) the maximum encode resolution.
+
+#### Unavailable backends
+
+Any backend the probe tried but could not open appears below the cards in an
+**Unavailable backends** list with the error message.
+
+#### Device-picker visibility
+
+The **Hardware device** picker in the Inspector is shown only for:
+- Hardware-accelerated filters (those that carry `AVFILTER_FLAG_HWDEVICE` in
+  libavfilter — i.e. `scale_cuda`, `scale_vaapi`, `libplacebo`, etc.), and
+- Hardware encoder nodes (`h264_nvenc`, `hevc_videotoolbox`, etc.).
+
+It is intentionally *not* shown for ordinary software filters (`scale`,
+`loudnorm`, …), even when a hardware device is declared in the job config.
+
 ### Inspector
 
 The right-hand panel shows a typed form for the selected node. Codec, filter,
 and processor parameters surface as editable fields; arbitrary key/value pairs
 can be added for less common options.
+
+#### Hardware device picker (filter and encoder nodes)
+
+Every **filter** and **encoder** node has a **Hardware device** dropdown at the
+top of its Inspector form. The dropdown lists every `hardware_devices` entry
+declared in the job config (e.g. `gpu0 [cuda]`, `igpu [qsv]`). Select an
+entry to set `NodeDef.device` on the node; select `(none — software)` to clear
+it and keep the node on the CPU path.
+
+For filter nodes, an **Auto-map to hardware filter** checkbox appears beneath
+the picker (only enabled when a device is selected). Checking it sets
+`auto_map_hw: true`, which:
+- promotes the software filter name to its hardware equivalent
+  (e.g. `scale` → `scale_cuda` on a CUDA device), and
+- auto-inserts `hwupload`/`hwdownload` nodes at device boundaries.
+
+If the job config has no `hardware_devices` entries the picker shows only
+`(none — software)` with a hint to add devices.
+
+#### Canvas HW indicator badges
+
+Two visual badges appear on canvas nodes to reflect hardware state:
+
+- **Purple `⊞ <device>` chip** — shown on any filter or encoder with
+  `NodeDef.device` set. Hovering reveals `Hardware device: <name>`.
+- **Yellow `⚠ sw/hw` chip** — shown on a software filter (no `device`)
+  that is adjacent to at least one hardware-accelerated node in the graph.
+  This warns that the runtime must implicitly insert an
+  `hwdownload`/`hwupload` round-trip at that boundary, which costs memory
+  bandwidth and can reduce the benefit of hardware acceleration. To
+  eliminate the warning either assign the same device to the filter and
+  enable `auto_map_hw`, or reorder the graph so software filters are
+  grouped away from the HW chain.
 
 #### Encoder nodes
 
@@ -960,7 +1082,7 @@ Unknown codecs or missing format fields produce no warning (no opinion).
 
 ### FFmpeg CLI export
 
-**Show CLI** (toolbar button, enabled when the canvas is non-empty) converts
+**-> FFmpeg** (toolbar button, enabled when the canvas is non-empty) converts
 the current graph back to an equivalent `ffmpeg …` command line. It posts the
 serialised `JobConfig` to `POST /api/export-cmd` and displays the result in a
 modal panel with a **Copy** button.

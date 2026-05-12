@@ -169,3 +169,89 @@ func TestParseConfigGoProcessorMissingProcessor(t *testing.T) {
 		t.Fatal("expected error for go_processor without processor field")
 	}
 }
+
+// ── Wave 10 #56: HardwareDevices + NodeDef.Device ────────────────────────
+
+func TestParseConfigHardwareDevicesRoundTrip(t *testing.T) {
+	raw := `{
+  "schema_version": "1.0",
+  "inputs": [{"id":"src","url":"in.mp4","streams":[{"input_index":0,"type":"video","track":0}]}],
+  "graph": {
+    "nodes": [
+      {"id":"enc","type":"encoder","device":"gpu0","params":{"codec":"h264_nvenc"}}
+    ],
+    "edges": [
+      {"from":"src:v:0","to":"enc:default","type":"video"},
+      {"from":"enc:default","to":"out:v","type":"video"}
+    ]
+  },
+  "outputs": [{"id":"out","url":"out.mp4"}],
+  "hardware_devices": [
+    {"name":"gpu0","type":"cuda","device":"0"}
+  ]
+}`
+	cfg, err := ParseConfig([]byte(raw))
+	if err != nil {
+		t.Fatalf("ParseConfig: %v", err)
+	}
+	if len(cfg.HardwareDevices) != 1 {
+		t.Fatalf("len(hardware_devices) = %d, want 1", len(cfg.HardwareDevices))
+	}
+	hd := cfg.HardwareDevices[0]
+	if hd.Name != "gpu0" || hd.Type != "cuda" || hd.Device != "0" {
+		t.Errorf("hardware_device = %+v, want {Name:gpu0, Type:cuda, Device:0}", hd)
+	}
+	if cfg.Graph.Nodes[0].Device != "gpu0" {
+		t.Errorf("node device = %q, want gpu0", cfg.Graph.Nodes[0].Device)
+	}
+}
+
+func TestParseConfigHardwareDeviceDuplicateName(t *testing.T) {
+	raw := `{
+  "schema_version": "1.0",
+  "inputs": [{"id":"src","url":"in.mp4","streams":[{"input_index":0,"type":"video","track":0}]}],
+  "graph": {"nodes":[],"edges":[]},
+  "outputs": [{"id":"out","url":"out.mp4"}],
+  "hardware_devices": [
+    {"name":"gpu0","type":"cuda"},
+    {"name":"gpu0","type":"vaapi"}
+  ]
+}`
+	_, err := ParseConfig([]byte(raw))
+	if err == nil {
+		t.Fatal("expected error for duplicate hardware_devices name")
+	}
+}
+
+func TestParseConfigHardwareDeviceEmptyType(t *testing.T) {
+	raw := `{
+  "schema_version": "1.0",
+  "inputs": [{"id":"src","url":"in.mp4","streams":[{"input_index":0,"type":"video","track":0}]}],
+  "graph": {"nodes":[],"edges":[]},
+  "outputs": [{"id":"out","url":"out.mp4"}],
+  "hardware_devices": [{"name":"gpu0","type":""}]
+}`
+	_, err := ParseConfig([]byte(raw))
+	if err == nil {
+		t.Fatal("expected error for empty hardware_devices type")
+	}
+}
+
+func TestParseConfigNodeDeviceUnknownRef(t *testing.T) {
+	raw := `{
+  "schema_version": "1.0",
+  "inputs": [{"id":"src","url":"in.mp4","streams":[{"input_index":0,"type":"video","track":0}]}],
+  "graph": {
+    "nodes": [{"id":"enc","type":"encoder","device":"missing","params":{"codec":"libx264"}}],
+    "edges": [
+      {"from":"src:v:0","to":"enc:default","type":"video"},
+      {"from":"enc:default","to":"out:v","type":"video"}
+    ]
+  },
+  "outputs": [{"id":"out","url":"out.mp4"}]
+}`
+	_, err := ParseConfig([]byte(raw))
+	if err == nil {
+		t.Fatal("expected error for node.device referencing unknown hardware_device")
+	}
+}

@@ -89,22 +89,16 @@ const (
 	HWDeviceVAAPI        HWDeviceType = HWDeviceType(C.AV_HWDEVICE_TYPE_VAAPI)
 	HWDeviceQSV          HWDeviceType = HWDeviceType(C.AV_HWDEVICE_TYPE_QSV)
 	HWDeviceVideoToolbox HWDeviceType = HWDeviceType(C.AV_HWDEVICE_TYPE_VIDEOTOOLBOX)
+	HWDeviceAMF          HWDeviceType = HWDeviceType(C.AV_HWDEVICE_TYPE_AMF)
 	HWDeviceNone         HWDeviceType = HWDeviceType(C.AV_HWDEVICE_TYPE_NONE)
 )
 
 func (t HWDeviceType) String() string {
-	switch t {
-	case HWDeviceCUDA:
-		return "cuda"
-	case HWDeviceVAAPI:
-		return "vaapi"
-	case HWDeviceQSV:
-		return "qsv"
-	case HWDeviceVideoToolbox:
-		return "videotoolbox"
-	default:
+	name := C.av_hwdevice_get_type_name(C.enum_AVHWDeviceType(t))
+	if name == nil {
 		return "none"
 	}
+	return C.GoString(name)
 }
 
 // ParseHWDeviceType parses a hardware device type name string.
@@ -125,6 +119,9 @@ func (t HWDeviceType) HWPixelFormat() int {
 type HWDeviceContext struct {
 	ref        *C.AVBufferRef
 	deviceType HWDeviceType
+	// device is the device path string passed to OpenHWDevice (e.g. "/dev/dri/renderD128").
+	// Empty string means the platform default was used.
+	device string
 }
 
 // OpenHWDevice creates a hardware device context of the given type.
@@ -143,7 +140,7 @@ func OpenHWDevice(deviceType HWDeviceType, device string) (*HWDeviceContext, err
 		return nil, fmt.Errorf("av_hwdevice_ctx_create(%s, %q): %w", deviceType, device, newErr(ret))
 	}
 
-	return &HWDeviceContext{ref: ref, deviceType: deviceType}, nil
+	return &HWDeviceContext{ref: ref, deviceType: deviceType, device: device}, nil
 }
 
 // Close releases the hardware device context.
@@ -256,4 +253,64 @@ func ListHWDeviceTypes() []HWDeviceType {
 		types = append(types, HWDeviceType(t))
 	}
 	return types
+}
+
+// HWDeviceProbe holds the result of probing a single hardware device type.
+type HWDeviceProbe struct {
+	Type      HWDeviceType
+	Available bool
+	Err       string // non-empty when Available == false
+	// Capabilities is populated only when Available is true.
+	Capabilities DeviceCapabilities
+}
+
+// ProbeHWDevices returns all hardware device types compiled into FFmpeg with
+// each one probed for runtime availability by calling av_hwdevice_ctx_create.
+// For available devices, DeviceCapabilities is also populated via
+// av_hwdevice_get_hwframe_constraints and the static codec registry.
+//
+// AMD AMF is additionally probed via a standalone libamfrt64.so.1 dlopen even
+// when FFmpeg was not compiled with --enable-amf, so AMD users on mixed-driver
+// setups still see their GPU.
+func ProbeHWDevices() []HWDeviceProbe {
+	types := ListHWDeviceTypes()
+	out := make([]HWDeviceProbe, 0, len(types)+1)
+	ffmpegHasAMF := false
+	for _, t := range types {
+		ctx, err := OpenHWDevice(t, "")
+		if err != nil {
+			out = append(out, HWDeviceProbe{Type: t, Err: err.Error()})
+		} else {
+			caps := ctx.QueryCapabilities()
+			_ = ctx.Close()
+			out = append(out, HWDeviceProbe{Type: t, Available: true, Capabilities: caps})
+		}
+		if t == HWDeviceAMF {
+			ffmpegHasAMF = true
+		}
+	}
+
+	// Standalone AMF probe: covers systems where FFmpeg is compiled without
+	// --enable-amf but the AMD AMF runtime (libamfrt64.so.1) is installed.
+	if !ffmpegHasAMF {
+		amfCaps := QueryAMFCaps()
+		if amfCaps != nil {
+			caps := DeviceCapabilities{
+				DisplayName: "AMD GPU (AMF)",
+				Codecs:      ListHWCodecs(HWDeviceAMF),
+				Filters:     FilterHWAccels(HWDeviceAMF),
+				AMFCaps:     amfCaps,
+			}
+			caps.StaticCaps = QueryStaticCaps(caps)
+			out = append(out, HWDeviceProbe{
+				Type: HWDeviceAMF, Available: true, Capabilities: caps,
+			})
+		} else {
+			out = append(out, HWDeviceProbe{
+				Type: HWDeviceAMF, Err: "AMF runtime not found (libamfrt64.so.1)",
+			})
+		}
+	}
+
+	return out
 }

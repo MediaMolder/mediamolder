@@ -7,6 +7,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -432,6 +433,24 @@ func TestPathTraversalPrevention(t *testing.T) {
 	traversal := filepath.Join(dir, "..", "..", "etc", "passwd")
 	if err := sc.ValidateURL(traversal); err == nil {
 		t.Error("traversal path should be rejected")
+	}
+}
+
+// TestValidateURLWindowsDriveLetter is a regression test for the bug where
+// url.Parse treated the drive letter in a Windows path (e.g. "C:\foo\bar")
+// as a URL scheme named "c", causing ValidateURL to reject legitimate paths.
+func TestValidateURLWindowsDriveLetter(t *testing.T) {
+	dir := t.TempDir()
+	sc := SecurityConfig{BaseDir: dir}
+
+	// Simulate a Windows absolute path that begins with a drive letter.
+	// We construct a path that url.Parse will parse as scheme="c" (or similar).
+	fakePath := "c:/some/file.mp4" // url.Parse sees scheme "c"
+	// ValidateURL must NOT error with "URL scheme \"c\" is not allowed".
+	// (It will still fail path-traversal / existence checks, but not scheme.)
+	err := sc.ValidateURL(fakePath)
+	if err != nil && strings.Contains(err.Error(), "scheme") {
+		t.Errorf("Windows drive-letter path incorrectly rejected as bad scheme: %v", err)
 	}
 }
 

@@ -109,10 +109,23 @@ func (e *exporter) buildGlobal() {
 	if o.ThreadType != "" {
 		e.add("-thread_type", o.ThreadType)
 	}
-	if o.HardwareDevice != "" {
+	// Emit named hardware device contexts as -init_hw_device flags (Wave 10 #56).
+	// These supersede the legacy GlobalOptions.HardwareDevice single-device path.
+	for _, hd := range e.cfg.HardwareDevices {
+		spec := hd.Type + "=" + hd.Name
+		if hd.Device != "" {
+			spec += ":" + hd.Device
+		}
+		e.add("-init_hw_device", spec)
+	}
+	// Legacy single-device path: emit GlobalOptions.HardwareDevice only when
+	// no named HardwareDevices are declared (backwards compatibility).
+	if o.HardwareDevice != "" && len(e.cfg.HardwareDevices) == 0 {
 		e.add("-init_hw_device", o.HardwareDevice)
 	}
 	if o.HardwareAccel != "" {
+		// Legacy global hw_accel from GlobalOptions is still exported
+		// for backward compatibility when per-input HWAccel is not set.
 		e.add("-hwaccel", o.HardwareAccel)
 	}
 	if e.cfg.FilterComplexThreads > 0 {
@@ -216,6 +229,29 @@ func (e *exporter) buildInput(idx int, in pipeline.Input) {
 	}
 	if v, ok := in.Options["to"]; ok {
 		e.add("-to", fmt.Sprint(v))
+	}
+	// Per-input hardware-accelerated decode flags (Wave 10 #59).
+	// These must appear before -i in the FFmpeg command line.
+	if in.HWAccel != "" {
+		e.add("-hwaccel", in.HWAccel)
+	}
+	if in.HWAccelDevice != "" {
+		e.add("-hwaccel_device", in.HWAccelDevice)
+	}
+	if in.HWAccelOutputFormat != "" {
+		e.add("-hwaccel_output_format", in.HWAccelOutputFormat)
+	}
+	// Wave 11 #67: network-protocol AVOptions (RTSP, SRT, RTMP, …).
+	// These are demuxer AVOptions that must appear before -i.
+	// The set is fixed so the export is deterministic and round-trippable.
+	for _, key := range []string{
+		"rtsp_transport", "stimeout",  // RTSP
+		"mode", "listen_timeout",      // SRT
+		"timeout", "rw_timeout",       // RTMP / general
+	} {
+		if v, ok := in.Options[key]; ok {
+			e.add("-"+key, fmt.Sprint(v))
+		}
 	}
 	// -map_metadata is per-output in FFmpeg; it is emitted when building
 	// outputs (addOutputFlags), not before -i.
@@ -646,6 +682,13 @@ func (e *exporter) buildOutput(out pipeline.Output) {
 		}
 	}
 
+	// Cover art (Wave 11 #64): -attach FILE -metadata:s:v:0 comment=Cover.
+	// This mirrors the fftools idiom for embedding cover art into MP4/M4A/MKV.
+	if out.CoverArt != "" {
+		e.add("-attach", out.CoverArt)
+		e.add("-metadata:s:v:0", "comment=Cover")
+	}
+
 	// HLS options.
 	if out.HLS != nil {
 		e.add("-f", "hls")
@@ -997,6 +1040,8 @@ func streamTypeLetter(t string) string {
 		return "s"
 	case "data":
 		return "d"
+	case "attachment":
+		return "t"
 	}
 	return t
 }
