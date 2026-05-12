@@ -28,7 +28,7 @@ const VIDEO_KEYS = [
   'width', 'height', 'pix_fmt', 'frame_rate',
   'bit_depth', 'color_space', 'color_range', 'color_primaries', 'color_transfer',
   'sar', 'field_order',
-  'codec', 'profile', 'level', 'bit_rate',
+  'codec', 'profile', 'level', 'bit_rate', 'rate_control',
 ] as const;
 const AUDIO_KEYS = [
   'sample_rate', 'channels', 'channel_layout', 'sample_fmt', 'bit_depth',
@@ -63,6 +63,7 @@ export function attrLabel(key: string): string {
     case 'color_primaries': return 'primaries';
     case 'color_transfer': return 'trc';
     case 'field_order': return 'field';
+    case 'rate_control': return 'rate control';
     default: return key;
   }
 }
@@ -282,16 +283,33 @@ function attrsFromGraphNode(node: NodeDef, type: StreamType): Record<string, str
     }
   }
 
-  // Encoder nodes: declare the codec and bitrate.
+  // Encoder nodes: declare the codec, rate control mode, and bitrate.
   if (node.type === 'encoder') {
     const codec = node.filter ?? get('codec');
     if (codec) out['codec'] = codec;
-    const br = get('b') ?? get('bitrate') ?? get('bit_rate');
-    if (br) {
+
+    // Quality/constant-rate-factor modes: CRF (libx264/libx265/libsvtav1/…),
+    // CQ (nvenc), ICQ/global_quality (qsv), QP.
+    const crf = get('crf') ?? get('cq') ?? get('global_quality');
+    const qp  = get('qp')  ?? get('qp_i');
+    const br  = get('b')   ?? get('bitrate') ?? get('bit_rate');
+    const rcMode = get('rc_mode') ?? get('rc');
+
+    if (crf !== undefined) {
+      // CRF/CQ/ICQ encode — output bitrate is unknowable until encoding.
+      const label = (get('crf') !== undefined ? 'CRF'
+                  : get('cq')  !== undefined ? 'CQ'
+                  : 'ICQ');
+      out['rate_control'] = `${label} ${crf}`;
+      out['bit_rate'] = null; // block upstream / schema default from showing
+    } else if (qp !== undefined) {
+      out['rate_control'] = `QP ${qp}`;
+      out['bit_rate'] = null;
+    } else if (br) {
       out['bit_rate'] = formatBitRateString(br);
+      if (rcMode) out['rate_control'] = rcMode.toUpperCase();
     } else if (codec) {
-      // No explicit bitrate — fall back to the encoder's default if the
-      // schema has already been fetched (synchronous cache peek).
+      // No explicit rate control — check schema for a non-zero default bitrate.
       const info = getEncoderInfoSync(codec);
       if (info) {
         const roles = rolesFor(codec, info.options);
@@ -299,9 +317,13 @@ function attrsFromGraphNode(node: NodeDef, type: StreamType): Record<string, str
         const defVal = brOpt?.default?.int;
         if (defVal !== undefined && defVal > 0) {
           out['bit_rate'] = formatBitRate(defVal) + ' (default)';
+        } else {
+          // Schema reports no meaningful default (likely CRF-style encoder).
+          out['bit_rate'] = null;
         }
       }
     }
+    if (rcMode && !('rate_control' in out)) out['rate_control'] = rcMode.toUpperCase();
   }
 
   return out;
@@ -420,14 +442,11 @@ export function inferEdgeAttributes(
       }
     }
     // Stop when we have everything we display for this stream type.
-    if (keysFor(type).every((k) => k in result)) break;
-    // Encoder nodes define a new encoded stream. Input characteristics
-    // (especially bit_rate) must not propagate through an encoder boundary
-    // to its output edge — doing so produces misleading values such as
-    // showing the source file's bitrate instead of the encoder's target.
-    const ref = n.data.ref;
-    if (ref?.kind === 'node' && (ref.def as NodeDef).type === 'encoder') break;
-    // Otherwise keep walking upstream.
+    if (keysFor(type).every((k) => k in result || blocked.has(k))) break;
+    // Keep walking upstream so spatial attrs (width/height/fps/pix_fmt/…)
+    // propagate through encoder nodes. Compressed bitrate and codec identity
+    // are already blocked by the null sentinels emitted by filter nodes or
+    // by quality-mode encoder nodes above.
     const incoming = incomingByNode.get(nid) ?? [];
     for (const inc of incoming) queue.push(inc.source);
   }
