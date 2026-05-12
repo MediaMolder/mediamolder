@@ -13,7 +13,7 @@
 //   - graph nodes:  "<nodeId>" (verbatim)
 
 import type { Edge, Node } from '@xyflow/react';
-import type { EdgeDef, JobConfig, NodeDef, ProbedStream, StreamType, UIPosition } from './jobTypes';
+import type { EdgeDef, GraphUI, JobConfig, NodeDef, ProbedInputCache, ProbedStream, StreamType, UIPosition } from './jobTypes';
 
 export const INPUT_PREFIX = '__in__';
 export const OUTPUT_PREFIX = '__out__';
@@ -77,10 +77,16 @@ export interface FlowNodeData extends Record<string, unknown> {
     | { kind: 'node'; def: NodeDef };
   /**
    * Probed stream metadata (input nodes only). Populated by clicking
-   * "Get properties" in the Inspector, which calls `POST /api/probe`.
-   * Editor-only — never serialised back into the JobConfig.
+   * "Get properties" in the Inspector or by auto-probe on job load.
+   * Persisted in graph.ui.probed_inputs so reopening a job restores
+   * stream handles without a round-trip to the file.
    */
   probed?: ProbedStream[];
+  /**
+   * Unix seconds of file last-modified at probe time (local files only).
+   * 0 = unknown (network/device). Used to detect stale caches on load.
+   */
+  probedFileMtime?: number;
   /**
    * Media types this node supports on its handles (e.g. ["video"] for a
    * video-only encoder, ["audio"] for an audio filter). Drives which
@@ -394,13 +400,18 @@ export function configToFlow(cfg: JobConfig, opts: ConvertOptions = {}): {
     // Scan edges to find how many distinct audio tracks this input exposes.
     // Gives MMNode enough information to render per-track source handles even
     // before the user clicks "Get Properties".
-    const audioTrackCount = cfg.graph.edges
+    const edgeAudioTrackCount = cfg.graph.edges
       .filter((e) => endpointHead(e.from) === inp.id && e.type === 'audio')
       .reduce((max, e) => {
         const parts = e.from.split(':');
         const track = Number(parts[2] ?? 0);
         return Math.max(max, Number.isFinite(track) ? track + 1 : 1);
       }, 1);
+    const cachedProbe = cfg.graph.ui?.probed_inputs?.[inp.id];
+    const cacheAudioCount = cachedProbe
+      ? cachedProbe.streams.filter((s) => s.type === 'audio').length
+      : 0;
+    const audioTrackCount = Math.max(edgeAudioTrackCount, cacheAudioCount);
     nodes.push({
       id,
       type: 'mmNode',
@@ -410,6 +421,11 @@ export function configToFlow(cfg: JobConfig, opts: ConvertOptions = {}): {
         label: inp.id,
         sublabel: displayUrl(inp.url),
         ref: { kind: 'input', def: inp },
+        ...(cachedProbe ? {
+          probed: cachedProbe.streams,
+          probedFileMtime: cachedProbe.file_mtime,
+          streams: [...new Set(cachedProbe.streams.map((s) => s.type as string))],
+        } : {}),
         ...(audioTrackCount > 1 ? { audioTrackCount } : {}),
       },
     });
@@ -473,14 +489,15 @@ export function configToFlow(cfg: JobConfig, opts: ConvertOptions = {}): {
     }
 
     // For audio edges into multi-input filter nodes or encoder nodes with
-    // multi_input_audio set, assign consecutive slot indices so the edges
-    // wire to numbered input pads.
+    // multi_input_audio or channel_layout set, assign consecutive slot
+    // indices so the edges wire to numbered input pads.
     let targetHandle: string = e.type;
     const targetNode = cfg.graph.nodes.find((n) => n.id === toHead);
     const isMultiInputAudioTarget =
       e.type === 'audio' &&
       (MULTI_AUDIO_INPUT_FILTERS.has(targetNode?.filter ?? '') ||
-        (targetNode?.type === 'encoder' && targetNode?.params?.multi_input_audio));
+        (targetNode?.type === 'encoder' &&
+          (targetNode?.params?.multi_input_audio || targetNode?.params?.channel_layout)));
     if (isMultiInputAudioTarget) {
       const slotKey = `${targetId}:audio`;
       const slot = targetSlots.get(slotKey) ?? 0;
@@ -571,11 +588,44 @@ export function flowToConfig(
     inp.streams = merged;
   }
 
+  // Strip codec shorthand fields (codec_video / codec_audio / codec_subtitle)
+  // from outputs that already have explicit encoder or copy nodes wired to them.
+  // The runtime warns when both are present, and the shorthands are meaningless
+  // once an explicit encoder node exists.
+  const encoderNodeIds = new Set(
+    graphNodes.filter((n) => n.type === 'encoder' || n.type === 'copy').map((n) => n.id),
+  );
+  for (const e of graphEdges) {
+    const fromHead = e.from.split(':')[0];
+    const toHead = e.to.split(':')[0];
+    if (!encoderNodeIds.has(fromHead)) continue;
+    const out = outputs.find((o) => o.id === toHead);
+    if (!out) continue;
+    delete (out as unknown as Record<string, unknown>).codec_video;
+    delete (out as unknown as Record<string, unknown>).codec_audio;
+    delete (out as unknown as Record<string, unknown>).codec_subtitle;
+  }
+
+  // Collect probed stream metadata from input nodes and persist it under
+  // graph.ui.probed_inputs so reopening the file restores the metadata
+  // without a round-trip to the source file.
+  const probedInputs: Record<string, ProbedInputCache> = {};
+  for (const n of nodes) {
+    if (n.data.ref.kind === 'input' && n.data.probed) {
+      probedInputs[n.data.ref.def.id] = {
+        streams: n.data.probed,
+        file_mtime: (n.data.probedFileMtime as number | undefined) ?? 0,
+      };
+    }
+  }
+  const ui: GraphUI = { positions };
+  if (Object.keys(probedInputs).length > 0) ui.probed_inputs = probedInputs;
+
   return {
     schema_version: baseSchemaVersion,
     description,
     inputs,
-    graph: { nodes: graphNodes, edges: graphEdges, ui: { positions } },
+    graph: { nodes: graphNodes, edges: graphEdges, ui },
     outputs,
     global_options: globalOptions,
     assets,

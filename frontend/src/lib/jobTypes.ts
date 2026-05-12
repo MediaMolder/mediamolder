@@ -158,8 +158,22 @@ export interface GraphDef {
   ui?: GraphUI;
 }
 
+/** Cached probe result stored per input-id under graph.ui.probed_inputs.
+ *  Persisted in the job JSON so re-opening a job shows stream metadata
+ *  and correct per-track handles without needing to re-probe the file.
+ *  file_mtime is the last-modified Unix timestamp of the source file at
+ *  probe time; the GUI re-probes automatically when the file has been
+ *  modified since this snapshot was taken. */
+export interface ProbedInputCache {
+  streams: ProbedStream[];
+  /** Unix seconds of file last-modified at probe time. 0 = unknown (network/device). */
+  file_mtime: number;
+}
+
 export interface GraphUI {
   positions?: Record<string, UIPosition>;
+  /** Cached probe results keyed by input id. Editor-only; ignored by the runtime. */
+  probed_inputs?: Record<string, ProbedInputCache>;
 }
 
 export interface UIPosition {
@@ -656,6 +670,7 @@ export interface ProbedStream {
   sample_fmt?: string;
   channels?: number;
   channel_layout?: string;
+  language?: string;
   duration_sec?: number;
   start_sec?: number;
   time_base_num?: number;
@@ -665,6 +680,8 @@ export interface ProbedStream {
 export interface ProbeResponse {
   url: string;
   streams: ProbedStream[];
+  /** Unix seconds of the file's last-modified time. 0 = unknown (network / device). */
+  file_mtime?: number;
 }
 
 /** Runtime hardware-acceleration probe result from GET /api/hwaccel.
