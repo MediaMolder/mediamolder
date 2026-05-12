@@ -46,6 +46,7 @@ import { spawnNodeFrom, type PaletteEntry } from './lib/spawn';
 import { useJobRun } from './lib/useJobRun';
 import { inferEdgeAttributes, summariseAttributes } from './lib/streamAttrs';
 import { fetchCatalog, indexStreams } from './lib/nodeCatalog';
+import { fetchEncoderInfo } from './lib/encoderSchema';
 import type { HWAccelProbe, JobConfig, ProbeResponse, StreamType } from './lib/jobTypes';
 
 const NODE_TYPES = { mmNode: MMNode };
@@ -838,6 +839,26 @@ function Editor() {
     [nodes, runByNode, edges],
   );
 
+  /* Prefetch encoder schemas for every encoder node in the graph so that
+     the edge attribute popover can show rate-control defaults (e.g. CRF 23)
+     without waiting for the user to click the node. Each resolved schema
+     bumps schemaVersion, which is included in the decoratedEdges memo dep
+     array so the edge attrs recompute with the now-cached data. */
+  const [schemaVersion, setSchemaVersion] = useState(0);
+  useEffect(() => {
+    const codecs = new Set<string>();
+    for (const n of nodes) {
+      const ref = n.data.ref;
+      if (ref?.kind === 'node' && ref.def.type === 'encoder') {
+        const codec = ref.def.filter ?? String(ref.def.params?.codec ?? '');
+        if (codec) codecs.add(codec);
+      }
+    }
+    for (const codec of codecs) {
+      fetchEncoderInfo(codec).then(() => setSchemaVersion((v) => v + 1));
+    }
+  }, [nodes]);
+
   /* Compute inferred technical attributes for each edge so MMEdge can render
      a chip showing pix_fmt / size / sample_rate / etc. Recomputes whenever
      the graph topology or any node params change. */
@@ -851,7 +872,8 @@ function Editor() {
           data: { ...(e.data ?? {}), attrs, attrSummary: summary },
         } as FlowEdge;
       }),
-    [nodes, edges],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [nodes, edges, schemaVersion],
   );
 
   return (
