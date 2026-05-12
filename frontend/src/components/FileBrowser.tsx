@@ -237,14 +237,14 @@ export function FileBrowser({
                   const dot = name.lastIndexOf('.');
                   if (dot < 0) return (
                     <div className="file-browser-ext-warn">
-                      ⚠ No file extension — FFmpeg needs one to choose the right muxer.
+                      ⚠ No file extension — a file extension is needed to select the right muxer.
                     </div>
                   );
                   const ext = name.slice(dot + 1).toLowerCase();
                   const allowed = new Set(warnExtensions.split(',').map((s) => s.trim().toLowerCase()));
                   if (!allowed.has(ext)) return (
                     <div className="file-browser-ext-warn">
-                      ⚠ <strong>.{ext}</strong> is not a recognised media container. FFmpeg will likely fail when this job runs.
+                      ⚠ <strong>.{ext}</strong> is not a recognised media container — this job will likely fail when run.
                     </div>
                   );
                   return null;
