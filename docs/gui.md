@@ -284,10 +284,33 @@ against FFmpeg drift by `internal/gui/curation_test.go`
   (video / audio / subtitle / data). Handles only accept connections of the
   same type — incompatible drags are rejected.
 * **Input nodes grow per-track audio handles** after **Get Properties** is
-  clicked.  A 16-track MOV shows 16 green dots labelled `a:0` … `a:15` on
+  clicked.  A 16-track MOV shows 16 green dots labelled `a:1` … `a:16` on
   the right edge instead of a single generic `audio` handle.  The handle
   count is also inferred from existing edges when a saved graph is loaded,
   so you do not need to re-probe after reopening a job.
+
+  > **Track numbering — GUI vs. JSON**
+  >
+  > The GUI displays audio tracks with **1-based** labels (`a:1`, `a:2`, …,
+  > `a:16`) to match the conventions of video editing tools (Pro Tools,
+  > Resolve, Avid, etc.). Internally, and in the saved JSON, tracks are
+  > **0-based** — the same convention used by FFmpeg and libavformat. So
+  > what the canvas shows as `a:7` is stored in the JSON edge as
+  > `in0:a:6`, and `a:8` becomes `in0:a:7`.
+  >
+  > **Quick reference:**
+  >
+  > | GUI label | JSON edge endpoint |
+  > |-----------|--------------------|
+  > | `a:1`     | `<inputID>:a:0`    |
+  > | `a:7`     | `<inputID>:a:6`    |
+  > | `a:8`     | `<inputID>:a:7`    |
+  > | `a:16`    | `<inputID>:a:15`   |
+  >
+  > The mapping is always `JSON index = GUI number − 1`.
+  > Audio handle labels on the canvas also show codec, channel layout, and
+  > language metadata (e.g. `a:7 · 5.1 · eng`) after probing.
+
 * **Multi-input filter nodes** (`amerge`, `amix`, `join`, `concat`) render
   numbered audio input handles (`0`, `1`, …) on the left edge matching
   their `inputs` / `nb_inputs` parameter (default 2).  Changing the

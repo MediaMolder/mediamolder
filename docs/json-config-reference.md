@@ -86,10 +86,36 @@ For `"copy"` nodes, no `params` are required — the inbound edge type tells the
 ### Edge reference formats
 
 - `"inputID:v:0"` — video track 0 from input
-- `"inputID:a:1"` — audio track 1 from input
+- `"inputID:a:0"` — audio track 0 (first audio track) from input
+- `"inputID:a:6"` — audio track 6 (seventh audio track) from input
 - `"nodeID:default"` — default port on a filter node
 - `"nodeID:overlay"` — named port (e.g., overlay filter's second input)
 - `"outputID:v"` — video input to output muxer
+
+> **Track numbering — JSON vs. GUI**
+>
+> Audio track indices in edge endpoints are **0-based** (matching FFmpeg and
+> libavformat). The GUI displays audio handles with **1-based** labels to
+> match the conventions of professional video tools. The relationship is
+> always:
+>
+> ```
+> JSON index  =  GUI label − 1
+> GUI label   =  JSON index + 1
+> ```
+>
+> Examples:
+>
+> | JSON edge endpoint | GUI canvas label |
+> |--------------------|------------------|
+> | `in0:a:0`          | `a:1`            |
+> | `in0:a:6`          | `a:7`            |
+> | `in0:a:7`          | `a:8`            |
+> | `in0:a:15`         | `a:16`           |
+>
+> Video (`v`), subtitle (`s`), and data (`d`) track indices follow the same
+> 0-based convention, but the GUI does not currently display per-track
+> labels for those types.
 
 For when two nodes can be wired with a single edge versus when a transform
 filter (`format`, `aformat`, `scale`, `aresample`, `hwupload`, …) must sit
