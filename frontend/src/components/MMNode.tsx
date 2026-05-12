@@ -203,7 +203,7 @@ export function MMNode({ id, data, selected }: NodeProps & { data: FlowNodeData 
                   style={{ top: slotTop('audio', i) }}
                   aria-hidden="true"
                 >
-                  a:{i}
+                  a:{i + 1}
                 </span>
                 <Handle
                   type="source"
