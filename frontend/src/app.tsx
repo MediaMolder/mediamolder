@@ -34,6 +34,7 @@ import {
   displayUrl,
   flowToConfig,
   materializeImplicitEncoders,
+  nextInputTrack,
   type FlowEdge,
   type FlowNode,
 } from './lib/jsonAdapter';
@@ -260,8 +261,21 @@ function Editor() {
       // unanchored.
       if (c.source?.startsWith('__ghost__') || c.target?.startsWith('__ghost__')) return;
       const stream = (c.sourceHandle as StreamType) || 'video';
+      const sourceNode = nodes.find((n) => n.id === c.source);
       markDirty();
       setEdges((es) => {
+        // For edges originating from an input node, auto-assign the next
+        // unused track index so that consecutive drags from the same
+        // audio/video handle produce in0:a:0, in0:a:1, in0:a:2, … rather
+        // than always defaulting to :0. This lets users wire multi-track
+        // sources (e.g. 16 mono audio streams) to separate filter inputs
+        // (e.g. amerge) without editing the JSON by hand.
+        let rawFrom = '';
+        if (sourceNode?.data.kind === 'input') {
+          const letter = stream === 'audio' ? 'a' : stream === 'video' ? 'v' : stream === 'subtitle' ? 's' : 'd';
+          const track = nextInputTrack(sourceNode.data.label as string, stream, es);
+          rawFrom = `${sourceNode.data.label}:${letter}:${track}`;
+        }
         const newEdge: FlowEdge = {
           id: `e-${Date.now()}-${es.length}`,
           type: 'mmEdge',
@@ -270,12 +284,12 @@ function Editor() {
           sourceHandle: c.sourceHandle ?? undefined,
           targetHandle: c.targetHandle ?? undefined,
           className: `edge-${stream}`,
-          data: { streamType: stream, rawFrom: '', rawTo: '' },
+          data: { streamType: stream, rawFrom, rawTo: '' },
         };
         return addEdge(newEdge, es) as FlowEdge[];
       });
     },
-    [isValidConnection],
+    [isValidConnection, nodes],
   );
 
   /* ---------- Selection ---------- */
