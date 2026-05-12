@@ -647,6 +647,11 @@ button.danger:hover { background: rgba(185, 74, 74, 0.15); }
   pointer-events: none;
   user-select: none;
   transform: translateY(-50%);
+  /* Solid background pill so the label is legible when an edge runs behind it */
+  background: var(--panel-2, #1f242d);
+  padding: 1px 3px;
+  border-radius: 3px;
+  outline: 1px solid color-mix(in srgb, var(--audio) 25%, transparent);
 }
 /* Labels sit just outside the node border so they never overlap node content.
  * right/left: -10px pushes the anchor past the border; translateX moves the
