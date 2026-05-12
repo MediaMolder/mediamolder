@@ -321,14 +321,18 @@ function attrsFromGraphNode(node: NodeDef, type: StreamType): Record<string, str
           const defaultRc = roles.default_rc ?? (roles.crf ? 'crf' : roles.qp ? 'qp' : 'bitrate');
           if ((defaultRc === 'crf') && roles.crf) {
             const crfOpt = findOption(info.options, roles.crf);
-            const defVal = crfOpt?.default?.float ?? crfOpt?.default?.int;
+            const defRaw = crfOpt?.default?.float ?? crfOpt?.default?.int;
+            // Negative defaults (e.g. -1) are libav sentinels meaning
+            // "use the codec's internal default" — don't show a number.
+            const defVal = (defRaw !== undefined && defRaw >= 0) ? defRaw : undefined;
             const label  = roles.crf === 'cq' ? 'CQ' : roles.crf === 'global_quality' ? 'ICQ' : 'CRF';
             out['rate_control'] = defVal !== undefined
               ? `${label} ${defVal} (default)`
               : `${label} (default)`;
           } else if (defaultRc === 'qp' && roles.qp) {
             const qpOpt = findOption(info.options, roles.qp);
-            const defVal = qpOpt?.default?.int;
+            const defRaw = qpOpt?.default?.int;
+            const defVal = (defRaw !== undefined && defRaw >= 0) ? defRaw : undefined;
             out['rate_control'] = defVal !== undefined
               ? `QP ${defVal} (default)`
               : 'QP (default)';
