@@ -106,11 +106,31 @@ export function formatBitRateString(s: string): string {
 }
 
 /**
+ * Derive the per-component bit depth from a pixel-format name.
+ * Handles high-bit-depth planar formats (yuv420p10le → 10, p010le → 10)
+ * and packed RGB exceptions (rgb48le → 16 per component). Returns 8 for
+ * all standard 8-bit formats (yuv420p, rgb24, nv12, rgba, …).
+ */
+function pixFmtBitDepth(pf: string): number {
+  // Packed RGB/RGBA where the suffix is total bits, not per-component.
+  const packedExceptions: Record<string, number> = {
+    rgb48le: 16, rgb48be: 16, bgr48le: 16, bgr48be: 16,
+    rgba64le: 16, rgba64be: 16, bgra64le: 16, bgra64be: 16,
+  };
+  if (pf in packedExceptions) return packedExceptions[pf];
+  // High-bit planar/semi-planar names end with NNle or NNbe (NN ≥ 10).
+  const m = pf.match(/(\d{2,})(le|be)$/);
+  if (m) return parseInt(m[1], 10);
+  // Everything else is 8-bit.
+  return 8;
+}
+
+/**
  * Extract attributes that a single graph node establishes for the given
  * stream type. Returns a partial map; absent keys mean "not set by this node".
  */
-function attrsFromGraphNode(node: NodeDef, type: StreamType): Record<string, string> {
-  const out: Record<string, string> = {};
+function attrsFromGraphNode(node: NodeDef, type: StreamType): Record<string, string | null> {
+  const out: Record<string, string | null> = {};
   const p = node.params ?? {};
   const get = (k: string) => asString(p[k]);
 
@@ -135,7 +155,10 @@ function attrsFromGraphNode(node: NodeDef, type: StreamType): Record<string, str
           if (w) out['width'] = w;
           if (h) out['height'] = h;
           const pf = get('format') ?? get('pix_fmt');
-          if (pf) out['pix_fmt'] = pf;
+          if (pf) {
+            out['pix_fmt'] = pf;
+            out['bit_depth'] = `${pixFmtBitDepth(pf)} bit`;
+          }
           break;
         }
         case 'pad':
@@ -148,7 +171,11 @@ function attrsFromGraphNode(node: NodeDef, type: StreamType): Record<string, str
         }
         case 'format': {
           const pf = get('pix_fmts') ?? get('pix_fmt');
-          if (pf) out['pix_fmt'] = pf.split('|')[0];
+          if (pf) {
+            const resolved = pf.split('|')[0];
+            out['pix_fmt'] = resolved;
+            out['bit_depth'] = `${pixFmtBitDepth(resolved)} bit`;
+          }
           break;
         }
         case 'fps':
@@ -198,6 +225,13 @@ function attrsFromGraphNode(node: NodeDef, type: StreamType): Record<string, str
           break;
         }
       }
+    }
+    // Decoded frames flowing through filter nodes have no codec identity.
+    // Emit null for codec/profile/level to block them from propagating
+    // further upstream (so the input's ProRes/h264/etc. doesn't appear
+    // on filter-to-filter edges).
+    for (const k of ['codec', 'profile', 'level'] as const) {
+      if (!(k in out)) out[k] = null;
     }
   }
 
@@ -285,7 +319,7 @@ function attrsFromOutput(out: Output, type: StreamType): Record<string, string> 
   return m;
 }
 
-function nodeAttrs(node: FlowNode, type: StreamType): Record<string, string> {
+function nodeAttrs(node: FlowNode, type: StreamType): Record<string, string | null> {
   const ref = node.data.ref;
   switch (ref.kind) {
     case 'input': return attrsFromInput(ref.def, type, node.data.probed);
@@ -315,6 +349,9 @@ export function inferEdgeAttributes(
   }
 
   const result: Record<string, EdgeAttribute> = {};
+  // Keys that a node explicitly cleared (null sentinel) — stop propagating
+  // them from further upstream nodes.
+  const blocked = new Set<string>();
   const visited = new Set<string>();
   const queue: string[] = [edge.source];
 
@@ -326,6 +363,11 @@ export function inferEdgeAttributes(
     if (!n) continue;
     const attrs = nodeAttrs(n, type);
     for (const [k, v] of Object.entries(attrs)) {
+      if (blocked.has(k)) continue;
+      if (v === null) {
+        blocked.add(k);
+        continue;
+      }
       if (!(k in result)) {
         result[k] = { key: k, value: v, source: n.data.label };
       }
