@@ -126,10 +126,20 @@ type parser struct {
 	// Wave 6 #31: queued `-attach FILE` entries draining onto the
 	// next output's `Attachments` slice.
 	pendingAttachments []pipeline.Attachment
-	hwAccel            string
-	hwDevice           string
-	hwOutFmt           string
-	globalOpts         map[string]string
+	// Wave 11 #64: cover art path detected from the
+	// `-attach FILE -metadata:s:v:0 comment=Cover` pattern. When the
+	// parser sees `-attach FILE` followed by (or preceded by)
+	// `-metadata:s:v:0 comment=Cover`, the attachment is routed here
+	// instead of pendingAttachments. Drained to Output.CoverArt.
+	pendingCoverArt string
+	hwAccel         string
+	hwDevice        string
+	hwOutFmt        string
+	// initHWDevices holds entries parsed from -init_hw_device flags.
+	// Each -init_hw_device type[=name][:device] produces one entry.
+	// Drained into Config.HardwareDevices at the end of parse(). (Wave 10 #56)
+	initHWDevices []pipeline.HardwareDevice
+	globalOpts    map[string]string
 	// Container-level metadata collected from `-metadata key=value`
 	// (no specifier). Latched onto the next output.
 	containerMeta map[string]string
@@ -266,6 +276,23 @@ func (p *parser) parse() (*pipeline.Config, error) {
 			if p.pendingSubCharencSet {
 				in.SubtitleCharenc = p.pendingSubCharenc
 				p.pendingSubCharenc, p.pendingSubCharencSet = "", false
+			}
+			// Wave 10 #59: per-input hwaccel flags. In FFmpeg, -hwaccel,
+			// -hwaccel_device, and -hwaccel_output_format are per-input
+			// flags that apply to the immediately following -i. Latch the
+			// buffered values and clear them so they don't bleed into
+			// subsequent -i arguments.
+			if p.hwAccel != "" {
+				in.HWAccel = p.hwAccel
+				p.hwAccel = ""
+			}
+			if p.hwDevice != "" {
+				in.HWAccelDevice = p.hwDevice
+				p.hwDevice = ""
+			}
+			if p.hwOutFmt != "" {
+				in.HWAccelOutputFormat = p.hwOutFmt
+				p.hwOutFmt = ""
 			}
 			p.inputs = append(p.inputs, in)
 		case arg == "-c:v" || arg == "-vcodec":
@@ -932,6 +959,70 @@ func (p *parser) parse() (*pipeline.Config, error) {
 				return nil, fmt.Errorf("-readrate_catchup: invalid value %q (want non-negative float)", v)
 			}
 			p.pendingReadCatchup, p.pendingReadCatchupSet = f, true
+		// Wave 11 #67: per-input network-protocol AVOptions.
+		// These are demuxer AVOptions that must appear before -i in the
+		// FFmpeg command line, so they are latched into pendingFileOpts
+		// where they end up in Input.Options after drainTypedInputDemuxer
+		// (which does not drain them — they intentionally stay in
+		// Options as AVDict passthrough to libavformat).
+		case arg == "-rtsp_transport":
+			// RTSP transport mode: tcp / udp / udp_multicast / http.
+			// Mirrors fftools/ffmpeg_opt.c reading from the demuxer AVOption.
+			if !p.hasMore() {
+				return nil, fmt.Errorf("-rtsp_transport requires an argument")
+			}
+			if p.pendingFileOpts == nil {
+				p.pendingFileOpts = make(map[string]any)
+			}
+			p.pendingFileOpts["rtsp_transport"] = p.next()
+		case arg == "-stimeout":
+			// RTSP socket timeout in microseconds (libavformat rtsp.c).
+			if !p.hasMore() {
+				return nil, fmt.Errorf("-stimeout requires an argument")
+			}
+			if p.pendingFileOpts == nil {
+				p.pendingFileOpts = make(map[string]any)
+			}
+			p.pendingFileOpts["stimeout"] = p.next()
+		case arg == "-listen_timeout":
+			// SRT listener-mode connection timeout in microseconds.
+			if !p.hasMore() {
+				return nil, fmt.Errorf("-listen_timeout requires an argument")
+			}
+			if p.pendingFileOpts == nil {
+				p.pendingFileOpts = make(map[string]any)
+			}
+			p.pendingFileOpts["listen_timeout"] = p.next()
+		case arg == "-timeout":
+			// General network I/O timeout in microseconds (rtmp, http, …).
+			// Note: -timeout is also a valid output-side muxer option for some
+			// muxers; here it is captured as a per-input option because it
+			// appears before -i in canonical FFmpeg command lines.
+			if !p.hasMore() {
+				return nil, fmt.Errorf("-timeout requires an argument")
+			}
+			if p.pendingFileOpts == nil {
+				p.pendingFileOpts = make(map[string]any)
+			}
+			p.pendingFileOpts["timeout"] = p.next()
+		case arg == "-rw_timeout":
+			// Protocol-level read/write timeout in microseconds (libavformat).
+			if !p.hasMore() {
+				return nil, fmt.Errorf("-rw_timeout requires an argument")
+			}
+			if p.pendingFileOpts == nil {
+				p.pendingFileOpts = make(map[string]any)
+			}
+			p.pendingFileOpts["rw_timeout"] = p.next()
+		case arg == "-mode":
+			// SRT connection mode: caller / listener / rendezvous.
+			if !p.hasMore() {
+				return nil, fmt.Errorf("-mode requires an argument")
+			}
+			if p.pendingFileOpts == nil {
+				p.pendingFileOpts = make(map[string]any)
+			}
+			p.pendingFileOpts["mode"] = p.next()
 		case arg == "-metadata" || strings.HasPrefix(arg, "-metadata:"):
 			// FFmpeg `-metadata [SPEC] key=value`. Without a spec the
 			// value lands on the container; with `:s:<type>:<idx>` it
@@ -1026,6 +1117,22 @@ func (p *parser) parse() (*pipeline.Config, error) {
 				return nil, fmt.Errorf("-hwaccel_output_format requires an argument")
 			}
 			p.hwOutFmt = p.next()
+		case arg == "-init_hw_device":
+			// Syntax: type[=name][:device[,key=value...]]
+			// Examples:
+			//   cuda                  → name="cuda",  type="cuda",  device=""
+			//   cuda=gpu0             → name="gpu0",  type="cuda",  device=""
+			//   vaapi=va:/dev/dri/renderD128 → name="va", type="vaapi", device="/dev/dri/renderD128"
+			//   cuda=gpu0:0           → name="gpu0",  type="cuda",  device="0"
+			if !p.hasMore() {
+				return nil, fmt.Errorf("-init_hw_device requires an argument")
+			}
+			spec := p.next()
+			hd, err := parseInitHWDevice(spec)
+			if err != nil {
+				return nil, fmt.Errorf("-init_hw_device %q: %w", spec, err)
+			}
+			p.initHWDevices = append(p.initHWDevices, hd)
 		// ---- Video encoder options ----
 		case arg == "-crf" || arg == "-qp" || arg == "-preset" || arg == "-tune" ||
 			arg == "-profile:v" || arg == "-level" || arg == "-g" || arg == "-bf" ||
@@ -1285,9 +1392,28 @@ func (p *parser) parse() (*pipeline.Config, error) {
 				out.InterlacedEncode = true
 				p.pendingInterlaced = false
 			}
+			// Wave 11 #64: promote the first pending attachment to
+			// Output.CoverArt when the user passed
+			// `-attach FILE -metadata:s:v:0 comment=Cover`, which
+			// mirrors the fftools cover-art idiom.
+			if len(p.pendingAttachments) > 0 {
+				if ss, ok := p.streamSpecs["v:0"]; ok && ss.Metadata["comment"] == "Cover" {
+					p.pendingCoverArt = p.pendingAttachments[0].Path
+					p.pendingAttachments = p.pendingAttachments[1:]
+					delete(ss.Metadata, "comment")
+					if len(ss.Metadata) == 0 && ss.Disposition == "" {
+						delete(p.streamSpecs, "v:0")
+					}
+					p.warn(fmt.Sprintf("-attach %q -metadata:s:v:0 comment=Cover detected; routing to Output.CoverArt (Wave 11 #64).", p.pendingCoverArt))
+				}
+			}
 			if len(p.pendingAttachments) > 0 {
 				out.Attachments = append(out.Attachments, p.pendingAttachments...)
 				p.pendingAttachments = nil
+			}
+			if p.pendingCoverArt != "" {
+				out.CoverArt = p.pendingCoverArt
+				p.pendingCoverArt = ""
 			}
 			if len(p.containerMeta) > 0 {
 				out.Metadata = p.containerMeta
@@ -1392,11 +1518,12 @@ func (p *parser) parse() (*pipeline.Config, error) {
 	if p.filterCxThreads > 0 {
 		cfg.FilterComplexThreads = p.filterCxThreads
 	}
-	if p.hwAccel != "" {
-		cfg.GlobalOptions.HardwareAccel = p.hwAccel
-	}
-	if p.hwDevice != "" {
-		cfg.GlobalOptions.HardwareDevice = p.hwDevice
+	// Note: p.hwAccel / p.hwDevice / p.hwOutFmt are drained per-input
+	// at the -i processing site (Wave 10 #59). Any remaining value
+	// means the user placed -hwaccel after the last -i, which is
+	// a no-op in FFmpeg — discard silently.
+	if len(p.initHWDevices) > 0 {
+		cfg.HardwareDevices = p.initHWDevices
 	}
 	return cfg, nil
 }
@@ -1545,4 +1672,51 @@ func copyAnyMap(m map[string]any) map[string]any {
 		out[k] = v
 	}
 	return out
+}
+
+// parseInitHWDevice parses an -init_hw_device argument string into a
+// pipeline.HardwareDevice. FFmpeg's syntax (fftools/ffmpeg_opt.c::opt_init_hw_device):
+//
+//	type[=name][:device[,key=value...]]
+//
+// Examples:
+//
+//	"cuda"                         → {Name:"cuda",  Type:"cuda",  Device:""}
+//	"cuda=gpu0"                    → {Name:"gpu0",  Type:"cuda",  Device:""}
+//	"cuda=gpu0:0"                  → {Name:"gpu0",  Type:"cuda",  Device:"0"}
+//	"vaapi=va:/dev/dri/renderD128" → {Name:"va",    Type:"vaapi", Device:"/dev/dri/renderD128"}
+func parseInitHWDevice(spec string) (pipeline.HardwareDevice, error) {
+	if spec == "" {
+		return pipeline.HardwareDevice{}, fmt.Errorf("empty specification")
+	}
+	// Split off device specifier at the first ':'.
+	devicePart := ""
+	typeAndName := spec
+	if idx := strings.IndexByte(spec, ':'); idx >= 0 {
+		typeAndName = spec[:idx]
+		// Only take the device path — drop any trailing ",key=value" options
+		// (we do not currently parse key=value options into HardwareDevice.Options).
+		devicePart = spec[idx+1:]
+		if comma := strings.IndexByte(devicePart, ','); comma >= 0 {
+			devicePart = devicePart[:comma]
+		}
+	}
+	// Split type from optional name at '='.
+	hwType := typeAndName
+	hwName := typeAndName
+	if idx := strings.IndexByte(typeAndName, '='); idx >= 0 {
+		hwType = typeAndName[:idx]
+		hwName = typeAndName[idx+1:]
+	}
+	if hwType == "" {
+		return pipeline.HardwareDevice{}, fmt.Errorf("device type must not be empty")
+	}
+	if hwName == "" {
+		return pipeline.HardwareDevice{}, fmt.Errorf("device name must not be empty")
+	}
+	return pipeline.HardwareDevice{
+		Name:   hwName,
+		Type:   hwType,
+		Device: devicePart,
+	}, nil
 }

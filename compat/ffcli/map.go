@@ -124,6 +124,8 @@ func mapStreamType(letter string) (string, bool) {
 		return "subtitle", true
 	case "d":
 		return "data", true
+	case "t":
+		return "attachment", true
 	}
 	return "", false
 }

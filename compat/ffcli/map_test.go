@@ -51,6 +51,16 @@ func TestParseMapArg(t *testing.T) {
 			in:   "0:d",
 			want: pipeline.StreamSelect{InputIndex: 0, Type: "data", All: true},
 		},
+		{
+			name: "all attachments",
+			in:   "0:t",
+			want: pipeline.StreamSelect{InputIndex: 0, Type: "attachment", All: true},
+		},
+		{
+			name: "attachment track 0",
+			in:   "0:t:0",
+			want: pipeline.StreamSelect{InputIndex: 0, Type: "attachment", Track: 0, All: false},
+		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

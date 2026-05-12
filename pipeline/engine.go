@@ -840,6 +840,10 @@ func buildFilterSpec(node NodeDef) string {
 		// avfilter_graph_parse_ptr treats ',' and ';' as separators between
 		// filter chains. Quote any value that contains those characters (or
 		// a literal single-quote) so the expression reaches the filter intact.
+		// NOTE: ':' (the option key=value separator) cannot be escaped via
+		// avfilter_graph_parse_ptr — the parser splits on all ':' before
+		// processing escape sequences. Callers must avoid ':' in option values
+		// (e.g. use relative file paths instead of Windows absolute paths).
 		if strings.ContainsAny(s, "',;") {
 			s = "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 		}
@@ -938,6 +942,21 @@ func (p *Pipeline) runGraph(ctx context.Context) (runErr error) {
 		p.edgeStats = nil
 		p.mu.Unlock()
 	}()
+
+	// 3a. Open named hardware-acceleration device contexts (Wave 10 #56).
+	// These are opened before any source/encoder/filter nodes so that
+	// resolveHWDevice can look them up by name during resource creation.
+	for _, hd := range cfg.HardwareDevices {
+		dt := av.ParseHWDeviceType(hd.Type)
+		if dt == av.HWDeviceNone {
+			return fmt.Errorf("hardware_devices[%q]: unknown device type %q", hd.Name, hd.Type)
+		}
+		ctx, err := av.OpenHWDevice(dt, hd.Device)
+		if err != nil {
+			return fmt.Errorf("hardware_devices[%q]: %w", hd.Name, err)
+		}
+		runner.hwDevices[hd.Name] = ctx
+	}
 
 	for _, inp := range cfg.Inputs {
 		// Resolve decoder threading from the corresponding source node.

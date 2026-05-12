@@ -13,10 +13,16 @@
 //   - graph nodes:  "<nodeId>" (verbatim)
 
 import type { Edge, Node } from '@xyflow/react';
-import type { EdgeDef, JobConfig, NodeDef, ProbedStream, StreamType, UIPosition } from './jobTypes';
+import type { EdgeDef, GraphUI, JobConfig, NodeDef, ProbedInputCache, ProbedStream, StreamType, UIPosition } from './jobTypes';
 
 export const INPUT_PREFIX = '__in__';
 export const OUTPUT_PREFIX = '__out__';
+
+/**
+ * Filters that accept N audio input streams and produce one merged stream.
+ * These nodes render individual numbered audio input pads.
+ */
+export const MULTI_AUDIO_INPUT_FILTERS = new Set(['amerge', 'amix', 'join', 'concat']);
 
 const STREAM_LETTER: Record<StreamType, string> = {
   video: 'v',
@@ -24,7 +30,33 @@ const STREAM_LETTER: Record<StreamType, string> = {
   subtitle: 's',
   data: 'd',
   metadata: 'm',
+  attachment: 't',
 };
+
+/**
+ * Returns the next unused track index for the given input node id and stream
+ * type, given the current set of edges. Used by onConnect so that dragging
+ * multiple audio edges from an input node auto-assigns a:0, a:1, a:2, …
+ * rather than always defaulting to :0.
+ */
+export function nextInputTrack(
+  inputLabel: string,
+  streamType: StreamType,
+  edges: FlowEdge[],
+): number {
+  const letter = STREAM_LETTER[streamType] ?? 'v';
+  const prefix = `${inputLabel}:${letter}:`;
+  const used = new Set(
+    edges
+      .map((e) => e.data?.rawFrom ?? '')
+      .filter((f) => f.startsWith(prefix))
+      .map((f) => Number(f.slice(prefix.length)))
+      .filter((n) => Number.isFinite(n)),
+  );
+  let track = 0;
+  while (used.has(track)) track++;
+  return track;
+}
 
 const LETTER_STREAM: Record<string, StreamType> = {
   v: 'video',
@@ -45,10 +77,16 @@ export interface FlowNodeData extends Record<string, unknown> {
     | { kind: 'node'; def: NodeDef };
   /**
    * Probed stream metadata (input nodes only). Populated by clicking
-   * "Get properties" in the Inspector, which calls `POST /api/probe`.
-   * Editor-only — never serialised back into the JobConfig.
+   * "Get properties" in the Inspector or by auto-probe on job load.
+   * Persisted in graph.ui.probed_inputs so reopening a job restores
+   * stream handles without a round-trip to the file.
    */
   probed?: ProbedStream[];
+  /**
+   * Unix seconds of file last-modified at probe time (local files only).
+   * 0 = unknown (network/device). Used to detect stale caches on load.
+   */
+  probedFileMtime?: number;
   /**
    * Media types this node supports on its handles (e.g. ["video"] for a
    * video-only encoder, ["audio"] for an audio filter). Drives which
@@ -58,6 +96,12 @@ export interface FlowNodeData extends Record<string, unknown> {
    * outputs, dynamic-pad filters, and unknown go_processors).
    */
   streams?: string[];
+  /**
+   * For input nodes: number of individual audio source handles to render.
+   * 1 = single unlabelled handle (unknown / single track). Set by
+   * configToFlow (edge scan on JSON load) and onProbedData (after probing).
+   */
+  audioTrackCount?: number;
   /**
    * Set on synthetic "ghost" nodes inserted by the GUI to visualise the
    * implicit demuxer / decoder / encoder / muxer stages that the runtime
@@ -74,6 +118,19 @@ export interface FlowNodeData extends Record<string, unknown> {
    * graph adapter on JSON load via the curation lookup table.
    */
   friendlyName?: string;
+  /**
+   * Hardware device name when this node runs on a named accelerator
+   * (NodeDef.device). Injected by app.tsx decoratedNodes; drives the
+   * GPU badge in MMNode. Editor-only. (Wave 10 #60)
+   */
+  hwDevice?: string;
+  /**
+   * True when this software filter sits adjacent to a hardware node
+   * in the graph, implying implicit hwdownload/hwupload round-trips.
+   * Injected by app.tsx decoratedNodes; drives the warning badge in
+   * MMNode. Editor-only. (Wave 10 #60)
+   */
+  hwRoundTrip?: boolean;
 }
 
 export interface FlowEdgeData extends Record<string, unknown> {
@@ -340,6 +397,21 @@ export function configToFlow(cfg: JobConfig, opts: ConvertOptions = {}): {
 
   cfg.inputs.forEach((inp) => {
     const id = INPUT_PREFIX + inp.id;
+    // Scan edges to find how many distinct audio tracks this input exposes.
+    // Gives MMNode enough information to render per-track source handles even
+    // before the user clicks "Get Properties".
+    const edgeAudioTrackCount = cfg.graph.edges
+      .filter((e) => endpointHead(e.from) === inp.id && e.type === 'audio')
+      .reduce((max, e) => {
+        const parts = e.from.split(':');
+        const track = Number(parts[2] ?? 0);
+        return Math.max(max, Number.isFinite(track) ? track + 1 : 1);
+      }, 1);
+    const cachedProbe = cfg.graph.ui?.probed_inputs?.[inp.id];
+    const cacheAudioCount = cachedProbe
+      ? cachedProbe.streams.filter((s) => s.type === 'audio').length
+      : 0;
+    const audioTrackCount = Math.max(edgeAudioTrackCount, cacheAudioCount);
     nodes.push({
       id,
       type: 'mmNode',
@@ -349,6 +421,12 @@ export function configToFlow(cfg: JobConfig, opts: ConvertOptions = {}): {
         label: inp.id,
         sublabel: displayUrl(inp.url),
         ref: { kind: 'input', def: inp },
+        ...(cachedProbe ? {
+          probed: cachedProbe.streams,
+          probedFileMtime: cachedProbe.file_mtime,
+          streams: [...new Set(cachedProbe.streams.map((s) => s.type as string))],
+        } : {}),
+        ...(audioTrackCount > 1 ? { audioTrackCount } : {}),
       },
     });
   });
@@ -390,18 +468,50 @@ export function configToFlow(cfg: JobConfig, opts: ConvertOptions = {}): {
     });
   });
 
+  // Per-(target, streamType) slot counter: used to assign numbered handle
+  // IDs to edges that converge on a multi-input filter (amerge, amix, …).
+  const targetSlots = new Map<string, number>();
+
   const edges: FlowEdge[] = cfg.graph.edges.map((e, idx) => {
     const fromHead = endpointHead(e.from);
     const toHead = endpointHead(e.to);
     const sourceId = inputIds.has(fromHead) ? INPUT_PREFIX + fromHead : fromHead;
     const targetId = outputIds.has(toHead) ? OUTPUT_PREFIX + toHead : toHead;
+
+    // For audio edges from input nodes, encode the track index in the
+    // handle ID so each track maps to its own visual dot on the node.
+    // Non-audio streams and non-input sources use the plain type string.
+    let sourceHandle: string = e.type;
+    if (inputIds.has(fromHead) && e.type === 'audio') {
+      const parts = e.from.split(':');
+      const track = Number(parts[2] ?? 0);
+      sourceHandle = `audio:${Number.isFinite(track) ? track : 0}`;
+    }
+
+    // For audio edges into multi-input filter nodes or encoder nodes with
+    // multi_input_audio or channel_layout set, assign consecutive slot
+    // indices so the edges wire to numbered input pads.
+    let targetHandle: string = e.type;
+    const targetNode = cfg.graph.nodes.find((n) => n.id === toHead);
+    const isMultiInputAudioTarget =
+      e.type === 'audio' &&
+      (MULTI_AUDIO_INPUT_FILTERS.has(targetNode?.filter ?? '') ||
+        (targetNode?.type === 'encoder' &&
+          (targetNode?.params?.multi_input_audio || targetNode?.params?.channel_layout)));
+    if (isMultiInputAudioTarget) {
+      const slotKey = `${targetId}:audio`;
+      const slot = targetSlots.get(slotKey) ?? 0;
+      targetSlots.set(slotKey, slot + 1);
+      targetHandle = `audio:${slot}`;
+    }
+
     return {
       id: `e${idx}-${sourceId}-${targetId}-${e.type}`,
       type: 'mmEdge',
       source: sourceId,
       target: targetId,
-      sourceHandle: e.type,
-      targetHandle: e.type,
+      sourceHandle,
+      targetHandle,
       className: `edge-${e.type}`,
       data: {
         streamType: e.type,
@@ -478,11 +588,44 @@ export function flowToConfig(
     inp.streams = merged;
   }
 
+  // Strip codec shorthand fields (codec_video / codec_audio / codec_subtitle)
+  // from outputs that already have explicit encoder or copy nodes wired to them.
+  // The runtime warns when both are present, and the shorthands are meaningless
+  // once an explicit encoder node exists.
+  const encoderNodeIds = new Set(
+    graphNodes.filter((n) => n.type === 'encoder' || n.type === 'copy').map((n) => n.id),
+  );
+  for (const e of graphEdges) {
+    const fromHead = e.from.split(':')[0];
+    const toHead = e.to.split(':')[0];
+    if (!encoderNodeIds.has(fromHead)) continue;
+    const out = outputs.find((o) => o.id === toHead);
+    if (!out) continue;
+    delete (out as unknown as Record<string, unknown>).codec_video;
+    delete (out as unknown as Record<string, unknown>).codec_audio;
+    delete (out as unknown as Record<string, unknown>).codec_subtitle;
+  }
+
+  // Collect probed stream metadata from input nodes and persist it under
+  // graph.ui.probed_inputs so reopening the file restores the metadata
+  // without a round-trip to the source file.
+  const probedInputs: Record<string, ProbedInputCache> = {};
+  for (const n of nodes) {
+    if (n.data.ref.kind === 'input' && n.data.probed) {
+      probedInputs[n.data.ref.def.id] = {
+        streams: n.data.probed,
+        file_mtime: (n.data.probedFileMtime as number | undefined) ?? 0,
+      };
+    }
+  }
+  const ui: GraphUI = { positions };
+  if (Object.keys(probedInputs).length > 0) ui.probed_inputs = probedInputs;
+
   return {
     schema_version: baseSchemaVersion,
     description,
     inputs,
-    graph: { nodes: graphNodes, edges: graphEdges, ui: { positions } },
+    graph: { nodes: graphNodes, edges: graphEdges, ui },
     outputs,
     global_options: globalOptions,
     assets,
@@ -502,10 +645,15 @@ function deriveEndpoint(
 ): string {
   if (!flowId) return '';
   const node = nodes.find((n) => n.id === flowId);
-  const stream = (handle as StreamType) || 'video';
+  // Handle may be "audio:2" (per-track) or "audio" (single). Extract the
+  // base stream type and, for input sources, the track index.
+  const baseType = (handle ?? '').split(':')[0] || 'video';
+  const stream = baseType as StreamType;
   const letter = STREAM_LETTER[stream] ?? 'v';
   if (node?.data.kind === 'input' && side === 'source') {
-    return `${node.data.label}:${letter}:0`;
+    const trackStr = (handle ?? '').split(':')[1];
+    const track = trackStr !== undefined ? parseInt(trackStr, 10) : 0;
+    return `${node.data.label}:${letter}:${isNaN(track) ? 0 : track}`;
   }
   if (node?.data.kind === 'output' && side === 'target') {
     return `${node.data.label}:${letter}`;

@@ -109,7 +109,7 @@ const (
 	FrameSideDataDynamicHDRVivid           FrameSideDataType = C.AV_FRAME_DATA_DYNAMIC_HDR_VIVID
 	FrameSideDataAmbientViewingEnvironment FrameSideDataType = C.AV_FRAME_DATA_AMBIENT_VIEWING_ENVIRONMENT
 	// FrameSideDataVideoHint requires FFmpeg 7.0 (libavutil 59.x) or later.
-	FrameSideDataVideoHint                 FrameSideDataType = C.AV_FRAME_DATA_VIDEO_HINT
+	FrameSideDataVideoHint FrameSideDataType = C.AV_FRAME_DATA_VIDEO_HINT
 )
 
 // Name returns the human-readable name FFmpeg associates with this side data

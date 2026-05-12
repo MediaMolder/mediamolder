@@ -3,7 +3,7 @@ import type { ReactNode } from 'react';
 import type { FlowEdge, FlowNode } from '../lib/jsonAdapter';
 import { displayUrl, nodeDisplayLabel, nodeDisplaySublabel } from '../lib/jsonAdapter';
 import { displayName, lookupFriendlyName, useNamingMode } from '../lib/friendlyNames';
-import type { Chapter, EncoderOverride, Input, NodeDef, Output, ProbeResponse, ProbedStream, StreamSpec } from '../lib/jobTypes';
+import type { Chapter, EncoderOverride, HWAccelProbe, HardwareDevice, Input, NodeDef, Output, ProbeResponse, ProbedStream, StreamSpec } from '../lib/jobTypes';
 import { type BSFEntry, parseBSFChain, serializeBSFChain } from '../lib/bsf';
 import { MEDIA_FILE_EXTENSIONS } from '../lib/mediaExtensions';
 import { FileBrowser, type BrowseMode } from './FileBrowser';
@@ -29,10 +29,18 @@ interface Props {
   /** Called when probe results arrive for an input node.  Kept separate from
    *  onChange so the caller can use a functional setNodes update and avoid
    *  overwriting concurrent URL changes made by the same event batch. */
-  onProbedData: (nodeId: string, probed: ProbedStream[] | undefined) => void;
+  onProbedData: (nodeId: string, response: ProbeResponse | undefined) => void;
+  /** Named hardware-acceleration device contexts available in the current
+   *  job config. Passed to NodeForm to populate the device picker. (Wave 10 #60) */
+  hwDevices?: HardwareDevice[];
+  /** Accelerator probe results from GET /api/hwaccel. null = probe not yet
+   *  returned; show all options as a fallback. The richer HWAccelProbe type
+   *  carries SW format lists and codec enumerations used to annotate the
+   *  dropdown and show a capability summary. */
+  availableHWAccels?: HWAccelProbe[] | null;
 }
 
-export function Inspector({ node, nodes, edges, onChange, onDelete, onSelectNode, onProbedData }: Props) {
+export function Inspector({ node, nodes, edges, onChange, onDelete, onSelectNode, onProbedData, hwDevices = [], availableHWAccels = null }: Props) {
   if (!node) {
     return (
       <div className="inspector">
@@ -84,12 +92,22 @@ export function Inspector({ node, nodes, edges, onChange, onDelete, onSelectNode
         {describeKind(node.data.kind, node.data.streams ?? [])}
       </div>
 
-      {ref.kind === 'input' && (
+      {ref.kind === 'input' && isDeviceInput(ref.def) && (
+        <DeviceInputForm
+          def={ref.def}
+          probed={node.data.probed}
+          onChange={(def) => onChange(updateRef(node, { kind: 'input', def }, def.id, displayUrl(def.url)))}
+          onProbed={(resp) => onProbedData(node.id, resp)}
+        />
+      )}
+      {ref.kind === 'input' && !isDeviceInput(ref.def) && (
         <InputForm
           def={ref.def}
           probed={node.data.probed}
           onChange={(def) => onChange(updateRef(node, { kind: 'input', def }, def.id, displayUrl(def.url)))}
-          onProbed={(probed) => onProbedData(node.id, probed)}
+          onProbed={(resp) => onProbedData(node.id, resp)}
+          hwDevices={hwDevices}
+          availableHWAccels={availableHWAccels}
         />
       )}
       {ref.kind === 'output' && (
@@ -110,6 +128,7 @@ export function Inspector({ node, nodes, edges, onChange, onDelete, onSelectNode
         <NodeForm
           def={ref.def}
           padHints={resolveUpstreamPad(nodes, edges, node.id)}
+          hwDevices={hwDevices}
           onChange={(def) =>
             onChange(updateRef(node, { kind: 'node', def }, nodeDisplayLabel(def), nodeDisplaySublabel(def)))
           }
@@ -126,8 +145,239 @@ function updateRef(node: FlowNode, ref: FlowNode['data']['ref'], label: string, 
   };
 }
 
-/* ---------- Input form ---------- */
-function InputForm({
+/* ---------- Device-input helpers ---------- */
+const DEVICE_FORMATS = new Set(['dshow', 'avfoundation', 'v4l2', 'gdigrab', 'decklink']);
+
+// COVER_ART_FORMATS is the set of libavformat muxer names that support
+// AV_DISPOSITION_ATTACHED_PIC cover art embedding (Wave 11 #64).
+const COVER_ART_FORMATS = new Set(['mp4', 'm4a', 'mov', 'ipod', 'mp3', 'mkv', 'matroska']);
+
+function isDeviceInput(def: Input): boolean {
+  return !!(def.format && DEVICE_FORMATS.has(def.format));
+}
+
+/* ---------- Network-input helpers (Wave 11 #67) ---------- */
+
+/** Extract the lower-cased scheme from a URL (token before "://"), or "" if none. */
+function urlScheme(url: string): string {
+  const m = /^([a-zA-Z][a-zA-Z0-9+\-.]*):\/\//.exec(url);
+  return m ? m[1].toLowerCase() : '';
+}
+
+/** True for live-network schemes that may need protocol-specific AVOptions. */
+function isNetworkInput(url: string): boolean {
+  switch (urlScheme(url)) {
+    case 'rtsp': case 'rtsps':
+    case 'rtmp': case 'rtmps': case 'rtmpe': case 'rtmpt': case 'rtmpte':
+    case 'srt':
+    case 'rist':
+    case 'rtp':
+      return true;
+  }
+  return false;
+}
+
+const SCHEME_LABEL: Record<string, string> = {
+  rtsp: 'RTSP', rtsps: 'RTSPS',
+  rtmp: 'RTMP', rtmps: 'RTMPS', rtmpe: 'RTMPE', rtmpt: 'RTMPT', rtmpte: 'RTMPTE',
+  srt: 'SRT',
+  rist: 'RIST',
+  rtp: 'RTP',
+};
+
+/** A small coloured badge showing the URL protocol. */
+function SchemeBadge({ url }: { url: string }) {
+  const scheme = urlScheme(url);
+  const label = SCHEME_LABEL[scheme];
+  if (!label) return null;
+  return (
+    <span
+      className="url-scheme-badge"
+      title={`Network protocol: ${label}`}
+      style={{
+        display: 'inline-block',
+        fontSize: 10,
+        fontFamily: 'monospace',
+        fontWeight: 700,
+        padding: '1px 5px',
+        borderRadius: 3,
+        marginLeft: 4,
+        verticalAlign: 'middle',
+        background: 'var(--accent-muted, #1e3a5f)',
+        color: 'var(--accent, #4ea8de)',
+        border: '1px solid var(--accent, #4ea8de)',
+        letterSpacing: '0.04em',
+        userSelect: 'none',
+      }}
+    >
+      {label}
+    </span>
+  );
+}
+
+/** Protocol-specific option controls that write into Input.Options (AVDict passthrough). */
+function NetworkInputSection({
+  url,
+  options,
+  onChange,
+}: {
+  url: string;
+  options: Record<string, unknown> | undefined;
+  onChange: (opts: Record<string, unknown> | undefined) => void;
+}) {
+  const scheme = urlScheme(url);
+  const setOpt = (key: string, value: string) => onChange(setDeviceOption(options, key, value));
+  const getOpt = (key: string) => String(options?.[key] ?? '');
+
+  if (scheme === 'rtsp' || scheme === 'rtsps') {
+    return (
+      <>
+        <label style={{ marginTop: 10 }}>RTSP transport</label>
+        <select
+          value={getOpt('rtsp_transport')}
+          onChange={(e) => setOpt('rtsp_transport', e.target.value)}
+        >
+          <option value="">Default (UDP)</option>
+          <option value="tcp">TCP (recommended for firewalled networks)</option>
+          <option value="udp">UDP</option>
+          <option value="udp_multicast">UDP multicast</option>
+          <option value="http">HTTP tunnelling</option>
+        </select>
+        <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: -4, marginBottom: 4 }}>
+          <code>-rtsp_transport</code> — TCP is more reliable across NAT/firewalls.
+        </div>
+        <label>Socket timeout (µs)</label>
+        <input
+          type="number"
+          min="0"
+          value={getOpt('stimeout')}
+          onChange={(e) => setOpt('stimeout', e.target.value)}
+          placeholder="e.g. 5000000 (5 s)"
+        />
+        <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: -4, marginBottom: 4 }}>
+          <code>-stimeout</code> — RTSP socket timeout in microseconds. 0 = no timeout.
+        </div>
+      </>
+    );
+  }
+
+  if (scheme === 'srt') {
+    return (
+      <>
+        <label style={{ marginTop: 10 }}>SRT mode</label>
+        <select
+          value={getOpt('mode')}
+          onChange={(e) => setOpt('mode', e.target.value)}
+        >
+          <option value="">Default (caller)</option>
+          <option value="caller">Caller — connect to a remote host</option>
+          <option value="listener">Listener — wait for incoming connection</option>
+          <option value="rendezvous">Rendezvous — symmetric hole-punch</option>
+        </select>
+        <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: -4, marginBottom: 4 }}>
+          <code>-mode</code> — SRT connection role.
+        </div>
+        <label>Listen timeout (µs)</label>
+        <input
+          type="number"
+          min="0"
+          value={getOpt('listen_timeout')}
+          onChange={(e) => setOpt('listen_timeout', e.target.value)}
+          placeholder="e.g. 30000000 (30 s)"
+        />
+        <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: -4, marginBottom: 4 }}>
+          <code>-listen_timeout</code> — Required in listener mode to prevent indefinite blocking.
+          0 = no timeout.
+        </div>
+      </>
+    );
+  }
+
+  if (scheme === 'rtmp' || scheme === 'rtmps' || scheme === 'rtmpe' ||
+      scheme === 'rtmpt' || scheme === 'rtmpte') {
+    return (
+      <>
+        <label style={{ marginTop: 10 }}>Connection timeout (µs)</label>
+        <input
+          type="number"
+          min="0"
+          value={getOpt('timeout')}
+          onChange={(e) => setOpt('timeout', e.target.value)}
+          placeholder="e.g. 10000000 (10 s)"
+        />
+        <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: -4, marginBottom: 4 }}>
+          <code>-timeout</code> — Network I/O timeout in microseconds. 0 = no timeout.
+        </div>
+      </>
+    );
+  }
+
+  // RIST, RTP, and other network schemes: no specialised controls — AVDict
+  // passthrough via the generic Options dict in TimingFields handles them.
+  return null;
+}
+
+type DeviceType = 'video' | 'audio' | 'screen';
+
+interface DeviceEntry {
+  name: string;
+  description: string;
+}
+
+/** Mutate a copy of `options`, setting or deleting `key`. Returns undefined when the map is empty. */
+function setDeviceOption(
+  options: Record<string, unknown> | undefined,
+  key: string,
+  value: string,
+): Record<string, unknown> | undefined {
+  const next: Record<string, unknown> = { ...(options ?? {}) };
+  if (value.trim() === '') {
+    delete next[key];
+  } else {
+    next[key] = value;
+  }
+  return Object.keys(next).length === 0 ? undefined : next;
+}
+
+/** Build the libavdevice URL specifier from a device name, type, and format. */
+function buildDeviceUrl(name: string, type: DeviceType, format: string, devices: DeviceEntry[]): string {
+  switch (format) {
+    case 'dshow':
+      return type === 'audio' ? `audio="${name}"` : `video="${name}"`;
+    case 'gdigrab':
+      return name || 'desktop';
+    case 'v4l2':
+      return name;
+    case 'avfoundation': {
+      // URL is the device index in the enumerated list, or "none:<idx>" for audio-only.
+      const idx = devices.findIndex((d) => d.name === name);
+      const idxStr = idx >= 0 ? String(idx) : name;
+      return type === 'audio' ? `none:${idxStr}` : idxStr;
+    }
+    default:
+      return name;
+  }
+}
+
+/** Extract the raw device name from a pre-built libavdevice URL. */
+function extractDeviceName(url: string, format: string): string {
+  if (!url) return '';
+  if (format === 'dshow') {
+    const m = /^(?:video|audio)="(.*)"$/.exec(url);
+    return m ? m[1] : url;
+  }
+  return url;
+}
+
+/* ---------- Device input form (Wave 11 #63) ----------
+ * Shown instead of InputForm when Input.format is a libavdevice demuxer name.
+ * Provides:
+ *   • Device type dropdown (video / audio / screen) where format allows it.
+ *   • Async device-name combobox populated from GET /api/devices?format=<fmt>.
+ *   • Raw URL field — auto-populated by the picker, also freely editable.
+ *   • Common capture knobs: framerate, video_size, pixel_format, sample_rate.
+ *   • "Test connection" probe button (passes format + options to /api/probe). */
+function DeviceInputForm({
   def,
   probed,
   onChange,
@@ -136,7 +386,202 @@ function InputForm({
   def: Input;
   probed?: ProbedStream[];
   onChange: (next: Input) => void;
-  onProbed: (next: ProbedStream[] | undefined) => void;
+  onProbed: (next: ProbeResponse | undefined) => void;
+}) {
+  const format = def.format ?? 'dshow';
+
+  const availableTypes: DeviceType[] =
+    format === 'gdigrab' ? ['screen'] :
+    format === 'v4l2'    ? ['video']  :
+    ['video', 'audio']; // dshow, avfoundation, decklink
+
+  const inferType = (): DeviceType => {
+    if (availableTypes.length === 1) return availableTypes[0];
+    if (def.url.startsWith('audio=') || def.url.startsWith('none:')) return 'audio';
+    return 'video';
+  };
+
+  const [deviceType, setDeviceType] = useState<DeviceType>(inferType);
+  const [devices, setDevices] = useState<DeviceEntry[]>([]);
+  const [loadingDevices, setLoadingDevices] = useState(false);
+  const [deviceError, setDeviceError] = useState<string | null>(null);
+  const [probing, setProbing] = useState(false);
+  const [probeError, setProbeError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setLoadingDevices(true);
+    setDeviceError(null);
+    fetch(`/api/devices?format=${encodeURIComponent(format)}`)
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
+      .then((d: DeviceEntry[]) => setDevices(d ?? []))
+      .catch((e: Error) => setDeviceError(e.message))
+      .finally(() => setLoadingDevices(false));
+  }, [format]);
+
+  const runProbe = async () => {
+    if (!def.url) { setProbeError('Select a device first.'); return; }
+    setProbing(true);
+    setProbeError(null);
+    try {
+      const r = await fetch('/api/probe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: def.url, format: def.format, options: def.options }),
+      });
+      if (!r.ok) throw new Error((await r.text()) || `HTTP ${r.status}`);
+      const resp = (await r.json()) as ProbeResponse;
+      onProbed(resp);
+    } catch (err) {
+      setProbeError((err as Error).message);
+      onProbed(undefined);
+    } finally {
+      setProbing(false);
+    }
+  };
+
+  const listId = `device-names-${format}`;
+  const currentName = extractDeviceName(def.url, format);
+
+  return (
+    <>
+      <Field label="ID" value={def.id} onChange={(v) => onChange({ ...def, id: v })} />
+      <label>Format</label>
+      <div className="inspector-canonical" style={{ marginBottom: 8 }}>
+        <code>{format}</code>
+      </div>
+      {availableTypes.length > 1 && (
+        <>
+          <label>Device type</label>
+          <select
+            value={deviceType}
+            onChange={(e) => {
+              const t = e.target.value as DeviceType;
+              setDeviceType(t);
+              if (currentName) onChange({ ...def, url: buildDeviceUrl(currentName, t, format, devices) });
+            }}
+          >
+            {availableTypes.map((t) => <option key={t} value={t}>{t}</option>)}
+          </select>
+        </>
+      )}
+      <label style={{ marginTop: 8 }}>Device</label>
+      {loadingDevices && (
+        <div style={{ fontSize: 11, color: 'var(--text-dim)', marginBottom: 4 }}>Listing devices…</div>
+      )}
+      {deviceError && <div className="probe-error">{deviceError}</div>}
+      {/* key=format resets the uncontrolled input when the format changes */}
+      <input
+        key={format}
+        list={listId}
+        defaultValue={currentName}
+        placeholder={devices.length === 0 && !loadingDevices ? 'No devices found — type a name' : 'Select or type device name…'}
+        onBlur={(e) => {
+          const name = e.target.value.trim();
+          if (!name) return;
+          const url = buildDeviceUrl(name, deviceType, format, devices);
+          onChange({ ...def, url });
+          if (probed) onProbed(undefined);
+        }}
+      />
+      <datalist id={listId}>
+        {devices.map((d) => (
+          <option key={d.name} value={d.name}>{d.description || d.name}</option>
+        ))}
+      </datalist>
+      <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: -4, marginBottom: 8 }}>
+        {format === 'dshow'        && 'Device name as reported by Windows (e.g. "Integrated Camera").'}
+        {format === 'avfoundation' && 'Device index from the enumerated list.'}
+        {format === 'v4l2'         && 'Device node path (e.g. /dev/video0).'}
+        {format === 'gdigrab'      && 'Window title, or leave empty for the full desktop.'}
+        {format === 'decklink'     && 'Blackmagic DeckLink device name.'}
+      </div>
+      <label>Device URL</label>
+      <div style={{ fontSize: 11, color: 'var(--text-dim)', marginBottom: 4 }}>
+        Full specifier sent to libavdevice — auto-populated above, or edit directly.
+      </div>
+      <input
+        value={def.url}
+        onChange={(e) => {
+          onChange({ ...def, url: e.target.value });
+          if (probed) onProbed(undefined);
+        }}
+      />
+      <div className="probe-actions">
+        {def.url ? (
+          <button onClick={runProbe} disabled={probing}>
+            {probing ? 'Testing…' : 'Test connection'}
+          </button>
+        ) : (
+          <div className="empty" style={{ fontSize: 11 }}>
+            Select a device above to test the connection.
+          </div>
+        )}
+        {probed && (
+          <button className="link-btn" onClick={() => onProbed(undefined)} title="Discard probed metadata">
+            Clear
+          </button>
+        )}
+      </div>
+      {probeError && <div className="probe-error">{probeError}</div>}
+      {probed && <ProbedStreamsView streams={probed} />}
+      <label style={{ marginTop: 12 }}>Capture options</label>
+      <div style={{ fontSize: 11, color: 'var(--text-dim)', marginBottom: 4 }}>
+        Common knobs passed to the demuxer as AVOptions. Leave empty to use device defaults.
+      </div>
+      <Field
+        label="Frame rate"
+        value={String(def.options?.['framerate'] ?? '')}
+        onChange={(v) => onChange({ ...def, options: setDeviceOption(def.options, 'framerate', v) })}
+      />
+      <Field
+        label="Video size (e.g. 1280x720)"
+        value={String(def.options?.['video_size'] ?? '')}
+        onChange={(v) => onChange({ ...def, options: setDeviceOption(def.options, 'video_size', v) })}
+      />
+      <Field
+        label="Pixel format"
+        value={String(def.options?.['pixel_format'] ?? '')}
+        onChange={(v) => onChange({ ...def, options: setDeviceOption(def.options, 'pixel_format', v) })}
+      />
+      <Field
+        label="Sample rate (Hz)"
+        value={String(def.options?.['sample_rate'] ?? '')}
+        onChange={(v) => onChange({ ...def, options: setDeviceOption(def.options, 'sample_rate', v) })}
+      />
+    </>
+  );
+}
+
+/* ---------- Input form ---------- */
+
+// All hardware accelerator options in display order. Filtered at render time
+// by the availableHWAccels list returned from GET /api/hwaccel.
+const HW_ACCELS: Array<{ value: string; label: string }> = [
+  { value: 'cuda',         label: 'cuda (NVIDIA NVDEC)' },
+  { value: 'vaapi',        label: 'vaapi (Intel/AMD VA-API)' },
+  { value: 'videotoolbox', label: 'videotoolbox (Apple)' },
+  { value: 'qsv',          label: 'qsv (Intel Quick Sync)' },
+  { value: 'd3d11va',      label: 'd3d11va (Windows Direct3D 11)' },
+  { value: 'dxva2',        label: 'dxva2 (Windows DXVA2)' },
+  { value: 'auto',         label: 'auto' },
+];
+
+function InputForm({
+  def,
+  probed,
+  onChange,
+  onProbed,
+  hwDevices = [],
+  availableHWAccels = null,
+}: {
+  def: Input;
+  probed?: ProbedStream[];
+  onChange: (next: Input) => void;
+  onProbed: (next: ProbeResponse | undefined) => void;
+  hwDevices?: HardwareDevice[];
+  /** null = probe not yet returned; show all options. HWAccelProbe[] =
+   *  full probe results including SW formats and codec lists. */
+  availableHWAccels?: HWAccelProbe[] | null;
 }) {
   const [probing, setProbing] = useState(false);
   const [probeError, setProbeError] = useState<string | null>(null);
@@ -155,7 +600,7 @@ function InputForm({
         throw new Error(body || `HTTP ${r.status}`);
       }
       const resp = (await r.json()) as ProbeResponse;
-      onProbed(resp.streams);
+      onProbed(resp);
     } catch (err) {
       setProbeError((err as Error).message);
       onProbed(undefined);
@@ -187,6 +632,13 @@ function InputForm({
           probeUrl(path);
         }}
       />
+      {/* Wave 11 #67: show protocol badge when URL is a network scheme. */}
+      {isNetworkInput(def.url) && (
+        <div style={{ marginTop: -4, marginBottom: 4, fontSize: 11, color: 'var(--text-dim)' }}>
+          <SchemeBadge url={def.url} />
+          {' '}Network stream
+        </div>
+      )}
       <div className="probe-actions">
         {def.url && def.url.trim() ? (
           <button onClick={runProbe} disabled={probing}>
@@ -205,6 +657,14 @@ function InputForm({
       </div>
       {probeError && <div className="probe-error">{probeError}</div>}
       {probed && <ProbedStreamsView streams={probed} />}
+      {/* Wave 11 #67: network-protocol specific option controls. */}
+      {isNetworkInput(def.url) && (
+        <NetworkInputSection
+          url={def.url}
+          options={def.options}
+          onChange={(opts) => onChange({ ...def, options: opts })}
+        />
+      )}
       <label style={{ marginTop: 12 }}>Subtitle charset</label>
       <input
         list="sub-charenc-list"
@@ -220,6 +680,209 @@ function InputForm({
         Leave empty for the UTF-8 default. Applies to SRT, ASS, SSA; ignored
         for bitmap subtitles (PGS, DVB).
       </div>
+      {/* Wave 10 #59: per-input hardware-accelerated decoding. */}
+      <div style={{ marginTop: 12, marginBottom: 4 }}>
+        <label>HW decode accelerator</label>
+        {(() => {
+          // null → probe not yet returned → show everything as fallback.
+          // HWAccelProbe[] → filter to confirmed-available types.
+          const probes = availableHWAccels;
+          const availableTypes = probes?.filter((p) => p.available).map((p) => p.type) ?? null;
+          const filtered = availableTypes === null
+            ? HW_ACCELS
+            : HW_ACCELS.filter((a) =>
+                a.value === 'auto'
+                  ? availableTypes.length > 0
+                  : availableTypes.includes(a.value),
+              );
+          // If the job was authored on a different machine, preserve the
+          // current value as a disabled option so it's visible but not selectable.
+          const currentMissing =
+            def.hwaccel &&
+            availableTypes !== null &&
+            !filtered.some((a) => a.value === def.hwaccel);
+          return (
+            <select
+              value={def.hwaccel ?? ''}
+              onChange={(e) => onChange({ ...def, hwaccel: e.target.value || undefined })}
+              style={{ display: 'block', width: '100%', marginTop: 4, marginBottom: 4 }}
+            >
+              <option value="">(none — software decode)</option>
+              {currentMissing && (
+                <option value={def.hwaccel} disabled>
+                  {def.hwaccel} (not available on this machine)
+                </option>
+              )}
+              {filtered.map((a) => (
+                <option key={a.value} value={a.value}>{a.label}</option>
+              ))}
+            </select>
+          );
+        })()}
+        {availableHWAccels !== null && availableHWAccels.length === 0 && (
+          <div style={{ fontSize: 11, color: 'var(--text-dim)', marginBottom: 4 }}>
+            No hardware accelerators detected on this machine.
+          </div>
+        )}
+        <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: -2, marginBottom: 6 }}>
+          <code>-hwaccel</code> — selects the hardware decode API for this input.
+        </div>
+
+        {/* Inline stream-level HW decode scope hint. */}
+        {(() => {
+          if (!def.hwaccel || !probed || probed.length === 0) return null;
+          const probe = availableHWAccels?.find((p) => p.type === def.hwaccel);
+          // When probe data is available use its codec list; otherwise assume
+          // video-only acceleration (true for all shipping hwaccel backends).
+          const hwDecoderNames = probe?.codecs
+            ?.filter((c) => c.role === 'decode')
+            .map((c) => c.name.toLowerCase()) ?? null;
+
+          const videoStreams = probed.filter((s) => s.type === 'video');
+          const audioStreams = probed.filter((s) => s.type === 'audio');
+
+          const willAccelerate = (s: ProbedStream) => {
+            if (!hwDecoderNames) return s.type === 'video'; // fallback: video only
+            return hwDecoderNames.some(
+              (n) => s.codec && (n === s.codec.toLowerCase() || n.startsWith(s.codec.toLowerCase())),
+            );
+          };
+
+          const hwVideo = videoStreams.filter(willAccelerate);
+          const hwAudio = audioStreams.filter(willAccelerate);
+          const swVideo = videoStreams.filter((s) => !willAccelerate(s));
+          const swAudio = audioStreams.filter((s) => !willAccelerate(s));
+
+          const parts: string[] = [];
+          if (hwVideo.length > 0) {
+            const tag = hwVideo.map((s) => s.codec ?? 'video').join(', ');
+            parts.push(`video (${tag})`);
+          }
+          if (hwAudio.length > 0) {
+            const tag = hwAudio.map((s) => s.codec ?? 'audio').join(', ');
+            parts.push(`audio (${tag})`);
+          }
+          const swParts: string[] = [];
+          if (swVideo.length > 0) swParts.push('video');
+          if (swAudio.length > 0) swParts.push('audio');
+
+          return (
+            <div style={{ fontSize: 11, marginBottom: 6 }}>
+              {parts.length > 0 ? (
+                <span>
+                  <span style={{ color: 'var(--accent, #4caf50)' }}>HW decode:</span>{' '}
+                  {parts.join(', ')}
+                </span>
+              ) : (
+                <span style={{ color: 'var(--text-dim)' }}>
+                  No streams in this input match a supported HW decoder.
+                </span>
+              )}
+              {swParts.length > 0 && parts.length > 0 && (
+                <span style={{ color: 'var(--text-dim)' }}>
+                  {' '}· SW fallback: {swParts.join(', ')}
+                </span>
+              )}
+            </div>
+          );
+        })()}
+
+        {/* Capability summary for the selected accelerator. */}
+        {(() => {
+          if (!def.hwaccel || def.hwaccel === 'auto' || !availableHWAccels) return null;
+          const probe = availableHWAccels.find((p) => p.type === def.hwaccel);
+          if (!probe?.available) return null;
+          const decoders = probe.codecs?.filter((c) => c.role === 'decode') ?? [];
+          const encoders = probe.codecs?.filter((c) => c.role === 'encode') ?? [];
+          const hasCaps = decoders.length > 0 || encoders.length > 0 ||
+                          (probe.sw_formats?.length ?? 0) > 0 ||
+                          probe.max_width || probe.cuda_arch;
+          if (!hasCaps) return null;
+          // Helper: render codec names with per-codec notes as a footnote block.
+          const CodecList = ({ list, label }: { list: typeof decoders; label: string }) => {
+            if (list.length === 0) return null;
+            const noted = list.filter((c) => c.note);
+            return (
+              <div>
+                <strong>{label}:</strong>{' '}
+                {list.map((c) => c.name).join(', ')}
+                {noted.length > 0 && (
+                  <div style={{ color: 'var(--text-dim)', paddingLeft: 8, marginTop: 2 }}>
+                    {noted.map((c) => (
+                      <div key={c.name}>{c.name}: {c.note}</div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          };
+          return (
+            <div style={{
+              fontSize: 11,
+              background: 'var(--panel-bg, rgba(255,255,255,0.04))',
+              border: '1px solid var(--border, rgba(255,255,255,0.1))',
+              borderRadius: 4,
+              padding: '6px 8px',
+              marginBottom: 8,
+              lineHeight: 1.6,
+            }}>
+              {probe.cuda_arch && (
+                <div>
+                  <strong>Architecture:</strong>{' '}
+                  {probe.cuda_arch}{probe.cuda_sm ? ` (SM ${probe.cuda_sm})` : ''}
+                </div>
+              )}
+              <CodecList list={decoders} label="Decoders" />
+              <CodecList list={encoders} label="Encoders" />
+              {(probe.sw_formats?.length ?? 0) > 0 && (
+                <div>
+                  <strong>SW formats:</strong>{' '}
+                  {probe.sw_formats!.join(', ')}
+                </div>
+              )}
+              {(probe.max_width ?? 0) > 0 && (
+                <div>
+                  <strong>Max resolution:</strong>{' '}
+                  {probe.max_width}×{probe.max_height}
+                </div>
+              )}
+            </div>
+          );
+        })()}
+
+        {def.hwaccel && (
+          <>
+            <label>HW device</label>
+            <select
+              value={def.hwaccel_device ?? ''}
+              onChange={(e) => onChange({ ...def, hwaccel_device: e.target.value || undefined })}
+              style={{ display: 'block', width: '100%', marginTop: 4, marginBottom: 4 }}
+            >
+              <option value="">(auto)</option>
+              {hwDevices.map((d) => (
+                <option key={d.name} value={d.name}>{d.name} [{d.type}]</option>
+              ))}
+            </select>
+            <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: -2, marginBottom: 6 }}>
+              <code>-hwaccel_device</code> — reuse a named device context from{' '}
+              <code>hardware_devices</code>, or leave empty for a transient context.
+            </div>
+
+            <label>HW output pixel format</label>
+            <input
+              value={def.hwaccel_output_format ?? ''}
+              onChange={(e) => onChange({ ...def, hwaccel_output_format: e.target.value || undefined })}
+              placeholder="e.g. cuda, nv12, yuv420p (empty = transfer to RAM)"
+            />
+            <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: -4, marginBottom: 4 }}>
+              <code>-hwaccel_output_format</code> — keep frames on the GPU (e.g.{' '}
+              <code>cuda</code>) for zero-copy filter chains, or use a software
+              format to transfer automatically.
+            </div>
+          </>
+        )}
+      </div>
+
       <TimingFields
         kind="input"
         options={def.options}
@@ -468,6 +1131,16 @@ function OutputForm({
               kind="subtitle"
               spec={def.bsf_subtitle}
               onChange={(s) => onChange({ ...def, bsf_subtitle: s })}
+            />
+          )}
+          {/* Cover art — shown only for containers that support AV_DISPOSITION_ATTACHED_PIC */}
+          {COVER_ART_FORMATS.has(def.format ?? '') && (
+            <FileField
+              label="Cover art"
+              value={def.cover_art ?? ''}
+              mode="open"
+              filter="image/jpeg,image/png,image/webp,image/*"
+              onChange={(v) => onChange({ ...def, cover_art: v || undefined })}
             />
           )}
         </>
@@ -884,9 +1557,26 @@ function TagField({
 }
 
 /* ---------- Graph node form ---------- */
-function NodeForm({ def, onChange, padHints }: { def: NodeDef; onChange: (next: NodeDef) => void; padHints?: Record<string, number> }) {
+function NodeForm({ def, onChange, padHints, hwDevices = [] }: { def: NodeDef; onChange: (next: NodeDef) => void; padHints?: Record<string, number>; hwDevices?: HardwareDevice[] }) {
   const isFilter =
     def.type === 'filter' || def.type === 'filter_source' || def.type === 'filter_sink';
+  // Show the device picker only for hardware-accelerated filters (scale_cuda,
+  // yadif_cuda, scale_vaapi, libplacebo, etc.) and hardware encoders.
+  // Software-only filters (split, volume, crop, …) and software encoders
+  // (libx264, libopus, aac, …) have no use for a device context.
+  // Always show when a device is already set so existing config is visible.
+  const isHWFilter = isFilter && (() => {
+    if (def.device) return true; // already configured — always show
+    const f = String(def.filter ?? '');
+    return /_(cuda|vaapi|qsv|vulkan|opencl|videotoolbox|metal|amf|rkmpp|v4l2m2m)$/.test(f)
+      || f === 'libplacebo';
+  })();
+  const isHWEncoder = def.type === 'encoder' && (() => {
+    if (def.device) return true; // already configured — always show
+    const codec = String(def.params?.codec ?? '');
+    return /_(nvenc|qsv|vaapi|videotoolbox|amf|vulkan|v4l2m2m|mmal|rkmpp)$/.test(codec);
+  })();
+  const showDevicePicker = isHWFilter || isHWEncoder;
   return (
     <>
       {isFilter ? (
@@ -903,6 +1593,46 @@ function NodeForm({ def, onChange, padHints }: { def: NodeDef; onChange: (next: 
           value={def.processor ?? ''}
           onChange={(v) => onChange({ ...def, processor: v || undefined })}
         />
+      )}
+      {showDevicePicker && (
+        <div style={{ marginBottom: 12 }}>
+          <label>Hardware device</label>
+          <select
+            value={def.device ?? ''}
+            onChange={(e) => onChange({ ...def, device: e.target.value || undefined })}
+            style={{ display: 'block', width: '100%', marginTop: 4, marginBottom: 4 }}
+          >
+            <option value="">(none — software)</option>
+            {hwDevices.map((d) => (
+              <option key={d.name} value={d.name}>{d.name} [{d.type}]</option>
+            ))}
+          </select>
+          {hwDevices.length === 0 && (
+            <div style={{ fontSize: 11, color: 'var(--text-dim)' }}>
+              No hardware devices defined. Add entries under{' '}
+              <code>hardware_devices</code> in your job config.
+            </div>
+          )}
+          {isFilter && (
+            <label style={{ display: 'flex', alignItems: 'flex-start', gap: 6, marginTop: 6, cursor: def.device ? 'pointer' : 'not-allowed', opacity: def.device ? 1 : 0.5 }}>
+              <input
+                type="checkbox"
+                checked={def.auto_map_hw ?? false}
+                disabled={!def.device}
+                onChange={(e) => onChange({ ...def, auto_map_hw: e.target.checked || undefined })}
+                style={{ marginTop: 2, flexShrink: 0 }}
+              />
+              <span>
+                Auto-map to hardware filter (<code>auto_map_hw</code>)
+                <div style={{ fontSize: 11, color: 'var(--text-dim)', fontWeight: 'normal', marginTop: 2 }}>
+                  Promotes the sw filter name (e.g. <code>scale</code>) to its hw
+                  equivalent (e.g. <code>scale_cuda</code>) and inserts
+                  hwupload/hwdownload at device boundaries. Requires a device.
+                </div>
+              </span>
+            </label>
+          )}
+        </div>
       )}
       {def.type === 'encoder' && <EncoderForm def={def} onChange={onChange} />}
       {isFilter && <FilterForm def={def} onChange={onChange} padHints={padHints} />}

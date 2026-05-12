@@ -8,6 +8,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
+	"sort"
+	"strings"
 )
 
 // Config is the top-level MediaMolder pipeline configuration (JSON schema v1.0).
@@ -63,6 +66,19 @@ type Config struct {
 	// drawtext= / subtitles=, RNNoise models for arnndn=, LUT files for
 	// lut3d= / haldclut=. (Wave 8 #51)
 	Assets map[string]AssetRef `json:"assets,omitempty"`
+	// HardwareDevices declares named hardware-acceleration device contexts
+	// that nodes may reference via NodeDef.Device. Each entry is opened
+	// via av_hwdevice_ctx_create at pipeline start and closed on teardown.
+	// Mirrors FFmpeg's global `-init_hw_device type[=name][:device]` flag
+	// (fftools/ffmpeg_opt.c::opt_init_hw_device). (Wave 10 #56)
+	HardwareDevices []HardwareDevice `json:"hardware_devices,omitempty"`
+	// FilterAssetPaths is a list of directories searched when resolving
+	// relative model-file paths that appear directly in filter params
+	// (e.g. arnndn model=rnnoise.rnnn, sofalizer sofa=file.sofa).
+	// Searched in declaration order after the pipeline file's own
+	// directory; $asset:<name> references bypass this mechanism.
+	// (Wave 11 #66)
+	FilterAssetPaths []string `json:"filter_asset_paths,omitempty"`
 }
 
 // Input describes a single input source.
@@ -276,6 +292,32 @@ type Input struct {
 	// ignored when ReadRate is zero. Rejected by validate when
 	// `0 < ReadRateCatchup < ReadRate`.
 	ReadRateCatchup float64 `json:"read_rate_catchup,omitempty"`
+	// HWAccel names the hardware-acceleration method to use when
+	// decoding streams from this input. Mirrors FFmpeg's per-input
+	// `-hwaccel METHOD` flag (e.g. "cuda", "vaapi", "qsv",
+	// "videotoolbox", "none"). When non-empty the pipeline opens the
+	// decoder via av.OpenHWDecoder instead of the software path,
+	// using the HardwareDevice named by HWAccelDevice (or the first
+	// matching device in Config.HardwareDevices when HWAccelDevice
+	// is empty). Empty = software decoding (the default). (Wave 10 #59)
+	HWAccel string `json:"hwaccel,omitempty"`
+	// HWAccelDevice names a HardwareDevice entry (from
+	// Config.HardwareDevices) whose opened AVHWDeviceContext is used
+	// for hardware-accelerated decoding of this input. Mirrors
+	// FFmpeg's per-input `-hwaccel_device DEV` flag. Empty = use the
+	// first Config.HardwareDevices entry whose Type matches HWAccel,
+	// or let libavcodec pick (if no matching entry exists). Ignored
+	// when HWAccel is empty. (Wave 10 #59)
+	HWAccelDevice string `json:"hwaccel_device,omitempty"`
+	// HWAccelOutputFormat pins the pixel format of frames produced by
+	// the hardware decoder, controlling whether frames stay in GPU
+	// memory ("cuda", "vaapi_vld", "nv12", …) or are automatically
+	// transferred to system RAM ("yuv420p", "nv12"). Mirrors FFmpeg's
+	// per-input `-hwaccel_output_format FMT` flag. Empty = let
+	// libavcodec choose (frames remain in GPU memory when HWAccel is
+	// set, which is usually what you want for zero-copy filter chains).
+	// Ignored when HWAccel is empty. (Wave 10 #59)
+	HWAccelOutputFormat string `json:"hwaccel_output_format,omitempty"`
 }
 
 // ConcatEntry is one row of the libavformat concat-demuxer playlist.
@@ -322,7 +364,7 @@ type ConcatEntry struct {
 // missing match a silent skip rather than a fatal error.
 type StreamSelect struct {
 	InputIndex int    `json:"input_index"`
-	Type       string `json:"type"`  // "video", "audio", "subtitle", "data"
+	Type       string `json:"type"`  // "video", "audio", "subtitle", "data", "attachment"
 	Track      int    `json:"track"` // zero-based track number within the type
 	// All, when true, selects every stream of `Type` rather than the
 	// single track at `Track`. Mirrors FFmpeg's no-index form
@@ -367,7 +409,12 @@ type GraphDef struct {
 // GraphUI carries optional layout metadata for the visual editor. All fields
 // are optional and ignored by the runtime.
 type GraphUI struct {
-	Positions map[string]UIPosition `json:"positions,omitempty"`
+	Positions    map[string]UIPosition      `json:"positions,omitempty"`
+	// ProbedInputs caches stream-probe results keyed by input id. It is
+	// written by the GUI when saving a job so that reopening it restores
+	// track handles and stream info without re-probing the source file.
+	// The pipeline runtime never reads or modifies this field.
+	ProbedInputs map[string]json.RawMessage `json:"probed_inputs,omitempty"`
 }
 
 // UIPosition is a 2D coordinate on the editor canvas.
@@ -400,6 +447,28 @@ type NodeDef struct {
 	// the buffersink media type is set correctly. Valid values: "video",
 	// "audio", "subtitle", "data". (Wave 7 #37)
 	OutputMediaType string `json:"output_media_type,omitempty"`
+	// Device, when set, names an entry in Config.HardwareDevices whose
+	// opened av.HWDeviceContext is used for hardware-accelerated
+	// encode / decode / filter on this node. Mirrors the per-stream device
+	// binding that FFmpeg expresses via `-init_hw_device` + per-codec
+	// AVOption (hwaccel_device). (Wave 10 #56)
+	Device string `json:"device,omitempty"`
+	// AutoMapHW, when true on a filter node that also has Device set,
+	// opts the node into the hardware filter auto-mapping pass
+	// (expandHWFilterMappings). The pass promotes the software filter
+	// name to its hardware equivalent for the declared device type
+	// (e.g. "scale" on a "cuda" device → "scale_cuda"), and inserts
+	// synthetic "hwupload" / "hwdownload" nodes on any video edge
+	// that crosses a device boundary.
+	//
+	// This is an explicit per-node opt-in so the user retains full
+	// control: a node with Device set but AutoMapHW=false keeps its
+	// software filter name and receives no format-conversion splices.
+	// Nodes that already name a hardware filter (e.g. "scale_cuda")
+	// should leave AutoMapHW=false (or omit it) — the pass only
+	// operates on names listed in the hw_filter_map table and is a
+	// no-op for hardware filter names not in that table. (Wave 10 #58)
+	AutoMapHW bool `json:"auto_map_hw,omitempty"`
 }
 
 // EdgeDef describes a directed edge between two nodes.
@@ -613,6 +682,15 @@ type Output struct {
 	// table is written instead. The container must support chapters
 	// (matroska, mp4, ogg, ffmetadata, …) for them to surface.
 	Chapters []Chapter `json:"chapters,omitempty"`
+	// CoverArt is the path to an image file (JPEG, PNG, or any format
+	// decodable by libavformat) that is embedded as cover art into the
+	// output container. Materialised as an AVMEDIA_TYPE_VIDEO stream
+	// with AV_DISPOSITION_ATTACHED_PIC before avformat_write_header,
+	// mirroring `-i cover.jpg -map 1:v -c:v:1 copy -disposition:v:1
+	// attached_pic`. Supported containers (validated by
+	// validateCoverArt): mp4, m4a, mov, ipod, mp3, mkv / matroska.
+	// Wave 11 #64.
+	CoverArt string `json:"cover_art,omitempty"`
 	// Attachments lists files muxed into the container as
 	// `AVMEDIA_TYPE_ATTACHMENT` streams (matroska / mkv / webm only).
 	// Mirrors the FFmpeg `-attach FILE` CLI: each entry's content
@@ -1153,6 +1231,22 @@ type EncoderOverride struct {
 	Options map[string]any `json:"options,omitempty"`
 }
 
+// HardwareDevice declares a named hardware-acceleration device context that
+// can be referenced by name from encoder, decoder, and filter nodes via
+// NodeDef.Device. Mirrors FFmpeg's `-init_hw_device type[=name][:device]`
+// (fftools/ffmpeg_opt.c::opt_init_hw_device). The name is a user-chosen
+// label (e.g. "gpu0"); type is one of "cuda", "vaapi", "qsv",
+// "videotoolbox"; device is the OS-level device specifier (e.g.
+// "/dev/dri/renderD128", "0", or "" for the first available);
+// options are forwarded as AVDictionary entries to av_hwdevice_ctx_create.
+// (Wave 10 #56)
+type HardwareDevice struct {
+	Name    string         `json:"name"`
+	Type    string         `json:"type"`
+	Device  string         `json:"device,omitempty"`
+	Options map[string]any `json:"options,omitempty"`
+}
+
 // Options holds global pipeline options.
 type Options struct {
 	Threads        int    `json:"threads,omitempty"`
@@ -1211,7 +1305,16 @@ func ParseConfigFile(path string) (*Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read config %q: %w", path, err)
 	}
-	return ParseConfig(data)
+	cfg, err := ParseConfig(data)
+	if err != nil {
+		return nil, err
+	}
+	// Validate filter model paths relative to the pipeline file's directory.
+	// (Wave 11 #66)
+	if err := validateFilterModelPaths(cfg, filepath.Dir(path)); err != nil {
+		return nil, err
+	}
+	return cfg, nil
 }
 
 // validate performs semantic validation beyond what JSON unmarshaling checks.
@@ -1257,6 +1360,13 @@ func validate(cfg *Config) error {
 	if cfg.StartAtZero && !cfg.CopyTS {
 		return fmt.Errorf("start_at_zero requires copy_ts=true (it modulates -copyts behaviour; see fftools/ffmpeg_demux.c)")
 	}
+	// Pre-build hw device name set for use by both input and node validation.
+	hwDeviceNames := make(map[string]bool, len(cfg.HardwareDevices))
+	for _, hd := range cfg.HardwareDevices {
+		if hd.Name != "" {
+			hwDeviceNames[hd.Name] = true
+		}
+	}
 	// All input IDs must be unique.
 	seen := map[string]bool{}
 	for i, inp := range cfg.Inputs {
@@ -1283,9 +1393,9 @@ func validate(cfg *Config) error {
 				return fmt.Errorf("input %q streams[%d] missing type", inp.ID, j)
 			}
 			switch s.Type {
-			case "video", "audio", "subtitle", "data":
+			case "video", "audio", "subtitle", "data", "attachment":
 			default:
-				return fmt.Errorf("input %q streams[%d]: invalid type %q (want video|audio|subtitle|data)", inp.ID, j, s.Type)
+				return fmt.Errorf("input %q streams[%d]: invalid type %q (want video|audio|subtitle|data|attachment)", inp.ID, j, s.Type)
 			}
 			if !s.All && s.Track < 0 {
 				return fmt.Errorf("input %q streams[%d]: negative track %d (use all=true for the no-index form)", inp.ID, j, s.Track)
@@ -1311,6 +1421,16 @@ func validate(cfg *Config) error {
 		}
 		if inp.ReadRateCatchup > 0 && inp.ReadRate > 0 && inp.ReadRateCatchup < inp.ReadRate {
 			return fmt.Errorf("input %q: read_rate_catchup %g must be >= read_rate %g (mirrors fftools/ffmpeg_demux.c)", inp.ID, inp.ReadRateCatchup, inp.ReadRate)
+		}
+		// Validate HWAccel fields (Wave 10 #59).
+		if inp.HWAccelDevice != "" && inp.HWAccel == "" {
+			return fmt.Errorf("input %q: hwaccel_device requires hwaccel to be set", inp.ID)
+		}
+		if inp.HWAccelOutputFormat != "" && inp.HWAccel == "" {
+			return fmt.Errorf("input %q: hwaccel_output_format requires hwaccel to be set", inp.ID)
+		}
+		if inp.HWAccelDevice != "" && !hwDeviceNames[inp.HWAccelDevice] {
+			return fmt.Errorf("input %q: hwaccel_device %q does not match any hardware_devices entry", inp.ID, inp.HWAccelDevice)
 		}
 	}
 	// All output IDs must be unique.
@@ -1459,6 +1579,9 @@ func validate(cfg *Config) error {
 		if err := validateAttachments(out); err != nil {
 			return err
 		}
+		if err := validateCoverArt(out); err != nil {
+			return err
+		}
 	}
 	// At most one non-zero loudnorm_pass across the whole run — a
 	// single job invocation maps to one shuttle pass (mirrors the
@@ -1478,7 +1601,7 @@ func validate(cfg *Config) error {
 	// Edge types must be valid.
 	validTypes := map[string]bool{
 		"video": true, "audio": true, "subtitle": true, "data": true,
-		"metadata": true,
+		"attachment": true, "metadata": true,
 	}
 	for i, e := range cfg.Graph.Edges {
 		if !validTypes[e.Type] {
@@ -1560,6 +1683,55 @@ func validate(cfg *Config) error {
 			return fmt.Errorf("assets[%q]: kind %q is not valid; must be \"font\", \"model\", \"lut\", or \"other\"", name, ref.Kind)
 		}
 	}
+	// Validate hardware_devices (Wave 10 #56).
+	hwDeviceNamesSeen := make(map[string]bool, len(cfg.HardwareDevices))
+	for i, hd := range cfg.HardwareDevices {
+		if hd.Name == "" {
+			return fmt.Errorf("hardware_devices[%d]: name must not be empty", i)
+		}
+		if hwDeviceNamesSeen[hd.Name] {
+			return fmt.Errorf("duplicate hardware_devices name %q", hd.Name)
+		}
+		hwDeviceNamesSeen[hd.Name] = true
+		if hd.Type == "" {
+			return fmt.Errorf("hardware_devices[%d] %q: type must not be empty", i, hd.Name)
+		}
+	}
+	// Validate that NodeDef.Device references a declared hardware_device name.
+	// Also validate AutoMapHW constraints (Wave 10 #58).
+	for i, node := range cfg.Graph.Nodes {
+		if node.Device != "" && !hwDeviceNames[node.Device] {
+			return fmt.Errorf("node[%d] %q: device %q does not match any hardware_devices entry", i, node.ID, node.Device)
+		}
+		if node.AutoMapHW {
+			if node.Type != "filter" {
+				return fmt.Errorf("node[%d] %q: auto_map_hw is only valid on filter nodes (type is %q)", i, node.ID, node.Type)
+			}
+			if node.Device == "" {
+				return fmt.Errorf("node[%d] %q: auto_map_hw requires device to be set", i, node.ID)
+			}
+			// Look up the device type to give an early hint about unsupported combos.
+			var devType string
+			for _, hd := range cfg.HardwareDevices {
+				if hd.Name == node.Device {
+					devType = strings.ToLower(hd.Type)
+					break
+				}
+			}
+			if devType != "" {
+				alts := HWFilterAlts()
+				if devAlts, ok := alts[node.Filter]; ok {
+					if _, ok := devAlts[devType]; !ok {
+						return fmt.Errorf("node[%d] %q: auto_map_hw has no hardware equivalent for filter %q on device type %q (supported device types: %s)",
+							i, node.ID, node.Filter, devType, joinedKeys(devAlts))
+					}
+				}
+				// If the filter itself is not in the table the pass is a no-op;
+				// no error — the user may have set AutoMapHW speculatively on a
+				// filter that never needed mapping, and that is harmless.
+			}
+		}
+	}
 	return nil
 }
 
@@ -1575,4 +1747,14 @@ func paramStringConfig(m map[string]any, key string) string {
 	}
 	s, _ := v.(string)
 	return s
+}
+
+// joinedKeys returns the sorted keys of m joined by ", " for error messages.
+func joinedKeys(m map[string]string) string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return strings.Join(keys, ", ")
 }

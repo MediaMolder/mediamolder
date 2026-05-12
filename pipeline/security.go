@@ -74,6 +74,12 @@ func (sc *SecurityConfig) ValidateURL(rawURL string) error {
 	}
 
 	scheme := strings.ToLower(u.Scheme)
+	// On Windows, url.Parse interprets the drive letter (e.g. "C" in
+	// "C:\foo\bar") as a URL scheme. Detect this: a single ASCII letter
+	// followed by a backslash or slash is a Windows drive path, not a scheme.
+	if len(scheme) == 1 && scheme[0] >= 'a' && scheme[0] <= 'z' {
+		scheme = "file"
+	}
 	if scheme == "" {
 		scheme = "file"
 	}

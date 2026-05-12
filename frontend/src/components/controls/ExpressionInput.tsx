@@ -389,7 +389,7 @@ export function ExpressionInput({
             e.currentTarget.value = '';
           }}
         >
-          <option value="">Insert pattern…</option>
+          <option value="">Expression examples…</option>
           {COOKBOOK.map((c) => (
             <option key={c.label} value={c.label} title={c.hint}>
               {c.label}

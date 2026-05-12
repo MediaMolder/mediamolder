@@ -14,6 +14,7 @@ import type { NodeDef } from '../lib/jobTypes';
 import { fetchFilterInfo, type FilterOption, type FilterOptionsInfo } from '../lib/filterSchema';
 import { OptionControl } from './controls/OptionControl';
 import { AudioChannelForm, AUDIO_ROUTING_FILTERS } from './AudioChannelForm';
+import { FileBrowser } from './FileBrowser';
 
 interface Props {
   def: NodeDef;
@@ -150,6 +151,63 @@ export function FilterForm({ def, onChange, padHints }: Props) {
   );
 }
 
+/* ---------- Model-bearing option name detection ---------- */
+
+/** Returns true for AVOption names that conventionally hold a path to a
+ * model or data file: exact matches "model" and "sofa", plus the suffixes
+ * "_model" and "_sofa". Mirrors isModelBearingKey in pipeline/filter_model_paths.go. */
+function isModelBearingOptionName(name: string): boolean {
+  return (
+    name === 'model' ||
+    name === 'sofa' ||
+    name.endsWith('_model') ||
+    name.endsWith('_sofa')
+  );
+}
+
+/* ---------- File-path input for model-bearing options ---------- */
+
+function ModelFileInput({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (next: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <div className="file-field">
+        <input
+          type="text"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              (e.currentTarget as HTMLInputElement).blur();
+            }
+          }}
+          placeholder="/path/to/model.rnnn"
+          title="Filesystem path to the model file (absolute or relative to pipeline file / filter_asset_paths)"
+        />
+        <button type="button" onClick={() => setOpen(true)} title="Browse local filesystem">
+          Browse…
+        </button>
+      </div>
+      <FileBrowser
+        open={open}
+        mode="open"
+        onClose={() => setOpen(false)}
+        onPick={(p) => {
+          onChange(p);
+          setOpen(false);
+        }}
+      />
+    </>
+  );
+}
+
 /* ---------- Single labelled option row ---------- */
 
 function OptionRow({
@@ -176,7 +234,11 @@ function OptionRow({
       {option.help && <div className="filter-option-help">{option.help}</div>}
       <div className="filter-option-control-row">
         <div className="filter-option-control">
-          <OptionControl filter={filter} option={option} value={value} onChange={onChange} padHints={padHints} />
+          {isModelBearingOptionName(option.name) ? (
+            <ModelFileInput value={value} onChange={onChange} />
+          ) : (
+            <OptionControl filter={filter} option={option} value={value} onChange={onChange} padHints={padHints} />
+          )}
         </div>
         {range && <div className="filter-option-range" title="Allowed range">{range}</div>}
       </div>

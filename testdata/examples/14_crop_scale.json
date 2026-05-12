@@ -38,7 +38,7 @@
           "w": "320",
           "h": "240"
         }
-      }
+      },
       {
         "id": "enc_video",
         "type": "encoder",

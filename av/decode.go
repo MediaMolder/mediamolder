@@ -26,6 +26,17 @@ type DecoderContext struct {
 	streamIndex int
 }
 
+// FrameDecoder is the common interface satisfied by both DecoderContext
+// (software) and HWDecoderContext (hardware-accelerated). It allows the
+// pipeline to store a uniform slice of decoders regardless of the
+// acceleration path chosen at open-time. (Wave 10 #59)
+type FrameDecoder interface {
+	SendPacket(pkt *Packet) error
+	ReceiveFrame(f *Frame) error
+	Flush() error
+	Close() error
+}
+
 // DecoderOptions configures optional decoder parameters.
 type DecoderOptions struct {
 	// ThreadCount sets the number of codec threads. 0 = FFmpeg auto-detect.

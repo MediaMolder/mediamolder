@@ -2,7 +2,7 @@
 // Only fields used by the editor are typed; unknown JSON fields are preserved
 // via passthrough during round-trip in adapter.ts.
 
-export type StreamType = 'video' | 'audio' | 'subtitle' | 'data' | 'metadata';
+export type StreamType = 'video' | 'audio' | 'subtitle' | 'data' | 'metadata' | 'attachment';
 
 export interface StreamSelect {
   input_index: number;
@@ -95,6 +95,19 @@ export interface Input {
    *  `-readrate_catchup`); must be >= read_rate when set. Defaults
    *  to read_rate × 1.05 when unset and read_rate is non-zero. */
   read_rate_catchup?: number;
+  /** Hardware acceleration API for decoding video streams in this input.
+   *  Mirrors FFmpeg's per-input -hwaccel flag (e.g. "cuda", "vaapi",
+   *  "qsv", "videotoolbox"). Empty = software decode. (Wave 10 #59) */
+  hwaccel?: string;
+  /** Name of a hardware_devices entry to use for decoding this input.
+   *  Mirrors FFmpeg's per-input -hwaccel_device flag. Ignored when
+   *  hwaccel is empty. (Wave 10 #59) */
+  hwaccel_device?: string;
+  /** Pixel format produced by the hardware decoder. Mirrors FFmpeg's
+   *  per-input -hwaccel_output_format flag. Software formats (nv12,
+   *  yuv420p, …) trigger automatic hw→sw transfer; hardware formats
+   *  (cuda, vaapi, …) keep frames on the GPU. (Wave 10 #59) */
+  hwaccel_output_format?: string;
   streams: StreamSelect[];
   options?: Record<string, unknown>;
 }
@@ -123,6 +136,14 @@ export interface NodeDef {
    *  (e.g. `showwavespic`: audio in, video out). Auto-filled by the engine
    *  from a curated registry when omitted. */
   output_media_type?: StreamType;
+  /** Name of a `hardware_devices` entry whose opened AVHWDeviceContext is
+   *  used for HW-accelerated encode/decode/filter on this node. (Wave 10 #56) */
+  device?: string;
+  /** Opt-in hardware filter auto-mapping. When true, the sw filter name (e.g.
+   *  `"scale"`) is promoted to its hw equivalent (e.g. `"scale_cuda"`) based
+   *  on the device type, and hwupload/hwdownload nodes are inserted at device
+   *  boundaries. Requires `device` to be set. (Wave 10 #58) */
+  auto_map_hw?: boolean;
 }
 
 export interface EdgeDef {
@@ -137,8 +158,22 @@ export interface GraphDef {
   ui?: GraphUI;
 }
 
+/** Cached probe result stored per input-id under graph.ui.probed_inputs.
+ *  Persisted in the job JSON so re-opening a job shows stream metadata
+ *  and correct per-track handles without needing to re-probe the file.
+ *  file_mtime is the last-modified Unix timestamp of the source file at
+ *  probe time; the GUI re-probes automatically when the file has been
+ *  modified since this snapshot was taken. */
+export interface ProbedInputCache {
+  streams: ProbedStream[];
+  /** Unix seconds of file last-modified at probe time. 0 = unknown (network/device). */
+  file_mtime: number;
+}
+
 export interface GraphUI {
   positions?: Record<string, UIPosition>;
+  /** Cached probe results keyed by input id. Editor-only; ignored by the runtime. */
+  probed_inputs?: Record<string, ProbedInputCache>;
 }
 
 export interface UIPosition {
@@ -259,6 +294,13 @@ export interface Output {
   /** Files muxed into the container as `AVMEDIA_TYPE_ATTACHMENT`
    *  streams (matroska / mkv / webm only). Mirrors FFmpeg `-attach`. */
   attachments?: Attachment[];
+  /** Path to a cover-art image (JPEG / PNG / any libavformat-decodable
+   *  format) embedded as an `AVMEDIA_TYPE_VIDEO` stream with
+   *  `AV_DISPOSITION_ATTACHED_PIC` before `avformat_write_header`.
+   *  Supported containers: mp4 / m4a / mov / mp3 / mkv.
+   *  Mirrors `-i cover.jpg -map 1:v -c:v:1 copy
+   *  -disposition:v:1 attached_pic`. Wave 11 #64. */
+  cover_art?: string;
   /** Output discriminator. `""` / `"file"` open a single muxer at
    *  `url`; `"tee"` switches to libavformat's built-in tee muxer to
    *  fan one encoded stream out to N targets (`url` / `format` are
@@ -519,6 +561,21 @@ export interface Options {
   realtime?: boolean;
 }
 
+/** A named hardware-acceleration device context. Each entry is opened via
+ *  av_hwdevice_ctx_create at pipeline start and referenced from nodes via
+ *  NodeDef.device. Mirrors FFmpeg's `-init_hw_device type[=name][:device]`.
+ *  (Wave 10 #56) */
+export interface HardwareDevice {
+  /** Symbolic label (e.g. "gpu0"). Must be unique within the pipeline. */
+  name: string;
+  /** Device type: "cuda" | "vaapi" | "qsv" | "videotoolbox". */
+  type: string;
+  /** OS-level device specifier (e.g. "/dev/dri/renderD128", "0"). Omit for first available. */
+  device?: string;
+  /** Extra AVDictionary entries forwarded to av_hwdevice_ctx_create. */
+  options?: Record<string, unknown>;
+}
+
 export interface ErrorPolicy {
   policy: string;
   max_retries?: number;
@@ -556,6 +613,16 @@ export interface JobConfig {
    *  substitutes the resolved filesystem path before building the
    *  libavfilter graph. */
   assets?: Record<string, AssetRef>;
+  /** Named hardware-acceleration device contexts (Wave 10 #56). Each entry
+   *  is opened via av_hwdevice_ctx_create at pipeline start. Nodes reference
+   *  a device by name via NodeDef.device. Mirrors ffmpeg's -init_hw_device. */
+  hardware_devices?: HardwareDevice[];
+  /** Directories searched when resolving relative model-file paths that
+   *  appear directly in filter params (e.g. arnndn model=rnnoise.rnnn,
+   *  sofalizer sofa=file.sofa). Checked in declaration order after the
+   *  pipeline file's own directory. $asset: references bypass this check.
+   *  (Wave 11 #66) */
+  filter_asset_paths?: string[];
 }
 
 /** A named media-asset entry in `JobConfig.assets`. The symbolic name
@@ -603,6 +670,7 @@ export interface ProbedStream {
   sample_fmt?: string;
   channels?: number;
   channel_layout?: string;
+  language?: string;
   duration_sec?: number;
   start_sec?: number;
   time_base_num?: number;
@@ -612,4 +680,77 @@ export interface ProbedStream {
 export interface ProbeResponse {
   url: string;
   streams: ProbedStream[];
+  /** Unix seconds of the file's last-modified time. 0 = unknown (network / device). */
+  file_mtime?: number;
+}
+
+/** Runtime hardware-acceleration probe result from GET /api/hwaccel.
+ *  For CUDA devices the codec list is filtered to the GPU generation and
+ *  annotated with per-codec limitation notes; other backends return the
+ *  full FFmpeg registry scan.
+ *  SWFormats / MaxWidth / MaxHeight come from av_hwdevice_get_hwframe_constraints
+ *  and are backend-specific — VideoToolbox and CUDA return partial data. */
+export interface HWAccelProbe {
+  type: string;
+  available: boolean;
+  error?: string;
+  /** Marketing name of the physical device, e.g. "NVIDIA GeForce RTX 3060 Ti". */
+  display_name?: string;
+  /** Software pixel formats the device can transfer to/from (e.g. "nv12", "p010le"). */
+  sw_formats?: string[];
+  /** Maximum frame width reported by the device; 0 = not reported. */
+  max_width?: number;
+  /** Maximum frame height reported by the device; 0 = not reported. */
+  max_height?: number;
+  /** Codecs supported by this GPU generation (CUDA) or full FFmpeg registry (others). */
+  codecs?: Array<{
+    name: string;
+    role: 'encode' | 'decode';
+    /** "video", "audio", "subtitle", "data", or absent for older probes. */
+    media_type?: string;
+    /** Non-empty when the codec is supported but with profile/feature gaps at this GPU. */
+    note?: string;
+  }>;
+  /** Names of libavfilter filters that support this hardware backend (e.g. scale_cuda). */
+  filters?: string[];
+  /** CUDA compute capability string, e.g. "8.9". Present only for CUDA devices. */
+  cuda_sm?: string;
+  /** CUDA GPU architecture name, e.g. "Ada Lovelace". Present only for CUDA devices. */
+  cuda_arch?: string;
+  /** NVIDIA NVENC per-codec encoder capabilities. Present only for CUDA devices with NVENC. */
+  nvenc_caps?: Array<{
+    codec_name: string;
+    max_width: number; max_height: number; min_width: number; min_height: number;
+    mb_per_sec_max: number;
+    num_encoder_engines: number;
+    level_max: number; level_min: number;
+    max_bframes: number;
+    support_10bit: boolean; support_yuv444: boolean; support_lossless: boolean;
+    support_lookahead: boolean; support_temporal_aq: boolean;
+    support_weighted_pred: boolean; support_bframe_ref: boolean;
+  }>;
+  /** NVIDIA NVDEC per-codec decoder capabilities. Present only for CUDA devices with NVDEC. */
+  nvdec_caps?: Array<{
+    codec_name: string;
+    chroma_fmt: string;
+    bit_depth: number;
+    num_nvdecs: number;
+    output_format_mask: number;
+    max_width: number; max_height: number; min_width: number; min_height: number;
+    max_mb_count: number;
+  }>;
+  /** AMD AMF per-codec encoder capabilities. Present only for AMF devices. */
+  amf_caps?: Array<{
+    codec_name: string;
+    max_num_of_streams: number;
+    min_width: number; max_width: number;
+    min_height: number; max_height: number;
+  }>;
+  /** Static / table-derived caps: max bitrate, session counts, VT resolution limits. */
+  static_caps?: {
+    nvdec_max_sessions?: number;
+    nvenc_max_bitrate_kbps?: Record<string, number>;
+    vt_max_width?: number;
+    vt_max_height?: number;
+  };
 }

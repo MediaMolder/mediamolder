@@ -158,6 +158,10 @@ func drainTypedOutputDemuxer(out *pipeline.Output, vEnc, aEnc map[string]any, op
 		"framerate", "pixel_format", "video_size", "sample_fmt",
 		"thread_queue_size", "protocol_whitelist", "pattern_type",
 		"accurate_seek", "seek_timestamp",
+		// Wave 11 #67: network-protocol AVOptions (input-only).
+		"rtsp_transport", "stimeout",
+		"mode", "listen_timeout",
+		"timeout", "rw_timeout",
 	} {
 		delete(opts, k)
 	}

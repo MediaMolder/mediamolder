@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import type { HWAccelProbe } from '../lib/jobTypes';
 import type { PaletteEntry } from '../lib/spawn';
 import {
   NAMING_EVENT,
@@ -30,7 +31,12 @@ function readScope(): Scope {
   return window.localStorage.getItem(SCOPE_STORAGE_KEY) === 'all' ? 'all' : 'common';
 }
 
-export function Palette() {
+interface PaletteProps {
+  hwProbes?: HWAccelProbe[] | null;
+  onHardwareClick?: () => void;
+}
+
+export function Palette({ hwProbes, onHardwareClick }: PaletteProps = {}) {
   const [entries, setEntries] = useState<CatalogEntry[]>(FALLBACK);
   const [filter, setFilter] = useState('');
   const [scope, setScope] = useState<Scope>(readScope);
@@ -104,8 +110,27 @@ export function Palette() {
 
   const isSearching = filter.trim().length > 0;
 
+  const availableCount = hwProbes ? hwProbes.filter((p) => p.available).length : null;
+
   return (
     <aside className="palette">
+      {onHardwareClick && (
+        <button
+          className="palette-hw-btn"
+          onClick={onHardwareClick}
+          title="Show available hardware acceleration backends and their media capabilities"
+        >
+          ⬡ Hardware
+          {availableCount !== null && availableCount > 0 && (
+            <span className="palette-hw-btn-badge">
+              {availableCount} backend{availableCount !== 1 ? 's' : ''}
+            </span>
+          )}
+          {availableCount === 0 && (
+            <span className="palette-hw-btn-badge" style={{ background: 'rgba(255,255,255,0.06)', color: 'var(--text-dim)', borderColor: 'var(--border)' }}>Software only</span>
+          )}
+        </button>
+      )}
       <div className="palette-toggles">
         <SegmentedToggle
           label="View"

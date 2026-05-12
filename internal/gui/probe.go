@@ -4,9 +4,14 @@
 package gui
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
 
 	"github.com/MediaMolder/MediaMolder/av"
 )
@@ -14,6 +19,7 @@ import (
 // probeRequest is the JSON body accepted by POST /api/probe.
 type probeRequest struct {
 	URL     string            `json:"url"`
+	Format  string            `json:"format,omitempty"` // optional libavformat short name; required for device inputs ("dshow", "v4l2", "avfoundation", "gdigrab", …)
 	Options map[string]string `json:"options,omitempty"`
 }
 
@@ -52,6 +58,7 @@ type probedStream struct {
 	SampleFmt          string  `json:"sample_fmt,omitempty"`
 	Channels           int     `json:"channels,omitempty"`
 	ChannelLayout      string  `json:"channel_layout,omitempty"`
+	Language           string  `json:"language,omitempty"`
 	DurationSec        float64 `json:"duration_sec,omitempty"`
 	StartSec           float64 `json:"start_sec,omitempty"`
 	TimeBaseNum        int     `json:"time_base_num,omitempty"`
@@ -62,6 +69,9 @@ type probedStream struct {
 type probeResponse struct {
 	URL     string         `json:"url"`
 	Streams []probedStream `json:"streams"`
+	// FileMtime is the file's last-modified time as a Unix timestamp (seconds).
+	// Only set for local file URLs; zero for network streams / devices.
+	FileMtime int64 `json:"file_mtime,omitempty"`
 }
 
 // handleProbe opens the requested URL with libavformat, runs
@@ -82,20 +92,55 @@ func handleProbe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ctx, err := av.OpenInput(req.URL, req.Options)
-	if err != nil {
-		writeJSONError(w, http.StatusUnprocessableEntity, fmt.Errorf("open %q: %w", req.URL, err))
+	// Device demuxers (dshow, v4l2, avfoundation, gdigrab, …) can block
+	// indefinitely when a device is in use. Run the open in a goroutine
+	// and abort after 2 seconds regardless of whether a format was supplied.
+	type openResult struct {
+		ctx *av.InputFormatContext
+		err error
+	}
+	openCtx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+	defer cancel()
+	ch := make(chan openResult, 1)
+	go func() {
+		c, err := av.OpenInputWithFormat(req.URL, req.Format, req.Options)
+		ch <- openResult{c, err}
+	}()
+	var ictx *av.InputFormatContext
+	select {
+	case res := <-ch:
+		if res.err != nil {
+			writeJSONError(w, http.StatusUnprocessableEntity, fmt.Errorf("open %q: %w", req.URL, res.err))
+			return
+		}
+		ictx = res.ctx
+	case <-openCtx.Done():
+		writeJSONError(w, http.StatusGatewayTimeout, fmt.Errorf("probe %q timed out", req.URL))
 		return
 	}
-	defer ctx.Close()
+	defer ictx.Close()
 
-	streams, err := ctx.AllStreams()
+	streams, err := ictx.AllStreams()
 	if err != nil {
 		writeJSONError(w, http.StatusInternalServerError, fmt.Errorf("read streams: %w", err))
 		return
 	}
 
 	out := probeResponse{URL: req.URL, Streams: make([]probedStream, 0, len(streams))}
+	// Populate file_mtime for local paths (not URLs with a scheme).
+	// Validate and sanitize the path against the allowed roots before
+	// passing to os.Stat so a crafted URL cannot read mtime for
+	// arbitrary filesystem paths.
+	if !strings.Contains(req.URL, "://") {
+		if localPath, err := filepath.Abs(req.URL); err == nil {
+			localPath = filepath.Clean(localPath)
+			if safe, ok := sanitizePathAnyRoot(localPath, defaultRoots()); ok {
+				if fi, err := os.Stat(safe); err == nil {
+					out.FileMtime = fi.ModTime().Unix()
+				}
+			}
+		}
+	}
 	for _, s := range streams {
 		ps := probedStream{
 			Index:              s.Index,
@@ -147,6 +192,9 @@ func handleProbe(w http.ResponseWriter, r *http.Request) {
 			ps.SampleFmt = av.SampleFmtName(s.SampleFmt)
 			ps.Channels = s.Channels
 			ps.ChannelLayout = av.DefaultChannelLayoutName(s.Channels)
+			if lang := ictx.StreamMetadata(s.Index)["language"]; lang != "" && lang != "und" {
+				ps.Language = lang
+			}
 		}
 		out.Streams = append(out.Streams, ps)
 	}

@@ -155,6 +155,12 @@ func (w *sinkWriter) processOne(i int, pkt *av.Packet, dstTB [2]int, rs *sinkRes
 	if lim := w.limitForChan(i); lim > 0 && st.written >= lim {
 		return false, false, nil
 	}
+	// Attachment data is carried in codecpar->extradata and written by
+	// WriteHeader; the muxer ignores per-packet writes for attachment
+	// streams. Drop the packet here so WritePacket is never called.
+	if i < len(w.node.Inbound) && w.node.Inbound[i].Type == graph.PortAttachment {
+		return false, false, nil
+	}
 	pkt.SetStreamIndex(i)
 	if rs != nil {
 		pkt.Rescale(rs.srcTB, rs.dstTB)
@@ -703,9 +709,54 @@ func (r *graphRunner) openSink(_ *graph.Graph, node *graph.Node) (*sinkResources
 		}
 	}
 
+	// Wave 11 #64: cover art embedded as AV_DISPOSITION_ATTACHED_PIC.
+	// The stream must be added before WriteHeader; the returned packet is
+	// written immediately after WriteHeader below.
+	var coverPkt *av.Packet
+	if out.CoverArt != "" {
+		cleanCA := filepath.Clean(out.CoverArt)
+		if strings.Contains(cleanCA, "..") {
+			muxer.Abort()
+			for _, b := range streamBSF {
+				if b != nil {
+					_ = b.Close()
+				}
+			}
+			return nil, fmt.Errorf("sink %q cover_art: path traversal in %q", node.ID, out.CoverArt)
+		}
+		_, pkt, err := muxer.AddCoverArt(cleanCA)
+		if err != nil {
+			muxer.Abort()
+			for _, b := range streamBSF {
+				if b != nil {
+					_ = b.Close()
+				}
+			}
+			return nil, fmt.Errorf("sink %q cover_art: %w", node.ID, err)
+		}
+		coverPkt = pkt
+	}
+
 	if err := muxer.WriteHeaderWithOptions(buildMuxerOptions(out)); err != nil {
 		muxer.Abort()
 		return nil, fmt.Errorf("sink %q write header: %w", node.ID, err)
+	}
+
+	// Wave 11 #64: write the cover art packet immediately after WriteHeader.
+	// The stream was registered above; the single-frame packet must be
+	// written before regular content so interleaved muxers see it early.
+	if coverPkt != nil {
+		if err := muxer.WritePacket(coverPkt); err != nil {
+			_ = coverPkt.Close()
+			muxer.Abort()
+			for _, b := range streamBSF {
+				if b != nil {
+					_ = b.Close()
+				}
+			}
+			return nil, fmt.Errorf("sink %q write cover art: %w", node.ID, err)
+		}
+		_ = coverPkt.Close()
 	}
 
 	// Some muxers adjust stream time_base in WriteHeader; refresh the
