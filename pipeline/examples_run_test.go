@@ -124,6 +124,10 @@ func runExample(t *testing.T, jsonPath, name, inputAbs, subsrtAbs, subassAbs str
 	if strings.Contains(raw, `"drawtext"`) && !av.FindFilter("drawtext") {
 		t.Skip("drawtext filter not compiled in this FFmpeg build (requires libfreetype)")
 	}
+	if (strings.Contains(raw, `"subtitles"`) && !av.FindFilter("subtitles")) ||
+		(strings.Contains(raw, `"ass"`) && !av.FindFilter("ass")) {
+		t.Skip("subtitles/ass filter not compiled in this FFmpeg build (rebuild with --enable-libass)")
+	}
 
 	// --- Skip: YOLOv8 requires with_onnx build tag and model files ---
 	if strings.Contains(raw, `"yolo_v8"`) {

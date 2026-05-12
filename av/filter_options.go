@@ -19,6 +19,12 @@ package av
 //     if (!f) return NULL;
 //     return f->priv_class;
 // }
+//
+// // Iterate AVOptions on a class (same semantics as next_opt in options.go
+// // but declared here so filter_options.go can call it independently).
+// static const AVOption *filter_next_opt(const AVClass **cls_ptr, const AVOption *prev) {
+//     return av_opt_next(cls_ptr, prev);
+// }
 import "C"
 
 import (
@@ -55,8 +61,49 @@ func FilterOptionsByName(name string) (FilterOptionsInfo, error) {
 	priv := C.filter_priv_class(f)
 	if priv != nil {
 		local := priv
-		info.Options = walkOptions(&local, true)
+		info.Options = filterWalkOptions(&local)
 	}
 
 	return info, nil
+}
+
+// filterWalkOptions is like walkOptions but deduplicates AVOption entries
+// that share the same struct offset. libavfilter sometimes registers both a
+// short alias (e.g. "w") and a longer canonical name (e.g. "width") that
+// both point to the same private-context field via identical OFFSET()
+// values. Keeping only the first occurrence (declaration order) avoids
+// showing duplicate rows in the Inspector for filters like scale.
+func filterWalkOptions(clsPtr **C.AVClass) []EncoderOption {
+	// First pass: collect the name of the first (canonical) option seen at
+	// each AVOption.offset value. Options with offset == 0 are not
+	// deduplicated (some flags options legitimately use offset 0).
+	seenOffset := make(map[int]struct{})
+	keepName := make(map[string]struct{})
+	var prev *C.AVOption
+	for {
+		opt := C.filter_next_opt(clsPtr, prev)
+		if opt == nil {
+			break
+		}
+		prev = opt
+		if optionType(opt) == "const" {
+			continue
+		}
+		off := int(opt.offset)
+		if _, seen := seenOffset[off]; !seen || off == 0 {
+			seenOffset[off] = struct{}{}
+			keepName[C.GoString(opt.name)] = struct{}{}
+		}
+	}
+
+	// Second pass: use the shared walkOptions to build fully-populated
+	// EncoderOption values, then drop any alias names not in keepName.
+	all := walkOptions(clsPtr, true)
+	out := all[:0:0]
+	for _, o := range all {
+		if _, ok := keepName[o.Name]; ok {
+			out = append(out, o)
+		}
+	}
+	return out
 }
