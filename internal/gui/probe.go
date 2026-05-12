@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -127,9 +128,17 @@ func handleProbe(w http.ResponseWriter, r *http.Request) {
 
 	out := probeResponse{URL: req.URL, Streams: make([]probedStream, 0, len(streams))}
 	// Populate file_mtime for local paths (not URLs with a scheme).
+	// Validate and sanitize the path against the allowed roots before
+	// passing to os.Stat so a crafted URL cannot read mtime for
+	// arbitrary filesystem paths.
 	if !strings.Contains(req.URL, "://") {
-		if fi, err := os.Stat(req.URL); err == nil {
-			out.FileMtime = fi.ModTime().Unix()
+		if localPath, err := filepath.Abs(req.URL); err == nil {
+			localPath = filepath.Clean(localPath)
+			if safe, ok := sanitizePathAnyRoot(localPath, defaultRoots()); ok {
+				if fi, err := os.Stat(safe); err == nil {
+					out.FileMtime = fi.ModTime().Unix()
+				}
+			}
 		}
 	}
 	for _, s := range streams {
