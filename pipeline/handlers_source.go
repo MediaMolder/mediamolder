@@ -465,13 +465,25 @@ func (r *graphRunner) handleCopy(ctx context.Context, node *graph.Node, ins []<-
 
 // ---------- Resource pre-opening ----------
 
-// isSwPixFmtName reports whether name is a software (system-RAM) pixel
-// format — i.e. the caller should auto-transfer hw frames to SW after
-// decode. Hardware-surface names ("cuda", "vaapi", "qsv",
-// "videotoolbox", "d3d11va", "dxva2", "opencl") and the empty string
-// keep frames in GPU memory. This mirrors FFmpeg's
-// -hwaccel_output_format semantics: any format not on the hw-surface
-// list triggers automatic hw→sw transfer. (Wave 10 #59)
+// isHwSurfaceFmtName reports whether name is an explicit hardware-surface
+// pixel format — frames should remain on the GPU after decode (for a
+// zero-copy HW encoder pipeline). An empty name is NOT a hw surface;
+// it means "use the default", which is hw→sw transfer (mirrors FFmpeg's
+// -hwaccel default behaviour where frames are always moved to system RAM
+// unless an explicit hw surface format is requested). (Wave 10 #59)
+func isHwSurfaceFmtName(name string) bool {
+	switch strings.ToLower(name) {
+	case "cuda", "vaapi", "qsv", "videotoolbox", "d3d11va", "dxva2", "opencl", "vulkan":
+		return true
+	}
+	return false
+}
+
+// isSwPixFmtName reports whether name is a software (system-RAM) pixel format.
+func isSwPixFmtName(name string) bool {
+	return name != "" && !isHwSurfaceFmtName(name)
+}
+
 // isDeviceFormat reports whether the libavformat demuxer name refers to a
 // live capture device. Device inputs do not support seeking — attempting
 // avformat_seek_file on them returns an error or blocks indefinitely.
@@ -482,18 +494,6 @@ func isDeviceFormat(name string) bool {
 		return true
 	}
 	return false
-}
-
-func isSwPixFmtName(name string) bool {
-	if name == "" {
-		return false
-	}
-	switch strings.ToLower(name) {
-	case "cuda", "vaapi", "qsv", "videotoolbox", "d3d11va", "dxva2", "opencl", "vulkan":
-		return false
-	default:
-		return true
-	}
 }
 
 func (r *graphRunner) openSource(cfg Input, srcNode *graph.Node, decOpts av.DecoderOptions) (*sourceResources, error) {
@@ -744,10 +744,12 @@ func (r *graphRunner) openSource(cfg Input, srcNode *graph.Node, decOpts av.Deco
 			// to audio decoders).
 			if resolvedHWDev != nil && si.Type == av.MediaTypeVideo {
 				// Determine whether to auto-transfer frames to SW.
-				// Software-format names (nv12, p010le, yuv420p, …) signal
-				// that the caller wants system-RAM frames; hw-surface names
-				// (cuda, vaapi, qsv, …) or empty keep frames on the GPU.
-				autoTransfer := isSwPixFmtName(cfg.HWAccelOutputFormat)
+				// The default (empty hwaccel_output_format) is to transfer,
+				// mirroring FFmpeg's -hwaccel behaviour: frames are always
+				// moved to system RAM unless the caller explicitly requests
+				// a hardware surface format (e.g. "cuda", "vaapi") for a
+				// zero-copy GPU encoder pipeline.
+				autoTransfer := !isHwSurfaceFmtName(cfg.HWAccelOutputFormat)
 				hwDec, err := av.OpenHWDecoder(input, si.Index, resolvedHWDev, av.HWDecoderOptions{
 					AutoTransfer: autoTransfer,
 					ThreadCount:  decOpts.ThreadCount,
