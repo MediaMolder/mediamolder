@@ -230,7 +230,7 @@ func QueryAMFCaps() []AMFCodecCaps {
 			continue
 		}
 		out = append(out, AMFCodecCaps{
-			CodecName:      amfCodecNames[i],
+			CodecName:       amfCodecNames[i],
 			MaxNumOfStreams: int(raw[i].max_streams),
 			MinWidth:        int(raw[i].min_width),
 			MaxWidth:        int(raw[i].max_width),
