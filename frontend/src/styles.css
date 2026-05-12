@@ -530,10 +530,10 @@ button.danger:hover { background: rgba(185, 74, 74, 0.15); }
   align-items: center;
   justify-content: space-between;
   gap: 6px;
-  font-size: 10px;
+  font-size: 9px;
   color: var(--text-dim);
   text-transform: uppercase;
-  letter-spacing: 0.5px;
+  letter-spacing: 0.4px;
 }
 /* Pencil button on each node header — opens the Inspector for that node.
  * Stop pointer events from bubbling into the node drag handler so the
@@ -560,8 +560,8 @@ button.danger:hover { background: rgba(185, 74, 74, 0.15); }
   border-color: var(--border);
   color: var(--text);
 }
-.mm-node .mm-node-title { font-weight: 600; }
-.mm-node .mm-node-sub { font-size: 11px; color: var(--text-dim); margin-top: 2px; }
+.mm-node .mm-node-title { font-weight: 600; font-size: 11px; }
+.mm-node .mm-node-sub { font-size: 10px; color: var(--text-dim); margin-top: 2px; }
 /* Clickable URL chip on input/output nodes. Inherits .mm-node-sub base
  * styles and adds button reset + right-tail truncation via RTL overflow. */
 .mm-node .mm-node-sub-btn {
@@ -648,8 +648,11 @@ button.danger:hover { background: rgba(185, 74, 74, 0.15); }
   user-select: none;
   transform: translateY(-50%);
 }
-.handle-track-label--src { right: 10px; text-align: right; }
-.handle-track-label--tgt { left: 10px;  text-align: left; }
+/* Labels sit just outside the node border so they never overlap node content.
+ * right/left: -10px pushes the anchor past the border; translateX moves the
+ * box fully clear so the label grows away from the node, not into it. */
+.handle-track-label--src { right: -10px; transform: translateX(100%) translateY(-50%); text-align: left; }
+.handle-track-label--tgt { left: -10px;  transform: translateX(-100%) translateY(-50%); text-align: right; }
 
 /* Stream-typed edges */
 .react-flow__edge.edge-video    .react-flow__edge-path { stroke: var(--video);    stroke-width: 2; }
