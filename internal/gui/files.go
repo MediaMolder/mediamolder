@@ -315,7 +315,123 @@ func handleMkdir(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(mkdirResponse{Path: target})
 }
 
-// defaultRoots returns the set of directories the file picker is allowed to
+// fileReadWriteBodyLimit caps the request body for PUT /api/file.
+// 10 MiB should comfortably cover even the largest job JSON files.
+const fileReadWriteBodyLimit = 10 * 1024 * 1024
+
+// handleReadFile returns the raw text content of a file.
+//
+// GET /api/file?path=<absolute-path>
+//
+// The path must resolve to a regular file within the allowed roots.
+// The raw file bytes are returned with Content-Type: text/plain so
+// the frontend can consume them with response.text().
+func handleReadFile(w http.ResponseWriter, r *http.Request) {
+	roots := defaultRoots()
+	rawPath := strings.TrimSpace(r.URL.Query().Get("path"))
+	if rawPath == "" {
+		writeJSONError(w, http.StatusBadRequest, errors.New("path is required"))
+		return
+	}
+	abs, err := filepath.Abs(expandHome(rawPath))
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, fmt.Errorf("invalid path: %w", err))
+		return
+	}
+	abs = filepath.Clean(abs)
+	if !isWithinAnyRoot(abs, roots) {
+		writeJSONError(w, http.StatusBadRequest, errors.New("path is outside allowed roots"))
+		return
+	}
+	info, err := os.Stat(abs)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			writeJSONError(w, http.StatusNotFound, err)
+		} else {
+			writeJSONError(w, http.StatusForbidden, err)
+		}
+		return
+	}
+	if info.IsDir() {
+		writeJSONError(w, http.StatusBadRequest, errors.New("path is a directory"))
+		return
+	}
+	data, err := os.ReadFile(abs)
+	if err != nil {
+		writeJSONError(w, http.StatusForbidden, fmt.Errorf("read %q: %w", abs, err))
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	_, _ = w.Write(data)
+}
+
+type fileWriteRequest struct {
+	Path    string `json:"path"`
+	Content string `json:"content"`
+}
+
+// handleWriteFile atomically writes text content to a file on disk.
+//
+// PUT /api/file  body: { "path": "...", "content": "..." }
+//
+// The path must resolve to a location within the allowed roots. The
+// parent directory must already exist. Content is written atomically
+// via a temp-file rename so a crash mid-write never truncates the
+// original file.
+func handleWriteFile(w http.ResponseWriter, r *http.Request) {
+	roots := defaultRoots()
+	var req fileWriteRequest
+	if err := json.NewDecoder(io.LimitReader(r.Body, fileReadWriteBodyLimit)).Decode(&req); err != nil {
+		writeJSONError(w, http.StatusBadRequest, fmt.Errorf("invalid JSON body: %w", err))
+		return
+	}
+	rawPath := strings.TrimSpace(req.Path)
+	if rawPath == "" {
+		writeJSONError(w, http.StatusBadRequest, errors.New("path is required"))
+		return
+	}
+	abs, err := filepath.Abs(expandHome(rawPath))
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, fmt.Errorf("invalid path: %w", err))
+		return
+	}
+	abs = filepath.Clean(abs)
+	if !isWithinAnyRoot(abs, roots) {
+		writeJSONError(w, http.StatusBadRequest, errors.New("path is outside allowed roots"))
+		return
+	}
+	// Parent directory must exist.
+	if _, err := os.Stat(filepath.Dir(abs)); err != nil {
+		writeJSONError(w, http.StatusBadRequest, fmt.Errorf("parent directory does not exist: %w", err))
+		return
+	}
+	// Write atomically: temp file in the same directory (guarantees
+	// same filesystem for the rename), then rename over the target.
+	dir := filepath.Dir(abs)
+	tmp, err := os.CreateTemp(dir, ".mm-save-*")
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, fmt.Errorf("create temp file: %w", err))
+		return
+	}
+	tmpName := tmp.Name()
+	if _, err := io.WriteString(tmp, req.Content); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpName)
+		writeJSONError(w, http.StatusInternalServerError, fmt.Errorf("write: %w", err))
+		return
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpName)
+		writeJSONError(w, http.StatusInternalServerError, fmt.Errorf("close: %w", err))
+		return
+	}
+	if err := os.Rename(tmpName, abs); err != nil {
+		_ = os.Remove(tmpName)
+		writeJSONError(w, http.StatusInternalServerError, fmt.Errorf("rename: %w", err))
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
 // browse: the user's shortcut roots (home, cwd, filesystem root on Unix and
 // mounted volumes) plus any local drives. Returned paths are absolute and
 // cleaned so they can be compared with filepath.Rel.

@@ -35,6 +35,8 @@ import {
   flowToConfig,
   materializeImplicitEncoders,
   nextInputTrack,
+  EMPTY_URL_PLACEHOLDER,
+  INPUT_PREFIX,
   type FlowEdge,
   type FlowNode,
 } from './lib/jsonAdapter';
@@ -44,7 +46,7 @@ import { spawnNodeFrom, type PaletteEntry } from './lib/spawn';
 import { useJobRun } from './lib/useJobRun';
 import { inferEdgeAttributes, summariseAttributes } from './lib/streamAttrs';
 import { fetchCatalog, indexStreams } from './lib/nodeCatalog';
-import type { HWAccelProbe, JobConfig, ProbedStream, StreamType } from './lib/jobTypes';
+import type { HWAccelProbe, JobConfig, ProbeResponse, StreamType } from './lib/jobTypes';
 
 const NODE_TYPES = { mmNode: MMNode };
 const EDGE_TYPES = { mmEdge: MMEdge };
@@ -66,7 +68,7 @@ interface ExampleEntry {
 type GraphIdentity =
   | { kind: 'empty' }
   | { kind: 'example'; url: string; name: string }
-  | { kind: 'file'; name: string; handle?: FileSystemFileHandle }
+  | { kind: 'file'; name: string; path?: string; handle?: FileSystemFileHandle }
   | { kind: 'unsaved' };
 
 /* File System Access API — feature-detected at call time. The TS lib does
@@ -100,6 +102,8 @@ function Editor() {
   const [job, setJob] = useState<JobConfig>(EMPTY_JOB);
   const [nodes, setNodes] = useState<FlowNode[]>([]);
   const [edges, setEdges] = useState<FlowEdge[]>([]);
+  // 'open' | 'save' | null — controls the job-file FileBrowser dialog.
+  const [jobBrowserMode, setJobBrowserMode] = useState<'open' | 'save' | null>(null);
   // null = probe not yet returned (show all options as fallback);
   // HWAccelProbe[] = full probe results from /api/hwaccel
   const [availableHWAccels, setAvailableHWAccels] = useState<HWAccelProbe[] | null>(null);
@@ -213,6 +217,80 @@ function Editor() {
       .catch(() => {
         /* catalog unavailable: fall back to all-pins display */
       });
+
+    // Auto-probe input nodes with real (non-placeholder) file URLs.
+    //   • No cache (cachedMtime=-1)  → probe, populate cache (no dirty mark)
+    //   • Local file (cachedMtime>0) → probe, check mtime; update + mark dirty if changed
+    //   • Network/device (cachedMtime=0, already cached) → skip
+    for (const inp of cfg.inputs) {
+      const url = inp.url ?? '';
+      if (
+        !url.trim() ||
+        url === EMPTY_URL_PLACEHOLDER ||
+        inp.kind === 'lavfi' ||
+        inp.kind === 'raw' ||
+        inp.kind === 'concat'
+      ) continue;
+      const cache = cfg.graph?.ui?.probed_inputs?.[inp.id];
+      const cachedMtime = cache?.file_mtime ?? -1;
+      // Network/device inputs that already have cached data: trust the cache.
+      if (cachedMtime === 0) continue;
+      const flowId = INPUT_PREFIX + inp.id;
+      fetch('/api/probe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: inp.url, ...(inp.format ? { format: inp.format } : {}) }),
+      })
+        .then((r) => (r.ok ? (r.json() as Promise<ProbeResponse>) : Promise.reject(new Error(`HTTP ${r.status}`))))
+        .then((resp) => {
+          const newMtime = resp.file_mtime ?? 0;
+          // Local file unchanged — cached data is still valid.
+          if (cachedMtime > 0 && newMtime > 0 && newMtime === cachedMtime) return;
+          const probed = resp.streams;
+          const streams = [...new Set(probed.map((s) => s.type as string))];
+          const audioCount = probed.filter((s) => s.type === 'audio').length;
+          setNodes((ns) =>
+            ns.map((node) => {
+              if (node.id !== flowId) return node;
+              let ref = node.data.ref;
+              if (ref.kind === 'input') {
+                const trackCount: Record<string, number> = {};
+                const rebuiltStreams = probed.map((s) => {
+                  const t = s.type as StreamType;
+                  const track = trackCount[t as string] ?? 0;
+                  trackCount[t as string] = track + 1;
+                  return { input_index: 0, type: t, track };
+                });
+                ref = { kind: 'input', def: { ...ref.def, streams: rebuiltStreams } };
+              }
+              return {
+                ...node,
+                data: {
+                  ...node.data,
+                  ref,
+                  probed,
+                  probedFileMtime: newMtime,
+                  streams,
+                  ...(audioCount > 1 ? { audioTrackCount: audioCount } : { audioTrackCount: undefined }),
+                },
+              };
+            }),
+          );
+          setEdges((es) =>
+            es.filter((e) => {
+              if (e.source !== flowId || e.sourceHandle == null) return true;
+              return streams.includes(e.sourceHandle.split(':')[0]);
+            }),
+          );
+          // Mark dirty only for freshness re-probes (file changed since last save).
+          // Initial cache population is transparent to the user.
+          if (cachedMtime > 0) setDirty(true);
+        })
+        .catch(() => {
+          /* Probe failed — file unavailable, permission error, etc.
+           * Leave any existing cached data in place. */
+        });
+    }
   }, []);
 
   /* Mark the graph as having unsaved edits. Loaded examples promote to
@@ -338,7 +416,9 @@ function Editor() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const onProbedData = useCallback((nodeId: string, probed: ProbedStream[] | undefined) => {
+  const onProbedData = useCallback((nodeId: string, response: ProbeResponse | undefined) => {
+    const probed = response?.streams;
+    const fileMtime = response?.file_mtime ?? 0;
     const streams = probed
       ? [...new Set(probed.map((s) => s.type as string))]
       : undefined;
@@ -367,6 +447,7 @@ function Editor() {
           ...n.data,
           ref,
           probed,
+          probedFileMtime: probed !== undefined ? fileMtime : undefined,
           streams,
           ...(audioTrackCount !== undefined && audioTrackCount > 1
             ? { audioTrackCount }
@@ -455,24 +536,10 @@ function Editor() {
     return 'job.json';
   }, [identity]);
 
-  /* Browser-level fallback when the File System Access API is unavailable
-   * (Firefox, Safari): trigger a download. We can't learn where it ended
-   * up, so identity stays as 'unsaved' — calling this "saved" would lie. */
-  const downloadJob = useCallback((text: string, filename: string) => {
-    const blob = new Blob([text], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    a.click();
-    URL.revokeObjectURL(url);
-  }, []);
-
   /* Save As… — always prompts for a destination. On success the chosen
    * handle becomes the graph's identity, so subsequent Save calls
    * overwrite silently. */
   const onSaveAs = useCallback(async () => {
-    const text = serialiseJob();
     const w = window as FsaWindow;
     if (typeof w.showSaveFilePicker === 'function') {
       try {
@@ -480,7 +547,9 @@ function Editor() {
           suggestedName: suggestedFilename(),
           types: [{ description: 'MediaMolder job', accept: { 'application/json': ['.json'] } }],
         });
-        const writable = await (handle as FileSystemFileHandle & { createWritable: () => Promise<FileSystemWritableFileStream> }).createWritable();
+        const text = serialiseJob();
+        const fh = handle as FileSystemFileHandle & { createWritable: () => Promise<FileSystemWritableFileStream> };
+        const writable = await fh.createWritable();
         await writable.write(text);
         await writable.close();
         setIdentity({ kind: 'file', name: handle.name, handle });
@@ -490,19 +559,48 @@ function Editor() {
         // AbortError = user cancelled the picker; treat as a no-op.
         if ((err as DOMException)?.name === 'AbortError') return;
         console.error('Save As failed', err);
-        // fall through to download fallback
+        // fall through to backend FileBrowser
       }
     }
-    downloadJob(text, suggestedFilename());
-  }, [serialiseJob, suggestedFilename, downloadJob]);
+    // FSA unavailable or failed: open the backend FileBrowser in save mode.
+    setJobBrowserMode('save');
+  }, [serialiseJob, suggestedFilename]);
 
-  /* Save — if we have a remembered file handle, overwrite it silently;
-   * otherwise behave like Save As…. */
+  /* Save — try in order:
+   * 1. Backend API  (identity.path set via FileBrowser open/save)
+   * 2. FSA handle   (identity.handle set via showOpenFilePicker/showSaveFilePicker)
+   * 3. Save As      (no known destination yet) */
   const onSave = useCallback(async () => {
+    if (identity.kind === 'file' && identity.path) {
+      try {
+        const text = serialiseJob();
+        const r = await fetch('/api/file', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ path: identity.path, content: text }),
+        });
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        setDirty(false);
+        return;
+      } catch (err) {
+        console.error('Save failed', err);
+        // fall through to FSA / Save As
+      }
+    }
     if (identity.kind === 'file' && identity.handle) {
       try {
         const text = serialiseJob();
-        const writable = await (identity.handle as FileSystemFileHandle & { createWritable: () => Promise<FileSystemWritableFileStream> }).createWritable();
+        const fh = identity.handle as FileSystemFileHandle & {
+          requestPermission?: (d: { mode: string }) => Promise<string>;
+          createWritable: () => Promise<FileSystemWritableFileStream>;
+        };
+        // Request write permission explicitly — required on Chrome/macOS when
+        // the handle came from showOpenFilePicker (read-only by default).
+        if (typeof fh.requestPermission === 'function') {
+          const perm = await fh.requestPermission({ mode: 'readwrite' });
+          if (perm !== 'granted') { await onSaveAs(); return; }
+        }
+        const writable = await fh.createWritable();
         await writable.write(text);
         await writable.close();
         setDirty(false);
@@ -516,8 +614,9 @@ function Editor() {
   }, [identity, serialiseJob, onSaveAs]);
 
   /* Open — prefers File System Access API so we capture a handle the
-   * user can later Save into; falls back to <input type=file> on
-   * browsers without FSA. */
+   * user can later Save into; falls back to the backend FileBrowser
+   * (which gives a full path for silent saves) on browsers without FSA;
+   * last resort is <input type=file>. */
   const onOpen = useCallback(async () => {
     const w = window as FsaWindow;
     if (typeof w.showOpenFilePicker === 'function') {
@@ -539,20 +638,9 @@ function Editor() {
         console.error('Open failed, falling back', err);
       }
     }
-    const inp = document.createElement('input');
-    inp.type = 'file';
-    inp.accept = 'application/json,.json';
-    inp.onchange = async () => {
-      const file = inp.files?.[0];
-      if (!file) return;
-      const text = await file.text();
-      try {
-        loadJob(JSON.parse(text) as JobConfig, { kind: 'file', name: file.name });
-      } catch (err) {
-        alert('Invalid JSON: ' + (err as Error).message);
-      }
-    };
-    inp.click();
+    // FSA unavailable: use the backend FileBrowser so we get a full server-
+    // side path and can subsequently save silently via PUT /api/file.
+    setJobBrowserMode('open');
   }, [loadJob]);
 
   const onClear = useCallback(() => {
@@ -1049,6 +1137,47 @@ function Editor() {
               }),
             );
             markDirty();
+          }}
+        />
+      )}
+      {jobBrowserMode && (
+        <FileBrowser
+          open
+          mode={jobBrowserMode}
+          title={jobBrowserMode === 'open' ? 'Open job file' : 'Save job file as…'}
+          filter="json"
+          defaultFilename={jobBrowserMode === 'save' ? suggestedFilename() : undefined}
+          initialPath={identity.kind === 'file' ? identity.path ?? undefined : undefined}
+          onClose={() => setJobBrowserMode(null)}
+          onPick={async (pickedPath) => {
+            setJobBrowserMode(null);
+            if (jobBrowserMode === 'open') {
+              try {
+                const r = await fetch(`/api/file?path=${encodeURIComponent(pickedPath)}`);
+                if (!r.ok) throw new Error(`HTTP ${r.status}`);
+                const text = await r.text();
+                const name = pickedPath.split('/').pop() ?? pickedPath;
+                loadJob(JSON.parse(text) as JobConfig, { kind: 'file', name, path: pickedPath });
+              } catch (err) {
+                alert('Could not open file: ' + (err as Error).message);
+              }
+            } else {
+              // save
+              try {
+                const text = serialiseJob();
+                const r = await fetch('/api/file', {
+                  method: 'PUT',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ path: pickedPath, content: text }),
+                });
+                if (!r.ok) throw new Error(`HTTP ${r.status}`);
+                const name = pickedPath.split('/').pop() ?? pickedPath;
+                setIdentity({ kind: 'file', name, path: pickedPath });
+                setDirty(false);
+              } catch (err) {
+                alert('Could not save file: ' + (err as Error).message);
+              }
+            }
           }}
         />
       )}
