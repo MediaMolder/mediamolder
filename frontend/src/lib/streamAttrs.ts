@@ -168,6 +168,20 @@ function pixFmtBitsPerPixel(pf: string): number | undefined {
   return known[pf];
 }
 
+/** Bits per sample for a libav sample_fmt name (packed and planar). */
+function sampleFmtBits(sf: string | undefined): number | undefined {
+  if (!sf) return undefined;
+  const known: Record<string, number> = {
+    u8: 8,  u8p: 8,
+    s16: 16, s16p: 16,
+    s32: 32, s32p: 32,
+    flt: 32, fltp: 32,
+    dbl: 64, dblp: 64,
+    s64: 64, s64p: 64,
+  };
+  return known[sf];
+}
+
 /**
  * Parse a frame-rate string that may be a decimal ("23.976") or a
  * rational ("24000/1001"). Returns NaN for unparseable input.
@@ -489,7 +503,10 @@ export function inferEdgeAttributes(
   // For decoded video streams all compressed-bitrate attrs have been
   // blocked by the null sentinel. Compute the uncompressed rate from
   // first principles: w × h × fps × bits_per_pixel.
-  if (type === 'video' && !('bit_rate' in result) && !blocked.has('bit_rate')) {
+  // Note: we intentionally ignore blocked.has('bit_rate') here — that flag
+  // means an upstream compressed rate was suppressed, which is *exactly*
+  // the case where we want to substitute the decoded rate.
+  if (type === 'video' && !('bit_rate' in result)) {
     const w = result['width'] ? parseInt(result['width'].value, 10) : NaN;
     const h = result['height'] ? parseInt(result['height'].value, 10) : NaN;
     const fpsStr = result['frame_rate']?.value;
@@ -501,6 +518,20 @@ export function inferEdgeAttributes(
         const bps = w * h * fps * bpp;
         result['bit_rate'] = { key: 'bit_rate', value: formatBitRate(bps) + ' (decoded)', source: 'calculated' };
       }
+    }
+  }
+
+  // For decoded audio streams compute the uncompressed rate from
+  // first principles: sample_rate × channels × bits_per_sample.
+  if (type === 'audio' && !('bit_rate' in result)) {
+    const srStr = result['sample_rate']?.value;
+    const sr = srStr ? parseInt(srStr, 10) : NaN;
+    const chStr = result['channels']?.value;
+    const ch = chStr ? parseInt(chStr, 10) : NaN;
+    const sf = result['sample_fmt']?.value;
+    const bps = sampleFmtBits(sf);
+    if (!isNaN(sr) && !isNaN(ch) && bps !== undefined) {
+      result['bit_rate'] = { key: 'bit_rate', value: formatBitRate(sr * ch * bps) + ' (decoded)', source: 'calculated' };
     }
   }
 
