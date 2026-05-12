@@ -473,7 +473,7 @@ export function inferEdgeAttributes(
   // For decoded video streams all compressed-bitrate attrs have been
   // blocked by the null sentinel. Compute the uncompressed rate from
   // first principles: w × h × fps × bits_per_pixel.
-  if (type === 'video' && !('bit_rate' in result)) {
+  if (type === 'video' && !('bit_rate' in result) && !blocked.has('bit_rate')) {
     const w = result['width'] ? parseInt(result['width'].value, 10) : NaN;
     const h = result['height'] ? parseInt(result['height'].value, 10) : NaN;
     const fpsStr = result['frame_rate']?.value;
