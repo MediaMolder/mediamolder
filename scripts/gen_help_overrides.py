@@ -15,7 +15,7 @@ import os
 import sys
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-CSV_PATH = os.path.join(REPO_ROOT, "docs", "nodes.csv")
+CSV_PATH = os.path.join(REPO_ROOT, "private_local", "nodes.csv")
 OUT_PATH = os.path.join(REPO_ROOT, "internal", "gui", "help_overrides_gen.go")
 
 
