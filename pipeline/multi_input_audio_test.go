@@ -10,15 +10,14 @@ import (
 	"github.com/MediaMolder/MediaMolder/graph"
 )
 
-// TestSpliceAudioMerge_TwoInputs verifies that an encoder node with
-// params["multi_input_audio"]="true" and two inbound audio edges gets a
-// synthetic __amerge__ filter spliced in front of it.
+// TestSpliceAudioMerge_TwoInputs verifies that an encoder node with two
+// inbound audio edges gets a synthetic __amerge__ filter spliced in front.
 func TestSpliceAudioMerge_TwoInputs(t *testing.T) {
 	def := &graph.Def{
 		Nodes: []graph.NodeDef{
 			{ID: "src1", Type: "input"},
 			{ID: "src2", Type: "input"},
-			{ID: "enc", Type: "encoder", Params: map[string]any{"codec": "aac", "multi_input_audio": "true"}},
+			{ID: "enc", Type: "encoder", Params: map[string]any{"codec": "aac"}},
 			{ID: "sink", Type: "output"},
 		},
 		Edges: []graph.EdgeDef{
@@ -68,13 +67,12 @@ func TestSpliceAudioMerge_TwoInputs(t *testing.T) {
 }
 
 // TestSpliceAudioMerge_SingleInputSkipped verifies that an encoder with
-// only one inbound audio edge is left untouched even when multi_input_audio
-// is set.
+// only one inbound audio edge is left untouched.
 func TestSpliceAudioMerge_SingleInputSkipped(t *testing.T) {
 	def := &graph.Def{
 		Nodes: []graph.NodeDef{
 			{ID: "src", Type: "input"},
-			{ID: "enc", Type: "encoder", Params: map[string]any{"codec": "aac", "multi_input_audio": "true"}},
+			{ID: "enc", Type: "encoder", Params: map[string]any{"codec": "aac"}},
 			{ID: "sink", Type: "output"},
 		},
 		Edges: []graph.EdgeDef{
@@ -89,9 +87,10 @@ func TestSpliceAudioMerge_SingleInputSkipped(t *testing.T) {
 	}
 }
 
-// TestSpliceAudioMerge_NoParamSkipped verifies that a normal encoder node
-// (no multi_input_audio) is untouched even if it has multiple inbound edges.
-func TestSpliceAudioMerge_NoParamSkipped(t *testing.T) {
+// TestSpliceAudioMerge_AlwaysSplicesMultiInput verifies that any encoder
+// with multiple inbound audio edges gets the synthetic amerge without
+// requiring any opt-in parameter.
+func TestSpliceAudioMerge_AlwaysSplicesMultiInput(t *testing.T) {
 	def := &graph.Def{
 		Nodes: []graph.NodeDef{
 			{ID: "src1", Type: "input"},
@@ -105,9 +104,14 @@ func TestSpliceAudioMerge_NoParamSkipped(t *testing.T) {
 			{From: "enc", To: "sink", Type: "audio"},
 		},
 	}
-	before := len(def.Nodes)
 	spliceAudioMergeForMultiInputEncoders(def)
-	if len(def.Nodes) != before {
-		t.Errorf("node count changed from %d to %d; expected no splice without multi_input_audio", before, len(def.Nodes))
+	var mergeNode *graph.NodeDef
+	for i := range def.Nodes {
+		if strings.HasPrefix(def.Nodes[i].ID, "__amerge__") {
+			mergeNode = &def.Nodes[i]
+		}
+	}
+	if mergeNode == nil {
+		t.Fatal("expected __amerge__ node, none found")
 	}
 }

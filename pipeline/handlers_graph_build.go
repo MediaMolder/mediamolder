@@ -161,20 +161,16 @@ var audioEncoderRequirements = map[string]audioEncoderRequirement{
 }
 
 // spliceAudioMergeForMultiInputEncoders inserts a synthetic amerge filter
-// in front of every encoder node that has params["multi_input_audio"] set
-// and more than one inbound audio edge. This lets users wire multiple audio
-// source handles directly to an audio encoder node and have the merge happen
-// transparently, without placing an explicit amerge node on the canvas.
+// in front of every encoder node that has more than one inbound audio edge.
+// This lets users wire multiple audio source handles directly to an audio
+// encoder node and have the merge happen transparently, without placing an
+// explicit amerge node on the canvas.
 //
 // Synthetic nodes use the "__amerge__" prefix to avoid colliding with
 // user-supplied node IDs. The pass runs after expandImplicitEncoders and
 // before spliceAudioAdaptersForEncoders so the resulting single-input
 // encoder edge still gets the aformat/asetnsamples adapter when needed.
 func spliceAudioMergeForMultiInputEncoders(def *graph.Def) {
-	nodeByID := make(map[string]graph.NodeDef, len(def.Nodes))
-	for _, n := range def.Nodes {
-		nodeByID[n.ID] = n
-	}
 	head := func(ref string) string {
 		if i := strings.IndexByte(ref, ':'); i >= 0 {
 			return ref[:i]
@@ -182,19 +178,12 @@ func spliceAudioMergeForMultiInputEncoders(def *graph.Def) {
 		return ref
 	}
 
-	// Collect encoder node IDs that opted into multi-input mode.
-	multiEncoders := make(map[string]bool)
+	// Collect all encoder node IDs.
+	encoders := make(map[string]bool)
 	for _, n := range def.Nodes {
-		if n.Type != "encoder" {
-			continue
+		if n.Type == "encoder" {
+			encoders[n.ID] = true
 		}
-		v, _ := n.Params["multi_input_audio"].(string)
-		if v == "true" || v == "1" {
-			multiEncoders[n.ID] = true
-		}
-	}
-	if len(multiEncoders) == 0 {
-		return
 	}
 
 	// Group audio edge indices by target encoder ID.
@@ -205,7 +194,7 @@ func spliceAudioMergeForMultiInputEncoders(def *graph.Def) {
 			continue
 		}
 		toID := head(e.To)
-		if multiEncoders[toID] {
+		if encoders[toID] {
 			encEdges[toID] = append(encEdges[toID], i)
 		}
 	}
