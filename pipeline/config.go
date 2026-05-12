@@ -409,7 +409,12 @@ type GraphDef struct {
 // GraphUI carries optional layout metadata for the visual editor. All fields
 // are optional and ignored by the runtime.
 type GraphUI struct {
-	Positions map[string]UIPosition `json:"positions,omitempty"`
+	Positions    map[string]UIPosition      `json:"positions,omitempty"`
+	// ProbedInputs caches stream-probe results keyed by input id. It is
+	// written by the GUI when saving a job so that reopening it restores
+	// track handles and stream info without re-probing the source file.
+	// The pipeline runtime never reads or modifies this field.
+	ProbedInputs map[string]json.RawMessage `json:"probed_inputs,omitempty"`
 }
 
 // UIPosition is a 2D coordinate on the editor canvas.
