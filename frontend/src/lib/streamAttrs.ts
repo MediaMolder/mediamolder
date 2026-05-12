@@ -126,6 +126,54 @@ function pixFmtBitDepth(pf: string): number {
 }
 
 /**
+ * Uncompressed bits-per-pixel for a pixel format.
+ * Based on chroma subsampling ratios and component depth.
+ * Returns undefined for unknown/exotic formats.
+ */
+function pixFmtBitsPerPixel(pf: string): number | undefined {
+  const known: Record<string, number> = {
+    // 4:2:0  8-bit (12 bpp)
+    yuv420p: 12, yuvj420p: 12, nv12: 12, nv21: 12,
+    // 4:2:0 10-bit (15 bpp)
+    yuv420p10le: 15, yuv420p10be: 15, p010le: 15, p010be: 15,
+    // 4:2:0 12-bit (18 bpp)
+    yuv420p12le: 18, yuv420p12be: 18,
+    // 4:2:2  8-bit (16 bpp)
+    yuv422p: 16, yuvj422p: 16, uyvy422: 16, yuyv422: 16, yvyu422: 16,
+    // 4:2:2 10-bit (20 bpp)
+    yuv422p10le: 20, yuv422p10be: 20, p210le: 20, p210be: 20,
+    // 4:4:4  8-bit (24 bpp)
+    yuv444p: 24, yuvj444p: 24, gbrp: 24,
+    // 4:4:4 10-bit (30 bpp)
+    yuv444p10le: 30, yuv444p10be: 30, gbrp10le: 30, gbrp10be: 30,
+    // 4:1:1  8-bit (9 bpp)
+    yuv411p: 9, yuvj411p: 9,
+    // Grayscale
+    gray: 8, gray8: 8, gray10le: 10, gray12le: 12, gray16le: 16, gray16be: 16,
+    // Packed RGB
+    rgb24: 24, bgr24: 24,
+    rgba: 32, argb: 32, bgra: 32, abgr: 32,
+    rgb48le: 48, rgb48be: 48, bgr48le: 48, bgr48be: 48,
+    rgba64le: 64, rgba64be: 64, bgra64le: 64, bgra64be: 64,
+  };
+  return known[pf];
+}
+
+/**
+ * Parse a frame-rate string that may be a decimal ("23.976") or a
+ * rational ("24000/1001"). Returns NaN for unparseable input.
+ */
+function parseFrameRate(s: string): number {
+  const slash = s.indexOf('/');
+  if (slash !== -1) {
+    const num = parseFloat(s.slice(0, slash));
+    const den = parseFloat(s.slice(slash + 1));
+    return den > 0 ? num / den : NaN;
+  }
+  return parseFloat(s);
+}
+
+/**
  * Extract attributes that a single graph node establishes for the given
  * stream type. Returns a partial map; absent keys mean "not set by this node".
  */
@@ -226,11 +274,10 @@ function attrsFromGraphNode(node: NodeDef, type: StreamType): Record<string, str
         }
       }
     }
-    // Decoded frames flowing through filter nodes have no codec identity.
-    // Emit null for codec/profile/level to block them from propagating
-    // further upstream (so the input's ProRes/h264/etc. doesn't appear
-    // on filter-to-filter edges).
-    for (const k of ['codec', 'profile', 'level'] as const) {
+    // Decoded frames flowing through filter nodes have no codec identity
+    // and no compressed bit rate — block all of these from propagating
+    // upstream so the input's ProRes/h264/bitrate doesn't bleed through.
+    for (const k of ['codec', 'profile', 'level', 'bit_rate'] as const) {
       if (!(k in out)) out[k] = null;
     }
   }
@@ -383,6 +430,24 @@ export function inferEdgeAttributes(
     // Otherwise keep walking upstream.
     const incoming = incomingByNode.get(nid) ?? [];
     for (const inc of incoming) queue.push(inc.source);
+  }
+
+  // For decoded video streams all compressed-bitrate attrs have been
+  // blocked by the null sentinel. Compute the uncompressed rate from
+  // first principles: w × h × fps × bits_per_pixel.
+  if (type === 'video' && !('bit_rate' in result)) {
+    const w = result['width'] ? parseInt(result['width'].value, 10) : NaN;
+    const h = result['height'] ? parseInt(result['height'].value, 10) : NaN;
+    const fpsStr = result['frame_rate']?.value;
+    const fps = fpsStr ? parseFrameRate(fpsStr) : NaN;
+    const pf = result['pix_fmt']?.value;
+    if (!isNaN(w) && !isNaN(h) && !isNaN(fps) && pf) {
+      const bpp = pixFmtBitsPerPixel(pf);
+      if (bpp !== undefined) {
+        const bps = w * h * fps * bpp;
+        result['bit_rate'] = { key: 'bit_rate', value: formatBitRate(bps) + ' (decoded)', source: 'calculated' };
+      }
+    }
   }
 
   // Preserve the canonical display order.
