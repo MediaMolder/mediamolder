@@ -143,10 +143,18 @@ function pixFmtBitsPerPixel(pf: string): number | undefined {
     yuv422p: 16, yuvj422p: 16, uyvy422: 16, yuyv422: 16, yvyu422: 16,
     // 4:2:2 10-bit (20 bpp)
     yuv422p10le: 20, yuv422p10be: 20, p210le: 20, p210be: 20,
+    // 4:2:2 12-bit (24 bpp)
+    yuv422p12le: 24, yuv422p12be: 24,
     // 4:4:4  8-bit (24 bpp)
     yuv444p: 24, yuvj444p: 24, gbrp: 24,
     // 4:4:4 10-bit (30 bpp)
     yuv444p10le: 30, yuv444p10be: 30, gbrp10le: 30, gbrp10be: 30,
+    // 4:4:4 12-bit (36 bpp)
+    yuv444p12le: 36, yuv444p12be: 36, gbrp12le: 36, gbrp12be: 36,
+    // 4:4:4 14-bit (42 bpp)
+    yuv444p14le: 42, yuv444p14be: 42,
+    // 4:4:4 16-bit (48 bpp)
+    yuv444p16le: 48, yuv444p16be: 48, gbrp16le: 48, gbrp16be: 48,
     // 4:1:1  8-bit (9 bpp)
     yuv411p: 9, yuvj411p: 9,
     // Grayscale
