@@ -7,7 +7,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
@@ -18,10 +17,7 @@ import (
 // muxer wrote SAR=16:15 (the DV-PAL anamorphic shape) onto the
 // video stream's codecpar.
 func TestApplyDARShorthand(t *testing.T) {
-	inputURL := filepath.Join("..", "testdata", "BBB_10sec.mp4")
-	if _, err := os.Stat(inputURL); err != nil {
-		t.Skip("testdata/BBB_10sec.mp4 missing")
-	}
+	inputURL := bbbSourcePath(t)
 	ffprobeBin, err := exec.LookPath("ffprobe")
 	if err != nil {
 		t.Skip("ffprobe not in PATH")
@@ -54,6 +50,7 @@ func TestApplyDARShorthand(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseConfig: %v", err)
 	}
+	injectBBBSeek(cfg)
 	eng, err := NewPipeline(cfg)
 	if err != nil {
 		t.Fatalf("NewPipeline: %v", err)
@@ -99,10 +96,7 @@ func TestApplyDARShorthand(t *testing.T) {
 // TestApplySARShorthand sets SAR directly (NTSC 8:9) and confirms
 // the muxer wrote it through unchanged.
 func TestApplySARShorthand(t *testing.T) {
-	inputURL := filepath.Join("..", "testdata", "BBB_10sec.mp4")
-	if _, err := os.Stat(inputURL); err != nil {
-		t.Skip("testdata/BBB_10sec.mp4 missing")
-	}
+	inputURL := bbbSourcePath(t)
 	ffprobeBin, err := exec.LookPath("ffprobe")
 	if err != nil {
 		t.Skip("ffprobe not in PATH")
@@ -135,6 +129,7 @@ func TestApplySARShorthand(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseConfig: %v", err)
 	}
+	injectBBBSeek(cfg)
 	eng, err := NewPipeline(cfg)
 	if err != nil {
 		t.Fatalf("NewPipeline: %v", err)
