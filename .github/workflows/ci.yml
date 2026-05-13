@@ -24,7 +24,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          lfs: true
+          lfs: false
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -124,6 +124,18 @@ jobs:
       - name: Build
         run: go build ./...
 
+      - name: Fetch LFS testdata (small fixtures)
+        run: git lfs pull
+
+      - name: Cache BBB source
+        uses: actions/cache@v4
+        with:
+          path: testdata/BBB_1080p.avi
+          key: bbb-1080p-stereo-avi-v1
+
+      - name: Fetch BBB testdata source
+        run: bash scripts/fetch-bbb.sh testdata/BBB_1080p.avi
+
       - name: Test
         run: go test -race -count=1 -timeout 300s -short ./...
 
@@ -140,7 +152,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          lfs: true
+          lfs: false
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -190,6 +202,18 @@ jobs:
 
       - name: Update linker cache
         run: sudo ldconfig
+
+      - name: Fetch LFS testdata (small fixtures)
+        run: git lfs pull
+
+      - name: Cache BBB source
+        uses: actions/cache@v4
+        with:
+          path: testdata/BBB_1080p.avi
+          key: bbb-1080p-stereo-avi-v1
+
+      - name: Fetch BBB testdata source
+        run: bash scripts/fetch-bbb.sh testdata/BBB_1080p.avi
 
       - name: Test with ASan
         # CGO_ENABLED=1 is the default; -asan instruments C and Go allocations.
