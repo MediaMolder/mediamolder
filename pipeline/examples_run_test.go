@@ -22,22 +22,10 @@ func TestExamplesRun(t *testing.T) {
 	if testing.Short() {
 		t.Skip("example runs execute real encodes (~150 s); use -run TestExamplesRun to include")
 	}
-	// Use the 10-second Big Buck Bunny clip for fast test runs (VP9 and
-	// other slow encoders would time out against a longer source). Fall
-	// back to the 30-second clip if the 10-second one isn't present.
-	inputAbs, err := filepath.Abs(filepath.Join("..", "testdata", "BBB_10sec.mp4"))
-	if err != nil {
-		t.Fatalf("abs path for input: %v", err)
-	}
-	if _, err := os.Stat(inputAbs); err != nil {
-		inputAbs, err = filepath.Abs(filepath.Join("..", "testdata", "BBB_30sec.mp4"))
-		if err != nil {
-			t.Fatalf("abs path for input: %v", err)
-		}
-		if _, err := os.Stat(inputAbs); err != nil {
-			t.Fatalf("BBB_10sec.mp4 (or BBB_30sec.mp4) not found: %v", err)
-		}
-	}
+	// Use 10 seconds of the full Big Buck Bunny 1080p source (starting at
+	// 450 s) — the seek is injected into every file input after ParseConfig
+	// via injectBBBSeek. Run scripts/fetch-bbb.sh to obtain the source.
+	inputAbs := bbbSourcePath(t)
 
 	subsrtAbs, _ := filepath.Abs(filepath.Join("..", "testdata", "subs.srt"))
 	subassAbs, _ := filepath.Abs(filepath.Join("..", "testdata", "subs.ass"))
@@ -226,6 +214,7 @@ func runExample(t *testing.T, jsonPath, name, inputAbs, subsrtAbs, subassAbs str
 	if err != nil {
 		t.Fatalf("ParseConfig: %v", err)
 	}
+	injectBBBSeek(cfg)
 
 	// --- Run pipeline ---
 	eng, err := NewPipeline(cfg)

@@ -7,7 +7,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
@@ -20,15 +19,11 @@ import (
 // for arbitrary metadata keys + chapters and is always built into our
 // FFmpeg.
 func TestOutputMetadataAndChapters(t *testing.T) {
-	if _, err := os.Stat(filepath.Join("..", "testdata", "BBB_10sec.mp4")); err != nil {
-		t.Skip("testdata/BBB_10sec.mp4 missing")
-	}
+	inputURL := bbbSourcePath(t)
 	ffprobeBin, err := exec.LookPath("ffprobe")
 	if err != nil {
 		t.Skip("ffprobe not in PATH; skipping metadata round-trip test")
 	}
-
-	inputURL := filepath.Join("..", "testdata", "BBB_10sec.mp4")
 	outDir := t.TempDir()
 	output := filepath.Join(outDir, "metadata.mkv")
 
@@ -67,6 +62,7 @@ func TestOutputMetadataAndChapters(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseConfig: %v", err)
 	}
+	injectBBBSeek(cfg)
 	eng, err := NewPipeline(cfg)
 	if err != nil {
 		t.Fatalf("NewPipeline: %v", err)
@@ -138,10 +134,7 @@ func TestOutputMetadataAndChapters(t *testing.T) {
 // input appeared on the output (we don't pin a specific key because
 // the fixture's tag set may evolve).
 func TestInputMapMetadata(t *testing.T) {
-	inputURL := filepath.Join("..", "testdata", "BBB_10sec.mp4")
-	if _, err := os.Stat(inputURL); err != nil {
-		t.Skip("testdata/BBB_10sec.mp4 missing")
-	}
+	inputURL := bbbSourcePath(t)
 	ffprobeBin, err := exec.LookPath("ffprobe")
 	if err != nil {
 		t.Skip("ffprobe not in PATH")
@@ -189,6 +182,7 @@ func TestInputMapMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseConfig: %v", err)
 	}
+	injectBBBSeek(cfg)
 	eng, err := NewPipeline(cfg)
 	if err != nil {
 		t.Fatalf("NewPipeline: %v", err)
