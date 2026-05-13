@@ -37,19 +37,7 @@ func TestCommunityScriptsRun(t *testing.T) {
 		t.Skip("community scripts run real encodes (~140 s); use -run TestCommunityScriptsRun to include")
 	}
 	// --- Resolve primary video fixture ---
-	inputAbs, err := filepath.Abs(filepath.Join("..", "testdata", "BBB_10sec.mp4"))
-	if err != nil {
-		t.Fatalf("abs path for input: %v", err)
-	}
-	if _, err := os.Stat(inputAbs); err != nil {
-		inputAbs, err = filepath.Abs(filepath.Join("..", "testdata", "BBB_30sec.mp4"))
-		if err != nil {
-			t.Fatalf("abs path for input: %v", err)
-		}
-		if _, err := os.Stat(inputAbs); err != nil {
-			t.Fatalf("BBB_10sec.mp4 (or BBB_30sec.mp4) not found: %v", err)
-		}
-	}
+	inputAbs := bbbSourcePath(t)
 
 	// --- Optional fixtures (absent → skip relevant subtests) ---
 	imageAbs, _ := filepath.Abs(filepath.Join("..", "testdata", "sample.jpg"))
@@ -148,6 +136,7 @@ func runCommunityScript(t *testing.T, jsonPath, name, inputAbs, imageAbs, audioA
 	if err != nil {
 		t.Fatalf("ParseConfig: %v", err)
 	}
+	injectBBBSeek(cfg)
 
 	eng, err := NewPipeline(cfg)
 	if err != nil {

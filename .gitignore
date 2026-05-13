@@ -37,6 +37,13 @@ Thumbs.db
 /testdata/dental_video_30s.mp4
 # Keeping *.mp4, *.mkv etc. in LFS via .gitattributes
 
+# Big Buck Bunny source + derived clips — downloaded by scripts/fetch-bbb.sh,
+# not stored in git. Remove the LFS pointers with:
+#   git rm --cached testdata/BBB_10sec.mp4 testdata/BBB_30sec.mp4
+/testdata/BBB_1080p.avi
+/testdata/BBB_10sec.mp4
+/testdata/BBB_30sec.mp4
+
 # Benchmark results (tracked separately)
 bench-*.txt
 
