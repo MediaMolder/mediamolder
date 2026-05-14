@@ -834,6 +834,26 @@ func (r *graphRunner) openSource(cfg Input, srcNode *graph.Node, decOpts av.Deco
 				}
 			}
 		}
+		// Override StreamInfo dimensions with the decoder's actual output
+		// geometry. AVCodecParameters::width/height can store the display
+		// width for anamorphic content (e.g. old DivX/Xvid AVIs), whereas
+		// AVCodecContext::width/height after avcodec_open2 reflect the
+		// coded (buffer) dimensions that decoded frames will actually have.
+		// Mirrors FFmpeg: enc_open() in fftools/ffmpeg_enc.c reads the
+		// frame's own width/height rather than the codec parameters.
+		if dec, ok := decoders[si.Index]; ok {
+			if cd, ok2 := dec.(*av.DecoderContext); ok2 && si.Type == av.MediaTypeVideo {
+				if w := cd.CodedWidth(); w > 0 {
+					si.Width = w
+				}
+				if h := cd.CodedHeight(); h > 0 {
+					si.Height = h
+				}
+				if pf := cd.CodedPixFmt(); pf >= 0 {
+					si.PixFmt = pf
+				}
+			}
+		}
 		streams[si.Index] = si
 	}
 
