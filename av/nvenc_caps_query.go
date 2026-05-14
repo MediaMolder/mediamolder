@@ -113,18 +113,23 @@ package av
 // // NV_ENCODE_API_FUNCTION_LIST (SDK 12.1 on 64-bit).
 // // We declare 64 fn-pointer slots (SDK 12.1 uses ~40) plus trailing reserved,
 // // which is safe: the driver only fills slots it knows and we zero the rest.
-// // Function pointer slot indices (0-based from fn[0]):
+// // Function pointer slot indices (0-based from fn[0]).
+// // Verified against NV_ENCODE_API_FUNCTION_LIST in nvEncodeAPI.h SDK 12.1–13.0:
 // //   0  nvEncOpenEncodeSession
-// //   1  nvEncGetEncodeGUIDs
-// //   2  nvEncGetEncodeProfileGUIDs
-// //   3  nvEncGetInputFormats
-// //   4  nvEncGetEncodeCaps          ← we use this
-// //   5  nvEncGetEncodeGUIDSuperCaps (reserved, NULL)
-// //   6  nvEncOpenEncodeSessionEx    ← we use this
-// //  22  nvEncDestroyEncoder         ← we use this
-// #define MM_NV_ENC_FN_SLOT_GET_CAPS    4
-// #define MM_NV_ENC_FN_SLOT_OPEN_EX     6
-// #define MM_NV_ENC_FN_SLOT_DESTROY    22
+// //   1  nvEncGetEncodeGUIDCount
+// //   2  nvEncGetEncodeProfileGUIDCount
+// //   3  nvEncGetEncodeProfileGUIDs
+// //   4  nvEncGetEncodeGUIDs
+// //   5  nvEncGetInputFormatCount
+// //   6  nvEncGetInputFormats
+// //   7  nvEncGetEncodeCaps          ← we use this
+// //  ...
+// //  27  nvEncDestroyEncoder         ← we use this
+// //  28  nvEncInvalidateRefFrames
+// //  29  nvEncOpenEncodeSessionEx    ← we use this
+// #define MM_NV_ENC_FN_SLOT_GET_CAPS    7
+// #define MM_NV_ENC_FN_SLOT_OPEN_EX    29
+// #define MM_NV_ENC_FN_SLOT_DESTROY    27
 // #define MM_NV_ENC_FN_TOTAL           64
 //
 // typedef struct {
