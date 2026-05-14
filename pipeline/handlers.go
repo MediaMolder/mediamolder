@@ -186,6 +186,12 @@ type graphRunner struct {
 	encoders     map[string]*av.EncoderContext
 	sinks        map[string]*sinkResources
 	goProcessors map[string]processors.Processor
+	// encoderOpts stores the EncoderOptions used to open each encoder,
+	// keyed by encoder node ID. Populated by createEncoder alongside
+	// encoders; used by handleEncoder to reopen the encoder with the
+	// first frame's actual coded dimensions when the container metadata
+	// disagrees with the real bitstream (e.g. anamorphic AVI).
+	encoderOpts map[string]av.EncoderOptions
 	// passLogFiles holds open pass-1 statistics files for video
 	// encoders that consume `Output.Pass` / `Output.PassLogFile`
 	// via the generic AVCodecContext.stats_out path (i.e. not
@@ -207,6 +213,7 @@ func newGraphRunner(cfg *Config, pipe *Pipeline) *graphRunner {
 		sources:      make(map[string]*sourceResources),
 		filters:      make(map[string]*av.FilterGraph),
 		encoders:     make(map[string]*av.EncoderContext),
+		encoderOpts:  make(map[string]av.EncoderOptions),
 		sinks:        make(map[string]*sinkResources),
 		goProcessors: make(map[string]processors.Processor),
 		passLogFiles: make(map[string]*os.File),
