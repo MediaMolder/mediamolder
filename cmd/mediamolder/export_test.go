@@ -2,10 +2,6 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 
 package main
-// Copyright (C) 2026 Thomas Vaughan
-// SPDX-License-Identifier: LGPL-2.1-or-later
-
-package main
 
 import (
 	"bytes"

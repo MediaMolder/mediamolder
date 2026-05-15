@@ -330,5 +330,11 @@ func (e *EncoderContext) MediaType() MediaType {
 	return MediaType(e.p.codec_type)
 }
 
+// Width returns the coded width the encoder was opened with.
+func (e *EncoderContext) Width() int { return int(e.p.width) }
+
+// Height returns the coded height the encoder was opened with.
+func (e *EncoderContext) Height() int { return int(e.p.height) }
+
 // raw returns the underlying C pointer. For use within the av package only.
 func (e *EncoderContext) raw() *C.AVCodecContext { return e.p }

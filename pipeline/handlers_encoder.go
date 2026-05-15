@@ -39,11 +39,18 @@ type encoderSession struct {
 	outs    []chan<- any
 	nodeID  string
 	pipe    *Pipeline
+	// encOpts holds the options used to open enc. On the first video frame
+	// the session checks whether the frame's coded dimensions match the
+	// encoder's; if not (anamorphic source, display width ≠ coded width)
+	// the encoder is closed and reopened with the frame's real dimensions.
+	// Set to zero after the first-frame check to skip on subsequent frames.
+	encOpts    av.EncoderOptions
+	checkedDim bool
 }
 
 // newEncoderSession creates an encoderSession for the given encoder node,
 // resolving fpsRewriter and forceKeyFramesMatcher from node.Internal.Encoder.
-func (r *graphRunner) newEncoderSession(node *graph.Node, enc *av.EncoderContext, outs []chan<- any) (*encoderSession, error) {
+func (r *graphRunner) newEncoderSession(node *graph.Node, enc *av.EncoderContext, encOpts av.EncoderOptions, outs []chan<- any) (*encoderSession, error) {
 	encInt := node.Internal.Encoder
 	var fpsRW *fpsRewriter
 	if enc.MediaType() == av.MediaTypeVideo && encInt != nil {
@@ -77,6 +84,7 @@ func (r *graphRunner) newEncoderSession(node *graph.Node, enc *av.EncoderContext
 		outs:    outs,
 		nodeID:  node.ID,
 		pipe:    r.pipe,
+		encOpts: encOpts,
 	}, nil
 }
 
@@ -155,6 +163,29 @@ func (s *encoderSession) sendOne(ctx context.Context, f *av.Frame) error {
 func (s *encoderSession) run(ctx context.Context, in <-chan any) error {
 	for v := range in {
 		f := v.(*av.Frame)
+
+		// On the first video frame, verify the encoder was opened with the
+		// correct coded dimensions. Container metadata (AVCodecParameters)
+		// may carry the display width for anamorphic content (e.g. old
+		// DivX/Xvid AVIs), while the actual decoded frame reports the real
+		// coded size. Mirrors FFmpeg enc_open() in fftools/ffmpeg_enc.c
+		// which uses the frame's own width/height rather than codecpar.
+		if !s.checkedDim && s.enc.MediaType() == av.MediaTypeVideo {
+			s.checkedDim = true
+			fw, fh := f.Width(), f.Height()
+			if fw > 0 && fh > 0 && (fw != s.enc.Width() || fh != s.enc.Height()) {
+				s.encOpts.Width = fw
+				s.encOpts.Height = fh
+				newEnc, err := av.OpenEncoder(s.encOpts)
+				if err != nil {
+					f.Close()
+					return fmt.Errorf("encoder %q: reopen with coded dims %dx%d: %w", s.nodeID, fw, fh, err)
+				}
+				s.enc.Close() //nolint:errcheck
+				s.enc = newEnc
+			}
+		}
+
 		frameStart := time.Now()
 
 		if s.fpsRW != nil {
@@ -224,7 +255,7 @@ func (r *graphRunner) handleEncoder(ctx context.Context, node *graph.Node, ins [
 	if len(ins) != 1 || len(outs) < 1 {
 		return fmt.Errorf("encoder node %q: expected 1 input / >=1 output, got %d/%d", node.ID, len(ins), len(outs))
 	}
-	s, err := r.newEncoderSession(node, enc, outs)
+	s, err := r.newEncoderSession(node, enc, r.encoderOpts[node.ID], outs)
 	if err != nil {
 		return err
 	}
@@ -437,7 +468,15 @@ func (r *graphRunner) createEncoder(dag *graph.Graph, node *graph.Node) (*av.Enc
 		}
 	}
 
-	return av.OpenEncoder(opts)
+	enc, err := av.OpenEncoder(opts)
+	if err != nil {
+		return nil, err
+	}
+	// Store the options for potential first-frame reopen (anamorphic sources
+	// may report display width in AVCodecParameters; the real coded dimensions
+	// are only known from the first decoded frame).
+	r.encoderOpts[node.ID] = opts
+	return enc, nil
 }
 
 // encoderReservedParams lists the param keys consumed directly by createEncoder
