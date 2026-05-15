@@ -108,6 +108,17 @@ func (d *DecoderContext) Close() error {
 // StreamIndex returns the input stream index this decoder was opened for.
 func (d *DecoderContext) StreamIndex() int { return d.streamIndex }
 
+// CodedWidth returns the actual output width set by avcodec_open2.
+// For anamorphic content this is the coded (buffer) width, which may
+// differ from the display width stored in AVCodecParameters.
+func (d *DecoderContext) CodedWidth() int { return int(d.p.width) }
+
+// CodedHeight returns the actual output height set by avcodec_open2.
+func (d *DecoderContext) CodedHeight() int { return int(d.p.height) }
+
+// CodedPixFmt returns the output pixel format (AVPixelFormat) set by avcodec_open2.
+func (d *DecoderContext) CodedPixFmt() int { return int(d.p.pix_fmt) }
+
 // SendPacket submits a packet for decoding. Pass nil to flush the decoder.
 func (d *DecoderContext) SendPacket(pkt *Packet) error {
 	var raw *C.AVPacket

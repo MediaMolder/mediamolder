@@ -6,6 +6,7 @@ package av
 // #include "libavformat/avformat.h"
 // #include "libavcodec/avcodec.h"
 // #include "libavutil/opt.h"
+// #include "libavutil/channel_layout.h"
 //
 // static AVStream* new_stream(AVFormatContext *ctx) {
 //     return avformat_new_stream(ctx, NULL);
@@ -25,6 +26,17 @@ package av
 //     // Clear codec_tag so the muxer can pick a container-appropriate one.
 //     out_ctx->streams[out_idx]->codecpar->codec_tag = 0;
 //     out_ctx->streams[out_idx]->time_base = in_ctx->streams[in_idx]->time_base;
+//     // Normalize an unspecified audio channel layout to the default named
+//     // layout for the channel count (e.g. 2ch → AV_CHANNEL_LAYOUT_STEREO).
+//     // Some muxers (e.g. MP4/MOV) reject AV_CHANNEL_ORDER_UNSPEC and log
+//     // "unsupported channel layout N channels". This mirrors what FFmpeg
+//     // does in its audio encoding path when no explicit layout is given.
+//     AVCodecParameters *dst_cp = out_ctx->streams[out_idx]->codecpar;
+//     if (dst_cp->codec_type == AVMEDIA_TYPE_AUDIO &&
+//         dst_cp->ch_layout.order == AV_CHANNEL_ORDER_UNSPEC &&
+//         dst_cp->ch_layout.nb_channels > 0) {
+//         av_channel_layout_default(&dst_cp->ch_layout, dst_cp->ch_layout.nb_channels);
+//     }
 //     return 0;
 // }
 // static AVRational out_stream_time_base(AVFormatContext *ctx, int idx) {

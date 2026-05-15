@@ -1636,7 +1636,10 @@ function NodeForm({ def, onChange, padHints, hwDevices = [] }: { def: NodeDef; o
       )}
       {def.type === 'encoder' && <EncoderForm def={def} onChange={onChange} />}
       {isFilter && <FilterForm def={def} onChange={onChange} padHints={padHints} />}
-      {def.type !== 'encoder' && !isFilter && (
+      {def.type !== 'encoder' && !isFilter && def.type === 'go_processor' && (
+        <GoProcessorParams params={def.params ?? {}} onChange={(p) => onChange({ ...def, params: p })} />
+      )}
+      {def.type !== 'encoder' && !isFilter && def.type !== 'go_processor' && (
         <ParamsEditor params={def.params ?? {}} onChange={(p) => onChange({ ...def, params: p })} />
       )}
     </>
@@ -1710,6 +1713,38 @@ function FilterAdvanced({
 }
 
 /* ---------- Params editor (key/value rows) ---------- */
+/* ---------- Go-processor params editor ----------
+ * Renders known file-path params (output_file) as a FileField with a
+ * Save browse dialog; all other params fall through to ParamsEditor. */
+function GoProcessorParams({
+  params,
+  onChange,
+}: {
+  params: Record<string, unknown>;
+  onChange: (next: Record<string, unknown>) => void;
+}) {
+  const FILE_PARAM_KEYS: ReadonlySet<string> = new Set(['output_file']);
+  const fileEntries = Object.entries(params).filter(([k]) => FILE_PARAM_KEYS.has(k));
+  const restParams = Object.fromEntries(Object.entries(params).filter(([k]) => !FILE_PARAM_KEYS.has(k)));
+
+  return (
+    <>
+      {fileEntries.map(([k, v]) => (
+        <FileField
+          key={k}
+          label={k}
+          value={typeof v === 'string' ? v : ''}
+          mode="save"
+          filter=".jsonl"
+          defaultFilename="output.jsonl"
+          onChange={(val) => onChange({ ...params, [k]: val })}
+        />
+      ))}
+      <ParamsEditor params={restParams} onChange={(next) => onChange({ ...fileEntries.reduce<Record<string, unknown>>((acc, [k, v]) => { acc[k] = v; return acc; }, {}), ...next })} />
+    </>
+  );
+}
+
 function ParamsEditor({
   params,
   onChange,
