@@ -32,15 +32,15 @@ var containerVideoCodecs = map[string]map[string]bool{
 		"h264_vaapi": true, "hevc_vaapi": true,
 		"h264_amf": true, "hevc_amf": true,
 	},
-	"mkv":       nil, // MKV accepts virtually all codecs
-	"matroska":  nil,
-	"webm":      {"libvpx": true, "libvpx-vp8": true, "libvpx-vp9": true, "av1": true, "libaom-av1": true, "libsvtav1": true},
-	"mpegts":    {"h264": true, "hevc": true, "h265": true, "libx264": true, "libx265": true, "mpeg2video": true, "mpeg4": true, "h264_nvenc": true, "hevc_nvenc": true, "h264_videotoolbox": true, "hevc_videotoolbox": true},
-	"ts":        {"h264": true, "hevc": true, "h265": true, "libx264": true, "libx265": true, "mpeg2video": true, "mpeg4": true, "h264_nvenc": true, "hevc_nvenc": true, "h264_videotoolbox": true, "hevc_videotoolbox": true},
-	"hls":       {"h264": true, "hevc": true, "libx264": true, "libx265": true, "h264_nvenc": true, "hevc_nvenc": true, "h264_videotoolbox": true, "hevc_videotoolbox": true, "h264_vaapi": true, "hevc_vaapi": true},
-	"dash":      {"h264": true, "hevc": true, "libx264": true, "libx265": true, "libvpx-vp9": true, "av1": true, "libaom-av1": true, "libsvtav1": true},
-	"avi":       {"mpeg4": true, "h264": true, "libx264": true, "mpeg2video": true, "mjpeg": true},
-	"flv":       {"h264": true, "libx264": true, "mpeg4": true, "h264_nvenc": true, "h264_videotoolbox": true},
+	"mkv":      nil, // MKV accepts virtually all codecs
+	"matroska": nil,
+	"webm":     {"libvpx": true, "libvpx-vp8": true, "libvpx-vp9": true, "av1": true, "libaom-av1": true, "libsvtav1": true},
+	"mpegts":   {"h264": true, "hevc": true, "h265": true, "libx264": true, "libx265": true, "mpeg2video": true, "mpeg4": true, "h264_nvenc": true, "hevc_nvenc": true, "h264_videotoolbox": true, "hevc_videotoolbox": true},
+	"ts":       {"h264": true, "hevc": true, "h265": true, "libx264": true, "libx265": true, "mpeg2video": true, "mpeg4": true, "h264_nvenc": true, "hevc_nvenc": true, "h264_videotoolbox": true, "hevc_videotoolbox": true},
+	"hls":      {"h264": true, "hevc": true, "libx264": true, "libx265": true, "h264_nvenc": true, "hevc_nvenc": true, "h264_videotoolbox": true, "hevc_videotoolbox": true, "h264_vaapi": true, "hevc_vaapi": true},
+	"dash":     {"h264": true, "hevc": true, "libx264": true, "libx265": true, "libvpx-vp9": true, "av1": true, "libaom-av1": true, "libsvtav1": true},
+	"avi":      {"mpeg4": true, "h264": true, "libx264": true, "mpeg2video": true, "mjpeg": true},
+	"flv":      {"h264": true, "libx264": true, "mpeg4": true, "h264_nvenc": true, "h264_videotoolbox": true},
 }
 
 // containerAudioCodecs maps container format names to allowed audio codecs.

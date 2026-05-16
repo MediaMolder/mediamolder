@@ -15,12 +15,13 @@ import (
 //
 // Usage:
 //
-//	mediamolder validate [--json] [--strict] <config.json>
+//	mediamolder validate [--no-probe] [--json] [--strict] <config.json>
 //
 // Flags:
 //
-//	--json    Emit the full ValidationReport as JSON instead of human-readable text.
-//	--strict  Treat WARNING-level issues as errors (exit code 1 instead of 2).
+//	--no-probe  Skip Phase B probe-assisted checks (static analysis only).
+//	--json      Emit the full ValidationReport as JSON instead of human-readable text.
+//	--strict    Treat WARNING-level issues as errors (exit code 1 instead of 2).
 //
 // Exit codes:
 //
@@ -30,6 +31,7 @@ import (
 func cmdValidate(args []string) error {
 	var jsonOut bool
 	var strict bool
+	var noProbe bool
 	var configPath string
 
 	for _, a := range args {
@@ -38,16 +40,18 @@ func cmdValidate(args []string) error {
 			jsonOut = true
 		case "--strict":
 			strict = true
+		case "--no-probe":
+			noProbe = true
 		default:
 			if configPath != "" {
-				return fmt.Errorf("unexpected argument %q\nusage: mediamolder validate [--json] [--strict] <config.json>", a)
+				return fmt.Errorf("unexpected argument %q\nusage: mediamolder validate [--no-probe] [--json] [--strict] <config.json>", a)
 			}
 			configPath = a
 		}
 	}
 
 	if configPath == "" {
-		return fmt.Errorf("usage: mediamolder validate [--json] [--strict] <config.json>")
+		return fmt.Errorf("usage: mediamolder validate [--no-probe] [--json] [--strict] <config.json>")
 	}
 
 	cfg, err := pipeline.ParseConfigFile(configPath)
@@ -55,7 +59,15 @@ func cmdValidate(args []string) error {
 		return fmt.Errorf("parse config: %w", err)
 	}
 
-	report := pipeline.ValidateConfigStatic(cfg, nil)
+	var report *pipeline.ValidationReport
+	if noProbe {
+		report = pipeline.ValidateConfigStatic(cfg, nil)
+	} else {
+		report, err = pipeline.ValidateConfig(cfg, nil)
+		if err != nil {
+			return fmt.Errorf("validation: %w", err)
+		}
+	}
 
 	if jsonOut {
 		enc := json.NewEncoder(os.Stdout)
