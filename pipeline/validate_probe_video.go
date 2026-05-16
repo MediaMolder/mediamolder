@@ -12,7 +12,7 @@ import (
 
 // AVFieldOrder constants (from libavcodec/defs.h).
 const (
-	avFieldUnknown    = 0
+	avFieldUnknown     = 0
 	avFieldProgressive = 1
 	// 2–5: interlaced variants (TT, BB, TB, BT)
 )
@@ -26,12 +26,12 @@ const (
 
 // deinterlaceFilters is the set of filter names that perform deinterlacing.
 var deinterlaceFilters = map[string]bool{
-	"yadif":            true,
-	"bwdif":            true,
-	"w3fdif":           true,
-	"kerndeint":        true,
+	"yadif":             true,
+	"bwdif":             true,
+	"w3fdif":            true,
+	"kerndeint":         true,
 	"deinterlace_vaapi": true,
-	"deinterlace_qsv":  true,
+	"deinterlace_qsv":   true,
 }
 
 // tonemapFilters is the set of filter names that perform HDR tone mapping.
@@ -103,6 +103,11 @@ func checkInterlacedNoDeinterlace(node *graph.Node, g *graph.Graph, stream av.St
 			fieldDesc, node.ID,
 		),
 		Suggestion: "add a yadif=mode=send_frame node before this encoder",
+		Fix: &Fix{InsertFilter: &InsertFilterFix{
+			BeforeNodeID: node.ID,
+			FilterName:   "yadif",
+			Params:       map[string]string{"mode": "send_frame"},
+		}},
 	})
 }
 
@@ -135,6 +140,11 @@ func checkPixFmtEncoderMismatch(node *graph.Node, codec string, stream av.Stream
 			"add a format=pix_fmts=%s filter before %q, or choose an encoder that supports %s",
 			av.PixFmtName(accepted[0]), node.ID, probedName,
 		),
+		Fix: &Fix{InsertFilter: &InsertFilterFix{
+			BeforeNodeID: node.ID,
+			FilterName:   "format",
+			Params:       map[string]string{"pix_fmts": av.PixFmtName(accepted[0])},
+		}},
 	})
 }
 
@@ -192,6 +202,11 @@ func checkHDRNoTonemap(node *graph.Node, g *graph.Graph, codec string, stream av
 			hdrType, node.ID,
 		),
 		Suggestion: "add a zscale=transfer=bt709,tonemap=hable,format=yuv420p filter chain before this encoder for SDR output",
+		Fix: &Fix{InsertFilter: &InsertFilterFix{
+			BeforeNodeID: node.ID,
+			FilterName:   "zscale",
+			Params:       map[string]string{"transfer": "bt709", "matrix": "bt709", "primaries": "bt709"},
+		}},
 	})
 }
 
@@ -221,6 +236,11 @@ func checkVFRToCFREncoder(node *graph.Node, g *graph.Graph, stream av.StreamInfo
 			avg[0], avg[1], rfr[0], rfr[1], node.ID,
 		),
 		Suggestion: "add an fps=fps=30 (or desired rate) filter before this encoder to normalise to CFR",
+		Fix: &Fix{InsertFilter: &InsertFilterFix{
+			BeforeNodeID: node.ID,
+			FilterName:   "fps",
+			Params:       map[string]string{"fps": fmt.Sprintf("%d/%d", avg[0], avg[1])},
+		}},
 	})
 }
 

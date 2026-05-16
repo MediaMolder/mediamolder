@@ -27,6 +27,36 @@ type ValidationIssue struct {
 	Location   string   `json:"location,omitempty"`
 	Message    string   `json:"message"`
 	Suggestion string   `json:"suggestion,omitempty"`
+	// Fix is an optional machine-applicable one-click repair. When non-nil the
+	// GUI can offer an "Apply fix" button that modifies the graph directly.
+	Fix *Fix `json:"fix,omitempty"`
+}
+
+// Fix describes a machine-applicable one-click repair for a ValidationIssue.
+// Exactly one of the optional fields is populated.
+type Fix struct {
+	// InsertFilter inserts a filter node immediately before BeforeNodeID.
+	InsertFilter *InsertFilterFix `json:"insert_filter,omitempty"`
+	// SetOutputField sets a single string field in an output's definition.
+	SetOutputField *SetOutputFieldFix `json:"set_output_field,omitempty"`
+}
+
+// InsertFilterFix describes inserting a filter node before a target node.
+// The frontend removes the edges that currently feed BeforeNodeID, adds a
+// new filter node of type FilterName with the given Params, reconnects the
+// old source edges to the new node, and adds an edge from the new node to
+// BeforeNodeID.
+type InsertFilterFix struct {
+	BeforeNodeID string            `json:"before_node_id"`
+	FilterName   string            `json:"filter_name"`
+	Params       map[string]string `json:"params,omitempty"`
+}
+
+// SetOutputFieldFix describes setting a top-level string field on an output.
+type SetOutputFieldFix struct {
+	OutputID string `json:"output_id"`
+	Field    string `json:"field"`
+	Value    string `json:"value"`
 }
 
 // ValidationReport is the result of a full validation run.
