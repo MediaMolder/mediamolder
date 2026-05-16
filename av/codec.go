@@ -117,5 +117,3 @@ func EncoderSampleRates(name string) []int {
 	}
 	return out
 }
-
-
