@@ -35,10 +35,11 @@ function sortIssues(issues: ValidationIssue[]): ValidationIssue[] {
 }
 
 export function ValidatePanel({ report, isValidating, onApplyFix, onRunWithProbe, onClose }: Props) {
-  const sorted = sortIssues(report.issues);
-  const errCount  = report.issues.filter((i) => i.severity === 'ERROR').length;
-  const warnCount = report.issues.filter((i) => i.severity === 'WARNING').length;
-  const infoCount = report.issues.filter((i) => i.severity === 'INFO').length;
+  const issues = report.issues ?? [];
+  const sorted = sortIssues(issues);
+  const errCount  = issues.filter((i) => i.severity === 'ERROR').length;
+  const warnCount = issues.filter((i) => i.severity === 'WARNING').length;
+  const infoCount = issues.filter((i) => i.severity === 'INFO').length;
 
   const summary = [
     errCount  ? `${errCount} error${errCount  > 1 ? 's' : ''}` : null,
