@@ -9,7 +9,7 @@ mediamolder convert-cmd "ffmpeg -i input.mp4 -c:v libx264 out.mp4"
 For the conceptual mapping — how positional CLI argument order (`-i`, `-map`,
 `-vf`, `-c:v`, `-c copy`) translates to declarative JSON nodes and edges, and
 when a transform filter must be inserted that the CLI handled implicitly —
-see [Graph Basics](graph-basics.md).
+see [Graph Basics](concepts-and-graph-basics.md).
 
 ## Common conversions
 

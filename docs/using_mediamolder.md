@@ -109,7 +109,7 @@ Each input is assigned a short **id** (`"src"`, `"bg"`, etc.) and each stream in
 
 MediaMolder reads the JSON, builds an in-memory processing graph, validates it, opens every input and output, and runs the frame loop using the libav* C libraries directly — without shelling out to the `ffmpeg` binary.
 
-For more details, see the [concepts guide](concepts.md).
+For more details, see the [concepts guide](concepts-and-graph-basics.md).
 
 ---
 
@@ -1205,7 +1205,7 @@ mediamolder version
 
 | Document | Contents |
 |---|---|
-| [concepts.md](concepts.md) | Core concepts, terminology, and design principles |
+| [concepts-and-graph-basics.md](concepts-and-graph-basics.md) | Core concepts, terminology, and design principles |
 | [json-config-reference.md](json-config-reference.md) | Complete field-by-field JSON schema reference |
 | [ffmpeg-migration-guide.md](ffmpeg-migration-guide.md) | FFmpeg command → JSON mapping table with examples |
 | [hardware-acceleration.md](hardware-acceleration.md) | Hardware setup, zero-copy paths, device context management |
