@@ -61,14 +61,22 @@ func validateProbeVideo(cfg *Config, g *graph.Graph, probed map[string][]av.Stre
 		if !ok {
 			continue
 		}
-		if ss.InputIndex < 0 || ss.InputIndex >= len(streams) {
+		stream, ok := findProbedStream(ss, streams)
+		if !ok {
 			continue
 		}
-		stream := streams[ss.InputIndex]
 
 		checkInterlacedNoDeinterlace(node, g, stream, r)
-		checkPixFmtEncoderMismatch(node, codec, stream, r)
-		checkBitDepthMismatch(node, codec, stream, r)
+
+		// Skip pixel-format and bit-depth checks when a format-conversion
+		// filter (format, zscale) is present in the path: those filters
+		// explicitly convert the pixel format before it reaches the encoder.
+		sourceNode := findSourceAncestor(g, node)
+		if !pathContainsFilter(g, sourceNode, node, pixFmtConversionFilters) {
+			checkPixFmtEncoderMismatch(node, codec, stream, r)
+			checkBitDepthMismatch(node, codec, stream, r)
+		}
+
 		checkHDRNoTonemap(node, g, codec, stream, r)
 		checkVFRToCFREncoder(node, g, stream, r)
 	}

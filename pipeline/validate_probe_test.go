@@ -63,13 +63,13 @@ func TestValidateConfig_ProbeFailed_Warning(t *testing.T) {
 
 func TestValidateConfig_ProbeStreamIndexOutOfRange(t *testing.T) {
 	bbb := testdataFile(t, "BBB_10sec.mp4")
-	// BBB_10sec.mp4 has 2 streams (index 0 and 1); index 5 is out of range.
+	// BBB_10sec.mp4 has 1 video stream (track 0); track 5 is out of range.
 	cfg := &Config{
 		Inputs: []Input{{
 			ID:  "in",
 			URL: bbb,
 			Streams: []StreamSelect{
-				{InputIndex: 5, Type: "video"},
+				{Type: "video", Track: 5},
 			},
 		}},
 		Graph: GraphDef{
@@ -93,15 +93,15 @@ func TestValidateConfig_ProbeStreamIndexOutOfRange(t *testing.T) {
 	}
 }
 
-func TestValidateConfig_ProbeStreamTypeMismatch(t *testing.T) {
+func TestValidateConfig_ProbeStreamTrackOutOfRange(t *testing.T) {
 	bbb := testdataFile(t, "BBB_10sec.mp4")
-	// BBB_10sec.mp4 stream 0 is video, but we declare it as "audio".
+	// BBB_10sec.mp4 has 1 audio stream (track 0); track 50 does not exist.
 	cfg := &Config{
 		Inputs: []Input{{
 			ID:  "in",
 			URL: bbb,
 			Streams: []StreamSelect{
-				{InputIndex: 0, Type: "audio"}, // stream 0 is actually video
+				{Type: "audio", Track: 50},
 			},
 		}},
 		Graph: GraphDef{
@@ -117,8 +117,8 @@ func TestValidateConfig_ProbeStreamTypeMismatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ValidateConfig returned error: %v", err)
 	}
-	if !hasCode(report, "STREAM_TYPE_MISMATCH") {
-		t.Error("expected STREAM_TYPE_MISMATCH for audio declaration on video stream 0")
+	if !hasCode(report, "STREAM_INDEX_OUT_OF_RANGE") {
+		t.Error("expected STREAM_INDEX_OUT_OF_RANGE for audio track 50 (file has only 1 audio stream)")
 		for _, iss := range report.Issues {
 			t.Logf("  %s %s: %s", iss.Severity, iss.Code, iss.Message)
 		}
@@ -133,7 +133,7 @@ func TestValidateConfig_ProbeCleanRun(t *testing.T) {
 			ID:  "in",
 			URL: bbb,
 			Streams: []StreamSelect{
-				{InputIndex: 0, Type: "video"},
+				{Type: "video", Track: 0},
 			},
 		}},
 		Graph: GraphDef{
@@ -166,23 +166,25 @@ func TestCheckStreamSelect_OutOfRange(t *testing.T) {
 		{Index: 1, Type: av.MediaTypeAudio},
 	}
 	r := &ValidationReport{}
-	ss := StreamSelect{InputIndex: 5, Type: "video"}
+	// Request video track 5; only track 0 exists.
+	ss := StreamSelect{Type: "video", Track: 5}
 	checkStreamSelect("in", ss, streams, r)
 	if !hasCode(r, "STREAM_INDEX_OUT_OF_RANGE") {
 		t.Error("expected STREAM_INDEX_OUT_OF_RANGE")
 	}
 }
 
-func TestCheckStreamSelect_TypeMismatch(t *testing.T) {
+func TestCheckStreamSelect_AudioTrackOutOfRange(t *testing.T) {
 	streams := []av.StreamInfo{
 		{Index: 0, Type: av.MediaTypeVideo},
 		{Index: 1, Type: av.MediaTypeAudio},
 	}
 	r := &ValidationReport{}
-	ss := StreamSelect{InputIndex: 0, Type: "audio"} // stream 0 is video
+	// Request audio track 1; only track 0 exists.
+	ss := StreamSelect{Type: "audio", Track: 1}
 	checkStreamSelect("in", ss, streams, r)
-	if !hasCode(r, "STREAM_TYPE_MISMATCH") {
-		t.Error("expected STREAM_TYPE_MISMATCH")
+	if !hasCode(r, "STREAM_INDEX_OUT_OF_RANGE") {
+		t.Error("expected STREAM_INDEX_OUT_OF_RANGE for non-existent audio track")
 	}
 }
 
@@ -192,8 +194,8 @@ func TestCheckStreamSelect_Valid(t *testing.T) {
 		{Index: 1, Type: av.MediaTypeAudio},
 	}
 	r := &ValidationReport{}
-	checkStreamSelect("in", StreamSelect{InputIndex: 0, Type: "video"}, streams, r)
-	checkStreamSelect("in", StreamSelect{InputIndex: 1, Type: "audio"}, streams, r)
+	checkStreamSelect("in", StreamSelect{Type: "video", Track: 0}, streams, r)
+	checkStreamSelect("in", StreamSelect{Type: "audio", Track: 0}, streams, r)
 	if len(r.Issues) > 0 {
 		t.Errorf("expected no issues for valid stream selects, got: %v", r.Issues)
 	}

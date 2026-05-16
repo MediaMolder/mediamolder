@@ -122,3 +122,29 @@ func encoderCodec(node *graph.Node) string {
 	}
 	return ""
 }
+
+// findProbedStream returns the ss.Track-th stream of ss.Type from streams,
+// mirroring resolveStreamSelection's counting logic.  ss.InputIndex is the
+// FFmpeg file index (for multi-file inputs) and is NOT the array index — do
+// not use it here.  Returns (zero, false) when no match is found.
+func findProbedStream(ss *StreamSelect, streams []av.StreamInfo) (av.StreamInfo, bool) {
+	count := 0
+	for _, si := range streams {
+		if si.Type.String() != ss.Type {
+			continue
+		}
+		if ss.All || count == ss.Track {
+			return si, true
+		}
+		count++
+	}
+	return av.StreamInfo{}, false
+}
+
+// pixFmtConversionFilters is the set of filter names that explicitly change the
+// pixel format of a video stream, making the source stream's pixel format
+// irrelevant for downstream encoder compatibility checks.
+var pixFmtConversionFilters = map[string]bool{
+	"format": true,
+	"zscale": true,
+}
