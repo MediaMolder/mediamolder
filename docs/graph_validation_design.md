@@ -472,12 +472,27 @@ Extend the existing `inspect` command to run Phase 1 static validation and appen
   (`cmd/mediamolder/cmd_validate.go`, `cmd/mediamolder/main.go`)
 - ✅ Unit tests for all static checks (`pipeline/validate_test.go` — 25+ table-driven tests)
 
-### Phase B — Probe-assisted checks
-- Extend `av.StreamInfo` with `FieldOrder`, color metadata, `Profile`, `Level`
-- Implement `ValidateConfig` with probe phase
-- Add interlacing, pixel format, sample format/rate, HDR checks
-- Add stream index/type existence checks
-- Async probe in GUI
+### Phase B — Probe-assisted checks ✅ IMPLEMENTED
+- ✅ Extend `av.StreamInfo` with `RFrameRate`, `FieldOrder`, `ColorSpace`, `ColorPrimaries`,
+  `ColorTransfer`, `ColorRange`, `BitsPerRawSample`, `Profile`, `Level` (`av/demux.go`)
+- ✅ Add `av.EncoderPixFmts`, `EncoderSampleFmts`, `EncoderSampleRates`, `PixFmtName`,
+  `SampleFmtName` using `avcodec_get_supported_config` (FFmpeg 8.1+ API) (`av/codec.go`)
+- ✅ Implement `ValidateConfig(cfg, sec)` — runs Phase A + B (`pipeline/validate_probe.go`)
+- ✅ Stream existence checks (`pipeline/validate_probe_stream.go`):
+  - `STREAM_INDEX_OUT_OF_RANGE` — selected stream index beyond probed stream count
+  - `STREAM_TYPE_MISMATCH` — declared type ≠ probed media type
+- ✅ Video probe checks (`pipeline/validate_probe_video.go`):
+  - `VIDEO_INTERLACED_NO_DEINTERLACE` — interlaced source without yadif/bwdif/kerndeint/w3fdif
+  - `VIDEO_PIX_FMT_ENCODER_MISMATCH` — probed pixel format not accepted by encoder
+  - `VIDEO_BIT_DEPTH_MISMATCH` — high-bit-depth source but encoder only accepts 8-bit formats
+  - `VIDEO_HDR_NO_TONEMAP` — HDR10/HLG source without tonemap/zscale filter
+  - `VIDEO_VFR_TO_CFR_ENCODER` — VFR source (avg_frame_rate ≠ r_frame_rate) without fps filter
+- ✅ Audio probe checks (`pipeline/validate_probe_audio.go`):
+  - `AUDIO_SAMPLE_FMT_MISMATCH` — probed sample format not accepted by encoder
+  - `AUDIO_SAMPLE_RATE_MISMATCH` — probed sample rate not accepted by encoder
+  - `AUDIO_MULTICHANNEL_NO_DOWNMIX` — multichannel source without pan/amerge/adownmix filter
+- ✅ `--no-probe` flag on `mediamolder validate` for static-only Phase A checks
+- ✅ Unit + integration tests (`pipeline/validate_probe_test.go` — 17 tests)
 
 ### Phase C — GUI integration
 - Inline node/edge annotations
