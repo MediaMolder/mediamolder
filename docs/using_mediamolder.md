@@ -1,6 +1,6 @@
 # Using MediaMolder
 
-This guide covers every feature available in MediaMolder, from installing the binary and running jobs at the command line to building and running complex pipelines visually in the browser-based GUI editor.
+This guide covers every feature available in MediaMolder, from installing the binary and running jobs at the command line to building and running complex graphs visually in the browser-based GUI editor.
 
 ---
 
@@ -16,7 +16,7 @@ This guide covers every feature available in MediaMolder, from installing the bi
    - [list-codecs / list-filters / list-formats / list-hw-devices](#35-list-commands)
    - [version](#36-version)
    - [gui](#37-gui)
-4. [Pipeline JSON reference](#4-pipeline-json-reference)
+4. [Graph JSON reference](#4-graph-json-reference)
    - [Top-level structure](#41-top-level-structure)
    - [inputs](#42-inputs)
    - [graph.nodes](#43-graphnodes)
@@ -97,17 +97,19 @@ Run `mediamolder gui` from the repository root or from any directory where `fron
 
 ## 2. Core concepts
 
-MediaMolder replaces the FFmpeg command-line string with a **structured JSON pipeline file**. A pipeline has three sections:
+MediaMolder accepts a single JSON file containing the media graph and all runtime options and parameters. It replaces the FFmpeg's command-line string with a **structured JSON graph file**. A graph has three sections:
 
 | Section | Purpose |
 |---|---|
 | `inputs` | Declare every source file, device, or URL |
-| `graph` | Processing DAG — filter nodes wired together with typed edges |
+| `graph` | The Directed Acyclic Graph (DAG) — defines how the nodes are connected with typed edges |
 | `outputs` | Every output file or stream destination |
 
 Each input is assigned a short **id** (`"src"`, `"bg"`, etc.) and each stream inside it is mapped by index and type. Edges connect input streams through graph nodes to output sinks using the notation `"<id>:<type>:<track>"`.
 
 MediaMolder reads the JSON, builds an in-memory processing graph, validates it, opens every input and output, and runs the frame loop using the libav* C libraries directly — without shelling out to the `ffmpeg` binary.
+
+For more details, see the [concepts guide](concepts.md).
 
 ---
 
@@ -123,7 +125,7 @@ Run `mediamolder help` at any time for a summary of all commands.
 
 ### 3.1 `run`
 
-Execute a pipeline.
+Execute a graph.
 
 ```sh
 mediamolder run <config.json>
@@ -137,7 +139,7 @@ Signals `SIGINT` / `SIGTERM` (Ctrl-C) cancel the run cleanly, flushing any in-pr
 
 ### 3.2 `inspect`
 
-Pretty-print the **resolved** pipeline config as indented JSON, then exit. No media I/O occurs.
+Pretty-print the **resolved** graph config as indented JSON, then exit. No media I/O occurs.
 
 ```sh
 mediamolder inspect transcode.json
@@ -149,7 +151,7 @@ mediamolder inspect transcode.json
 
 ### 3.3 `validate`
 
-Statically analyse a pipeline config and report issues — no encoding happens.
+Statically analyse a graph config and report issues — no encoding happens.
 
 ```sh
 mediamolder validate [--no-probe] [--json] [--strict] <config.json>
@@ -282,7 +284,7 @@ The GUI communicates with the local Go process over HTTP. JSON config files save
 
 ---
 
-## 4. Pipeline JSON reference
+## 4. Graph JSON reference
 
 ### 4.1 Top-level structure
 
@@ -302,7 +304,7 @@ The GUI communicates with the local Go process over HTTP. JSON config files save
 | `inputs` | array | yes | Input sources |
 | `graph` | object | yes | Processing graph |
 | `outputs` | array | yes | Output sinks |
-| `global_options` | object | no | Pipeline-wide settings |
+| `global_options` | object | no | Graph-wide settings |
 
 ---
 
@@ -332,7 +334,7 @@ The GUI communicates with the local Go process over HTTP. JSON config files save
 | `hwaccel_output_format` | string | no | Pixel format to request from the HW decoder (e.g. `"cuda"`, `"vaapi"`) |
 | `subtitle_charenc` | string | no | Character encoding for text subtitle streams (e.g. `"UTF-8"`, `"latin1"`) |
 | `duration_us` | int | no | Limit how many microseconds to read from this input |
-| `loop` | bool | no | Loop the input indefinitely (or until the pipeline ends) |
+| `loop` | bool | no | Loop the input indefinitely (or until the graph run ends) |
 | `ts_offset_us` | int | no | Shift all timestamps in this input by this many microseconds |
 
 #### StreamSelect
@@ -659,7 +661,7 @@ Add filter nodes and wire edges through them. Filters are connected in series by
 
 ### 5.5 Hardware-accelerated encoding
 
-Set `global_options.hw_accel` to enable a hardware backend. When set, the pipeline opens a device context, uses hardware decoders where available, and routes frames through hardware filters automatically.
+Set `global_options.hw_accel` to enable a hardware backend. When set, MediaMolder opens a device context, uses hardware decoders where available, and routes frames through hardware filters automatically.
 
 ```json
 {
@@ -1029,7 +1031,7 @@ Selecting a node opens its configuration in the Inspector. Toggle the panel with
 | **New** | Clear the canvas (prompts if there are unsaved changes) |
 | **Open…** | Open a job JSON file from disk (File System Access API on supported browsers, otherwise the server file browser) |
 | **FFmpeg →** | Open the Import FFmpeg dialog — paste an FFmpeg command and convert it to a graph |
-| **Graph: \<dropdown\>** | Switch between built-in example pipelines; discards unsaved changes after confirmation |
+| **Graph: \<dropdown\>** | Switch between built-in example graphs; discards unsaved changes after confirmation |
 | **Save** | Write the current graph back to the same file (disabled for examples and when there are no unsaved changes) |
 | **Save As…** | Write the current graph to a new file |
 | **→ FFmpeg** | Open the Export FFmpeg dialog — shows the current graph rendered as an equivalent FFmpeg command line |
@@ -1058,7 +1060,7 @@ The Run panel appears at the bottom of the screen when **Show log** is toggled o
 - **Log entries** — warning and info messages from the backend
 - **Progress** — elapsed time and estimated completion based on input duration
 
-The **Stop** button in the toolbar cancels the running job; the pipeline flushes in-progress frames before closing all outputs.
+The **Stop** button in the toolbar cancels the running job; MediaMolder flushes in-progress frames before closing all outputs.
 
 **Node status indicators (on-canvas badges):**
 - Running nodes show live packet counts and FPS directly on the node
@@ -1130,7 +1132,7 @@ Use this to confirm that your GPU supports the encoder settings you've chosen be
 **Import FFmpeg → graph (FFmpeg → button):**
 1. Click **FFmpeg →** in the toolbar
 2. Paste any FFmpeg command line (with or without the leading `ffmpeg` word)
-3. Click **Convert** — the current graph is replaced with the converted pipeline
+3. Click **Convert** — the current graph is replaced with the imported graph
 
 **Export graph → FFmpeg (→ FFmpeg button):**
 1. Click **→ FFmpeg** in the toolbar
@@ -1186,7 +1188,7 @@ Add `"codec_tag_video": "hvc1"` to the output. The validate command reports this
 - Use `codec_video: "copy"` whenever re-encoding is not needed — remuxing is near-instantaneous
 
 **Saving from the GUI for use with the CLI**
-The JSON exported by **Save** or **Save As…** is a standard MediaMolder pipeline config. Run it directly:
+The JSON exported by **Save** or **Save As…** is a standard MediaMolder graph config. Run it directly:
 ```sh
 mediamolder run my_job.json
 ```
@@ -1203,12 +1205,13 @@ mediamolder version
 
 | Document | Contents |
 |---|---|
+| [concepts.md](concepts.md) | Core concepts, terminology, and design principles |
 | [json-config-reference.md](json-config-reference.md) | Complete field-by-field JSON schema reference |
 | [ffmpeg-migration-guide.md](ffmpeg-migration-guide.md) | FFmpeg command → JSON mapping table with examples |
 | [hardware-acceleration.md](hardware-acceleration.md) | Hardware setup, zero-copy paths, device context management |
 | [subtitles.md](subtitles.md) | Subtitle format support, burn-in, passthrough, charset handling |
 | [error-handling.md](error-handling.md) | Error policy, retry, fallback |
 | [observability.md](observability.md) | Event bus, metrics, SSE API |
-| [pipeline-state-machine.md](pipeline-state-machine.md) | Pipeline lifecycle, pause/resume, seek |
+| [graph-state-machine.md](graph-state-machine.md) | Graph lifecycle, pause/resume, seek |
 | [build_and_packaging.md](build_and_packaging.md) | Static linking, cross-compilation, packaging |
 | [graph_validation_design.md](graph_validation_design.md) | Validation architecture and issue code catalogue |
