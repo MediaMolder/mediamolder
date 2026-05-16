@@ -10,13 +10,6 @@ import (
 	"github.com/MediaMolder/MediaMolder/graph"
 )
 
-// AVFieldOrder constants (from libavcodec/defs.h).
-const (
-	avFieldUnknown     = 0
-	avFieldProgressive = 1
-	// 2–5: interlaced variants (TT, BB, TB, BT)
-)
-
 // HDR color primaries / transfer constants (from libavutil/pixfmt.h).
 const (
 	avColPriBT2020       = 9  // AVCOL_PRI_BT2020

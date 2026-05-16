@@ -118,22 +118,4 @@ func EncoderSampleRates(name string) []int {
 	return out
 }
 
-// PixFmtName returns the name string for the given AVPixelFormat value.
-// Returns "" for unknown formats.
-func PixFmtName(pixFmt int) string {
-	name := C.av_get_pix_fmt_name(C.enum_AVPixelFormat(pixFmt))
-	if name == nil {
-		return ""
-	}
-	return C.GoString(name)
-}
 
-// SampleFmtName returns the name string for the given AVSampleFormat value.
-// Returns "" for unknown formats.
-func SampleFmtName(sampleFmt int) string {
-	name := C.av_get_sample_fmt_name(C.enum_AVSampleFormat(sampleFmt))
-	if name == nil {
-		return ""
-	}
-	return C.GoString(name)
-}

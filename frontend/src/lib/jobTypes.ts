@@ -754,3 +754,41 @@ export interface HWAccelProbe {
     vt_max_height?: number;
   };
 }
+
+// ---------------------------------------------------------------------------
+// Validation types — mirror of pipeline/validate.go
+// ---------------------------------------------------------------------------
+
+export type ValidationSeverity = 'ERROR' | 'WARNING' | 'INFO';
+
+export interface InsertFilterFix {
+  before_node_id: string;
+  filter_name: string;
+  params?: Record<string, string>;
+}
+
+export interface SetOutputFieldFix {
+  output_id: string;
+  field: string;
+  value: string;
+}
+
+export interface Fix {
+  insert_filter?: InsertFilterFix;
+  set_output_field?: SetOutputFieldFix;
+}
+
+export interface ValidationIssue {
+  severity: ValidationSeverity;
+  code: string;
+  location?: string;
+  message: string;
+  suggestion?: string;
+  fix?: Fix;
+}
+
+export interface ValidationReport {
+  issues: ValidationIssue[];
+  has_errors: boolean;
+  has_warnings: boolean;
+}

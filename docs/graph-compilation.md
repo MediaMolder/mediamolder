@@ -5,7 +5,7 @@ sits between building a validated graph and actually running it.
 
 For the rules that govern when two nodes can be connected with a single
 edge versus when a transform filter must sit between them, see
-[Graph Basics](graph-basics.md).
+[Graph Basics](concepts-and-graph-basics.md).
 
 ---
 
