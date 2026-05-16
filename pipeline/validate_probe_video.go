@@ -184,9 +184,9 @@ func checkBitDepthMismatch(node *graph.Node, codec string, stream av.StreamInfo,
 // checkHDRNoTonemap warns when the source is HDR (BT.2020 primaries or PQ/HLG
 // transfer) but no tonemap or zscale filter precedes the encoder.
 func checkHDRNoTonemap(node *graph.Node, g *graph.Graph, codec string, stream av.StreamInfo, r *ValidationReport) {
-	isHDR := stream.ColorPrimaries == avColPriBT2020 ||
-		stream.ColorTransfer == avColTrcSMPTE2084 ||
+	isPQorHLG := stream.ColorTransfer == avColTrcSMPTE2084 ||
 		stream.ColorTransfer == avColTrcARIB_STD_B67
+	isHDR := isPQorHLG || stream.ColorPrimaries == avColPriBT2020
 	if !isHDR {
 		return
 	}
@@ -196,8 +196,12 @@ func checkHDRNoTonemap(node *graph.Node, g *graph.Graph, codec string, stream av
 	}
 	hdrType := hdrTypeName(stream.ColorPrimaries, stream.ColorTransfer)
 
-	// Prefer zscale (high-quality, handles full colorspace conversion); fall
-	// back to colorspace (built into most FFmpeg builds) when zscale is absent.
+	// zscale handles both SDR-gamut (BT.2020 primaries) and HDR-transfer
+	// (PQ/HLG) sources. The colorspace filter supports SDR-space primaries
+	// rotation but its TRC table does not include SMPTE 2084 (PQ) or
+	// ARIB STD B67 (HLG) — using it for those sources produces EINVAL at
+	// runtime. Only offer colorspace as a fix when the source uses an
+	// SDR transfer function (BT.2020 primaries only, no PQ/HLG).
 	var fix *Fix
 	var suggestion string
 	if av.FindFilter("zscale") {
@@ -207,7 +211,8 @@ func checkHDRNoTonemap(node *graph.Node, g *graph.Graph, codec string, stream av
 			FilterName:   "zscale",
 			Params:       map[string]string{"transfer": "bt709", "matrix": "bt709", "primaries": "bt709"},
 		}}
-	} else if av.FindFilter("colorspace") {
+	} else if !isPQorHLG && av.FindFilter("colorspace") {
+		// colorspace is safe only for SDR-transfer BT.2020 sources.
 		suggestion = "add a colorspace=trc=bt709:primaries=bt709:space=bt709,format=yuv420p filter chain before this encoder for SDR output"
 		fix = &Fix{InsertFilter: &InsertFilterFix{
 			BeforeNodeID: node.ID,
@@ -215,7 +220,7 @@ func checkHDRNoTonemap(node *graph.Node, g *graph.Graph, codec string, stream av
 			Params:       map[string]string{"trc": "bt709", "primaries": "bt709", "space": "bt709"},
 		}}
 	} else {
-		suggestion = "add a colorspace conversion filter (zscale or colorspace) before this encoder for SDR output"
+		suggestion = "add a zscale=transfer=bt709:matrix=bt709:primaries=bt709 filter before this encoder; zscale is required for PQ/HLG tone-mapping and is not available in this FFmpeg build"
 	}
 
 	r.add(ValidationIssue{
