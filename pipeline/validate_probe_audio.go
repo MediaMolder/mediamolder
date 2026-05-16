@@ -44,17 +44,36 @@ func validateProbeAudio(cfg *Config, g *graph.Graph, probed map[string][]av.Stre
 			continue
 		}
 
-		checkProbeSampleFmt(node, codec, stream, r)
+		checkProbeSampleFmt(node, g, codec, stream, r)
 		checkProbeSampleRate(node, codec, stream, r)
 		checkMultichannelNoDownmix(node, g, codec, stream, r)
 	}
 }
 
+// sampleFmtConversionFilters is the set of filter names that explicitly
+// convert the audio sample format before it reaches the encoder.
+var sampleFmtConversionFilters = map[string]bool{
+	"aformat":  true,
+	"aresample": true,
+}
+
 // checkProbeSampleFmt reports AUDIO_SAMPLE_FMT_MISMATCH when the probed sample
 // format is not accepted by the encoder and no aformat filter is in the path.
-func checkProbeSampleFmt(node *graph.Node, codec string, stream av.StreamInfo, r *ValidationReport) {
+func checkProbeSampleFmt(node *graph.Node, g *graph.Graph, codec string, stream av.StreamInfo, r *ValidationReport) {
 	required, known := audioEncoderSampleFmts[codec]
 	if !known || len(required) == 0 {
+		return
+	}
+	// The graph-build pass spliceAudioAdaptersForEncoders unconditionally
+	// inserts an aformat node before every codec in audioEncoderRequirements,
+	// so a mismatch here will always be resolved at runtime — skip.
+	if _, autoAdapted := audioEncoderRequirements[codec]; autoAdapted {
+		return
+	}
+	// Also skip when the user has already placed an aformat or aresample
+	// filter in the path to this encoder.
+	sourceNode := findSourceAncestor(g, node)
+	if pathContainsFilter(g, sourceNode, node, sampleFmtConversionFilters) {
 		return
 	}
 	// Use the LiveQuery approach: check via av.EncoderSampleFmts if available,
