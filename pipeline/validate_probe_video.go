@@ -29,8 +29,9 @@ var deinterlaceFilters = map[string]bool{
 
 // tonemapFilters is the set of filter names that perform HDR tone mapping.
 var tonemapFilters = map[string]bool{
-	"tonemap": true,
-	"zscale":  true,
+	"tonemap":    true,
+	"zscale":     true,
+	"colorspace": true,
 }
 
 // cfvFilters is the set of filter names that enforce a constant frame rate.
