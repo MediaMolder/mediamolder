@@ -304,6 +304,11 @@ func checkHEVCTagInMP4(out Output, container string, r *ValidationReport) {
 			Location:   "output:" + out.ID,
 			Message:    "HEVC video in MP4 without tag:v=hvc1; some Apple devices will refuse to play it",
 			Suggestion: `add "options": {"tag:v": "hvc1"} to this output`,
+			Fix: &Fix{SetOutputField: &SetOutputFieldFix{
+				OutputID: out.ID,
+				Field:    "codec_tag_video",
+				Value:    "hvc1",
+			}},
 		})
 	}
 }

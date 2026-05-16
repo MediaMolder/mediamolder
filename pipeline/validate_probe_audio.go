@@ -88,6 +88,11 @@ func checkProbeSampleFmt(node *graph.Node, codec string, stream av.StreamInfo, r
 			"add an aformat=sample_fmts=%s filter before %q",
 			acceptedNames[0], node.ID,
 		),
+		Fix: &Fix{InsertFilter: &InsertFilterFix{
+			BeforeNodeID: node.ID,
+			FilterName:   "aformat",
+			Params:       map[string]string{"sample_fmts": acceptedNames[0]},
+		}},
 	})
 }
 
@@ -123,6 +128,11 @@ func checkProbeSampleRate(node *graph.Node, codec string, stream av.StreamInfo, 
 			"add an aresample=%d filter before %q to convert to a supported rate",
 			nearestAllowedRate(stream.SampleRate, allowed), node.ID,
 		),
+		Fix: &Fix{InsertFilter: &InsertFilterFix{
+			BeforeNodeID: node.ID,
+			FilterName:   "aresample",
+			Params:       map[string]string{"sample_rate": fmt.Sprintf("%d", nearestAllowedRate(stream.SampleRate, allowed))},
+		}},
 	})
 }
 
@@ -151,6 +161,11 @@ func checkMultichannelNoDownmix(node *graph.Node, g *graph.Graph, codec string, 
 			stream.Channels, codec, channelLayoutName(outputChannels),
 		),
 		Suggestion: "add a pan=stereo|c0=0.5*c0+0.5*c2|c1=0.5*c1+0.5*c3 filter, or use aformat=channel_layouts=stereo",
+		Fix: &Fix{InsertFilter: &InsertFilterFix{
+			BeforeNodeID: node.ID,
+			FilterName:   "aformat",
+			Params:       map[string]string{"channel_layouts": "stereo"},
+		}},
 	})
 }
 

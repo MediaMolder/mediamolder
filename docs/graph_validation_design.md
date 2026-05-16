@@ -494,10 +494,17 @@ Extend the existing `inspect` command to run Phase 1 static validation and appen
 - ✅ `--no-probe` flag on `mediamolder validate` for static-only Phase A checks
 - ✅ Unit + integration tests (`pipeline/validate_probe_test.go` — 17 tests)
 
-### Phase C — GUI integration
-- Inline node/edge annotations
-- Validate panel
-- One-click fix suggestions for common issues
+### Phase C — GUI integration ✅ IMPLEMENTED
+- ✅ `internal/gui` package — HTTP server with `/api/validate`, `/api/probe`, `/api/run`, SSE `/api/run/events`, `/api/hwaccel`, `/api/assets`
+- ✅ `cmd/mediamolder/cmd_gui.go` — `mediamolder gui` subcommand starts embedded GUI server
+- ✅ `Fix` type on `ValidationIssue` — actionable one-click repairs:
+  - `insert_filter`: yadif (interlaced), zscale+tonemap (HDR→SDR), fps (VFR→CFR), format (pix_fmt), aformat (sample_fmt), aresample (sample_rate)
+  - `set_output_field`: codec_tag_video → hvc1 (HEVC in MP4)
+- ✅ `ValidatePanel` component — sorted issue list (ERROR/WARNING/INFO), severity badges, Apply Fix button
+- ✅ Auto-validate on graph change (Phase A static checks, debounced 300 ms)
+- ✅ "Validate" toolbar button (Phase B probe-assisted, on demand)
+- ✅ `MMNode` inline badge — error/warning count with tooltip
+- ✅ One-click fix handler — `InsertFilterFix` creates new filter node and rewires edges; `SetOutputFieldFix` updates output node data field directly
 
 ### Phase D — Advanced checks
 - Expression validation (call `av_expr_parse` for filter option expressions)
