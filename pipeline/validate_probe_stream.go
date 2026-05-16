@@ -24,38 +24,33 @@ func validateProbeStreams(cfg *Config, probed map[string][]av.StreamInfo, r *Val
 }
 
 func checkStreamSelect(inputID string, ss StreamSelect, streams []av.StreamInfo, r *ValidationReport) {
-	idx := ss.InputIndex
-	if idx < 0 || idx >= len(streams) {
-		r.add(ValidationIssue{
-			Severity: SeverityError,
-			Code:     "STREAM_INDEX_OUT_OF_RANGE",
-			Location: fmt.Sprintf("input:%s", inputID),
-			Message: fmt.Sprintf(
-				"input %q has %d stream(s) but stream index %d was selected (type=%s)",
-				inputID, len(streams), idx, ss.Type,
-			),
-			Suggestion: fmt.Sprintf(
-				"check the stream count with 'mediamolder inspect %q' and use an index in [0, %d)",
-				inputID, len(streams),
-			),
-		})
+	if ss.Type == "" {
 		return
 	}
-
-	probed := streams[idx]
-	if ss.Type != "" && probed.Type.String() != ss.Type {
-		r.add(ValidationIssue{
-			Severity: SeverityError,
-			Code:     "STREAM_TYPE_MISMATCH",
-			Location: fmt.Sprintf("input:%s", inputID),
-			Message: fmt.Sprintf(
-				"input %q stream index %d has type %q but %q was declared",
-				inputID, idx, probed.Type.String(), ss.Type,
-			),
-			Suggestion: fmt.Sprintf(
-				"use the correct stream index for a %s stream, or update the type field",
-				ss.Type,
-			),
-		})
+	// Find the ss.Track-th stream of ss.Type, mirroring resolveStreamSelection.
+	// InputIndex is the FFmpeg file index (for multi-file inputs), not the
+	// stream array index — do not use it here.
+	_, ok := findProbedStream(&ss, streams)
+	if ok || ss.Optional {
+		return
 	}
+	typeCount := 0
+	for _, si := range streams {
+		if si.Type.String() == ss.Type {
+			typeCount++
+		}
+	}
+	r.add(ValidationIssue{
+		Severity: SeverityError,
+		Code:     "STREAM_INDEX_OUT_OF_RANGE",
+		Location: fmt.Sprintf("input:%s", inputID),
+		Message: fmt.Sprintf(
+			"input %q has %d %s stream(s) but track %d was selected",
+			inputID, typeCount, ss.Type, ss.Track,
+		),
+		Suggestion: fmt.Sprintf(
+			"check the stream count with 'mediamolder inspect %q' and use a track in [0, %d)",
+			inputID, typeCount,
+		),
+	})
 }

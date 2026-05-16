@@ -39,10 +39,10 @@ func validateProbeAudio(cfg *Config, g *graph.Graph, probed map[string][]av.Stre
 		if !ok {
 			continue
 		}
-		if ss.InputIndex < 0 || ss.InputIndex >= len(streams) {
+		stream, ok := findProbedStream(ss, streams)
+		if !ok {
 			continue
 		}
-		stream := streams[ss.InputIndex]
 
 		checkProbeSampleFmt(node, codec, stream, r)
 		checkProbeSampleRate(node, codec, stream, r)
