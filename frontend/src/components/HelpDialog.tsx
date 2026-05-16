@@ -182,8 +182,8 @@ export function HelpDialog({ open, onClose }: Props) {
           </ul>
 
           <p className="hint">
-            For the full developer guide and HTTP API reference, see{' '}
-            <code>docs/gui.md</code>.
+            For the full user guide, CLI reference, and JSON config reference, see{' '}
+            <code>docs/using_mediamolder.md</code>.
           </p>
         </div>
 
