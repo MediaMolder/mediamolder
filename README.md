@@ -59,6 +59,8 @@ See [Build & Packaging](docs/build_and_packaging.md) for detailed instructions f
 
 ### Usage
 
+- [Using MediaMolder (CLI & GUI guide)](docs/using_mediamolder.md)
+- [Concepts — Graph Model, Nodes, Edges, Lifecycle](docs/concepts.md)
 - [Graph Basics — Nodes, Edges, Sources, Sinks, and the FFmpeg CLI mapping](docs/graph-basics.md)
 - [FFmpeg Migration Guide](docs/ffmpeg-migration-guide.md)
 - [JSON Config Reference](docs/json-config-reference.md)

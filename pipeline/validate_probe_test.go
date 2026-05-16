@@ -241,7 +241,7 @@ func TestCheckInterlacedNoDeinterlace_WithDeinterlaceFilter(t *testing.T) {
 func TestCheckHDRNoTonemap_HDR10(t *testing.T) {
 	g, node := buildMinimalVideoGraph(t)
 	stream := av.StreamInfo{
-		Type:          av.MediaTypeVideo,
+		Type:           av.MediaTypeVideo,
 		ColorPrimaries: avColPriBT2020,
 		ColorTransfer:  avColTrcSMPTE2084, // PQ
 	}
@@ -255,7 +255,7 @@ func TestCheckHDRNoTonemap_HDR10(t *testing.T) {
 func TestCheckHDRNoTonemap_SDR(t *testing.T) {
 	g, node := buildMinimalVideoGraph(t)
 	stream := av.StreamInfo{
-		Type:          av.MediaTypeVideo,
+		Type:           av.MediaTypeVideo,
 		ColorPrimaries: 1, // BT.709
 		ColorTransfer:  1, // BT.709
 	}
@@ -269,7 +269,7 @@ func TestCheckHDRNoTonemap_SDR(t *testing.T) {
 func TestCheckHDRNoTonemap_HLG(t *testing.T) {
 	g, node := buildMinimalVideoGraph(t)
 	stream := av.StreamInfo{
-		Type:         av.MediaTypeVideo,
+		Type:          av.MediaTypeVideo,
 		ColorTransfer: avColTrcARIB_STD_B67, // HLG
 	}
 	r := &ValidationReport{}
@@ -400,17 +400,17 @@ func buildMinimalAudioGraph(t *testing.T, codec string) (*graph.Graph, *graph.No
 
 // filterProbeIssues returns issues that are produced only by Phase B probe checks.
 var phaseAIssueCodes = map[string]bool{
-	"TOPO_SOURCE_DISCONNECTED": true,
-	"TOPO_SINK_DISCONNECTED":   true,
-	"TOPO_CYCLE":               true,
-	"TOPO_MULTIPLE_WRITERS":    true,
-	"VIDEO_ZERO_DIMENSION":     true,
-	"VIDEO_ZERO_FRAMERATE":     true,
-	"AUDIO_SAMPLE_FMT_MISMATCH": true, // can also be Phase A
-	"AUDIO_SAMPLE_RATE_MISMATCH": true, // can also be Phase A
+	"TOPO_SOURCE_DISCONNECTED":    true,
+	"TOPO_SINK_DISCONNECTED":      true,
+	"TOPO_CYCLE":                  true,
+	"TOPO_MULTIPLE_WRITERS":       true,
+	"VIDEO_ZERO_DIMENSION":        true,
+	"VIDEO_ZERO_FRAMERATE":        true,
+	"AUDIO_SAMPLE_FMT_MISMATCH":   true, // can also be Phase A
+	"AUDIO_SAMPLE_RATE_MISMATCH":  true, // can also be Phase A
 	"CONTAINER_CODEC_UNSUPPORTED": true,
-	"HW_CODEC_UNAVAILABLE":     true,
-	"HW_PLATFORM_MISMATCH":     true,
+	"HW_CODEC_UNAVAILABLE":        true,
+	"HW_PLATFORM_MISMATCH":        true,
 }
 
 func filterProbeIssues(r *ValidationReport) []ValidationIssue {
