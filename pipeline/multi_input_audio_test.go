@@ -45,11 +45,15 @@ func TestSpliceAudioMerge_TwoInputs(t *testing.T) {
 		t.Error("merge node missing Generated provenance")
 	}
 
-	// Both original src→enc edges must now target the merge node.
+	// Both original src→enc edges must now target the merge node on distinct input ports.
+	wantPorts := map[string]string{
+		"src1:a:0": mergeNode.ID + ":in0",
+		"src2:a:0": mergeNode.ID + ":in1",
+	}
 	for _, e := range def.Edges {
-		if e.From == "src1:a:0" || e.From == "src2:a:0" {
-			if e.To != mergeNode.ID {
-				t.Errorf("edge from %s: To = %q, want %q", e.From, e.To, mergeNode.ID)
+		if want, ok := wantPorts[e.From]; ok {
+			if e.To != want {
+				t.Errorf("edge from %s: To = %q, want %q", e.From, e.To, want)
 			}
 		}
 	}

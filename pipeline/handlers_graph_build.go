@@ -219,8 +219,12 @@ func spliceAudioMergeForMultiInputEncoders(def *graph.Def) {
 			},
 		}
 		addedNodes = append(addedNodes, mergeNode)
-		for _, idx := range idxs {
-			def.Edges[idx].To = mergeID
+		for slot, idx := range idxs {
+			// Assign each inbound edge a distinct input pad name (in0, in1, …)
+			// so that the topology validator does not flag multiple edges on the
+			// same port.  The scheduler uses Inbound slice order for channel
+			// assignment, not the port name, so renaming is safe.
+			def.Edges[idx].To = fmt.Sprintf("%s:in%d", mergeID, slot)
 		}
 		addedEdges = append(addedEdges, graph.EdgeDef{From: mergeID, To: encID, Type: "audio"})
 	}
