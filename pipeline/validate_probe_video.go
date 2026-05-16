@@ -194,6 +194,29 @@ func checkHDRNoTonemap(node *graph.Node, g *graph.Graph, codec string, stream av
 		return
 	}
 	hdrType := hdrTypeName(stream.ColorPrimaries, stream.ColorTransfer)
+
+	// Prefer zscale (high-quality, handles full colorspace conversion); fall
+	// back to colorspace (built into most FFmpeg builds) when zscale is absent.
+	var fix *Fix
+	var suggestion string
+	if av.FindFilter("zscale") {
+		suggestion = "add a zscale=transfer=bt709,tonemap=hable,format=yuv420p filter chain before this encoder for SDR output"
+		fix = &Fix{InsertFilter: &InsertFilterFix{
+			BeforeNodeID: node.ID,
+			FilterName:   "zscale",
+			Params:       map[string]string{"transfer": "bt709", "matrix": "bt709", "primaries": "bt709"},
+		}}
+	} else if av.FindFilter("colorspace") {
+		suggestion = "add a colorspace=trc=bt709:primaries=bt709:space=bt709,format=yuv420p filter chain before this encoder for SDR output"
+		fix = &Fix{InsertFilter: &InsertFilterFix{
+			BeforeNodeID: node.ID,
+			FilterName:   "colorspace",
+			Params:       map[string]string{"trc": "bt709", "primaries": "bt709", "space": "bt709"},
+		}}
+	} else {
+		suggestion = "add a colorspace conversion filter (zscale or colorspace) before this encoder for SDR output"
+	}
+
 	r.add(ValidationIssue{
 		Severity: SeverityWarning,
 		Code:     "VIDEO_HDR_NO_TONEMAP",
@@ -202,12 +225,8 @@ func checkHDRNoTonemap(node *graph.Node, g *graph.Graph, codec string, stream av
 			"source stream has %s color properties but no tonemap or zscale filter precedes encoder %q",
 			hdrType, node.ID,
 		),
-		Suggestion: "add a zscale=transfer=bt709,tonemap=hable,format=yuv420p filter chain before this encoder for SDR output",
-		Fix: &Fix{InsertFilter: &InsertFilterFix{
-			BeforeNodeID: node.ID,
-			FilterName:   "zscale",
-			Params:       map[string]string{"transfer": "bt709", "matrix": "bt709", "primaries": "bt709"},
-		}},
+		Suggestion: suggestion,
+		Fix:        fix,
 	})
 }
 

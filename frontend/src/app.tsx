@@ -40,6 +40,7 @@ import {
   INPUT_PREFIX,
   OUTPUT_PREFIX,
   type FlowEdge,
+  type FlowEdgeData,
   type FlowNode,
 } from './lib/jsonAdapter';
 import { MEDIA_FILE_EXTENSIONS } from './lib/mediaExtensions';
@@ -746,9 +747,14 @@ function Editor() {
         while (existingNodeIds.has(newId)) newId = `${base}_${++i}`;
         const incomingToTarget = es.filter((e) => e.target === before_node_id);
         const rest = es.filter((e) => e.target !== before_node_id);
-        const rerouted = incomingToTarget.map((e) => ({ ...e, target: newId, id: `${e.id}_via_${newId}` }));
+        const rerouted = incomingToTarget.map((e): FlowEdge => ({
+          ...e,
+          target: newId,
+          id: `${e.id}_via_${newId}`,
+          data: { ...(e.data as FlowEdgeData), rawTo: newId },
+        }));
         // Infer stream type from first rerouted edge.
-        const st = rerouted[0]?.data?.streamType ?? 'video';
+        const st: StreamType = rerouted[0]?.data?.streamType ?? 'video';
         const bridgeEdge: FlowEdge = {
           id: `${newId}_to_${before_node_id}`,
           source: newId,
