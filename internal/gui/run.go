@@ -19,8 +19,9 @@ import (
 // this limit; raise the constant here and recompile.
 const jobConfigBodyLimit = 1 << 20 // 1 MiB
 
-// handleValidate parses + structurally validates a JobConfig posted as JSON.
-// Returns 200 with {ok:true,...} on success, 400 with {ok:false,error:"..."}.
+// handleValidate parses and validates a JobConfig posted as JSON.
+// Query param ?no_probe=1 skips Phase B (file I/O) and runs only Phase A static checks.
+// Always returns 200 with a ValidationReport JSON object.
 func handleValidate(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, jobConfigBodyLimit))
 	if err != nil {
@@ -29,21 +30,40 @@ func handleValidate(w http.ResponseWriter, r *http.Request) {
 	}
 	cfg, err := pipeline.ParseConfig(body)
 	if err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"ok":    false,
-			"error": err.Error(),
-		})
+		// Return a synthetic single-issue report so the frontend always gets a ValidationReport.
+		writeValidationParseError(w, err)
 		return
 	}
+
+	var report *pipeline.ValidationReport
+	if r.URL.Query().Get("no_probe") == "1" {
+		report = pipeline.ValidateConfigStatic(cfg, nil)
+	} else {
+		report, err = pipeline.ValidateConfig(cfg, nil)
+		if err != nil {
+			writeValidationParseError(w, err)
+			return
+		}
+	}
+
+	// Ensure Issues is never null in the JSON response.
+	if report.Issues == nil {
+		report.Issues = []pipeline.ValidationIssue{}
+	}
+
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{
-		"ok":      true,
-		"inputs":  len(cfg.Inputs),
-		"outputs": len(cfg.Outputs),
-		"nodes":   len(cfg.Graph.Nodes),
-		"edges":   len(cfg.Graph.Edges),
+	_ = json.NewEncoder(w).Encode(report)
+}
+
+func writeValidationParseError(w http.ResponseWriter, err error) {
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(&pipeline.ValidationReport{
+		Issues: []pipeline.ValidationIssue{{
+			Severity: pipeline.SeverityError,
+			Code:     "PARSE_ERROR",
+			Message:  err.Error(),
+		}},
+		HasErrors: true,
 	})
 }
 

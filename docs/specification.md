@@ -445,9 +445,9 @@ The `mediamolder gui` HTTP server (§18) is intended for **localhost use only** 
 
 ### Related Documents
 - [Build & Packaging](build_and_packaging.md)
-- [Development Roadmap](roadmap.md)
+- [Development Roadmap](roadmap/roadmap.md)
 - [Contribution & Governance](contribution_and_governance.md)
-- [Possible Future Improvements](future_improvements.md)
+- Possible Future Improvements
 
 ---
 

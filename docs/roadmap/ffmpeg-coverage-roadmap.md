@@ -962,10 +962,10 @@ Close remaining ⚠️/❌ items in §2.3 that are not hardware-related.
     `node.Kind == KindFilterSource` to construct the
     source-only graph instead of the standard
     buffersrc-fronted one. Two corpus fixtures:
-    [testdata/examples/51_filter_source_color_overlay.json](../testdata/examples/51_filter_source_color_overlay.json)
+    `testdata/examples/51_filter_source_color_overlay.json`
     (`color=black:s=1920x1080:d=10` overlaid by `[0:v]` —
     real overlay use-case) and
-    [testdata/examples/52_filter_source_testsrc_only.json](../testdata/examples/52_filter_source_testsrc_only.json)
+    `testdata/examples/52_filter_source_testsrc_only.json`
     (`testsrc2=d=5` → libx264 → mp4 with no top-level `-i`).
 
     **36d — `KindFilterSink` runtime handler.** ✅ Wave 7.
@@ -975,7 +975,7 @@ Close remaining ⚠️/❌ items in §2.3 that are not hardware-related.
     consumed frames, honours `ctx.Done()`. Validator: at
     least one `KindSink` *or* `KindFilterSink` per pipeline
     (so a pure-analyser job is legal). Fixture
-    [testdata/examples/53_filter_sink_analyser.json](../testdata/examples/53_filter_sink_analyser.json)
+    `testdata/examples/53_filter_sink_analyser.json`
     — `[0:a]asplit → ebur128 → ametadata=mode=print:file=…
     → anullsink` runs an analyser branch in parallel with
     the real encode and the analyser branch terminates

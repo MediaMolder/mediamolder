@@ -30,7 +30,7 @@ Useful flags:
 
 For an explanation of nodes, pads, edges, sources and sinks — and the rules
 that govern when two nodes can be wired directly versus when a transform
-filter has to sit between them — see [Graph Basics](graph-basics.md).
+filter has to sit between them — see [Concepts and Graph Basics](concepts-and-graph-basics.md).
 
 If you have never used the editor before, the canvas opens with an
 **onboarding card** that summarises the steps below. Click the

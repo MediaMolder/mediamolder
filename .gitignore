@@ -1,4 +1,4 @@
-﻿# Binaries
+# Binaries
 /mediamolder
 *.exe
 *.dll
@@ -47,6 +47,21 @@ Thumbs.db
 # Benchmark results (tracked separately)
 bench-*.txt
 
+# Frontend build artefacts and dependencies
+frontend/node_modules/
+frontend/dist/
+frontend/tsconfig.tsbuildinfo
+
+# Processor / pipeline runtime output files
+frame_info.jsonl
+scene_changes.jsonl
+*.jsonl
+
+# Build logs
+mediamolder-build.log
+*.log
+*.log.mbtree
+
 # Internal planning docs (not for public release)
 /private_local/
 
@@ -67,7 +82,6 @@ frontend/tsconfig.tsbuildinfo
 docs/images/1.png
 docs/images/2.png
 docs/images/ABR.png
-docs/images/Separate_audio_video.png
 
 # Debug build log (make build-debug / make build-gui-debug)
 mediamolder-build.log
