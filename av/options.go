@@ -51,6 +51,7 @@ import "C"
 
 import (
 	"fmt"
+	"math"
 	"unsafe"
 )
 
@@ -250,8 +251,8 @@ func optionToEncoderOption(opt *C.AVOption, private bool) EncoderOption {
 		Help:             goStr(opt.help),
 		Type:             OptionType(t),
 		Unit:             goStr(opt.unit),
-		Min:              float64(opt.min),
-		Max:              float64(opt.max),
+		Min:              safeFloat(float64(opt.min)),
+		Max:              safeFloat(float64(opt.max)),
 		IsPrivate:        private,
 		Flags:            flags,
 		IsEncodingParam:  flags&C.AV_OPT_FLAG_ENCODING_PARAM != 0,
@@ -328,6 +329,9 @@ func optionDefault(opt *C.AVOption, t string) *EncoderOptionVal {
 		v.Int = &i
 	case "double", "float":
 		f := float64(*(*C.double)(unsafe.Pointer(&opt.default_val)))
+		if math.IsNaN(f) || math.IsInf(f, 0) {
+			return nil
+		}
 		v.Float = &f
 	case "string", "color", "image_size", "channel_layout":
 		// default_val is a char* in the union for string-like types.
@@ -356,4 +360,15 @@ func goStr(c *C.char) string {
 		return ""
 	}
 	return C.GoString(c)
+}
+
+// safeFloat returns 0 for NaN or ±Inf so that encoding/json never
+// encounters a non-finite float64 value. Some filters (e.g. zscale's
+// npl, param_a, param_b) declare NAN as min/max or leave them as
+// uninitialized C doubles that may be ±Inf or NaN.
+func safeFloat(f float64) float64 {
+	if math.IsNaN(f) || math.IsInf(f, 0) {
+		return 0
+	}
+	return f
 }

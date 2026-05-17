@@ -196,6 +196,15 @@ func checkHDRNoTonemap(node *graph.Node, g *graph.Graph, codec string, stream av
 	}
 	hdrType := hdrTypeName(stream.ColorPrimaries, stream.ColorTransfer)
 
+	// Map the probed transfer characteristic to the zscale transferin value.
+	// zscale requires explicit input colorspace params when the decoded
+	// frames lack embedded colorspace metadata (csp: unknown), which is
+	// common for ProRes and other professional formats.
+	transferIn := "smpte2084" // safe default for BT.2020/HDR sources
+	if stream.ColorTransfer == avColTrcARIB_STD_B67 {
+		transferIn = "arib-std-b67"
+	}
+
 	// zscale handles both SDR-gamut (BT.2020 primaries) and HDR-transfer
 	// (PQ/HLG) sources. The colorspace filter supports SDR-space primaries
 	// rotation but its TRC table does not include SMPTE 2084 (PQ) or
@@ -205,11 +214,19 @@ func checkHDRNoTonemap(node *graph.Node, g *graph.Graph, codec string, stream av
 	var fix *Fix
 	var suggestion string
 	if av.FindFilter("zscale") {
-		suggestion = "add a zscale=transfer=bt709,tonemap=hable,format=yuv420p filter chain before this encoder for SDR output"
+		suggestion = "add a zscale=transferin=smpte2084:primariesin=bt2020:matrixin=bt2020nc:t=bt709:p=bt709:m=bt709:npl=100 filter before this encoder for SDR output"
 		fix = &Fix{InsertFilter: &InsertFilterFix{
 			BeforeNodeID: node.ID,
 			FilterName:   "zscale",
-			Params:       map[string]string{"transfer": "bt709", "matrix": "bt709", "primaries": "bt709"},
+			Params: map[string]string{
+				"transferin":  transferIn,
+				"primariesin": "bt2020",
+				"matrixin":    "bt2020nc",
+				"t":           "bt709",
+				"p":           "bt709",
+				"m":           "bt709",
+				"npl":         "100",
+			},
 		}}
 	} else if !isPQorHLG && av.FindFilter("colorspace") {
 		// colorspace is safe only for SDR-transfer BT.2020 sources.
@@ -220,7 +237,7 @@ func checkHDRNoTonemap(node *graph.Node, g *graph.Graph, codec string, stream av
 			Params:       map[string]string{"trc": "bt709", "primaries": "bt709", "space": "bt709"},
 		}}
 	} else {
-		suggestion = "add a zscale=transfer=bt709:matrix=bt709:primaries=bt709 filter before this encoder; zscale is required for PQ/HLG tone-mapping and is not available in this FFmpeg build"
+		suggestion = "add a zscale=transferin=smpte2084:primariesin=bt2020:matrixin=bt2020nc:t=bt709:p=bt709:m=bt709:npl=100 filter before this encoder; zscale is required for PQ/HLG tone-mapping and is not available in this FFmpeg build"
 	}
 
 	r.add(ValidationIssue{
