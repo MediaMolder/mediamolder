@@ -50,7 +50,7 @@ Use `"1.1"` when the graph contains `go_processor` nodes. Use `"1.2"` when the g
 appear in the program's `AVProgram.stream_index` table are eligible
 for matching. Selectors are walked in declaration order; non-negate
 selectors append, negate selectors remove. See
-[`docs/ffmpeg-coverage-roadmap.md`](ffmpeg-coverage-roadmap.md)
+[`docs/roadmap/ffmpeg-coverage-roadmap.md`](roadmap/ffmpeg-coverage-roadmap.md)
 §2.2 for the full grammar table.
 
 ## Graph
@@ -119,7 +119,7 @@ For `"copy"` nodes, no `params` are required — the inbound edge type tells the
 
 For when two nodes can be wired with a single edge versus when a transform
 filter (`format`, `aformat`, `scale`, `aresample`, `hwupload`, …) must sit
-between them, see [Graph Basics](graph-basics.md).
+between them, see [Graph Basics](concepts-and-graph-basics.md).
 
 ## Output
 

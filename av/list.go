@@ -215,6 +215,13 @@ func ListFormats() []FormatInfo {
 	return out
 }
 
+// FindFilter reports whether the named filter is registered in this build.
+func FindFilter(name string) bool {
+	cName := C.CString(name)
+	defer C.free(unsafe.Pointer(cName))
+	return C.avfilter_get_by_name(cName) != nil
+}
+
 // DeviceInfo describes a capture or playback device enumerated by libavdevice.
 type DeviceInfo struct {
 	Name        string `json:"name"`

@@ -11,6 +11,13 @@
       ]
     }
   ],
+  "graph": {
+    "nodes": [],
+    "edges": [
+      { "from": "in0:v:0", "to": "out0:v", "type": "video" },
+      { "from": "in0:a:0", "to": "out0:a", "type": "audio" }
+    ]
+  },
   "outputs": [
     {
       "id": "out0",

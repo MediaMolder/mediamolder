@@ -158,7 +158,7 @@ JSON → PipelineConfig → Graph (DAG) → Compiled Plan → Open Resources (de
 ```
 
 > **📖 Expanded Level 3 Documentation Available**  
-> For **detailed subcomponent breakdowns, key Go types/interfaces, and UML-style Mermaid sequence diagrams** (parse job, build graph, full execution lifecycle, observability emission, etc.), see **[MediaMolder-Core-Detailed-Level3.md](/docs/architecture/MediaMolder-Core-Detailed-Level3.md)**. It covers all 8 core components with 10+ sequence diagrams and code examples.
+> For **detailed subcomponent breakdowns, key Go types/interfaces, and UML-style Mermaid sequence diagrams** (parse job, build graph, full execution lifecycle, observability emission, etc.), see **[MediaMolder-Core-Detailed-Level3.md](MediaMolder-Core-Detailed-Level3.md)**. It covers all 8 core components with 10+ sequence diagrams and code examples.
 
 
 ### 3.2 Components — Embedded GUI (React SPA)

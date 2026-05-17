@@ -23,6 +23,7 @@ import { FileBrowser } from './components/FileBrowser';
 import { MMEdge } from './components/MMEdge';
 import { RunPanel } from './components/RunPanel';
 import { RunDock } from './components/RunDock';
+import { ValidatePanel } from './components/ValidatePanel';
 import { HelpDialog } from './components/HelpDialog';
 import { HardwareDialog } from './components/HardwareDialog';
 import { ImportFFmpegDialog } from './components/ImportFFmpegDialog';
@@ -37,7 +38,9 @@ import {
   nextInputTrack,
   EMPTY_URL_PLACEHOLDER,
   INPUT_PREFIX,
+  OUTPUT_PREFIX,
   type FlowEdge,
+  type FlowEdgeData,
   type FlowNode,
 } from './lib/jsonAdapter';
 import { MEDIA_FILE_EXTENSIONS } from './lib/mediaExtensions';
@@ -47,7 +50,8 @@ import { useJobRun } from './lib/useJobRun';
 import { inferEdgeAttributes, summariseAttributes } from './lib/streamAttrs';
 import { fetchCatalog, indexStreams } from './lib/nodeCatalog';
 import { fetchEncoderInfo } from './lib/encoderSchema';
-import type { HWAccelProbe, JobConfig, ProbeResponse, StreamType } from './lib/jobTypes';
+import type { Fix, HWAccelProbe, JobConfig, ProbeResponse, StreamType, ValidationIssue, ValidationReport } from './lib/jobTypes';
+import { postValidate } from './lib/validate';
 
 const NODE_TYPES = { mmNode: MMNode };
 const EDGE_TYPES = { mmEdge: MMEdge };
@@ -105,6 +109,9 @@ function Editor() {
   const [edges, setEdges] = useState<FlowEdge[]>([]);
   // 'open' | 'save' | null — controls the job-file FileBrowser dialog.
   const [jobBrowserMode, setJobBrowserMode] = useState<'open' | 'save' | null>(null);
+  const [validateReport, setValidateReport] = useState<ValidationReport | null>(null);
+  const [isValidating, setIsValidating] = useState(false);
+  const [showValidatePanel, setShowValidatePanel] = useState(false);
   // null = probe not yet returned (show all options as fallback);
   // HWAccelProbe[] = full probe results from /api/hwaccel
   const [availableHWAccels, setAvailableHWAccels] = useState<HWAccelProbe[] | null>(null);
@@ -302,6 +309,7 @@ function Editor() {
   const markDirty = useCallback(() => {
     setDirty(true);
     setIdentity((cur) => (cur.kind === 'example' || cur.kind === 'empty' ? { kind: 'unsaved' } : cur));
+    setValidateReport(null);
   }, []);
 
   /* ---------- React Flow change handlers ----------
@@ -685,6 +693,92 @@ function Editor() {
     [nodes.length, edges.length],
   );
 
+  /* ---------- Validate controls ---------- */
+  const runValidate = useCallback(async (probe: boolean) => {
+    const cfg = buildJobRef.current?.() ?? null;
+    if (!cfg) return;
+    setShowValidatePanel(true);
+    setIsValidating(true);
+    try {
+      const r = await postValidate(cfg, probe);
+      setValidateReport(r);
+    } catch (err) {
+      setValidateReport({ issues: [{ severity: 'ERROR', code: 'NETWORK_ERROR', message: String(err) }], has_errors: true, has_warnings: false });
+    } finally {
+      setIsValidating(false);
+    }
+  }, []);
+
+  const onValidate = useCallback(() => void runValidate(false), [runValidate]);
+  const onValidateProbe = useCallback(() => void runValidate(true), [runValidate]);
+
+  const onApplyFix = useCallback((fix: Fix, _issue: ValidationIssue) => {
+    if (fix.insert_filter) {
+      const { before_node_id, filter_name, params } = fix.insert_filter;
+      setNodes((ns) => {
+        const target = ns.find((n) => n.id === before_node_id);
+        const pos = target ? { x: target.position.x - 220, y: target.position.y } : { x: 200, y: 200 };
+        const existingIds = ns.map((n) => n.id);
+        const base = filter_name.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'filter';
+        let newId = base;
+        let i = 0;
+        while (existingIds.includes(newId)) newId = `${base}_${++i}`;
+        const newNode: FlowNode = {
+          id: newId,
+          type: 'mmNode',
+          position: pos,
+          data: {
+            kind: 'filter',
+            label: filter_name,
+            sublabel: newId,
+            ref: { kind: 'node', def: { id: newId, type: 'filter', filter: filter_name, params: params ?? {} } },
+          },
+        };
+        return [...ns, newNode];
+      });
+      setEdges((es) => {
+        // Reroute edges targeting before_node_id to the new filter node.
+        // We need the new node id — re-derive it from the current edge state
+        // after the setNodes above has queued. Use a local derivation.
+        const base = filter_name.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'filter';
+        const existingNodeIds = new Set(es.flatMap((e) => [e.source, e.target]));
+        let newId = base;
+        let i = 0;
+        while (existingNodeIds.has(newId)) newId = `${base}_${++i}`;
+        const incomingToTarget = es.filter((e) => e.target === before_node_id);
+        const rest = es.filter((e) => e.target !== before_node_id);
+        const rerouted = incomingToTarget.map((e): FlowEdge => ({
+          ...e,
+          target: newId,
+          id: `${e.id}_via_${newId}`,
+          data: { ...(e.data as FlowEdgeData), rawTo: newId },
+        }));
+        // Infer stream type from first rerouted edge.
+        const st: StreamType = rerouted[0]?.data?.streamType ?? 'video';
+        const bridgeEdge: FlowEdge = {
+          id: `${newId}_to_${before_node_id}`,
+          source: newId,
+          target: before_node_id,
+          type: 'mmEdge',
+          data: { streamType: st, rawFrom: newId, rawTo: before_node_id },
+        };
+        return [...rest, ...rerouted, bridgeEdge];
+      });
+      markDirty();
+    } else if (fix.set_output_field) {
+      const { output_id, field, value } = fix.set_output_field;
+      const flowId = OUTPUT_PREFIX + output_id;
+      setNodes((ns) => ns.map((n) => {
+        if (n.id !== flowId || n.data.ref.kind !== 'output') return n;
+        const def = { ...n.data.ref.def, [field]: value };
+        return { ...n, data: { ...n.data, ref: { kind: 'output' as const, def } } };
+      }));
+      markDirty();
+    }
+    // Re-run static validation after applying the fix.
+    void runValidate(false);
+  }, [markDirty, runValidate]);
+
   /* ---------- Run controls (Phase 3) ---------- */
   const buildJobRef = useRef<() => JobConfig | null>(() => null);
   buildJobRef.current = () => {
@@ -1009,6 +1103,12 @@ function Editor() {
             Compact
           </button>
         </div>
+        <button
+          onClick={onValidate}
+          disabled={isValidating || !nodes.length}
+          title="Run static validation (no file I/O)">
+          Validate{validateReport?.has_errors ? ' ✗' : validateReport && !validateReport.has_errors ? ' ✓' : ''}
+        </button>
         {isRunning ? (
           <button className="danger" onClick={onStop}>Stop</button>
         ) : (
@@ -1104,6 +1204,15 @@ function Editor() {
       )}
       <RunDock visible={showRunPanel}>
         <RunPanel run={run} nodeKinds={nodeKinds} onClose={() => setShowRunPanel(false)} />
+      </RunDock>
+      <RunDock visible={showValidatePanel && validateReport !== null}>
+        <ValidatePanel
+          report={validateReport ?? { issues: [], has_errors: false, has_warnings: false }}
+          isValidating={isValidating}
+          onApplyFix={onApplyFix}
+          onRunWithProbe={onValidateProbe}
+          onClose={() => setShowValidatePanel(false)}
+        />
       </RunDock>
       <HelpDialog open={helpOpen} onClose={() => setHelpOpen(false)} />
       <HardwareDialog open={showHWDialog} probes={availableHWAccels} onClose={() => setShowHWDialog(false)} />

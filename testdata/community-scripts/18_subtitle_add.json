@@ -12,7 +12,7 @@
     },
     {
       "id": "in1",
-      "url": "subs.srt",
+      "url": "testdata/subs.srt",
       "streams": [
         { "input_index": 0, "type": "subtitle", "track": 0 }
       ]

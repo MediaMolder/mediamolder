@@ -1,6 +1,7 @@
 // Copyright (C) 2026 Thomas Vaughan
 // SPDX-License-Identifier: LGPL-2.1-or-later
 
+// Command mediamolder is the command-line interface for MediaMolder.
 package main
 
 import (
@@ -39,6 +40,8 @@ func run(args []string) error {
 		return cmdRun(args[1:])
 	case "inspect":
 		return cmdInspect(args[1:])
+	case "validate":
+		return cmdValidate(args[1:])
 	case "convert-cmd":
 		return cmdConvertCmd(args[1:])
 	case "export":
@@ -475,6 +478,8 @@ Commands:
                          Flags: --json (JSON progress), --metadata-out=PATH (write metadata as JSONL),
                                 --set KEY=VALUE (substitute {{KEY}} in the job JSON; may be repeated).
   inspect <config.json>  Validate and pretty-print the resolved pipeline config.
+  validate <config.json> Statically validate a pipeline config (no I/O).
+                         Flags: --json (output as JSON), --strict (exit 1 on WARNING).
   convert-cmd "..."      Convert an FFmpeg command line to JSON config.
   export <config.json>   Render a JSON config back into an FFmpeg command line.
                          Flags: --from-graph (normalise via pipeline.NormalizeConfig
