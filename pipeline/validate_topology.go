@@ -105,6 +105,15 @@ func checkMultiEdgeSamePort(g *graph.Graph, r *ValidationReport) {
 		}
 		for port, count := range portCount {
 			if count > 1 {
+				// "default" means the edge spec omitted a port selector,
+				// which in FFmpeg's filtergraph model assigns pads
+				// sequentially (pad 0, pad 1, …). Multiple edges at
+				// "default" is the normal way to wire multi-input filters
+				// (overlay, xfade, amix, acrossfade, …). Only flag
+				// collisions on explicitly named ports.
+				if port == "default" {
+					continue
+				}
 				r.add(ValidationIssue{
 					Severity:   SeverityError,
 					Code:       "TOPO_MULTI_EDGE_SAME_INPUT_PORT",

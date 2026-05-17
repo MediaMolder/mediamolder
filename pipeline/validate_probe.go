@@ -25,7 +25,7 @@ func ValidateConfig(cfg *Config, sec *SecurityConfig) (*ValidationReport, error)
 	// Phase B: probe each input.
 	probed := make(map[string][]av.StreamInfo)
 	for _, inp := range cfg.Inputs {
-		streams, err := probeInput(inp)
+		streams, skip, err := probeInput(inp)
 		if err != nil {
 			r.add(ValidationIssue{
 				Severity: SeverityWarning,
@@ -33,6 +33,11 @@ func ValidateConfig(cfg *Config, sec *SecurityConfig) (*ValidationReport, error)
 				Location: "input:" + inp.ID,
 				Message:  fmt.Sprintf("could not probe input %q: %v", inp.URL, err),
 			})
+			continue
+		}
+		if skip {
+			// Input kind does not support probing (e.g. "raw"); skip
+			// probe-assisted stream checks for this input silently.
 			continue
 		}
 		probed[inp.ID] = streams
@@ -50,13 +55,34 @@ func ValidateConfig(cfg *Config, sec *SecurityConfig) (*ValidationReport, error)
 }
 
 // probeInput opens the input URL and returns the probed stream list.
-func probeInput(inp Input) ([]av.StreamInfo, error) {
-	ctx, err := av.OpenInput(inp.URL, nil)
-	if err != nil {
-		return nil, err
+// The skip return value is true when the input kind does not support generic
+// probing (e.g. "raw") — the caller should not emit PROBE_FAILED in that case.
+func probeInput(inp Input) (streams []av.StreamInfo, skip bool, err error) {
+	switch inp.Kind {
+	case "lavfi":
+		// lavfi inputs are virtual sources; probe using the lavfi demuxer.
+		ctx, openErr := av.OpenInputWithFormat(inp.URL, "lavfi", nil)
+		if openErr != nil {
+			return nil, false, openErr
+		}
+		defer ctx.Close()
+		s, e := ctx.AllStreams()
+		return s, false, e
+	case "raw":
+		// Raw inputs require explicit geometry/format options that are
+		// only known to the runtime (rawvideo format, video_size,
+		// pixel_format, …). Skip probing silently so that stream-count
+		// checks are not fired against an empty stream list.
+		return nil, true, nil
+	default:
+		ctx, openErr := av.OpenInput(inp.URL, nil)
+		if openErr != nil {
+			return nil, false, openErr
+		}
+		defer ctx.Close()
+		s, e := ctx.AllStreams()
+		return s, false, e
 	}
-	defer ctx.Close()
-	return ctx.AllStreams()
 }
 
 // sourceStreamForEncoder walks backward through the graph from node along edges
