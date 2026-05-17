@@ -11,6 +11,13 @@
       ]
     }
   ],
+  "graph": {
+    "nodes": [],
+    "edges": [
+      { "from": "in0:v:0", "to": "out0:v", "type": "video" },
+      { "from": "in0:a:0", "to": "out0:a", "type": "audio" }
+    ]
+  },
   "outputs": [
     {
       "id": "out0",
@@ -19,6 +26,7 @@
       "codec_video": "libx264",
       "codec_audio": "aac",
       "force_key_frames": "expr:gte(t,n_forced*2)",
+      "options": { "movflags": "frag_keyframe+empty_moov" },
       "dash": {
         "seg_duration": 2,
         "adaptation_sets": "id=0,streams=v id=1,streams=a",
