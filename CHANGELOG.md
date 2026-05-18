@@ -6,6 +6,81 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 ## [Unreleased]
 
 ### Added
+- **Per-node performance monitoring (NodePerfTracker).**
+  A lightweight, lock-free state machine (`pipeline/node_perf.go`) tracks
+  every pipeline node through three states — *processing*, *idle*, and
+  *stalled* — on each channel send and receive.  Exported snapshot fields:
+  windowed FPS, FPS target, FPS deficit, active/idle/stalled fractions, stall
+  count, max/mean stall duration, per-frame processing latency, queue fill
+  fraction at send time, and libavcodec thread visibility
+  (`ThreadsConfigured`, `ThreadsBusy`, `EstimatedCPUCores`).
+
+  The `av.FrameDecoder` interface now exposes `ThreadCount()`,
+  `ActiveThreadType()`, and `ThreadsBusy()` so the source handler can
+  forward the codec's internal thread pool fill to `NodePerfTracker`.
+  Hardware and VideoToolbox decoders that do not use libavcodec thread pools
+  return stubs (`ThreadsBusy() = -1`).
+
+  Channel helpers `perfReceive` and `perfSend` wrap every handler's hot-path
+  channel operations with idle/stall accounting at zero allocation cost.
+
+- **New Prometheus per-node performance metrics.**
+  Twelve new metrics with a `node_id` label are registered on the Prometheus
+  collector and updated from `NodePerfSnapshot` on every `MetricsEmitter` tick:
+
+  | Metric | Type | Description |
+  |--------|------|-------------|
+  | `mediamolder_node_active_fraction`       | Gauge     | Fraction of elapsed time the node spent actively processing frames |
+  | `mediamolder_node_idle_fraction`         | Gauge     | Fraction of elapsed time the node was idle waiting for input |
+  | `mediamolder_node_stalled_fraction`      | Gauge     | Fraction of elapsed time the node was blocked sending to a full output channel |
+  | `mediamolder_node_stall_duration_seconds`| Histogram | Distribution of individual stall event durations |
+  | `mediamolder_node_stall_count_total`     | Counter   | Cumulative stall events per node |
+  | `mediamolder_node_fps`                   | Gauge     | Windowed output rate (frames or packets per second) |
+  | `mediamolder_node_fps_target`            | Gauge     | Expected output rate (0 if no target is known) |
+  | `mediamolder_node_fps_deficit`           | Gauge     | `fps_target − fps`; positive means the node is falling behind |
+  | `mediamolder_node_queue_fill`            | Gauge     | EWMA of the output channel fill ratio \[0, 1\] at each send |
+  | `mediamolder_node_threads_configured`    | Gauge     | Number of libavcodec decode threads configured (label `mode`: `frame`/`slice`/`auto`) |
+  | `mediamolder_node_threads_busy`          | Gauge     | Live threads currently in-flight (−1 for HW decoders) |
+  | `mediamolder_node_cpu_cores_estimated`   | Gauge     | Estimated CPU cores consumed (`threads_busy × active_fraction`) |
+  | `mediamolder_node_frame_latency_seconds` | Histogram | Per-frame processing latency (receive→send) |
+
+- **`mediamolder perf` CLI subcommand.**
+  Renders a live terminal table of per-node performance data by polling the
+  pipeline's `/perf` JSON endpoint.  Columns: NODE, FPS, TARGET, DEFICIT,
+  ACTIVE%, IDLE%, STALL%, THREADS, BUSY, LATENCY.  Rows are colour-coded
+  green/amber/red against the FPS target.
+
+  ```sh
+  # Poll the default local endpoint (localhost:9090) every second.
+  mediamolder perf
+
+  # Connect to a remote pipeline or a non-default port.
+  mediamolder perf --url http://host:9090/perf --interval 500ms
+  ```
+
+- **`/perf` and `/perf/stream` HTTP endpoints on `MetricsServer`.**
+  `GET /perf` returns the latest `MetricsSnapshot.Perf` slice as JSON on
+  demand.  `GET /perf/stream` pushes `[]NodePerfSnapshot` as Server-Sent
+  Events at 2 Hz, letting dashboards and the `mediamolder perf` command
+  receive live data without polling overhead.  Both endpoints are gated on
+  `MetricsEmitter.RegisterPerfHandler` /
+  `RegisterPerfStreamHandler` being called with a snapshot callback by the
+  pipeline engine.
+
+- **Run panel — Unblocked Performance column.**
+  The per-node metrics table in the Run panel now has a sixth column —
+  **Unblocked Performance** — showing `1 / AvgLatency` (the rate the node
+  achieves while actively processing, excluding idle and stall time).  For
+  video nodes the unit is `fps`; for audio/other nodes it is `pkt/s`.  The
+  value is `—` until at least one frame has been timed.
+
+- **`pipeline/snap` shared snapshot package.**
+  `NodePerfSnapshot`, `NodeMetricsSnapshot`, and `MetricsSnapshot` now live
+  in `pipeline/snap` to break the import cycle that would otherwise arise
+  between the `pipeline` and `observability` packages.  The `pipeline`
+  package re-exports them as type aliases so all existing call sites compile
+  unchanged.
+
 - **Per-track audio handles on input nodes and multi-input filter nodes (GUI).**
   Once an input node is probed with **Get Properties**, it grows one audio
   source handle per track, labelled `a:0`, `a:1`, … `a:N-1`.  Opening a

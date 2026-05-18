@@ -79,7 +79,7 @@ For detailed instructions see [MacOS](docs/build/macos.md), [Windows](docs/build
 - [Event Bus](docs/event-bus.md)
 - [Error Handling](docs/error-handling.md)
 - [Hardware Acceleration](docs/hardware-acceleration.md)
-- [Observability](docs/observability.md)
+- [Observability](docs/observability.md) — Prometheus metrics, OpenTelemetry tracing, per-node performance monitoring, `mediamolder perf` CLI
 - [Graph Compilation](docs/graph-compilation.md)
 
 ### Project

@@ -282,6 +282,30 @@ MediaMolder GUI
 
 The GUI communicates with the local Go process over HTTP. JSON config files saved through the GUI are fully compatible with `mediamolder run`.
 
+### 3.8 `perf`
+
+Display a live terminal table of per-node performance data for a running
+pipeline.  Polls the pipeline's `/perf` JSON endpoint and redraws the
+display in place at the configured interval.
+
+```sh
+mediamolder perf [--url <url>] [--interval <duration>]
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--url` | `http://localhost:9090/perf` | URL of the running pipeline's `/perf` endpoint |
+| `--interval` | `1s` | How often to refresh the display |
+
+The table columns are **NODE**, **FPS**, **TARGET**, **DEFICIT**, **ACTIVE%**,
+**IDLE%**, **STALL%**, **THREADS**, **BUSY**, and **LATENCY**.  Rows are
+colour-coded green/amber/red relative to the FPS target.  Press **Ctrl-C**
+to exit.
+
+The `/perf` endpoint is served by the `MetricsServer` when a pipeline is
+running.  Start the server with `--metrics-addr :9090` (or configure it in
+code via `observability.NewMetricsServer`).
+
 ---
 
 ## 4. Graph JSON reference
