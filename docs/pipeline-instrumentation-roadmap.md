@@ -244,13 +244,22 @@ r.pipe.Metrics().Node(node.ID).Frames.Add(1)
 
 ---
 
-## 3. Prometheus Metrics Wiring — ✅ Implemented
+## 3. Prometheus Metrics Wiring — ✅ Implemented (extended with NodePerfTracker metrics)
 
 ### Problem
 
 Eight Prometheus metrics are defined in `observability/metrics.go` but **none**
 are ever populated by the pipeline. The internal `MetricsRegistry` collects
 frame/error/byte counts but they are never bridged to Prometheus.
+
+The original eight metrics have been wired.  Additionally, 14 new per-node
+performance metrics (`mediamolder_node_active_fraction`,
+`mediamolder_node_fps`, `mediamolder_node_stall_count_total`, etc.) are
+populated from `NodePerfSnapshot` on every emitter tick — see
+[docs/observability.md](observability.md#per-node-performance-metrics) for
+the complete list.  The `MetricsEmitter` gained
+`RegisterPerfHandler`/`RegisterPerfStreamHandler` callbacks so the
+`MetricsServer` can serve `/perf` (JSON) and `/perf/stream` (SSE at 2 Hz).
 
 ### Design
 

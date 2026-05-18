@@ -83,9 +83,11 @@ in-app help dialog.
 5. **Connect the nodes.** Each node exposes one handle per stream type on
    each side. Drag from a source handle to a target handle of the **same
    colour**. Mismatched stream types are rejected.
-6. **Run.** Click **Run** in the toolbar. The Run panel opens; node badges
-   show live `Frames` / `FPS`, and a node that errors is outlined in red.
-   Click **Stop** to cancel.
+6. **Run.** Click **Run** in the toolbar. The Run panel opens; each node row
+   in the live metrics table shows **Packets**, **Rate**, **Errors**,
+   **Avg latency**, and **Unblocked Performance** (the rate the node achieves
+   while actively processing, excluding idle and stall time).  A node that
+   errors is outlined in red.  Click **Stop** to cancel.
 7. **Save / Open.** **Save** writes the current graph back to its on-disk
    file (silent overwrite when the browser supports the File System Access
    API). **Save As…** prompts for a new path. **Open…** loads any job JSON
@@ -1128,14 +1130,24 @@ receive a stream of typed events:
 | Event      | Payload                                                                 |
 |------------|-------------------------------------------------------------------------|
 | `state`    | `{from, to}` — pipeline state transitions (Ready → Playing → ...).     |
-| `metrics`  | `{State, Elapsed, Nodes:[{NodeID, Frames, FPS, Errors, ...}]}` snapshot.|
+| `metrics`  | `{State, Elapsed, Nodes:[{NodeID, Frames, FPS, Errors, AvgLatency, ...}], Perf:[{NodeID, FPS, FPSTarget, FPSDeficit, ActiveFrac, IdleFrac, StalledFrac, ...}]}` snapshot. |
 | `error`    | `{node_id, stage, error}` — per-node failures.                          |
 | `log`      | `{message}` — informational entries (e.g. EOS).                         |
 | `metadata` | `pipeline.ProcessorMetadata` events from custom processors.             |
 | `done`     | `{status: "succeeded"\|"failed"\|"canceled", error}` — terminal event.  |
 
-Live data is merged back into each node on the canvas: frame counts and FPS
-appear as badges, and any node that has logged an error is outlined in red.
+The Run panel merges live data back onto the canvas (node badges) and into a
+per-node metrics table with six columns:
+
+| Column | Description |
+|--------|-------------|
+| **Node** | Node identifier |
+| **Packets** | Total frames / packets processed |
+| **Rate** | Current output rate (`fps` for video, `pkt/s` for audio and other) |
+| **Errors** | Cumulative error count |
+| **Avg latency** | Mean per-frame processing latency (receive→send) |
+| **Unblocked Performance** | `1 / AvgLatency` — rate the node achieves while actively processing, idle and stall time excluded; `—` until the first frame is timed |
+
 **Stop** cancels the underlying `context.Context` so the run unwinds cleanly.
 
 ## HTTP API

@@ -2,7 +2,8 @@
 
 MediaMolder integrates OpenTelemetry for distributed tracing, Prometheus
 for real-time metrics collection, and built-in runtime instrumentation for
-backpressure monitoring and per-node latency tracking.
+channel backpressure monitoring, per-node latency tracking, and full
+per-node performance profiling via `NodePerfTracker`.
 
 ## Runtime Instrumentation
 
@@ -44,6 +45,101 @@ for _, ns := range snap.Nodes {
         ns.NodeID, ns.AvgLatency, ns.MaxLatency, ns.FPS)
 }
 ```
+
+### Per-Node Performance Monitoring (NodePerfTracker)
+
+`NodePerfTracker` (`pipeline/node_perf.go`) tracks each pipeline node through
+three mutually exclusive states:
+
+| State | Meaning |
+|-------|---------|
+| **Processing** | The node received a frame and is actively working on it |
+| **Idle** | The node is waiting for its input channel to deliver the next frame |
+| **Stalled** | The node finished processing a frame but is blocked trying to send it to a full output channel |
+
+The tracker computes windowed fractions for each state, a rolling FPS, stall
+counts and durations, per-frame processing latency (measured from channel
+receive to channel send), and an EWMA queue fill fraction sampled at each
+send.
+
+#### Channel helpers: `perfReceive` and `perfSend`
+
+Every handler wraps its hot-path channel operations with the two helpers:
+
+```go
+frame, ok := perfReceive(ctx, tracker, inputCh)  // accounts for idle time
+if !ok {
+    return
+}
+// ... process frame ...
+perfSend(ctx, tracker, outputCh, frame)           // accounts for stall time
+```
+
+`perfReceive` calls `tracker.BeginIdle()` before blocking on the channel and
+`tracker.EndIdle()` (which transitions to Processing) when a frame arrives.
+`perfSend` calls `tracker.BeginStall()` before blocking on the output channel
+and `tracker.EndStall()` after the send succeeds.  Both helpers record frame
+latency and queue fill at the send site.  Nil trackers are a no-op so callers
+need no guard.
+
+#### Snapshot fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `FPS` | float64 | Windowed output rate (frames or packets per second) |
+| `FPSTarget` | float64 | Expected output rate (0 = no target known) |
+| `FPSDeficit` | float64 | `FPSTarget − FPS`; positive means falling behind |
+| `ActiveFrac` | float64 | Fraction of elapsed time spent processing |
+| `IdleFrac` | float64 | Fraction of elapsed time idle (waiting for input) |
+| `StalledFrac` | float64 | Fraction of elapsed time stalled on a full output channel |
+| `StallCount` | int64 | Cumulative stall events since pipeline start |
+| `MaxStallDuration` | time.Duration | Longest single stall |
+| `QueueFillFrac` | float64 | EWMA of output channel fill ratio \[0, 1\] at each send |
+| `ThreadsConfigured` | int | libavcodec decode threads configured (0 for non-decoders) |
+| `ThreadMode` | string | libavcodec thread mode (`frame` / `slice` / `auto`) |
+| `ThreadsBusy` | int | Live threads in-flight; −1 for HW decoders without thread pools |
+| `EstimatedCPUCores` | float64 | `ThreadsBusy × ActiveFrac` |
+| `FrameLatencyMean` | time.Duration | Mean per-frame latency (receive→send) |
+
+#### Thread visibility
+
+`av.FrameDecoder` exposes three new methods so `NodePerfTracker` can forward
+libavcodec's internal thread pool state:
+
+```go
+type FrameDecoder interface {
+    // ...
+    ThreadCount() int           // threads configured in AVCodecContext
+    ActiveThreadType() int      // FF_THREAD_FRAME, FF_THREAD_SLICE, or 0
+    ThreadsBusy() int           // live in-flight threads; -1 if not available
+}
+```
+
+Hardware decoders (`HWDecoderContext`, `VTDecoderContext`) that do not use
+libavcodec thread pools return `ThreadsBusy() = -1`.
+
+#### Accessing snapshots
+
+Snapshots are aggregated by `MetricsEmitter` and are available in two ways:
+
+```go
+// Poll on demand.
+snap := pipe.GetMetrics()   // returns pipeline.MetricsSnapshot
+for _, p := range snap.Perf {
+    fmt.Printf("%s: fps=%.1f active=%.0f%% stalls=%d\n",
+        p.NodeID, p.FPS, p.ActiveFrac*100, p.StallCount)
+}
+
+// Register a callback (used by MetricsServer and the perf CLI).
+emitter.RegisterPerfHandler(func() snap.MetricsSnapshot {
+    return pipe.GetMetrics()
+})
+```
+
+The shared types (`NodePerfSnapshot`, `MetricsSnapshot`, `NodeMetricsSnapshot`)
+live in the `pipeline/snap` package so both `pipeline` and `observability` can
+import them without a circular dependency.  The `pipeline` package re-exports
+them as type aliases for backward compatibility.
 
 ## OpenTelemetry Tracing
 
@@ -110,6 +206,8 @@ logger.Info("processing frame", "pts", frame.PTS())
 
 All metrics use the `pipeline` constant label for identification.
 
+#### Pipeline-level metrics
+
 | Metric | Type | Labels | Description |
 |--------|------|--------|-------------|
 | `mediamolder_pipeline_fps` | Gauge | node, media_type | Current processing frame rate |
@@ -120,6 +218,29 @@ All metrics use the `pipeline` constant label for identification.
 | `mediamolder_pipeline_frames_total` | Counter | node, media_type | Total frames processed |
 | `mediamolder_pipeline_bytes_total` | Counter | node, media_type | Total bytes processed |
 | `mediamolder_pipeline_state` | Gauge | — | Current state (0=NULL, 1=READY, 2=PAUSED, 3=PLAYING) |
+| `mediamolder_pipeline_frames_in_flight` | Gauge | — | Frames currently in-flight across all nodes |
+| `mediamolder_pipeline_realtime_satisfied` | Gauge | — | 1 when all nodes are meeting their FPS targets |
+
+#### Per-node performance metrics
+
+These metrics all carry a `node_id` label.
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `mediamolder_node_active_fraction`        | Gauge     | Fraction of elapsed time spent actively processing |
+| `mediamolder_node_idle_fraction`          | Gauge     | Fraction of elapsed time idle (waiting for input) |
+| `mediamolder_node_stalled_fraction`       | Gauge     | Fraction of elapsed time stalled on a full output channel |
+| `mediamolder_node_stall_duration_seconds` | Histogram | Distribution of individual stall event durations |
+| `mediamolder_node_stall_count_total`      | Counter   | Cumulative stall events per node |
+| `mediamolder_node_fps`                    | Gauge     | Windowed output rate (fps or pkt/s) |
+| `mediamolder_node_fps_target`             | Gauge     | Expected output rate (0 if no target is known) |
+| `mediamolder_node_fps_deficit`            | Gauge     | `fps_target − fps`; positive means falling behind |
+| `mediamolder_node_queue_fill`             | Gauge     | EWMA of output channel fill ratio \[0, 1\] at each send |
+| `mediamolder_node_threads_configured`     | Gauge     | libavcodec decode threads configured (label `mode`: `frame`/`slice`/`auto`) |
+| `mediamolder_node_threads_busy`           | Gauge     | Live threads currently in-flight (−1 for HW decoders) |
+| `mediamolder_node_cpu_cores_estimated`    | Gauge     | Estimated CPU cores consumed (`threads_busy × active_fraction`) |
+| `mediamolder_node_thread_restarts_total`  | Counter   | Cumulative libavcodec thread restart events |
+| `mediamolder_node_frame_latency_seconds`  | Histogram | Per-frame processing latency (receive→send) |
 
 ### HTTP Endpoints
 
@@ -134,6 +255,25 @@ defer server.Shutdown(ctx)
 |----------|-------------|
 | `/metrics` | Prometheus scrape endpoint |
 | `/health` | Health check (returns 200 OK) |
+| `/perf` | JSON snapshot of `[]NodePerfSnapshot` on demand |
+| `/perf/stream` | Server-Sent Events stream of `[]NodePerfSnapshot` at 2 Hz |
+
+The `/perf` and `/perf/stream` endpoints become active once a snapshot
+callback is registered on the emitter:
+
+```go
+// Wired by the pipeline engine after building the graph.
+emitter.RegisterPerfHandler(func() snap.MetricsSnapshot {
+    return engine.GetMetrics()
+})
+emitter.RegisterPerfStreamHandler(func() snap.MetricsSnapshot {
+    return engine.GetMetrics()
+})
+```
+
+The SSE event name on `/perf/stream` is `perf`; each event carries the full
+`[]NodePerfSnapshot` JSON array.  Clients that miss events can reconnect; the
+server resends the latest snapshot immediately on reconnect.
 
 ### Periodic Metrics Snapshots
 
@@ -152,12 +292,41 @@ emitter := pipeline.NewMetricsEmitter(
 )
 emitter.Start()
 defer emitter.Stop()
+
+// Register callbacks so the MetricsServer can serve /perf and /perf/stream.
+emitter.RegisterPerfHandler(func() snap.MetricsSnapshot {
+    return engine.GetMetrics()
+})
+emitter.RegisterPerfStreamHandler(func() snap.MetricsSnapshot {
+    return engine.GetMetrics()
+})
 ```
 
-When Prometheus is enabled, the emitter updates all 8 collectors on each tick
+When Prometheus is enabled, the emitter updates all collectors on each tick
 using delta tracking for counters (Prometheus counters are monotonic). When
 edge stats are provided, the `mediamolder_node_buffer_fill` gauge is populated
-with the current fill ratio for each edge's downstream node.
+with the current fill ratio for each edge's downstream node.  Per-node
+performance metrics are populated from `NodePerfSnapshot` fields whenever a
+snapshot callback is registered.
+
+## `mediamolder perf` CLI
+
+A terminal-based live performance monitor polls the pipeline's `/perf`
+endpoint and renders a colour-coded table updated at a configurable interval:
+
+```
+mediamolder perf [--url http://host:port/perf] [--interval duration]
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--url` | `http://localhost:9090/perf` | URL of the running pipeline's `/perf` endpoint |
+| `--interval` | `1s` | How often to refresh the display |
+
+Table columns: **NODE**, **FPS**, **TARGET**, **DEFICIT**, **ACTIVE%**,
+**IDLE%**, **STALL%**, **THREADS**, **BUSY**, **LATENCY**.  Rows are
+colour-coded: green when meeting the target, amber when deficit ≤ 1 fps,
+red when deficit > 1 fps.  Press Ctrl-C to exit.
 
 ## Sample Grafana Dashboard
 
