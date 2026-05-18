@@ -147,6 +147,11 @@ func (d *DecoderContext) ThreadCount() int {
 	return int(d.p.thread_count)
 }
 
+// ActiveThreadType returns the threading method actually in use
+// (AVCodecContext.active_thread_type). 0 = none, 1 = FF_THREAD_FRAME,
+// 2 = FF_THREAD_SLICE. Populated after avcodec_open2.
+func (d *DecoderContext) ActiveThreadType() int { return int(d.p.active_thread_type) }
+
 // parseThreadType converts a thread type string to FFmpeg's integer constants.
 // "frame" → FF_THREAD_FRAME (1), "slice" → FF_THREAD_SLICE (2),
 // "frame+slice" → both (3). Returns 0 for unknown/empty (auto).

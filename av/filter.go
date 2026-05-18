@@ -885,3 +885,7 @@ func NewSinkFilterGraph(cfg SinkFilterGraphConfig) (*FilterGraph, error) {
 		mediaType: cfg.Inputs[0].MediaType,
 	}, nil
 }
+
+// ThreadCount returns the maximum number of threads for this filter graph
+// (AVFilterGraph.nb_threads). 0 means auto / unset.
+func (fg *FilterGraph) ThreadCount() int { return int(fg.graph.nb_threads) }

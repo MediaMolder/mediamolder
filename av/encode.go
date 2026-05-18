@@ -291,6 +291,11 @@ func (e *EncoderContext) ThreadCount() int {
 	return int(e.p.thread_count)
 }
 
+// ActiveThreadType returns the threading method actually in use
+// (AVCodecContext.active_thread_type). 0 = none, 1 = FF_THREAD_FRAME,
+// 2 = FF_THREAD_SLICE. Populated after avcodec_open2.
+func (e *EncoderContext) ActiveThreadType() int { return int(e.p.active_thread_type) }
+
 // TimeBase returns the encoder context's time_base as {num, den}. Encoded
 // packet PTS / DTS values are expressed in this time base; muxers that
 // override the output stream's time_base during WriteHeader (notably MP4)
