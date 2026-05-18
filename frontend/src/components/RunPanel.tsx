@@ -182,6 +182,7 @@ export function RunPanel({ run, nodeKinds, onClose }: Props) {
                   <th>Rate</th>
                   <th>Errors</th>
                   <th>Avg latency</th>
+                  <th>Unblocked Performance</th>
                 </tr>
               </thead>
               <tbody>
@@ -189,6 +190,7 @@ export function RunPanel({ run, nodeKinds, onClose }: Props) {
                   const kind = nodeKinds.get(n.NodeID) ?? '';
                   const rate = rateFor(n.NodeID, n.FPS);
                   const unit = kind === 'video' ? 'fps' : 'pkt/s';
+                  const unblockedFPS = n.AvgLatency > 0 ? 1e9 / n.AvgLatency : null;
                   return (
                     <tr key={n.NodeID}>
                       <td>{n.NodeID}</td>
@@ -196,6 +198,7 @@ export function RunPanel({ run, nodeKinds, onClose }: Props) {
                       <td>{rate.toFixed(1)} {unit}</td>
                       <td className={n.Errors > 0 ? 'cell-error' : ''}>{n.Errors}</td>
                       <td>{(n.AvgLatency / 1e6).toFixed(2)} ms</td>
+                      <td>{unblockedFPS !== null ? `${unblockedFPS.toFixed(1)} ${unit}` : '—'}</td>
                     </tr>
                   );
                 })}
