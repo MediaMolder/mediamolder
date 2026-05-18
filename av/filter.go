@@ -10,6 +10,7 @@ package av
 // #include "libavutil/opt.h"
 // #include "libavutil/rational.h"
 // #include "libavcodec/avcodec.h"
+// #include "mm_thread_count.h"
 //
 // // Helper: build the buffersrc args string for a video stream.
 // static int make_video_src_args(char *buf, int buf_size,
@@ -75,6 +76,7 @@ type FilterGraph struct {
 	bufSrcs   []*C.AVFilterContext // one per input pad
 	bufSinks  []*C.AVFilterContext // one per output pad
 	mediaType MediaType
+	tctx      *C.mm_filter_tctx_t // nil when execute not available
 }
 
 // VideoFilterGraphConfig carries the parameters needed to build a video filter graph.
@@ -193,12 +195,15 @@ func NewVideoFilterGraph(cfg VideoFilterGraphConfig) (*FilterGraph, error) {
 		bufSrcs:   []*C.AVFilterContext{srcCtx},
 		bufSinks:  []*C.AVFilterContext{sinkCtx},
 		mediaType: MediaTypeVideo,
+		tctx:      C.mm_install_filter_tracker(graph),
 	}, nil
 }
 
 // Close frees the filter graph.
 func (fg *FilterGraph) Close() error {
 	if fg.graph != nil {
+		C.mm_filter_tctx_free(fg.graph, fg.tctx)
+		fg.tctx = nil
 		C.avfilter_graph_free(&fg.graph)
 		fg.graph = nil
 	}
@@ -437,6 +442,7 @@ func NewAudioFilterGraph(cfg AudioFilterGraphConfig) (*FilterGraph, error) {
 		bufSrcs:   []*C.AVFilterContext{srcCtx},
 		bufSinks:  []*C.AVFilterContext{sinkCtx},
 		mediaType: MediaTypeAudio,
+		tctx:      C.mm_install_filter_tracker(graph),
 	}, nil
 }
 
@@ -640,6 +646,7 @@ func NewComplexFilterGraph(cfg ComplexFilterGraphConfig) (*FilterGraph, error) {
 		bufSrcs:   bufSrcs,
 		bufSinks:  bufSinks,
 		mediaType: cfg.Inputs[0].MediaType,
+		tctx:      C.mm_install_filter_tracker(graph),
 	}, nil
 }
 
@@ -889,3 +896,5 @@ func NewSinkFilterGraph(cfg SinkFilterGraphConfig) (*FilterGraph, error) {
 // ThreadCount returns the maximum number of threads for this filter graph
 // (AVFilterGraph.nb_threads). 0 means auto / unset.
 func (fg *FilterGraph) ThreadCount() int { return int(fg.graph.nb_threads) }
+// the execute callback, or -1 if the graph does not use parallel execution.
+func (fg *FilterGraph) ThreadsBusy() int { return int(C.mm_filter_threads_busy(fg.tctx)) }

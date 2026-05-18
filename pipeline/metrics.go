@@ -233,20 +233,25 @@ type MetricsSnapshot struct {
 	// let a fast sink (e.g. AAC audio) report 100% before the slower
 	// video encoder is anywhere close to done.
 	OutputPTS time.Duration
+	// Perf holds per-node performance timing snapshots collected by the
+	// NodePerfTracker instances registered via RegisterPerfTracker.
+	Perf []NodePerfSnapshot
 }
 
 // MetricsRegistry tracks metrics for all nodes in a pipeline.
 type MetricsRegistry struct {
-	mu    sync.RWMutex
-	nodes map[string]*NodeMetrics
-	start time.Time
+	mu           sync.RWMutex
+	nodes        map[string]*NodeMetrics
+	perfTrackers map[string]*NodePerfTracker
+	start        time.Time
 }
 
 // NewMetricsRegistry creates a registry and records the start time.
 func NewMetricsRegistry() *MetricsRegistry {
 	return &MetricsRegistry{
-		nodes: make(map[string]*NodeMetrics),
-		start: time.Now(),
+		nodes:        make(map[string]*NodeMetrics),
+		perfTrackers: make(map[string]*NodePerfTracker),
+		start:        time.Now(),
 	}
 }
 
@@ -270,6 +275,14 @@ func (r *MetricsRegistry) Node(id string) *NodeMetrics {
 	return m
 }
 
+// RegisterPerfTracker associates a NodePerfTracker with the given node ID.
+// Subsequent Snapshot calls will include its NodePerfSnapshot in Perf.
+func (r *MetricsRegistry) RegisterPerfTracker(id string, t *NodePerfTracker) {
+	r.mu.Lock()
+	r.perfTrackers[id] = t
+	r.mu.Unlock()
+}
+
 // Snapshot returns a complete metrics snapshot.
 func (r *MetricsRegistry) Snapshot() MetricsSnapshot {
 	r.mu.RLock()
@@ -278,9 +291,13 @@ func (r *MetricsRegistry) Snapshot() MetricsSnapshot {
 	snap := MetricsSnapshot{
 		Elapsed: time.Since(r.start),
 		Nodes:   make([]NodeMetricsSnapshot, 0, len(r.nodes)),
+		Perf:    make([]NodePerfSnapshot, 0, len(r.perfTrackers)),
 	}
 	for _, m := range r.nodes {
 		snap.Nodes = append(snap.Nodes, m.Snapshot())
+	}
+	for _, t := range r.perfTrackers {
+		snap.Perf = append(snap.Perf, t.Snapshot())
 	}
 	// Aggregate media-time progress across all source nodes. Take the
 	// max so multi-input jobs report progress against the longest

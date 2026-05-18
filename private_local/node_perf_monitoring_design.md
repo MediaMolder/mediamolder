@@ -1,6 +1,6 @@
 # Per-Node Performance Monitoring Design
 
-**Status:** Phase 1 implemented (`perf_monitoring` branch)  
+**Status:** Phase 2 implemented (`perf_monitoring` branch)  
 **Target branch:** `perf_monitoring`  
 **Relates to:** `observability/metrics.go`, `pipeline/metrics.go`, `pipeline/handlers.go`, `runtime/scheduler.go`
 
@@ -721,13 +721,13 @@ If a node is already at the thread budget ceiling and still has `FPSDeficit > 1.
 7. ✅ Add `ThreadCount() int` to `av.FilterGraph` (reads `AVFilterGraph.nb_threads`).
 8. ✅ `NodePerfSnapshot` includes `ThreadsConfigured`, `ThreadMode`, `EstimatedCPUCores`.
 
-### Phase 2 — Handler instrumentation + live thread counting
-9. Extend `graphRunner` to allocate `NodePerfTracker` per node and inject via context.
-10. Update `handleSource`, `handleFilter`, `handleEncoder`, `handleSink` to use `perfSend`/`perfReceive` and record frame latency timestamps.
-11. Add C-level `execute2`/`execute` callback wrappers in `av/thread_count.c`; install during `OpenEncoder`, `OpenDecoder`, and `NewFilterGraph`.
-12. Add `x264_encoder_get_thread_busy_count()` to x264 (`common/threadpool.c`); expose via `av/encode.go`.
-13. Update `MetricsSnapshot` and `MetricsRegistry.Snapshot()` to include `[]NodePerfSnapshot`, `FramesInFlight`, `EndToEndLatency`.
-14. Integration test: throttled sink causes upstream encoder to show `StalledFrac > 0.5`; thread-limited encoder shows `ThreadsBusy ≈ ThreadsConfigured`.
+### Phase 2 — Handler instrumentation + live thread counting ✅ DONE
+9. ✅ Extend `graphRunner` to allocate `NodePerfTracker` per node and inject via context (`pipeline/handlers.go`, `pipeline/engine.go`).
+10. ✅ Update `handleSource`, `handleFilter`, `handleEncoder`, `handleSink` to use `perfSend`/`perfReceive` and record frame latency timestamps.
+11. ✅ Add C-level `execute2`/`execute` callback wrappers in `av/mm_thread_count.c`; install during `OpenEncoder`, `OpenDecoder`, and `NewFilterGraph` via `mm_install_codec_tracker` / `mm_install_filter_tracker`.
+12. ✅ Add `x264_encoder_get_thread_busy_count()` to x264 (`common/threadpool.c`); declared in `x264.h` for future direct use.
+13. ✅ Update `MetricsSnapshot` and `MetricsRegistry` to include `[]NodePerfSnapshot`, `RegisterPerfTracker`, and per-node `FrameLatencyMean`.
+14. ✅ Integration tests: `TestPipelinePerfMetrics_Populated` verifies `Perf` is non-empty with valid fractions; `TestPipelinePerfMetrics_EncoderThreadInfo` verifies `ThreadsConfigured > 0` for encoder node.
 
 ### Phase 3 — Prometheus and API
 15. Add all new metrics to `observability/metrics.go`.

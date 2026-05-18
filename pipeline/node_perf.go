@@ -54,9 +54,17 @@ type NodePerfTracker struct {
 	// EWMA of output queue fill fraction (α = 0.1).
 	queueFillEWMA float64
 
-	// Thread info, set externally after av contexts are opened (Phase 2).
+	// Thread info, set externally after av contexts are opened.
 	threadsConfigured int
 	threadMode        string
+	// threadsBusyFn, when non-nil, is called by Snapshot to obtain the live
+	// count of av tasks currently executing inside execute2/execute.  Set by
+	// runGraph after opening av contexts.
+	threadsBusyFn func() int
+
+	// EWMA of frame processing latency (nanoseconds), α = 0.1.
+	// Updated by RecordFrameLatency.
+	frameLatEWMA float64
 
 	// Timestamp ring buffer for windowed FPS.
 	// Stores Unix nanoseconds of the last perfTsBufSize RecordFrame calls.
@@ -166,7 +174,30 @@ func (t *NodePerfTracker) RecordFrame() {
 	t.mu.Unlock()
 }
 
-// RecordQueueFill updates the EWMA of the output channel fill fraction.
+// SetThreadBusyFn stores a function that returns the live count of tasks
+// currently executing inside the node's execute2/execute callback.
+// Replaces the −1 placeholder in NodePerfSnapshot.ThreadsBusy.
+func (t *NodePerfTracker) SetThreadBusyFn(fn func() int) {
+	if t == nil {
+		return
+	}
+	t.mu.Lock()
+	t.threadsBusyFn = fn
+	t.mu.Unlock()
+}
+
+// RecordFrameLatency updates the EWMA of per-frame processing latency.
+// d is the elapsed time from when the frame entered the node (perfReceive
+// returned) to when the last output derived from that frame was sent.
+func (t *NodePerfTracker) RecordFrameLatency(d time.Duration) {
+	if t == nil || d <= 0 {
+		return
+	}
+	const alpha = 0.1
+	t.mu.Lock()
+	t.frameLatEWMA = alpha*float64(d) + (1-alpha)*t.frameLatEWMA
+	t.mu.Unlock()
+}
 // qf should be len(ch)/cap(ch) sampled just before the send attempt.
 func (t *NodePerfTracker) RecordQueueFill(qf float64) {
 	if t == nil {
@@ -231,6 +262,11 @@ func (t *NodePerfTracker) Snapshot() NodePerfSnapshot {
 		deficit = t.fpsTarget - fps
 	}
 
+	threadsBusy := -1
+	if t.threadsBusyFn != nil {
+		threadsBusy = t.threadsBusyFn()
+	}
+
 	return NodePerfSnapshot{
 		NodeID:            t.nodeID,
 		FPS:               fps,
@@ -248,8 +284,9 @@ func (t *NodePerfTracker) Snapshot() NodePerfSnapshot {
 		Elapsed:           now.Sub(t.startTime),
 		ThreadsConfigured: t.threadsConfigured,
 		ThreadMode:        t.threadMode,
-		ThreadsBusy:       -1, // populated in Phase 2 via execute2 callback
+		ThreadsBusy:       threadsBusy,
 		EstimatedCPUCores: float64(t.threadsConfigured) * activeFrac,
+		FrameLatencyMean:  time.Duration(t.frameLatEWMA),
 	}
 }
 
@@ -284,13 +321,16 @@ type NodePerfSnapshot struct {
 	// Total elapsed wall-clock time since the node started.
 	Elapsed time.Duration
 
-	// Thread information. Populated from av package accessors in Phase 2.
-	// ThreadsConfigured and ThreadMode are zero/"n/a" until SetThreadInfo is called.
-	// ThreadsBusy is -1 until the execute2/execute callback wiring in Phase 2.
+	// Thread information. Populated from av package accessors via SetThreadInfo
+	// and SetThreadBusyFn.
 	ThreadsConfigured int     // libav configured thread count (0 = unknown/n/a)
 	ThreadMode        string  // "none", "frame", "slice", "auto", "n/a"
-	ThreadsBusy       int     // live tasks in-flight from execute2/execute callback
+	ThreadsBusy       int     // live tasks in-flight; -1 = not available
 	EstimatedCPUCores float64 // ThreadsConfigured × ActiveFrac; upper-bound estimate
+
+	// EWMA of frame processing latency (wall-clock time from perfReceive to
+	// last perfSend for a given frame).  Set by RecordFrameLatency.
+	FrameLatencyMean time.Duration
 }
 
 // --- context helpers ---
