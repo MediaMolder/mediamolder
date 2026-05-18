@@ -1,6 +1,6 @@
 # Per-Node Performance Monitoring Design
 
-**Status:** Phase 2 implemented (`perf_monitoring` branch)  
+**Status:** Phase 3 implemented (`perf_monitoring` branch)  
 **Target branch:** `perf_monitoring`  
 **Relates to:** `observability/metrics.go`, `pipeline/metrics.go`, `pipeline/handlers.go`, `runtime/scheduler.go`
 
@@ -729,10 +729,10 @@ If a node is already at the thread budget ceiling and still has `FPSDeficit > 1.
 13. ✅ Update `MetricsSnapshot` and `MetricsRegistry` to include `[]NodePerfSnapshot`, `RegisterPerfTracker`, and per-node `FrameLatencyMean`.
 14. ✅ Integration tests: `TestPipelinePerfMetrics_Populated` verifies `Perf` is non-empty with valid fractions; `TestPipelinePerfMetrics_EncoderThreadInfo` verifies `ThreadsConfigured > 0` for encoder node.
 
-### Phase 3 — Prometheus and API
-15. Add all new metrics to `observability/metrics.go`.
-16. Wire `MetricsEmitter` to populate all Prometheus gauges/histograms/counters.
-17. Add `mediamolder perf` CLI subcommand: live table of per-node state fractions, FPS, deficit, and thread stats.
+### Phase 3 — Prometheus and API ✅ DONE
+15. ✅ Add all new metrics to `observability/metrics.go`.
+16. ✅ Wire `MetricsEmitter` to populate all Prometheus gauges/histograms/counters.
+17. ✅ Add `mediamolder perf` CLI subcommand: live table of per-node state fractions, FPS, deficit, and thread stats.
 
 ### Phase 4 — GUI integration
 18. Expose `NodePerfSnapshot[]` via the HTTP metrics endpoint JSON response.

@@ -5,16 +5,28 @@ package observability
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
+	"sync"
 
+	"github.com/MediaMolder/MediaMolder/pipeline"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
+// stallDurationBuckets are the histogram buckets (seconds) for stall event
+// durations. Range: 1 ms – 500 ms, which covers typical media pipeline stalls.
+var stallDurationBuckets = []float64{0.001, 0.005, 0.010, 0.025, 0.050, 0.100, 0.250, 0.500}
+
+// frameLatencyBuckets are the histogram buckets (seconds) for per-frame
+// processing latency. Range: 1 ms – 500 ms.
+var frameLatencyBuckets = []float64{0.001, 0.005, 0.010, 0.025, 0.050, 0.100, 0.250, 0.500}
+
 // Metrics holds registered Prometheus metrics for a pipeline.
 type Metrics struct {
+	// Pre-existing metrics.
 	Fps           *prometheus.GaugeVec
 	BitrateBps    *prometheus.GaugeVec
 	NodeLatency   *prometheus.HistogramVec
@@ -24,7 +36,41 @@ type Metrics struct {
 	BytesTotal    *prometheus.CounterVec
 	PipelineState *prometheus.GaugeVec
 
+	// Phase 3: per-node state fractions.
+	NodeActiveFrac  *prometheus.GaugeVec
+	NodeIdleFrac    *prometheus.GaugeVec
+	NodeStalledFrac *prometheus.GaugeVec
+
+	// Phase 3: per-node stall events.
+	NodeStallDuration *prometheus.HistogramVec // distribution of per-snapshot max stall durations
+	NodeStallCount    *prometheus.CounterVec   // total stall events
+
+	// Phase 3: per-node throughput.
+	NodeFPS       *prometheus.GaugeVec
+	NodeFPSTarget *prometheus.GaugeVec
+	NodeFPSDeficit *prometheus.GaugeVec
+	NodeQueueFill *prometheus.GaugeVec
+
+	// Phase 3: per-node thread visibility.
+	NodeThreadsConfigured *prometheus.GaugeVec
+	NodeThreadsBusy       *prometheus.GaugeVec
+	NodeCPUCoresEstimated *prometheus.GaugeVec
+	NodeThreadRestarts    *prometheus.CounterVec // populated in Phase 5
+
+	// Phase 3: per-node frame latency.
+	NodeFrameLatency *prometheus.HistogramVec
+
+	// Phase 3: pipeline-level.
+	PipelineFramesInFlight    *prometheus.GaugeVec // populated in Phase 4/5
+	PipelineRealtimeSatisfied *prometheus.GaugeVec
+
 	registry *prometheus.Registry
+
+	// mu guards prevStallCount for counter delta computation.
+	// Update must be called from a single goroutine (e.g. MetricsEmitter's
+	// tick goroutine); the lock is present for defensive correctness.
+	mu             sync.Mutex
+	prevStallCount map[string]int64
 }
 
 // NewMetrics creates and registers all pipeline metrics.
@@ -33,7 +79,10 @@ func NewMetrics(pipelineID string) *Metrics {
 	constLabels := prometheus.Labels{"pipeline": pipelineID}
 
 	m := &Metrics{
-		registry: reg,
+		registry:       reg,
+		prevStallCount: make(map[string]int64),
+
+		// --- pre-existing ---
 
 		Fps: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Name:        "mediamolder_pipeline_fps",
@@ -83,11 +132,130 @@ func NewMetrics(pipelineID string) *Metrics {
 			Help:        "Current pipeline state (0=NULL, 1=READY, 2=PAUSED, 3=PLAYING).",
 			ConstLabels: constLabels,
 		}, []string{}),
+
+		// --- Phase 3: per-node state fractions ---
+
+		NodeActiveFrac: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name:        "mediamolder_node_active_fraction",
+			Help:        "Fraction of wall time the node spends in PROCESSING state.",
+			ConstLabels: constLabels,
+		}, []string{"node"}),
+
+		NodeIdleFrac: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name:        "mediamolder_node_idle_fraction",
+			Help:        "Fraction of wall time the node spends in IDLE state (waiting for input).",
+			ConstLabels: constLabels,
+		}, []string{"node"}),
+
+		NodeStalledFrac: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name:        "mediamolder_node_stalled_fraction",
+			Help:        "Fraction of wall time the node spends in STALLED state (output channel full).",
+			ConstLabels: constLabels,
+		}, []string{"node"}),
+
+		// --- Phase 3: per-node stall events ---
+
+		NodeStallDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Name:        "mediamolder_node_stall_duration_seconds",
+			Help:        "Distribution of per-snapshot maximum stall event durations in seconds.",
+			ConstLabels: constLabels,
+			Buckets:     stallDurationBuckets,
+		}, []string{"node"}),
+
+		NodeStallCount: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name:        "mediamolder_node_stall_count_total",
+			Help:        "Total number of stall events (blocked on full output channel) per node.",
+			ConstLabels: constLabels,
+		}, []string{"node"}),
+
+		// --- Phase 3: per-node throughput ---
+
+		NodeFPS: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name:        "mediamolder_node_fps",
+			Help:        "Windowed frames-per-second for this node.",
+			ConstLabels: constLabels,
+		}, []string{"node"}),
+
+		NodeFPSTarget: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name:        "mediamolder_node_fps_target",
+			Help:        "Configured FPS target for this node; 0 if no target is set.",
+			ConstLabels: constLabels,
+		}, []string{"node"}),
+
+		NodeFPSDeficit: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name:        "mediamolder_node_fps_deficit",
+			Help:        "fps_target − fps_actual; positive = falling behind; negative = headroom.",
+			ConstLabels: constLabels,
+		}, []string{"node"}),
+
+		NodeQueueFill: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name:        "mediamolder_node_queue_fill",
+			Help:        "EWMA of the output channel fill fraction at send time (0.0–1.0).",
+			ConstLabels: constLabels,
+		}, []string{"node"}),
+
+		// --- Phase 3: per-node thread visibility ---
+
+		NodeThreadsConfigured: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name:        "mediamolder_node_threads_configured",
+			Help:        "libav configured thread count for this node.",
+			ConstLabels: constLabels,
+		}, []string{"node", "thread_mode"}),
+
+		NodeThreadsBusy: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name:        "mediamolder_node_threads_busy",
+			Help:        "Live tasks in-flight from execute2/execute callback; omitted when unavailable.",
+			ConstLabels: constLabels,
+		}, []string{"node"}),
+
+		NodeCPUCoresEstimated: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name:        "mediamolder_node_cpu_cores_estimated",
+			Help:        "threads_configured × active_fraction; upper-bound CPU core estimate.",
+			ConstLabels: constLabels,
+		}, []string{"node"}),
+
+		NodeThreadRestarts: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name:        "mediamolder_node_thread_restarts_total",
+			Help:        "Number of graceful node restarts for thread reallocation (Phase 5).",
+			ConstLabels: constLabels,
+		}, []string{"node"}),
+
+		// --- Phase 3: per-node frame latency ---
+
+		NodeFrameLatency: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Name:        "mediamolder_node_frame_latency_seconds",
+			Help:        "Distribution of per-snapshot EWMA frame processing latency in seconds.",
+			ConstLabels: constLabels,
+			Buckets:     frameLatencyBuckets,
+		}, []string{"node"}),
+
+		// --- Phase 3: pipeline-level ---
+
+		PipelineFramesInFlight: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name:        "mediamolder_pipeline_frames_in_flight",
+			Help:        "Total frames buffered across all pipeline channels (populated in Phase 4).",
+			ConstLabels: constLabels,
+		}, []string{}),
+
+		PipelineRealtimeSatisfied: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name:        "mediamolder_pipeline_realtime_satisfied",
+			Help:        "1 if all nodes are meeting their fps_target, 0 otherwise.",
+			ConstLabels: constLabels,
+		}, []string{}),
 	}
 
 	reg.MustRegister(
+		// pre-existing
 		m.Fps, m.BitrateBps, m.NodeLatency, m.NodeBufFill,
 		m.ErrorsTotal, m.FramesTotal, m.BytesTotal, m.PipelineState,
+		// Phase 3
+		m.NodeActiveFrac, m.NodeIdleFrac, m.NodeStalledFrac,
+		m.NodeStallDuration, m.NodeStallCount,
+		m.NodeFPS, m.NodeFPSTarget, m.NodeFPSDeficit, m.NodeQueueFill,
+		m.NodeThreadsConfigured, m.NodeThreadsBusy, m.NodeCPUCoresEstimated,
+		m.NodeThreadRestarts,
+		m.NodeFrameLatency,
+		m.PipelineFramesInFlight, m.PipelineRealtimeSatisfied,
 	)
 
 	return m
@@ -98,9 +266,103 @@ func (m *Metrics) Registry() *prometheus.Registry {
 	return m.registry
 }
 
+// Update populates all Prometheus metrics from a pipeline MetricsSnapshot.
+// It should be called from a single goroutine (e.g. the MetricsEmitter tick
+// goroutine via SetSnapshotCallback). The internal mutex guards the
+// delta-tracking state; all prometheus operations are concurrency-safe.
+func (m *Metrics) Update(snap pipeline.MetricsSnapshot) {
+	// Pipeline-level state (prometheus methods are thread-safe; no lock needed).
+	m.PipelineState.WithLabelValues().Set(pipelineStateFloat(snap.State))
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	anyTarget := false
+	allMet := true
+
+	for _, p := range snap.Perf {
+		// Populate previously-registered-but-unpopulated placeholders.
+		m.Fps.WithLabelValues(p.NodeID, "all").Set(p.FPS)
+		m.NodeBufFill.WithLabelValues(p.NodeID).Set(p.QueueFillFrac)
+
+		// State fractions.
+		m.NodeActiveFrac.WithLabelValues(p.NodeID).Set(p.ActiveFrac)
+		m.NodeIdleFrac.WithLabelValues(p.NodeID).Set(p.IdleFrac)
+		m.NodeStalledFrac.WithLabelValues(p.NodeID).Set(p.StalledFrac)
+
+		// Throughput.
+		m.NodeFPS.WithLabelValues(p.NodeID).Set(p.FPS)
+		m.NodeFPSTarget.WithLabelValues(p.NodeID).Set(p.FPSTarget)
+		m.NodeFPSDeficit.WithLabelValues(p.NodeID).Set(p.FPSDeficit)
+		m.NodeQueueFill.WithLabelValues(p.NodeID).Set(p.QueueFillFrac)
+
+		// Thread visibility.
+		m.NodeThreadsConfigured.WithLabelValues(p.NodeID, p.ThreadMode).Set(float64(p.ThreadsConfigured))
+		if p.ThreadsBusy >= 0 {
+			m.NodeThreadsBusy.WithLabelValues(p.NodeID).Set(float64(p.ThreadsBusy))
+		}
+		m.NodeCPUCoresEstimated.WithLabelValues(p.NodeID).Set(p.EstimatedCPUCores)
+
+		// Frame latency: observe the EWMA as a histogram sample.
+		// Individual per-frame observations require a direct callback; the EWMA
+		// gives a distribution of the smoothed latency over the pipeline run.
+		if p.FrameLatencyMean > 0 {
+			secs := p.FrameLatencyMean.Seconds()
+			m.NodeLatency.WithLabelValues(p.NodeID, "all").Observe(secs)
+			m.NodeFrameLatency.WithLabelValues(p.NodeID).Observe(secs)
+		}
+
+		// Stall duration: observe the per-snapshot maximum as a histogram sample.
+		if p.MaxStallDuration > 0 {
+			m.NodeStallDuration.WithLabelValues(p.NodeID).Observe(p.MaxStallDuration.Seconds())
+		}
+
+		// Stall count counter: compute delta from previous snapshot.
+		delta := p.StallCount - m.prevStallCount[p.NodeID]
+		if delta > 0 {
+			m.NodeStallCount.WithLabelValues(p.NodeID).Add(float64(delta))
+		}
+		m.prevStallCount[p.NodeID] = p.StallCount
+
+		// Real-time satisfied flag.
+		if p.FPSTarget > 0 {
+			anyTarget = true
+			if p.FPSDeficit > 0.5 {
+				allMet = false
+			}
+		}
+	}
+
+	if anyTarget {
+		satisfied := 0.0
+		if allMet {
+			satisfied = 1.0
+		}
+		m.PipelineRealtimeSatisfied.WithLabelValues().Set(satisfied)
+	}
+}
+
+// pipelineStateFloat converts a pipeline State string to its numeric encoding:
+// 0=null, 1=ready, 2=paused, 3=playing, -1=unknown.
+func pipelineStateFloat(s string) float64 {
+	switch s {
+	case "null", "NULL", "Null":
+		return 0
+	case "ready", "READY", "Ready":
+		return 1
+	case "paused", "PAUSED", "Paused":
+		return 2
+	case "playing", "PLAYING", "Playing":
+		return 3
+	default:
+		return -1
+	}
+}
+
 // MetricsServer serves Prometheus metrics on an HTTP endpoint.
 type MetricsServer struct {
 	server *http.Server
+	mux    *http.ServeMux
 }
 
 // NewMetricsServer creates a new metrics server.
@@ -113,11 +375,25 @@ func NewMetricsServer(addr string, registry *prometheus.Registry) *MetricsServer
 	})
 
 	return &MetricsServer{
+		mux: mux,
 		server: &http.Server{
 			Addr:    addr,
 			Handler: mux,
 		},
 	}
+}
+
+// RegisterPerfHandler adds a /perf endpoint that serves a live
+// pipeline.MetricsSnapshot encoded as JSON. snapFn is called on each request.
+// Must be called before Start.
+func (s *MetricsServer) RegisterPerfHandler(snapFn func() pipeline.MetricsSnapshot) {
+	s.mux.HandleFunc("/perf", func(w http.ResponseWriter, r *http.Request) {
+		snap := snapFn()
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		if err := json.NewEncoder(w).Encode(snap); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
+	})
 }
 
 // Start begins serving metrics. It binds to the address and returns the

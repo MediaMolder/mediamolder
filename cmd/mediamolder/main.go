@@ -22,6 +22,11 @@ import (
 )
 
 func main() {
+	// perf subcommand handled before the main CLI dispatcher.
+	if len(os.Args) >= 2 && os.Args[1] == "perf" {
+		runPerf(os.Args[2:])
+		return
+	}
 	if err := run(os.Args[1:]); err != nil {
 		fmt.Fprintf(os.Stderr, "mediamolder: %v\n", err)
 		os.Exit(1)

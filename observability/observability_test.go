@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"testing"
 	"time"
+
+	"github.com/MediaMolder/MediaMolder/pipeline"
 )
 
 func TestNewMetrics(t *testing.T) {
@@ -24,6 +26,60 @@ func TestNewMetrics(t *testing.T) {
 	if m.Registry() == nil {
 		t.Error("Registry should not be nil")
 	}
+	// Phase 3 metrics.
+	if m.NodeActiveFrac == nil {
+		t.Error("NodeActiveFrac should be registered")
+	}
+	if m.NodeFPS == nil {
+		t.Error("NodeFPS should be registered")
+	}
+	if m.NodeFrameLatency == nil {
+		t.Error("NodeFrameLatency should be registered")
+	}
+	if m.NodeThreadsConfigured == nil {
+		t.Error("NodeThreadsConfigured should be registered")
+	}
+	if m.PipelineRealtimeSatisfied == nil {
+		t.Error("PipelineRealtimeSatisfied should be registered")
+	}
+}
+
+func TestMetricsUpdate(t *testing.T) {
+	m := NewMetrics("upd-test")
+
+	snap := pipeline.MetricsSnapshot{
+		State:   "playing",
+		Elapsed: 2 * time.Second,
+		Perf: []pipeline.NodePerfSnapshot{
+			{
+				NodeID:            "enc0",
+				FPS:               28.5,
+				FPSTarget:         30.0,
+				FPSDeficit:        1.5,
+				ActiveFrac:        0.92,
+				IdleFrac:          0.05,
+				StalledFrac:       0.03,
+				StallCount:        4,
+				MaxStallDuration:  12 * time.Millisecond,
+				QueueFillFrac:     0.4,
+				ThreadsConfigured: 4,
+				ThreadMode:        "slice",
+				ThreadsBusy:       3,
+				EstimatedCPUCores: 3.68,
+				FrameLatencyMean:  8 * time.Millisecond,
+			},
+		},
+	}
+
+	// First call: should not panic or error.
+	m.Update(snap)
+
+	// Second call with incremented stall count: delta should be positive.
+	snap.Perf[0].StallCount = 7
+	m.Update(snap)
+
+	// Third call with same stall count: delta should be zero (no double-count).
+	m.Update(snap)
 }
 
 func TestMetricsServerStartStop(t *testing.T) {
