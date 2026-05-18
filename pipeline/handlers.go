@@ -185,6 +185,7 @@ type graphRunner struct {
 	filters      map[string]*av.FilterGraph
 	encoders     map[string]*av.EncoderContext
 	sinks        map[string]*sinkResources
+	trackers     map[string]*NodePerfTracker
 	goProcessors map[string]processors.Processor
 	// encoderOpts stores the EncoderOptions used to open each encoder,
 	// keyed by encoder node ID. Populated by createEncoder alongside
@@ -215,6 +216,7 @@ func newGraphRunner(cfg *Config, pipe *Pipeline) *graphRunner {
 		encoders:     make(map[string]*av.EncoderContext),
 		encoderOpts:  make(map[string]av.EncoderOptions),
 		sinks:        make(map[string]*sinkResources),
+		trackers:     make(map[string]*NodePerfTracker),
 		goProcessors: make(map[string]processors.Processor),
 		passLogFiles: make(map[string]*os.File),
 		hwDevices:    make(map[string]*av.HWDeviceContext),
@@ -288,6 +290,9 @@ func (r *graphRunner) close() {
 // handle dispatches to the appropriate per-kind handler.
 // It implements runtime.NodeHandler.
 func (r *graphRunner) handle(ctx context.Context, node *graph.Node, ins []<-chan any, outs []chan<- any) error {
+	if t := r.trackers[node.ID]; t != nil {
+		ctx = withPerfTracker(ctx, t)
+	}
 	switch node.Kind {
 	case graph.KindSource:
 		return r.handleSource(ctx, node, outs)

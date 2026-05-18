@@ -1038,7 +1038,34 @@ func (p *Pipeline) runGraph(ctx context.Context) (runErr error) {
 	p.reconf = reconf
 	p.mu.Unlock()
 
-	// 4. Run the scheduler — one goroutine per node, channels per edge.
+	// 2b. Create per-node performance trackers and register with metrics.
+	for _, node := range dag.Order {
+		tr := NewNodePerfTracker(node.ID, 0)
+		switch node.Kind {
+		case graph.KindSource:
+			if src := runner.sources[node.ID]; src != nil {
+				for _, dec := range src.decoders {
+					tr.SetThreadInfo(dec.ThreadCount(), threadModeString(dec.ActiveThreadType()))
+					tr.SetThreadBusyFn(dec.ThreadsBusy)
+					break
+				}
+			}
+		case graph.KindFilter:
+			if fg := runner.filters[node.ID]; fg != nil {
+				tr.SetThreadInfo(fg.ThreadCount(), "auto")
+				tr.SetThreadBusyFn(fg.ThreadsBusy)
+			}
+		case graph.KindEncoder:
+			if enc := runner.encoders[node.ID]; enc != nil {
+				tr.SetThreadInfo(enc.ThreadCount(), threadModeString(enc.ActiveThreadType()))
+				tr.SetThreadBusyFn(enc.ThreadsBusy)
+			}
+		}
+		runner.trackers[node.ID] = tr
+		p.metrics.RegisterPerfTracker(node.ID, tr)
+	}
+
+	// 3. Run the scheduler — one goroutine per node, channels per edge.
 	edgeStats := runtime.NewEdgeStatsRegistry()
 	p.mu.Lock()
 	p.edgeStats = edgeStats
@@ -1076,4 +1103,23 @@ func (p *Pipeline) runGraph(ctx context.Context) (runErr error) {
 		}
 	}
 	return nil
+}
+
+// threadModeString converts an AVCodecContext.active_thread_type bitmask to a
+// human-readable label.  Values map to FFmpeg's FF_THREAD_* constants:
+//
+//	0 = FF_THREAD_NONE  → "none"
+//	1 = FF_THREAD_FRAME → "frame"
+//	2 = FF_THREAD_SLICE → "slice"
+func threadModeString(active int) string {
+	switch active {
+	case 1:
+		return "frame"
+	case 2:
+		return "slice"
+	case 0:
+		return "none"
+	default:
+		return "unknown"
+	}
 }

@@ -8,6 +8,7 @@ package av
 // #include "libavutil/mem.h"
 // #include "libavutil/opt.h"
 // #include "libavutil/pixdesc.h"
+// #include "mm_thread_count.h"
 //
 // // set_stats_in copies a Go-supplied stats buffer into an av_malloc'd
 // // C string and assigns it to ctx->stats_in. The encoder takes ownership
@@ -125,7 +126,8 @@ type EncoderOptions struct {
 // EncoderContext wraps an AVCodecContext configured for encoding.
 // It must be closed via Close().
 type EncoderContext struct {
-	p *C.AVCodecContext
+	p    *C.AVCodecContext
+	tctx *C.mm_codec_tctx_t // nil when execute2 not available
 }
 
 // OpenEncoder creates and opens an encoder from the given options.
@@ -250,14 +252,17 @@ func OpenEncoder(opts EncoderOptions) (*EncoderContext, error) {
 		return nil, fmt.Errorf("avcodec_open2(%s): %w", opts.CodecName, newErr(ret))
 	}
 
+	tctx := C.mm_install_codec_tracker(ctx)
 	leakTrack(unsafe.Pointer(ctx), "AVCodecContext(encoder:"+opts.CodecName+")")
-	return &EncoderContext{p: ctx}, nil
+	return &EncoderContext{p: ctx, tctx: tctx}, nil
 }
 
 // Close frees the encoder context.
 func (e *EncoderContext) Close() error {
 	if e.p != nil {
 		leakUntrack(unsafe.Pointer(e.p))
+		C.mm_codec_tctx_free(e.p, e.tctx)
+		e.tctx = nil
 		C.avcodec_free_context(&e.p)
 		e.p = nil
 	}
@@ -340,6 +345,10 @@ func (e *EncoderContext) Width() int { return int(e.p.width) }
 
 // Height returns the coded height the encoder was opened with.
 func (e *EncoderContext) Height() int { return int(e.p.height) }
+
+// ThreadsBusy returns the number of encode slice tasks currently executing
+// inside execute2, or -1 if slice-threading is not in use for this encoder.
+func (e *EncoderContext) ThreadsBusy() int { return int(C.mm_codec_threads_busy(e.tctx)) }
 
 // raw returns the underlying C pointer. For use within the av package only.
 func (e *EncoderContext) raw() *C.AVCodecContext { return e.p }

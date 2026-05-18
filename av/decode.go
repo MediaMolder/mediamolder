@@ -5,6 +5,7 @@ package av
 
 // #include "libavcodec/avcodec.h"
 // #include "libavformat/avformat.h"
+// #include "mm_thread_count.h"
 //
 // static AVCodecParameters *get_codecpar(AVFormatContext *ctx, int stream_index) {
 //     return ctx->streams[stream_index]->codecpar;
@@ -24,6 +25,7 @@ import (
 type DecoderContext struct {
 	p           *C.AVCodecContext
 	streamIndex int
+	tctx        *C.mm_codec_tctx_t // nil when execute2 not available
 }
 
 // FrameDecoder is the common interface satisfied by both DecoderContext
@@ -91,14 +93,17 @@ func OpenDecoderWithOptions(input *InputFormatContext, streamIndex int, opts Dec
 		return nil, fmt.Errorf("avcodec_open2: %w", newErr(ret))
 	}
 
+	tctx := C.mm_install_codec_tracker(ctx)
 	leakTrack(unsafe.Pointer(ctx), "AVCodecContext(decoder)")
-	return &DecoderContext{p: ctx, streamIndex: streamIndex}, nil
+	return &DecoderContext{p: ctx, streamIndex: streamIndex, tctx: tctx}, nil
 }
 
 // Close frees the decoder context.
 func (d *DecoderContext) Close() error {
 	if d.p != nil {
 		leakUntrack(unsafe.Pointer(d.p))
+		C.mm_codec_tctx_free(d.p, d.tctx)
+		d.tctx = nil
 		C.avcodec_free_context(&d.p)
 		d.p = nil
 	}
@@ -167,3 +172,7 @@ func parseThreadType(s string) int {
 		return 0
 	}
 }
+
+// ThreadsBusy returns the number of decode slice tasks currently executing
+// inside execute2, or -1 if slice-threading is not in use for this decoder.
+func (d *DecoderContext) ThreadsBusy() int { return int(C.mm_codec_threads_busy(d.tctx)) }
