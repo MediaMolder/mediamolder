@@ -1,0 +1,158 @@
+/* ── Design tokens ────────────────────────────────────────────────────────── */
+:root {
+  --mm-green:  #22c55e;   /* processing / active */
+  --mm-yellow: #eab308;   /* idle / mild deficit  */
+  --mm-red:    #ef4444;   /* stalled / high deficit */
+  --mm-bg:     #0f172a;
+  --mm-surface: #1e293b;
+  --mm-border: #334155;
+  --mm-text:   #e2e8f0;
+  --mm-muted:  #94a3b8;
+  --mm-accent: #6366f1;
+}
+
+/* ── Reset ────────────────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  background: var(--mm-bg);
+  color: var(--mm-text);
+  font-family: ui-monospace, 'Cascadia Code', 'Source Code Pro', Menlo, monospace;
+  font-size: 13px;
+  height: 100dvh;
+  overflow: hidden;
+}
+
+/* ── Layout ───────────────────────────────────────────────────────────────── */
+.mm-root {
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+}
+
+.mm-header {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  background: var(--mm-surface);
+  border-bottom: 1px solid var(--mm-border);
+  user-select: none;
+}
+
+.mm-title  { font-weight: 700; font-size: 15px; letter-spacing: 0.02em; }
+.mm-subtitle { color: var(--mm-muted); font-size: 12px; }
+
+.mm-status-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+.mm-status-live { background: var(--mm-green); box-shadow: 0 0 6px var(--mm-green); }
+.mm-status-wait { background: var(--mm-muted); }
+
+.mm-status-label { font-size: 11px; color: var(--mm-muted); }
+
+.mm-canvas { flex: 1 1 auto; position: relative; }
+
+/* ── Waiting overlay ──────────────────────────────────────────────────────── */
+.mm-overlay-hint {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: rgba(15, 23, 42, 0.75);
+  backdrop-filter: blur(4px);
+  pointer-events: none;
+  z-index: 10;
+}
+.mm-overlay-hint p    { color: var(--mm-text); }
+.mm-overlay-hint code { color: var(--mm-accent); font-size: 12px; }
+.mm-hint-sub { color: var(--mm-muted); font-size: 12px; max-width: 480px; text-align: center; }
+
+/* ── React Flow overrides ─────────────────────────────────────────────────── */
+.react-flow__renderer { background: var(--mm-bg); }
+.react-flow__minimap  { background: var(--mm-surface); border: 1px solid var(--mm-border); border-radius: 6px; }
+.react-flow__controls { background: var(--mm-surface); border: 1px solid var(--mm-border); border-radius: 6px; }
+.react-flow__controls-button {
+  background: var(--mm-surface);
+  border-bottom: 1px solid var(--mm-border);
+  color: var(--mm-text);
+  fill: var(--mm-text);
+}
+.react-flow__controls-button:hover { background: var(--mm-border); }
+
+/* ── PerfNode ─────────────────────────────────────────────────────────────── */
+.mm-node {
+  background: var(--mm-surface);
+  border: 1px solid var(--mm-border);
+  border-radius: 8px;
+  width: 220px;
+  padding: 8px 10px;
+  font-family: inherit;
+  cursor: default;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+  transition: border-color 0.15s;
+}
+.mm-node:hover { border-color: var(--mm-accent); }
+
+.mm-node-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 6px;
+}
+
+.mm-node-id {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--mm-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 120px;
+}
+
+.mm-fps-badge {
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.mm-fps-target { color: var(--mm-muted); font-weight: 400; font-size: 11px; }
+.mm-deficit-badge { font-size: 11px; }
+
+/* Activity bar ── three segments that always sum to 100 % */
+.mm-activity-bar {
+  display: flex;
+  height: 8px;
+  border-radius: 4px;
+  overflow: hidden;
+  background: var(--mm-border);
+  margin-bottom: 6px;
+}
+.mm-bar-seg { height: 100%; transition: width 0.4s ease; }
+.mm-bar-active  { background: var(--mm-green); }
+.mm-bar-idle    { background: var(--mm-yellow); }
+.mm-bar-stalled { background: var(--mm-red); }
+
+/* Stats row */
+.mm-stats-row {
+  display: flex;
+  gap: 10px;
+  color: var(--mm-muted);
+  font-size: 11px;
+}
+.mm-stats-row span { white-space: nowrap; }
+
+/* React Flow handles */
+.react-flow__handle {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--mm-accent);
+  border: 2px solid var(--mm-surface);
+}

@@ -18,6 +18,19 @@ export default defineConfig({
         changeOrigin: true,
         ws: true,
       },
+      // Proxy perf/metrics endpoints to the metrics server during local dev.
+      '/perf': {
+        target: 'http://localhost:9090',
+        changeOrigin: true,
+      },
+      '/metrics': {
+        target: 'http://localhost:9090',
+        changeOrigin: true,
+      },
+      '/health': {
+        target: 'http://localhost:9090',
+        changeOrigin: true,
+      },
     },
   },
 });
