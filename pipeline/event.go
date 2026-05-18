@@ -103,6 +103,7 @@ type MetricsEmitter struct {
 	prom      *observability.Metrics         // nil = no Prometheus export
 	edgeStats *runtime.EdgeStatsRegistry     // nil = no backpressure bridge
 	prev      map[string]NodeMetricsSnapshot // previous snapshot for delta tracking
+	onSnapshot func(MetricsSnapshot)         // optional; called after each tick
 	cancel    context.CancelFunc
 	done      chan struct{}
 }
@@ -140,6 +141,17 @@ func WithEdgeStats(es *runtime.EdgeStatsRegistry) MetricsEmitterOption {
 	return func(m *MetricsEmitter) { m.edgeStats = es }
 }
 
+// SetSnapshotCallback registers fn to be called after each tick with the
+// current MetricsSnapshot. Typical use is to wire a Prometheus Metrics
+// instance:
+//
+//	emitter.SetSnapshotCallback(obsMetrics.Update)
+//
+// Must be called before Start.
+func (m *MetricsEmitter) SetSnapshotCallback(fn func(MetricsSnapshot)) {
+	m.onSnapshot = fn
+}
+
 // Start begins emitting periodic metrics snapshots.
 func (m *MetricsEmitter) Start() {
 	ctx, cancel := context.WithCancel(context.Background())
@@ -159,6 +171,9 @@ func (m *MetricsEmitter) Start() {
 					Time:     time.Now(),
 				})
 				m.updatePrometheus(snap)
+				if m.onSnapshot != nil {
+					m.onSnapshot(snap)
+				}
 			case <-ctx.Done():
 				return
 			}
