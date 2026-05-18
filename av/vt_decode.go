@@ -444,6 +444,15 @@ func (d *VTDecoderContext) Close() error {
 	return nil
 }
 
+// ThreadCount returns 0 — VT decoders do not use libavcodec thread pools.
+func (d *VTDecoderContext) ThreadCount() int { return 0 }
+
+// ActiveThreadType returns 0 — not applicable for VT decoders.
+func (d *VTDecoderContext) ActiveThreadType() int { return 0 }
+
+// ThreadsBusy returns -1 — thread-busy tracking is not available for VT decoders.
+func (d *VTDecoderContext) ThreadsBusy() int { return -1 }
+
 // newVTDecoderForCodec creates a VTDecoderContext from a raw codec type and
 // dimensions, bypassing InputFormatContext.  Used only by package tests.
 func newVTDecoderForCodec(codecTag uint32, width, height int) (*VTDecoderContext, error) {

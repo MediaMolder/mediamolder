@@ -37,6 +37,14 @@ type FrameDecoder interface {
 	ReceiveFrame(f *Frame) error
 	Flush() error
 	Close() error
+	// ThreadCount returns the number of codec threads (0 = unknown).
+	ThreadCount() int
+	// ActiveThreadType returns the active threading method (AV_THREAD_TYPE_*).
+	// Returns 0 for HW/VT decoders that do not use libavcodec threads.
+	ActiveThreadType() int
+	// ThreadsBusy returns the number of decode tasks currently in-flight;
+	// -1 means not available (e.g. hardware or VideoToolbox decoders).
+	ThreadsBusy() int
 }
 
 // DecoderOptions configures optional decoder parameters.

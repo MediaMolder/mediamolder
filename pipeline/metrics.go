@@ -8,6 +8,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/MediaMolder/MediaMolder/pipeline/snap"
 )
 
 // NodeMetrics holds per-node performance counters. Fields are updated
@@ -193,50 +195,10 @@ func (m *NodeMetrics) Snapshot() NodeMetricsSnapshot {
 }
 
 // NodeMetricsSnapshot is a read-only copy of node metrics at a point in time.
-type NodeMetricsSnapshot struct {
-	NodeID     string
-	Frames     int64
-	Errors     int64
-	Bytes      int64
-	FPS        float64
-	Elapsed    time.Duration
-	AvgLatency time.Duration
-	MaxLatency time.Duration
-	// MediaPTS is the latest input timestamp this node has read
-	// (source nodes only; 0 elsewhere). MediaDuration is the total
-	// known input duration (0 for live / unknown).
-	MediaPTS      time.Duration
-	MediaDuration time.Duration
-	// OutputPTS is the latest output timestamp written by this node
-	// (sink nodes only; 0 elsewhere). It reflects how much media has
-	// actually been encoded + muxed, which is what the GUI uses for
-	// progress/speed/ETA.
-	OutputPTS time.Duration
-}
+type NodeMetricsSnapshot = snap.NodeMetricsSnapshot
 
 // MetricsSnapshot is a complete metrics snapshot for the pipeline.
-type MetricsSnapshot struct {
-	State   string
-	Elapsed time.Duration
-	Nodes   []NodeMetricsSnapshot
-	// MediaPTS / MediaDuration are aggregated across all source nodes
-	// (max of per-source values), giving the GUI a single
-	// "how-far-through-the-input" pair without needing to know which
-	// node is the source. MediaDuration is 0 when no input declares
-	// one (live streams).
-	MediaPTS      time.Duration
-	MediaDuration time.Duration
-	// OutputPTS is the slowest sink's latest output timestamp (min
-	// over sinks that have started writing). It tracks how much
-	// media has actually been written by every output and is the
-	// basis for progress/speed/ETA in the GUI — using max here would
-	// let a fast sink (e.g. AAC audio) report 100% before the slower
-	// video encoder is anywhere close to done.
-	OutputPTS time.Duration
-	// Perf holds per-node performance timing snapshots collected by the
-	// NodePerfTracker instances registered via RegisterPerfTracker.
-	Perf []NodePerfSnapshot
-}
+type MetricsSnapshot = snap.MetricsSnapshot
 
 // MetricsRegistry tracks metrics for all nodes in a pipeline.
 type MetricsRegistry struct {
