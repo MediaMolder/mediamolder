@@ -281,7 +281,12 @@ func (r *graphRunner) handleSink(ctx context.Context, node *graph.Node, ins []<-
 			dstTB = rs.dstTB
 		}
 		st := &chanState{}
-		for v := range ins[0] {
+			t := perfTrackerFrom(ctx)
+			for {
+				v, cancelled := perfReceive(ctx, ins[0], t)
+				if cancelled {
+					break
+				}
 			pkt := v.(*av.Packet)
 			if sink.stopAll.Load() {
 				pkt.Close()

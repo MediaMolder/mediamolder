@@ -46,6 +46,7 @@ type encoderSession struct {
 	// Set to zero after the first-frame check to skip on subsequent frames.
 	encOpts    av.EncoderOptions
 	checkedDim bool
+	perf       *NodePerfTracker // nil when no perf tracking is active
 }
 
 // newEncoderSession creates an encoderSession for the given encoder node,
@@ -85,6 +86,7 @@ func (r *graphRunner) newEncoderSession(node *graph.Node, enc *av.EncoderContext
 		nodeID:  node.ID,
 		pipe:    r.pipe,
 		encOpts: encOpts,
+		perf:    r.trackers[node.ID],
 	}, nil
 }
 
@@ -161,7 +163,12 @@ func (s *encoderSession) sendOne(ctx context.Context, f *av.Frame) error {
 // fpsRewriter (CFR gap-fill / drop), calls sendOne for each output frame,
 // then flushes the encoder.
 func (s *encoderSession) run(ctx context.Context, in <-chan any) error {
-	for v := range in {
+	for {
+		v, cancelled := perfReceive(ctx, in, s.perf)
+		if cancelled {
+			break
+		}
+		recv := time.Now()
 		f := v.(*av.Frame)
 
 		// On the first video frame, verify the encoder was opened with the
@@ -186,13 +193,13 @@ func (s *encoderSession) run(ctx context.Context, in <-chan any) error {
 			}
 		}
 
-		frameStart := time.Now()
-
+		// No fpsRewriter: just use recv directly.
 		if s.fpsRW != nil {
 			emit, basePTS, drop := s.fpsRW.rewrite(f.PTS())
 			if drop || emit == 0 {
 				f.Close()
-				s.pipe.Metrics().Node(s.nodeID).RecordLatency(time.Since(frameStart))
+				s.pipe.Metrics().Node(s.nodeID).RecordLatency(time.Since(recv))
+				s.perf.RecordFrameLatency(time.Since(recv))
 				continue
 			}
 			// Fast path: single emission, no clone.
@@ -203,7 +210,8 @@ func (s *encoderSession) run(ctx context.Context, in <-chan any) error {
 					return err
 				}
 				f.Close()
-				s.pipe.Metrics().Node(s.nodeID).RecordLatency(time.Since(frameStart))
+				s.pipe.Metrics().Node(s.nodeID).RecordLatency(time.Since(recv))
+				s.perf.RecordFrameLatency(time.Since(recv))
 				continue
 			}
 			// CFR forward-gap fill: emit `emit` copies at basePTS,
@@ -229,7 +237,8 @@ func (s *encoderSession) run(ctx context.Context, in <-chan any) error {
 				return err
 			}
 			f.Close()
-			s.pipe.Metrics().Node(s.nodeID).RecordLatency(time.Since(frameStart))
+			s.pipe.Metrics().Node(s.nodeID).RecordLatency(time.Since(recv))
+			s.perf.RecordFrameLatency(time.Since(recv))
 			continue
 		}
 
@@ -238,9 +247,13 @@ func (s *encoderSession) run(ctx context.Context, in <-chan any) error {
 			return err
 		}
 		f.Close()
-		s.pipe.Metrics().Node(s.nodeID).RecordLatency(time.Since(frameStart))
+		s.pipe.Metrics().Node(s.nodeID).RecordLatency(time.Since(recv))
+		s.perf.RecordFrameLatency(time.Since(recv))
 	}
 
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
 	if err := s.enc.Flush(); err != nil && !av.IsEOF(err) && !av.IsEAgain(err) {
 		return err
 	}

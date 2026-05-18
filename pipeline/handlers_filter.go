@@ -39,6 +39,8 @@ func (r *graphRunner) handleFilter(ctx context.Context, node *graph.Node, ins []
 
 	// Multi-input / multi-output: serialise all filter-graph operations
 	// through a single goroutine to satisfy FFmpeg's thread-safety contract.
+	t := perfTrackerFrom(ctx)
+
 	type filterMsg struct {
 		padIdx int
 		frame  *av.Frame // nil = this input is exhausted
@@ -77,9 +79,7 @@ func (r *graphRunner) handleFilter(ctx context.Context, node *graph.Node, ins []
 					}
 					return err
 				}
-				select {
-				case outs[oi] <- f:
-				case <-ctx.Done():
+				if perfSend(ctx, outs[oi], f, t) {
 					f.Close()
 					return ctx.Err()
 				}
@@ -88,7 +88,24 @@ func (r *graphRunner) handleFilter(ctx context.Context, node *graph.Node, ins []
 		return nil
 	}
 
-	for msg := range msgCh {
+	for {
+		var msg filterMsg
+		var ok bool
+		select {
+		case msg, ok = <-msgCh:
+		default:
+			t.BeginIdle()
+			select {
+			case msg, ok = <-msgCh:
+				t.EndIdle()
+			case <-ctx.Done():
+				t.EndIdle()
+				return ctx.Err()
+			}
+		}
+		if !ok {
+			break
+		}
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
@@ -135,9 +152,7 @@ func (r *graphRunner) handleFilter(ctx context.Context, node *graph.Node, ins []
 				}
 				return err
 			}
-			select {
-			case outs[oi] <- f:
-			case <-ctx.Done():
+			if perfSend(ctx, outs[oi], f, t) {
 				f.Close()
 				return ctx.Err()
 			}
@@ -148,6 +163,7 @@ func (r *graphRunner) handleFilter(ctx context.Context, node *graph.Node, ins []
 
 // handleSimpleFilter processes a single-input single-output filter chain.
 func (r *graphRunner) handleSimpleFilter(ctx context.Context, node *graph.Node, fg *av.FilterGraph, in <-chan any, out chan<- any) error {
+	t := perfTrackerFrom(ctx)
 	pull := func() error {
 		for {
 			f, err := av.AllocFrame()
@@ -161,18 +177,20 @@ func (r *graphRunner) handleSimpleFilter(ctx context.Context, node *graph.Node, 
 				}
 				return err
 			}
-			select {
-			case out <- f:
-			case <-ctx.Done():
+			if perfSend(ctx, out, f, t) {
 				f.Close()
 				return ctx.Err()
 			}
 		}
 	}
 
-	for v := range in {
+	for {
+		v, cancelled := perfReceive(ctx, in, t)
+		if cancelled {
+			break
+		}
+		recv := time.Now()
 		f := v.(*av.Frame)
-		frameStart := time.Now()
 		if err := fg.PushFrame(f); err != nil {
 			f.Close()
 			return err
@@ -181,9 +199,13 @@ func (r *graphRunner) handleSimpleFilter(ctx context.Context, node *graph.Node, 
 		if err := pull(); err != nil {
 			return err
 		}
-		r.pipe.Metrics().Node(node.ID).RecordLatency(time.Since(frameStart))
+		t.RecordFrameLatency(time.Since(recv))
+		r.pipe.Metrics().Node(node.ID).RecordLatency(time.Since(recv))
 	}
 
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
 	// Flush and drain.
 	if err := fg.Flush(); err != nil && !av.IsEOF(err) {
 		return err
