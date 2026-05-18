@@ -200,6 +200,7 @@ func (t *NodePerfTracker) RecordFrameLatency(d time.Duration) {
 	t.frameLatEWMA = alpha*float64(d) + (1-alpha)*t.frameLatEWMA
 	t.mu.Unlock()
 }
+
 // qf should be len(ch)/cap(ch) sampled just before the send attempt.
 func (t *NodePerfTracker) RecordQueueFill(qf float64) {
 	if t == nil {

@@ -47,10 +47,10 @@ type Metrics struct {
 	NodeStallCount    *prometheus.CounterVec   // total stall events
 
 	// Phase 3: per-node throughput.
-	NodeFPS       *prometheus.GaugeVec
-	NodeFPSTarget *prometheus.GaugeVec
+	NodeFPS        *prometheus.GaugeVec
+	NodeFPSTarget  *prometheus.GaugeVec
 	NodeFPSDeficit *prometheus.GaugeVec
-	NodeQueueFill *prometheus.GaugeVec
+	NodeQueueFill  *prometheus.GaugeVec
 
 	// Phase 3: per-node thread visibility.
 	NodeThreadsConfigured *prometheus.GaugeVec

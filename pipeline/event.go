@@ -96,16 +96,16 @@ func (ProcessorMetadata) eventTag() {}
 // MetricsEmitter periodically posts MetricsSnapshotEvent to the event bus
 // and optionally bridges metrics to Prometheus collectors.
 type MetricsEmitter struct {
-	interval  time.Duration
-	registry  *MetricsRegistry
-	events    *EventBus
-	getState  func() State
-	prom      *observability.Metrics         // nil = no Prometheus export
-	edgeStats *runtime.EdgeStatsRegistry     // nil = no backpressure bridge
-	prev      map[string]NodeMetricsSnapshot // previous snapshot for delta tracking
-	onSnapshot func(MetricsSnapshot)         // optional; called after each tick
-	cancel    context.CancelFunc
-	done      chan struct{}
+	interval   time.Duration
+	registry   *MetricsRegistry
+	events     *EventBus
+	getState   func() State
+	prom       *observability.Metrics         // nil = no Prometheus export
+	edgeStats  *runtime.EdgeStatsRegistry     // nil = no backpressure bridge
+	prev       map[string]NodeMetricsSnapshot // previous snapshot for delta tracking
+	onSnapshot func(MetricsSnapshot)          // optional; called after each tick
+	cancel     context.CancelFunc
+	done       chan struct{}
 }
 
 // NewMetricsEmitter creates an emitter that fires every interval.
