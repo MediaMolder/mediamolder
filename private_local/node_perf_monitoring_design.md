@@ -1,6 +1,6 @@
 # Per-Node Performance Monitoring Design
 
-**Status:** Phase 3 implemented (`perf_monitoring` branch)  
+**Status:** Phase 4 implemented (`perf_monitoring` branch)  
 **Target branch:** `perf_monitoring`  
 **Relates to:** `observability/metrics.go`, `pipeline/metrics.go`, `pipeline/handlers.go`, `runtime/scheduler.go`
 
@@ -734,9 +734,19 @@ If a node is already at the thread budget ceiling and still has `FPSDeficit > 1.
 16. ✅ Wire `MetricsEmitter` to populate all Prometheus gauges/histograms/counters.
 17. ✅ Add `mediamolder perf` CLI subcommand: live table of per-node state fractions, FPS, deficit, and thread stats.
 
-### Phase 4 — GUI integration
-18. Expose `NodePerfSnapshot[]` via the HTTP metrics endpoint JSON response.
-19. Add a per-node performance overlay in the graph editor canvas: coloured activity bars (green=processing, yellow=idle, red=stalled) with FPS deficit badge, updating at ~2 Hz via WebSocket or polling.
+### Phase 4 — GUI integration ✅ DONE
+18. ✅ Expose `NodePerfSnapshot[]` via the HTTP metrics endpoint JSON response.
+    - `MetricsServer.RegisterPerfHandler` adds `/perf` (full `MetricsSnapshot` JSON, CORS-enabled).
+    - `MetricsServer.RegisterPerfStreamHandler` adds `/perf/stream` SSE endpoint that pushes
+      `[]NodePerfSnapshot` at 2 Hz; empty array sent when pipeline is idle.
+19. ✅ Add a per-node performance overlay in the graph editor canvas: coloured activity bars
+    (green=processing, yellow=idle, red=stalled) with FPS deficit badge, updating at ~2 Hz.
+    - `frontend/src/components/mmnode.tsx`: custom React Flow node with three-segment coloured
+      activity bar and colour-coded FPS deficit badge.
+    - `frontend/src/lib/usePerfStream.ts`: React hook subscribing to `/perf/stream` SSE.
+    - `frontend/src/app.tsx`: React Flow canvas that auto-arranges nodes and preserves
+      user-dragged positions between updates.
+    - Built with Vite 6 + React 19 + @xyflow/react 12; compiled output in `frontend/dist/`.
 
 ### Phase 5 — Adaptive control loop (real-time mode)
 20. Implement `ThreadBudget` manager in `pipeline/`.

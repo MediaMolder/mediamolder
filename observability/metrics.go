@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/MediaMolder/MediaMolder/pipeline"
 	"github.com/prometheus/client_golang/prometheus"
@@ -383,15 +384,76 @@ func NewMetricsServer(addr string, registry *prometheus.Registry) *MetricsServer
 	}
 }
 
+// setCORSHeaders adds permissive CORS headers suitable for a local monitoring
+// server. All origins are allowed because the metrics server is intended for
+// localhost use only and does not expose sensitive data.
+func setCORSHeaders(w http.ResponseWriter) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+}
+
 // RegisterPerfHandler adds a /perf endpoint that serves a live
 // pipeline.MetricsSnapshot encoded as JSON. snapFn is called on each request.
 // Must be called before Start.
 func (s *MetricsServer) RegisterPerfHandler(snapFn func() pipeline.MetricsSnapshot) {
 	s.mux.HandleFunc("/perf", func(w http.ResponseWriter, r *http.Request) {
+		setCORSHeaders(w)
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
 		snap := snapFn()
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		if err := json.NewEncoder(w).Encode(snap); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
+	})
+}
+
+// RegisterPerfStreamHandler adds a /perf/stream Server-Sent Events endpoint
+// that pushes []NodePerfSnapshot updates at ~2 Hz to browser clients.
+// The stream sends a "data:" line with a JSON-encoded []NodePerfSnapshot every
+// 500 ms; clients reconnect automatically via the EventSource API.
+// Must be called before Start.
+func (s *MetricsServer) RegisterPerfStreamHandler(snapFn func() pipeline.MetricsSnapshot) {
+	s.mux.HandleFunc("/perf/stream", func(w http.ResponseWriter, r *http.Request) {
+		setCORSHeaders(w)
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			http.Error(w, "streaming not supported", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Connection", "keep-alive")
+		w.WriteHeader(http.StatusOK)
+		flusher.Flush()
+
+		ticker := time.NewTicker(500 * time.Millisecond)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ticker.C:
+				snap := snapFn()
+				perf := snap.Perf
+				if perf == nil {
+					perf = []pipeline.NodePerfSnapshot{}
+				}
+				data, err := json.Marshal(perf)
+				if err != nil {
+					continue
+				}
+				fmt.Fprintf(w, "data: %s\n\n", data)
+				flusher.Flush()
+			case <-r.Context().Done():
+				return
+			}
 		}
 	})
 }
