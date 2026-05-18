@@ -215,6 +215,15 @@ func (d *HWDecoderContext) Flush() error {
 	return d.SendPacket(nil)
 }
 
+// ThreadCount returns 0 — HW decoders do not use libavcodec thread pools.
+func (d *HWDecoderContext) ThreadCount() int { return 0 }
+
+// ActiveThreadType returns 0 — not applicable for HW decoders.
+func (d *HWDecoderContext) ActiveThreadType() int { return 0 }
+
+// ThreadsBusy returns -1 — thread-busy tracking is not available for HW decoders.
+func (d *HWDecoderContext) ThreadsBusy() int { return -1 }
+
 // SupportsHWDecode checks if a given codec ID supports hardware decoding with
 // the specified device type.
 func SupportsHWDecode(codecID uint32, deviceType HWDeviceType) bool {

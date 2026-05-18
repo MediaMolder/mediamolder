@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/MediaMolder/MediaMolder/pipeline"
+	"github.com/MediaMolder/MediaMolder/pipeline/snap"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
@@ -271,9 +271,9 @@ func (m *Metrics) Registry() *prometheus.Registry {
 // It should be called from a single goroutine (e.g. the MetricsEmitter tick
 // goroutine via SetSnapshotCallback). The internal mutex guards the
 // delta-tracking state; all prometheus operations are concurrency-safe.
-func (m *Metrics) Update(snap pipeline.MetricsSnapshot) {
+func (m *Metrics) Update(s snap.MetricsSnapshot) {
 	// Pipeline-level state (prometheus methods are thread-safe; no lock needed).
-	m.PipelineState.WithLabelValues().Set(pipelineStateFloat(snap.State))
+	m.PipelineState.WithLabelValues().Set(pipelineStateFloat(s.State))
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -281,7 +281,7 @@ func (m *Metrics) Update(snap pipeline.MetricsSnapshot) {
 	anyTarget := false
 	allMet := true
 
-	for _, p := range snap.Perf {
+	for _, p := range s.Perf {
 		// Populate previously-registered-but-unpopulated placeholders.
 		m.Fps.WithLabelValues(p.NodeID, "all").Set(p.FPS)
 		m.NodeBufFill.WithLabelValues(p.NodeID).Set(p.QueueFillFrac)
@@ -396,16 +396,16 @@ func setCORSHeaders(w http.ResponseWriter) {
 // RegisterPerfHandler adds a /perf endpoint that serves a live
 // pipeline.MetricsSnapshot encoded as JSON. snapFn is called on each request.
 // Must be called before Start.
-func (s *MetricsServer) RegisterPerfHandler(snapFn func() pipeline.MetricsSnapshot) {
+func (s *MetricsServer) RegisterPerfHandler(snapFn func() snap.MetricsSnapshot) {
 	s.mux.HandleFunc("/perf", func(w http.ResponseWriter, r *http.Request) {
 		setCORSHeaders(w)
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
-		snap := snapFn()
+		shot := snapFn()
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		if err := json.NewEncoder(w).Encode(snap); err != nil {
+		if err := json.NewEncoder(w).Encode(shot); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		}
 	})
@@ -416,7 +416,7 @@ func (s *MetricsServer) RegisterPerfHandler(snapFn func() pipeline.MetricsSnapsh
 // The stream sends a "data:" line with a JSON-encoded []NodePerfSnapshot every
 // 500 ms; clients reconnect automatically via the EventSource API.
 // Must be called before Start.
-func (s *MetricsServer) RegisterPerfStreamHandler(snapFn func() pipeline.MetricsSnapshot) {
+func (s *MetricsServer) RegisterPerfStreamHandler(snapFn func() snap.MetricsSnapshot) {
 	s.mux.HandleFunc("/perf/stream", func(w http.ResponseWriter, r *http.Request) {
 		setCORSHeaders(w)
 		if r.Method == http.MethodOptions {
@@ -440,10 +440,10 @@ func (s *MetricsServer) RegisterPerfStreamHandler(snapFn func() pipeline.Metrics
 		for {
 			select {
 			case <-ticker.C:
-				snap := snapFn()
-				perf := snap.Perf
+				shot := snapFn()
+				perf := shot.Perf
 				if perf == nil {
-					perf = []pipeline.NodePerfSnapshot{}
+					perf = []snap.NodePerfSnapshot{}
 				}
 				data, err := json.Marshal(perf)
 				if err != nil {

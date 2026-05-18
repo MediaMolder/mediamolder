@@ -7,6 +7,8 @@ import (
 	"context"
 	"sync"
 	"time"
+
+	"github.com/MediaMolder/MediaMolder/pipeline/snap"
 )
 
 // nodePerfState is the operating state of a node goroutine.
@@ -291,47 +293,7 @@ func (t *NodePerfTracker) Snapshot() NodePerfSnapshot {
 }
 
 // NodePerfSnapshot is a point-in-time read of all performance data for one node.
-type NodePerfSnapshot struct {
-	NodeID string
-
-	// Windowed throughput (computed over the last ~perfTsBufSize frames).
-	FPS       float64
-	FPSTarget float64 // desired output frame rate; 0 = no target set
-	FPSDeficit float64 // FPSTarget − FPS; positive = behind; negative = headroom
-
-	// Time-distribution fractions (0.0–1.0, always sum to 1.0).
-	ActiveFrac  float64 // fraction of time in PROCESSING
-	IdleFrac    float64 // fraction of time in IDLE (waiting for input)
-	StalledFrac float64 // fraction of time in STALLED (output channel full)
-
-	// Absolute cumulative durations.
-	TotalActive  time.Duration
-	TotalIdle    time.Duration
-	TotalStalled time.Duration
-
-	// Stall event detail.
-	StallCount       int64
-	MaxStallDuration time.Duration
-
-	// EWMA of output channel fill fraction at send time (0.0–1.0).
-	// A sustained value near 1.0 indicates this node produces faster than
-	// its downstream can consume.
-	QueueFillFrac float64
-
-	// Total elapsed wall-clock time since the node started.
-	Elapsed time.Duration
-
-	// Thread information. Populated from av package accessors via SetThreadInfo
-	// and SetThreadBusyFn.
-	ThreadsConfigured int     // libav configured thread count (0 = unknown/n/a)
-	ThreadMode        string  // "none", "frame", "slice", "auto", "n/a"
-	ThreadsBusy       int     // live tasks in-flight; -1 = not available
-	EstimatedCPUCores float64 // ThreadsConfigured × ActiveFrac; upper-bound estimate
-
-	// EWMA of frame processing latency (wall-clock time from perfReceive to
-	// last perfSend for a given frame).  Set by RecordFrameLatency.
-	FrameLatencyMean time.Duration
-}
+type NodePerfSnapshot = snap.NodePerfSnapshot
 
 // --- context helpers ---
 
