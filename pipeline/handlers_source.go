@@ -108,6 +108,8 @@ func (r *graphRunner) handleSource(ctx context.Context, node *graph.Node, outs [
 		}
 	}
 
+	t := perfTrackerFrom(ctx)
+
 	// sendFrame delivers f to each listed output channel. When more
 	// than one channel is listed (multiple consumers of the same
 	// stream) the frame is cloned for all but the last recipient so
@@ -124,15 +126,14 @@ func (r *graphRunner) handleSource(ctx context.Context, node *graph.Node, outs [
 					return err
 				}
 			}
-			select {
-			case outs[idx] <- toSend:
-			case <-ctx.Done():
+			if perfSend(ctx, outs[idx], toSend, t) {
 				if toSend != f {
 					toSend.Close()
 				}
 				return ctx.Err()
 			}
 		}
+		t.RecordFrame()
 		return nil
 	}
 
@@ -147,9 +148,7 @@ func (r *graphRunner) handleSource(ctx context.Context, node *graph.Node, outs [
 			if err != nil {
 				return err
 			}
-			select {
-			case outs[idx] <- c:
-			case <-ctx.Done():
+			if perfSend(ctx, outs[idx], c, t) {
 				c.Close()
 				return ctx.Err()
 			}
@@ -372,9 +371,7 @@ func (r *graphRunner) handleSource(ctx context.Context, node *graph.Node, outs [
 				}
 				if got {
 					for _, idx := range subChans {
-						select {
-						case outs[idx] <- sub:
-						case <-ctx.Done():
+						if perfSend(ctx, outs[idx], sub, t) {
 							sub.Close()
 							return ctx.Err()
 						}
