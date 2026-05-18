@@ -158,4 +158,3 @@ func TestPipelinePerfMetrics_EncoderThreadInfo(t *testing.T) {
 		encSnap.ThreadsConfigured, encSnap.ThreadMode, encSnap.ThreadsBusy,
 		encSnap.FrameLatencyMean, encSnap.FPS)
 }
-

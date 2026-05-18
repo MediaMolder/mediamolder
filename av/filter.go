@@ -896,5 +896,6 @@ func NewSinkFilterGraph(cfg SinkFilterGraphConfig) (*FilterGraph, error) {
 // ThreadCount returns the maximum number of threads for this filter graph
 // (AVFilterGraph.nb_threads). 0 means auto / unset.
 func (fg *FilterGraph) ThreadCount() int { return int(fg.graph.nb_threads) }
+
 // the execute callback, or -1 if the graph does not use parallel execution.
 func (fg *FilterGraph) ThreadsBusy() int { return int(C.mm_filter_threads_busy(fg.tctx)) }
