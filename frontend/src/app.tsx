@@ -110,7 +110,9 @@ function Editor() {
   // 'open' | 'save' | null — controls the job-file FileBrowser dialog.
   const [jobBrowserMode, setJobBrowserMode] = useState<'open' | 'save' | null>(null);
   const [validateReport, setValidateReport] = useState<ValidationReport | null>(null);
+  const [probeReport, setProbeReport] = useState<ValidationReport | null>(null);
   const [isValidating, setIsValidating] = useState(false);
+  const [isProbing, setIsProbing] = useState(false);
   const [showValidatePanel, setShowValidatePanel] = useState(false);
   // null = probe not yet returned (show all options as fallback);
   // HWAccelProbe[] = full probe results from /api/hwaccel
@@ -694,13 +696,14 @@ function Editor() {
   );
 
   /* ---------- Validate controls ---------- */
-  const runValidate = useCallback(async (probe: boolean) => {
+  const onValidate = useCallback(async () => {
     const cfg = buildJobRef.current?.() ?? null;
     if (!cfg) return;
+    setProbeReport(null); // clear previous probe result when re-running static validation
     setShowValidatePanel(true);
     setIsValidating(true);
     try {
-      const r = await postValidate(cfg, probe);
+      const r = await postValidate(cfg, false);
       setValidateReport(r);
     } catch (err) {
       setValidateReport({ issues: [{ severity: 'ERROR', code: 'NETWORK_ERROR', message: String(err) }], has_errors: true, has_warnings: false });
@@ -709,8 +712,19 @@ function Editor() {
     }
   }, []);
 
-  const onValidate = useCallback(() => void runValidate(false), [runValidate]);
-  const onValidateProbe = useCallback(() => void runValidate(true), [runValidate]);
+  const onValidateProbe = useCallback(async () => {
+    const cfg = buildJobRef.current?.() ?? null;
+    if (!cfg) return;
+    setIsProbing(true);
+    try {
+      const r = await postValidate(cfg, true);
+      setProbeReport(r);
+    } catch (err) {
+      setProbeReport({ issues: [{ severity: 'ERROR', code: 'NETWORK_ERROR', message: String(err) }], has_errors: true, has_warnings: false });
+    } finally {
+      setIsProbing(false);
+    }
+  }, []);
 
   const onApplyFix = useCallback((fix: Fix, _issue: ValidationIssue) => {
     if (fix.insert_filter) {
@@ -776,8 +790,8 @@ function Editor() {
       markDirty();
     }
     // Re-run static validation after applying the fix.
-    void runValidate(false);
-  }, [markDirty, runValidate]);
+    void onValidate();
+  }, [markDirty, onValidate]);
 
   /* ---------- Run controls (Phase 3) ---------- */
   const buildJobRef = useRef<() => JobConfig | null>(() => null);
@@ -1208,7 +1222,9 @@ function Editor() {
       <RunDock visible={showValidatePanel && validateReport !== null}>
         <ValidatePanel
           report={validateReport ?? { issues: [], has_errors: false, has_warnings: false }}
+          probeReport={probeReport}
           isValidating={isValidating}
+          isProbing={isProbing}
           onApplyFix={onApplyFix}
           onRunWithProbe={onValidateProbe}
           onClose={() => setShowValidatePanel(false)}
