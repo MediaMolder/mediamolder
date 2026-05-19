@@ -1150,7 +1150,34 @@ per-node metrics table with six columns:
 
 **Stop** cancels the underlying `context.Context` so the run unwinds cleanly.
 
-## HTTP API
+### Performance overlay
+
+While a job is running the canvas updates each node at ~2 Hz with a live performance overlay sourced from the `/perf/stream` SSE endpoint.
+
+**Three-segment activity bar** (left-to-right on the node body):
+
+| Colour | Fraction | Meaning |
+|---|---|---|
+| Green | `ActiveFrac` | Codec or I/O work underway |
+| Yellow | `IdleFrac` | Waiting for the next input frame |
+| Red | `StalledFrac` | Output channel full — blocked on a slow downstream node |
+
+**Badges on the node header:**
+
+| Badge | Meaning |
+|---|---|
+| `30.1 fps` | Actual output rate over a sliding window |
+| `−1.5 fps` (amber) | `fps_actual − fps_target`; amber when 0–2 fps deficit |
+| `−5.2 fps` (red) | Same; red when deficit exceeds 2 fps or active_frac is saturated |
+| `8t / 6b` | Threads configured (`8t`) and threads currently busy (`6b`); only shown for encoder and decoder nodes |
+
+**Interpreting the overlay:**
+
+- A node that is mostly **red** (stalled) is not the bottleneck — its downstream neighbour is too slow.
+- A node that is mostly **green** (active) with a large deficit and fully occupied threads is the bottleneck. Enable real-time mode to let the control loop allocate more threads.
+- A node that is mostly **yellow** (idle) is waiting for input; its upstream node is the bottleneck.
+
+The same data is available in the terminal via `mediamolder perf --url http://localhost:9090/perf`.
 
 All endpoints are unauthenticated and intended for `localhost` use. Bind
 explicitly to `127.0.0.1` (the default) if untrusted users share the host.
@@ -1167,6 +1194,8 @@ explicitly to `127.0.0.1` (the default) if untrusted users share the host.
 | `POST` | `/api/run`                    | Start a run; returns `{job_id}`.                      |
 | `POST` | `/api/cancel/{jobId}`         | Cancel an in-flight run.                              |
 | `GET`  | `/api/events/{jobId}`         | Server-Sent Events stream for the run.                |
+| `GET`  | `/perf`                       | Full `MetricsSnapshot` JSON for the currently-running pipeline, including `[]NodePerfSnapshot` (per-node `ActiveFrac`, `IdleFrac`, `StalledFrac`, `FPS`, `FPSDeficit`, `ThreadsConfigured`, `ThreadsBusy`). Used by `mediamolder perf`. |
+| `GET`  | `/perf/stream`                | SSE endpoint pushing `[]NodePerfSnapshot` at 2 Hz. Consumed by the canvas performance overlay. Sends an empty array when the pipeline is idle. |
 | `GET`  | `/api/files`                  | List a directory (`?path=&filter=ext1,ext2&dirs_only=`). |
 | `POST` | `/api/probe`                  | Probe an input URL with libavformat. Body `{url, options?}`; response `{url, streams: [{index, type, codec, codec_tag, profile, level, bit_rate, bit_depth, bits_per_coded_sample, bits_per_raw_sample, width, height, pix_fmt, frame_rate, r_frame_rate, sar, field_order, color_space, color_range, color_primaries, color_transfer, sample_rate, sample_fmt, channels, channel_layout, duration_sec, start_sec, time_base_num, time_base_den}]}`. Used by the Inspector's **Get properties** button. |
 | `GET`  | `/api/encoders/{name}/options` | Enumerate every AVOption available on the named encoder (both generic AVCodecContext options and the codec's private options). Response: `{name, long_name, media_type, options: [{name, help, type, unit, min, max, default, constants?, is_private}]}`. `type` is one of `int`/`int64`/`uint64`/`bool`/`float`/`double`/`string`/`flags`/`rational`/`pix_fmt`/`sample_fmt`/`channel_layout`/`duration`/`color`/`binary`/`dict`. `constants` is populated for enum-like options (every `AV_OPT_TYPE_CONST` whose `unit` matches). Cached in-memory after the first call. |

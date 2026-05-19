@@ -135,7 +135,12 @@ mediamolder run <config.json>
 
 Signals `SIGINT` / `SIGTERM` (Ctrl-C) cancel the run cleanly, flushing any in-progress frames.
 
-**No additional flags** are exposed on `run` today — all runtime control (threads, HW device) lives inside the JSON itself under `global_options`.
+| Flag | Description |
+|---|---|
+| `--realtime` | Enable adaptive real-time mode — see [§5.11](#511-real-time-mode) |
+| `--json` | Output progress snapshots as JSON Lines on stderr instead of the default human-readable line |
+| `--metadata-out <path>` | Write processor metadata events (e.g. scene-change JSON) to a file; use `-` for stdout |
+| `--set KEY=VALUE` | Substitute `{{KEY}}` in the JSON config before parsing; may be repeated |
 
 ---
 
@@ -554,7 +559,7 @@ Edges are directed connections between stream producers and consumers.
 | `threads` | int | Maximum worker threads (0 = auto) |
 | `hw_accel` | string | Hardware acceleration backend: `"cuda"`, `"vaapi"`, `"qsv"`, `"videotoolbox"` |
 | `hw_device` | string | Device selector: GPU index (`"0"`), `/dev/dri/renderD128` for VAAPI, etc. |
-| `realtime` | bool | Pace output to wall-clock time (live streaming use case) |
+| `realtime` | bool | Enable adaptive real-time mode: the control loop dynamically increases encoder thread counts and (as a last resort) drops frames to keep every node at or above its `fps_target`. Set via `--realtime` CLI flag or the **Real-time** checkbox in the GUI toolbar — see [§5.11](#511-real-time-mode) |
 
 ---
 
@@ -928,7 +933,44 @@ Use a format matching the capture API and set `url` to the device specifier:
 }
 ```
 
-Use `global_options.realtime: true` when the output must keep pace with wall-clock time (e.g. streaming to RTMP).
+For live streaming to RTMP/SRT where the output must pace to wall clock, combine device input with `global_options.realtime: true` — see [§5.11](#511-real-time-mode) below.
+
+---
+
+### 5.11 Real-time mode
+
+Real-time mode activates an adaptive control loop that runs every 500 ms while the pipeline is playing. It observes per-node performance and attempts to keep every node at or above its configured `fps_target`.
+
+**Enabling real-time mode:**
+
+```sh
+# CLI flag (overrides the JSON without editing it)
+mediamolder run --realtime pipeline.json
+
+# JSON config
+{
+  "schema_version": "1.2",
+  "global_options": { "realtime": true },
+  "nodes": [ … ]
+}
+```
+
+In the GUI, check the **Real-time** checkbox in the toolbar before pressing **Run**. Toggling the checkbox updates `global_options.realtime` in the in-memory graph; saving the file persists the flag to the `.json` file.
+
+**What the control loop does:**
+
+| Condition | Action |
+|---|---|
+| Node behind `fps_target` + `ActiveFrac > 90%` + threads fully occupied | Increase codec thread count by 2 (graceful restart) |
+| Thread budget exhausted + `FPSDeficit > 1 fps` | Enable frame-drop mode on the upstream source (1 in 4 frames skipped); emit `RealTimeViolation` event |
+| Node behind target + `ActiveFrac > 90%` + threads underutilised | Sequential bottleneck — emit advisory violation; recommend a faster codec preset |
+| Node behind target + `StalledFrac > 50%` | Downstream bottleneck — do not act on this node; the control loop addresses the actual bottleneck downstream |
+
+**Thread budget:** the total CPU threads available across all encoder nodes defaults to `runtime.NumCPU()` minus 2 reserved for the Go runtime. Hardware-accelerated nodes (NVENC, VideoToolbox, etc.) are exempt and do not consume the CPU budget.
+
+**`fps_target` per node:** set in the Inspector for source and encoder nodes (`fps_target` field). Nodes without a target are excluded from real-time control.
+
+**Observability:** real-time violations are emitted as `RealTimeViolation` events on the event bus and as Prometheus metrics (`mediamolder_node_fps_deficit`, `mediamolder_pipeline_realtime_satisfied`). Use `mediamolder perf` to watch the control loop in action.
 
 ---
 
@@ -1092,6 +1134,7 @@ Selecting a node opens its configuration in the Inspector. Toggle the panel with
 | **View: Inspector** | Toggle the inspector sidebar |
 | **View: Minimap** | Toggle the minimap (bottom-right corner of canvas) |
 | **Labels: Verbose / Compact** | Switch node label density; Verbose shows all fields, Compact shows a concise summary |
+| **Real-time** *(checkbox)* | Enable adaptive real-time mode for the next run — see [§5.11](#511-real-time-mode). Toggling updates `global_options.realtime` in the graph (persisted on Save) |
 | **Run** | Send the current graph to the backend and start encoding |
 | **Stop** | Cancel the running job cleanly |
 | **Show log / Hide log** | Toggle the Run panel at the bottom of the screen (enabled only while a job is running or has finished) |
@@ -1113,10 +1156,24 @@ The Run panel appears at the bottom of the screen when **Show log** is toggled o
 
 The **Stop** button in the toolbar cancels the running job; MediaMolder flushes in-progress frames before closing all outputs.
 
-**Node status indicators (on-canvas badges):**
-- Running nodes show live packet counts and FPS directly on the node
+**Per-node performance overlay (while running):**
+
+Each active node displays a three-segment activity bar and live metrics that update at ~2 Hz:
+
+| Indicator | Meaning |
+|---|---|
+| Green segment | Active fraction — codec or I/O work underway |
+| Yellow segment | Idle fraction — waiting for the next frame to arrive |
+| Red segment | Stalled fraction — output channel full, blocked on a slow downstream node |
+| **FPS badge** | Actual frames/sec over a sliding window |
+| **Deficit badge** (amber/red) | `fps_target − fps_actual`; appears when the node is behind its target |
+| **Thread badge** | Configured thread count and live busy count (where available) |
+
+The performance data is streamed from the `/perf/stream` SSE endpoint. Use the `mediamolder perf` CLI for a terminal table showing the same data.
+
+**Other node status indicators:**
 - A red border indicates an error on that node
-- Error and warning counts from validation are shown as small badges (e.g. `2 err`, `1 warn`) — click the node to read the issue list in the Validate panel
+- Validation issue badges (e.g. `2E 1W`) appear on nodes with validation errors/warnings — click to open the Validate panel
 
 ---
 
