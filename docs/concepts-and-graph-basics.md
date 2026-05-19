@@ -37,6 +37,7 @@ to in the JSON graph?"*
 6. [Sources and sinks in detail](#6-sources-and-sinks-in-detail)
 7. [FFmpeg CLI → JSON mapping](#7-ffmpeg-cli--json-mapping)
 8. [Data flow and execution](#8-data-flow-and-execution)
+   - [Performance monitoring](#8a-performance-monitoring)
 9. [Graph lifecycle](#9-graph-lifecycle)
 10. [Validation](#10-validation)
 11. [Dynamic reconfiguration](#11-dynamic-reconfiguration)
@@ -655,6 +656,53 @@ cleanly — no truncation.
 
 **Channel buffer size.** Each inter-node channel buffers up to 8 frames by
 default, smoothing over transient speed differences between stages.
+
+---
+
+## 8a. Performance monitoring
+
+MediaMolder tracks per-node performance continuously while a pipeline is running. The data is available via the `/perf` HTTP endpoint, the `/perf/stream` SSE endpoint (used by the GUI canvas overlay), and the `mediamolder perf` CLI subcommand.
+
+### Per-node snapshot
+
+Every 500 ms each node records a `NodePerfSnapshot` containing:
+
+| Field | Description |
+|---|---|
+| `ActiveFrac` | Fraction of time spent doing codec or I/O work (0.0–1.0) |
+| `IdleFrac` | Fraction of time waiting for the next input frame |
+| `StalledFrac` | Fraction of time blocked because the output channel is full |
+| `FPS` | Actual output frame rate over a sliding window |
+| `FPSTarget` | Target frame rate set via `fps_target` on the node |
+| `FPSDeficit` | `FPSTarget − FPS`; positive means the node is falling behind |
+| `ThreadsConfigured` | Thread count granted by libavcodec at codec open time |
+| `ThreadsBusy` | Live count of threads actively working (−1 if unavailable) |
+| `FrameLatencyMean` | Mean time from input-frame receive to output-frame emit |
+
+### Diagnosing bottlenecks
+
+| Pattern | Diagnosis |
+|---|---|
+| High `ActiveFrac` + high `FPSDeficit` + `ThreadsBusy ≈ ThreadsConfigured` | Thread-limited bottleneck — add threads or use a faster preset |
+| High `ActiveFrac` + high `FPSDeficit` + `ThreadsBusy` much less than `ThreadsConfigured` | Sequential bottleneck — more threads won't help; switch preset |
+| High `StalledFrac` | Downstream is the bottleneck — look at the next node |
+| High `IdleFrac` | Upstream is the bottleneck — look at the previous node |
+
+### `fps_target`
+
+Set `fps_target` on a source or encoder node (Inspector → **fps_target** field, or `"fps_target": 30` in JSON) to define the node's throughput target. The performance overlay uses this to compute and display `FPSDeficit`.
+
+### Real-time mode
+
+When `global_options.realtime` is `true` (or `--realtime` is passed to `mediamolder run`, or the GUI **Real-time** checkbox is checked), an adaptive control loop activates. It reads per-node snapshots every 500 ms and:
+
+1. **Increases encoder thread counts** (graceful codec restart) when a node is thread-limited and within the global CPU thread budget.
+2. **Enables frame-drop mode** (1 in 4 frames dropped at the source) once the thread budget is exhausted and deficit exceeds 1 fps.
+3. **Emits `RealTimeViolation` events** when convergence is not possible (sequential bottleneck, hardware limit reached, etc.).
+
+Hardware-accelerated encoder nodes are exempt from the CPU thread budget.
+
+See [docs/using_mediamolder.md §5.11](using_mediamolder.md#511-real-time-mode) for full usage details.
 
 ---
 
