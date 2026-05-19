@@ -97,7 +97,7 @@ FFmpeg's hardware support works. MediaMolder makes it *safe and understandable*.
 ### Observable at every level
 
 MediaMolder was designed for long-running and production jobs where "check
-after it finishes" is not an option.
+after it finishes" is not an option. 
 
 - **Per-node performance tracking** (`NodePerfTracker`) records each node's
   active, idle, and stalled fractions, windowed FPS vs. target, stall count
