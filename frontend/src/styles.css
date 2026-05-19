@@ -1555,6 +1555,142 @@ button.danger:hover { background: rgba(185, 74, 74, 0.15); }
 }
 .rate-control-group > label:first-child { margin-top: 0; }
 
+/* ---------- Validation panel ---------- */
+.validate-panel {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.validate-panel-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 10px;
+  background: var(--panel-2);
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+  flex: 0 0 auto;
+}
+.validate-panel-title {
+  font-weight: 600;
+  color: var(--text);
+  flex: 1 1 auto;
+}
+.validate-spinner { animation: spin 1s linear infinite; display: inline-block; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.validate-close-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 14px;
+  padding: 0 6px;
+}
+.validate-close-btn:hover { color: var(--text); }
+.validate-panel-body {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 8px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.validate-section-summary {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-left: 8px;
+}
+.validate-empty {
+  font-size: 12px;
+  color: var(--text-dim);
+  padding: 4px 0;
+}
+.validate-issue-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.validate-issue {
+  font-size: 12px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  border-left: 3px solid var(--border);
+  background: var(--panel-2);
+}
+.validate-issue--error   { border-left-color: #ef4444; }
+.validate-issue--warning { border-left-color: #eab308; }
+.validate-issue--info    { border-left-color: #6366f1; }
+.validate-issue-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 2px;
+}
+.validate-badge {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 5px;
+  border-radius: 3px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+.badge-err  { background: rgba(239,68,68,0.2);  color: #f5b7b1; }
+.badge-warn { background: rgba(234,179,8,0.2);  color: #fde68a; }
+.badge-info { background: rgba(99,102,241,0.2); color: #c7d2fe; }
+.validate-issue-code     { color: var(--text-dim); font-size: 11px; }
+.validate-issue-location { color: var(--text-dim); font-size: 11px; margin-left: auto; }
+.validate-issue-message  { color: var(--text); font-size: 12px; }
+.validate-issue-suggestion { color: var(--text-dim); font-size: 11px; margin-top: 2px; }
+.validate-fix-btn {
+  margin-top: 4px;
+  font-size: 11px;
+  padding: 2px 8px;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+}
+.validate-fix-btn:hover { opacity: 0.85; }
+/* "Probe Inputs" button row */
+.validate-probe-row {
+  padding: 4px 0;
+  border-top: 1px solid var(--border);
+  margin-top: 4px;
+}
+.validate-probe-btn {
+  font-size: 11px;
+  padding: 3px 10px;
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  cursor: pointer;
+}
+.validate-probe-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+.validate-probe-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+/* Probe results section */
+.validate-probe-results {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border-top: 1px solid var(--border);
+  padding-top: 6px;
+  margin-top: 2px;
+}
+.validate-section-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
 /* ---------- Audio channel routing form (AudioChannelForm) ----------
  * Shared container, layout inputs, gain matrix, source-select lists,
  * and spec preview for pan / channelmap / channelsplit / join / amerge / amix. */
