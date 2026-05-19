@@ -101,13 +101,15 @@ For the most common video encoders (`libx264`, `libx265`, `libsvtav1`), add a "Q
 
 ### G. Implementation order (smallest landable slices)
 
-1. **Schema + curation table** — Common / `FriendlyName` / `Aliases` on `NodeCatalogEntry` + `internal/gui/curation.go`. Test that every key resolves. ~half-day. ✅ landed
-2. **Palette toggle** — segmented control + filter logic in Palette.tsx; persistence in `localStorage`. ~half-day. ✅ landed
-3. **Friendly-name helper** — `displayName()` used by Palette, MMNode, Inspector heading. ~half-day. ✅ landed
-4. **Hardware sub-grouping + chips** — pure `classifyEncoder()` logic in api.go + a small CSS chip. ~half-day.
-5. **Recipes endpoint + dropdown** — 6–8 starter JSONs. ~1 day.
-6. **Encoder preset chips** — additive, only for the three common video encoders. ~half-day.
-7. **Search across `friendly_name` / `aliases` + match highlighting**. ~half-day.
+1. **Schema + curation table** — Common / `FriendlyName` / `Aliases` on `NodeCatalogEntry` + `internal/gui/curation.go`. Test that every key resolves. ~half-day. ✅ done
+2. **Palette toggle** — segmented control + filter logic in Palette.tsx; persistence in `localStorage`. ~half-day. ✅ done
+3. **Friendly-name helper** — `displayName()` used by Palette, MMNode, Inspector heading. ~half-day. ✅ done
+4. **Hardware sub-grouping + chips** — pure `classifyEncoder()` logic in api.go + a small CSS chip. ~half-day. ❌ not yet implemented
+5. **Recipes endpoint + dropdown** — 6–8 starter JSONs. ~1 day. ❌ not yet implemented
+6. **Encoder preset chips** — additive, only for the three common video encoders. ~half-day. ❌ not yet implemented
+7. **Search across `friendly_name` / `aliases` + match highlighting**. ~half-day. 
+	✅ search done (Palette.tsx searches `name`, `label`, `description`, `friendly_name`, and `aliases`); 
+	❌ match highlighting not yet implemented
 
 Each slice is independently shippable, individually doc-able in the CHANGELOG, and adds no new build dependencies. None changes pipeline semantics, runtime, or schema — purely GUI surface.
 

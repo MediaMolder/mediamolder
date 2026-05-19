@@ -21,8 +21,8 @@ err := pipeline.Reconfigure("volume_filter", map[string]any{
 4. Updates the internal parameter tracking
 5. Emits a `ReconfigureComplete` event
 
-This uses FFmpeg's built-in command interface, which processes commands
-between frames — no frames are dropped or reordered.
+This calls `avfilter_graph_send_command` in libavfilter directly via CGO.
+Commands are processed between frames — no frames are dropped or reordered.
 
 ### Supported Use Cases
 
