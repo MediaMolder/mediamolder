@@ -96,8 +96,8 @@ type NodePerfSnapshot struct {
 	// last perfSend for a given frame).  Set by RecordFrameLatency.
 	FrameLatencyMean time.Duration
 
-        // ThreadRestarts is the cumulative number of graceful codec restarts
-        // triggered by the real-time adaptive control loop (Phase 5).
-        // Monotonically non-decreasing. 0 when real-time mode is disabled.
-        ThreadRestarts int64
+	// ThreadRestarts is the cumulative number of graceful codec restarts
+	// triggered by the real-time adaptive control loop (Phase 5).
+	// Monotonically non-decreasing. 0 when real-time mode is disabled.
+	ThreadRestarts int64
 }

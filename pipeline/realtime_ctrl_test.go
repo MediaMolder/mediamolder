@@ -181,4 +181,3 @@ func TestSnapNodePerfSnapshot_ThreadRestartsField(t *testing.T) {
 		t.Fatalf("want 7, got %d", s.ThreadRestarts)
 	}
 }
-
