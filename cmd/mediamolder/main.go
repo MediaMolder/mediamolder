@@ -93,13 +93,14 @@ func cmdRun(args []string) error {
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
 	jsonOut := fs.Bool("json", false, "output progress as JSON")
 	metadataOut := fs.String("metadata-out", "", "write processor metadata events as JSON Lines to this file (- for stdout)")
+	realtimeFlag := fs.Bool("realtime", false, "enable adaptive real-time mode: dynamically allocates encoder threads and drops frames to meet fps_target")
 	var sets setVars
 	fs.Var(&sets, "set", "set a template variable in the job JSON: KEY=VALUE replaces every {{KEY}} occurrence (may be repeated)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if fs.NArg() < 1 {
-		return fmt.Errorf("usage: mediamolder run [--json] [--metadata-out=path] [--set KEY=VALUE ...] <config.json>")
+		return fmt.Errorf("usage: mediamolder run [--json] [--realtime] [--metadata-out=path] [--set KEY=VALUE ...] <config.json>")
 	}
 	rawBytes, err := os.ReadFile(fs.Arg(0))
 	if err != nil {
@@ -116,6 +117,9 @@ func cmdRun(args []string) error {
 	cfg, err := pipeline.ParseConfig([]byte(raw))
 	if err != nil {
 		return err
+	}
+	if *realtimeFlag {
+		cfg.GlobalOptions.Realtime = true
 	}
 	eng, err := pipeline.NewPipeline(cfg)
 	if err != nil {

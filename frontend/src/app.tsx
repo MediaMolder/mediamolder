@@ -1123,6 +1123,26 @@ function Editor() {
           title="Run static validation (no file I/O)">
           Validate{validateReport?.has_errors ? ' ✗' : validateReport && !validateReport.has_errors ? ' ✓' : ''}
         </button>
+        <label
+          className="toolbar-check"
+          title="Enable adaptive real-time mode: dynamically adjusts encoder threads and drops frames to meet fps_target. Saved in global_options.realtime when the graph is saved.">
+          <input
+            type="checkbox"
+            checked={!!(job.global_options?.realtime)}
+            onChange={(e) => {
+              setJob((j) => ({
+                ...j,
+                global_options: {
+                  ...j.global_options,
+                  realtime: e.target.checked || undefined,
+                },
+              }));
+              markDirty();
+            }}
+            disabled={isRunning}
+          />
+          Real-time
+        </label>
         {isRunning ? (
           <button className="danger" onClick={onStop}>Stop</button>
         ) : (
