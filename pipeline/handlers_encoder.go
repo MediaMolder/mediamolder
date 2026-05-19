@@ -39,6 +39,7 @@ type encoderSession struct {
 	outs    []chan<- any
 	nodeID  string
 	pipe    *Pipeline
+	runner  *graphRunner // for updating r.encoders on graceful restart (Phase 5)
 	// encOpts holds the options used to open enc. On the first video frame
 	// the session checks whether the frame's coded dimensions match the
 	// encoder's; if not (anamorphic source, display width ≠ coded width)
@@ -85,6 +86,7 @@ func (r *graphRunner) newEncoderSession(node *graph.Node, enc *av.EncoderContext
 		outs:    outs,
 		nodeID:  node.ID,
 		pipe:    r.pipe,
+		runner:  r,
 		encOpts: encOpts,
 		perf:    r.trackers[node.ID],
 	}, nil
@@ -170,6 +172,16 @@ func (s *encoderSession) run(ctx context.Context, in <-chan any) error {
 		}
 		recv := time.Now()
 		f := v.(*av.Frame)
+
+		// Phase 5: check for a pending real-time thread-count adjustment.
+		// The restart drains and flushes the current encoder, closes it, and
+		// reopens with the requested thread count before processing this frame.
+		if newCount, ok := s.perf.PopRestartRequest(); ok {
+			if err := s.restartWithThreadCount(ctx, newCount); err != nil {
+				f.Close()
+				return fmt.Errorf("encoder %q: thread restart: %w", s.nodeID, err)
+			}
+		}
 
 		// On the first video frame, verify the encoder was opened with the
 		// correct coded dimensions. Container metadata (AVCodecParameters)
@@ -258,6 +270,55 @@ func (s *encoderSession) run(ctx context.Context, in <-chan any) error {
 		return err
 	}
 	return s.drain(ctx)
+}
+
+// restartWithThreadCount performs a graceful codec restart: it flushes the
+// current encoder, drains remaining packets downstream, closes the encoder,
+// and reopens it with threads as the new thread count. The in-flight frame
+// (if any) is processed by the new encoder after this returns.
+//
+// This method must only be called from the handler goroutine between frames.
+// It updates s.enc, s.runner.encoders[s.nodeID], and the NodePerfTracker.
+func (s *encoderSession) restartWithThreadCount(ctx context.Context, threads int) error {
+	// Flush the encoder and drain any packets buffered in the codec.
+	if err := s.enc.Flush(); err != nil && !av.IsEOF(err) && !av.IsEAgain(err) {
+		return fmt.Errorf("flush before restart: %w", err)
+	}
+	if err := s.drain(ctx); err != nil {
+		return fmt.Errorf("drain before restart: %w", err)
+	}
+
+	// Close the old encoder.
+	s.enc.Close()
+
+	// Reopen with the updated thread count.
+	opts := s.encOpts
+	opts.ThreadCount = threads
+	newEnc, err := av.OpenEncoder(opts)
+	if err != nil {
+		return fmt.Errorf("reopen with %d threads: %w", threads, err)
+	}
+
+	// Update session and graphRunner state.
+	s.enc = newEnc
+	s.encOpts.ThreadCount = threads
+	if s.runner != nil {
+		s.runner.encoders[s.nodeID] = newEnc
+	}
+
+	// Update the perf tracker so subsequent snapshots reflect the new
+	// thread count and the Prometheus restart counter increments.
+	s.perf.SetThreadInfo(newEnc.ThreadCount(), threadModeString(newEnc.ActiveThreadType()))
+	s.perf.SetThreadBusyFn(newEnc.ThreadsBusy)
+	s.perf.IncrementRestarts()
+
+	// Increment the Prometheus NodeThreadRestarts counter directly so
+	// it advances even before the next MetricsEmitter tick.
+	if p := s.pipe.prom; p != nil {
+		p.NodeThreadRestarts.WithLabelValues(s.nodeID).Add(1)
+	}
+
+	return nil
 }
 
 func (r *graphRunner) handleEncoder(ctx context.Context, node *graph.Node, ins []<-chan any, outs []chan<- any) error {

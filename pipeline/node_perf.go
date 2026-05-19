@@ -6,6 +6,7 @@ package pipeline
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/MediaMolder/MediaMolder/pipeline/snap"
@@ -67,6 +68,23 @@ type NodePerfTracker struct {
 	// EWMA of frame processing latency (nanoseconds), α = 0.1.
 	// Updated by RecordFrameLatency.
 	frameLatEWMA float64
+
+	// Adaptive control (Phase 5): restart request set by realtimeController,
+	// consumed by the handler goroutine after draining the codec.
+	// restartPending is 1 when a restart has been requested, 0 otherwise.
+	// restartThreads holds the target thread count for the restart.
+	// restartCount is the lifetime count of completed restarts.
+	// All three are accessed atomically so the control-loop goroutine can
+	// write them without holding mu.
+	restartPending atomic.Int32
+	restartThreads atomic.Int32
+	restartCount   atomic.Int64
+
+	// Frame-drop control (Phase 5, last resort): when dropPeriod > 0 the
+	// source handler drops 1 in dropPeriod frames before sending downstream.
+	// dropCounter tracks progress within the period.
+	dropPeriod  atomic.Int32
+	dropCounter atomic.Int64
 
 	// Timestamp ring buffer for windowed FPS.
 	// Stores Unix nanoseconds of the last perfTsBufSize RecordFrame calls.
@@ -290,11 +308,80 @@ func (t *NodePerfTracker) Snapshot() NodePerfSnapshot {
 		ThreadsBusy:       threadsBusy,
 		EstimatedCPUCores: float64(t.threadsConfigured) * activeFrac,
 		FrameLatencyMean:  time.Duration(t.frameLatEWMA),
+		ThreadRestarts:    t.restartCount.Load(),
 	}
 }
 
 // NodePerfSnapshot is a point-in-time read of all performance data for one node.
 type NodePerfSnapshot = snap.NodePerfSnapshot
+
+// --- Phase 5: restart / frame-drop control ---
+
+// RequestRestart asks the handler goroutine to perform a graceful codec restart
+// with threads as the new thread count. Called by realtimeController from its
+// own goroutine; the handler goroutine polls via PopRestartRequest.
+func (t *NodePerfTracker) RequestRestart(threads int) {
+	if t == nil {
+		return
+	}
+	t.restartThreads.Store(int32(threads))
+	t.restartPending.Store(1)
+}
+
+// PopRestartRequest returns (threads, true) if a restart has been requested
+// and atomically clears the pending flag. Called by the handler goroutine.
+func (t *NodePerfTracker) PopRestartRequest() (threads int, ok bool) {
+	if t == nil {
+		return 0, false
+	}
+	if t.restartPending.Swap(0) == 1 {
+		return int(t.restartThreads.Load()), true
+	}
+	return 0, false
+}
+
+// IncrementRestarts records that one graceful restart has completed.
+// Called by the handler goroutine after the new codec context is open.
+func (t *NodePerfTracker) IncrementRestarts() {
+	if t == nil {
+		return
+	}
+	t.restartCount.Add(1)
+}
+
+// RestartCount returns the lifetime count of completed graceful restarts.
+func (t *NodePerfTracker) RestartCount() int64 {
+	if t == nil {
+		return 0
+	}
+	return t.restartCount.Load()
+}
+
+// SetDropPeriod enables frame-drop mode on this node. When period > 0 the
+// source handler drops 1 in period decoded frames before sending downstream,
+// reducing pipeline load as a last resort. period == 0 disables frame-drop.
+func (t *NodePerfTracker) SetDropPeriod(period int) {
+	if t == nil {
+		return
+	}
+	t.dropPeriod.Store(int32(period))
+}
+
+// ShouldDrop returns true if the current frame should be dropped according to
+// the configured drop period. Must be called once per frame from the handler
+// goroutine; it advances the internal counter. Returns false when frame-drop
+// is disabled (period == 0).
+func (t *NodePerfTracker) ShouldDrop() bool {
+	if t == nil {
+		return false
+	}
+	p := t.dropPeriod.Load()
+	if p <= 0 {
+		return false
+	}
+	n := t.dropCounter.Add(1)
+	return n%int64(p) == 0
+}
 
 // --- context helpers ---
 

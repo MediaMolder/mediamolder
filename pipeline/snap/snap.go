@@ -1,4 +1,3 @@
-package snap
 // Copyright (C) 2026 Thomas Vaughan
 // SPDX-License-Identifier: LGPL-2.1-or-later
 
@@ -96,4 +95,9 @@ type NodePerfSnapshot struct {
 	// EWMA of frame processing latency (wall-clock time from perfReceive to
 	// last perfSend for a given frame).  Set by RecordFrameLatency.
 	FrameLatencyMean time.Duration
+
+        // ThreadRestarts is the cumulative number of graceful codec restarts
+        // triggered by the real-time adaptive control loop (Phase 5).
+        // Monotonically non-decreasing. 0 when real-time mode is disabled.
+        ThreadRestarts int64
 }

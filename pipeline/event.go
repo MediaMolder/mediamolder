@@ -93,6 +93,19 @@ type ProcessorMetadata struct {
 
 func (ProcessorMetadata) eventTag() {}
 
+// RealTimeViolation is emitted by the adaptive control loop (Phase 5) when a
+// node cannot meet its FPS target and the CPU thread budget is exhausted. The
+// Reason field describes the specific cause: budget exhausted, frame-drop
+// engaged, or a sequential-bottleneck advisory.
+type RealTimeViolation struct {
+	NodeID     string
+	FPSDeficit float64
+	Reason     string
+	Time       time.Time
+}
+
+func (RealTimeViolation) eventTag() {}
+
 // MetricsEmitter periodically posts MetricsSnapshotEvent to the event bus
 // and optionally bridges metrics to Prometheus collectors.
 type MetricsEmitter struct {

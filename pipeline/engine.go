@@ -1071,6 +1071,37 @@ func (p *Pipeline) runGraph(ctx context.Context) (runErr error) {
 	p.edgeStats = edgeStats
 	p.mu.Unlock()
 
+	// 3a. Start the real-time adaptive control loop when enabled.
+	// It must start after perf trackers are registered (above) and the
+	// scheduler is about to run, so snapshots contain live data.
+	if cfg.GlobalOptions.Realtime {
+		budget := newThreadBudget(p.maxThreads)
+		for _, node := range dag.Order {
+			switch node.Kind {
+			case graph.KindEncoder:
+				if enc := runner.encoders[node.ID]; enc != nil {
+					// Nodes with a named hardware device (NVENC, VideoToolbox,
+					// VAAPI, QSV, …) consume GPU resources, not CPU threads —
+					// exempt them from the CPU ThreadBudget.
+					if node.Device != "" {
+						budget.SetHWNode(node.ID)
+					} else {
+						budget.Seed(node.ID, enc.ThreadCount())
+					}
+				}
+			case graph.KindFilter:
+				if fg := runner.filters[node.ID]; fg != nil {
+					budget.Seed(node.ID, fg.ThreadCount())
+				}
+			}
+		}
+		p.mu.Lock()
+		prom := p.prom
+		p.mu.Unlock()
+		ctrl := newRealtimeController(budget, p.metrics, p.events, runner, dag, prom)
+		go ctrl.run(ctx)
+	}
+
 	// Wrap handler with per-node OTel spans.
 	handler := runtime.NodeHandler(runner.handle)
 	if obs != nil {

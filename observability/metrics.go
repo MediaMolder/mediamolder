@@ -67,11 +67,13 @@ type Metrics struct {
 
 	registry *prometheus.Registry
 
-	// mu guards prevStallCount for counter delta computation.
-	// Update must be called from a single goroutine (e.g. MetricsEmitter's
-	// tick goroutine); the lock is present for defensive correctness.
-	mu             sync.Mutex
-	prevStallCount map[string]int64
+	// mu guards prevStallCount and prevRestartCount for counter delta
+	// computation. Update must be called from a single goroutine (e.g.
+	// MetricsEmitter's tick goroutine); the lock is present for defensive
+	// correctness.
+	mu               sync.Mutex
+	prevStallCount   map[string]int64
+	prevRestartCount map[string]int64
 }
 
 // NewMetrics creates and registers all pipeline metrics.
@@ -80,8 +82,9 @@ func NewMetrics(pipelineID string) *Metrics {
 	constLabels := prometheus.Labels{"pipeline": pipelineID}
 
 	m := &Metrics{
-		registry:       reg,
-		prevStallCount: make(map[string]int64),
+		registry:         reg,
+		prevStallCount:   make(map[string]int64),
+		prevRestartCount: make(map[string]int64),
 
 		// --- pre-existing ---
 
@@ -324,6 +327,13 @@ func (m *Metrics) Update(s snap.MetricsSnapshot) {
 			m.NodeStallCount.WithLabelValues(p.NodeID).Add(float64(delta))
 		}
 		m.prevStallCount[p.NodeID] = p.StallCount
+
+		// Thread restart counter (Phase 5): delta since last snapshot.
+		deltaRestarts := p.ThreadRestarts - m.prevRestartCount[p.NodeID]
+		if deltaRestarts > 0 {
+			m.NodeThreadRestarts.WithLabelValues(p.NodeID).Add(float64(deltaRestarts))
+		}
+		m.prevRestartCount[p.NodeID] = p.ThreadRestarts
 
 		// Real-time satisfied flag.
 		if p.FPSTarget > 0 {
