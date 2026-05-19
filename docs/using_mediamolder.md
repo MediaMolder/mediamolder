@@ -16,6 +16,8 @@ This guide covers every feature available in MediaMolder, from installing the bi
    - [list-codecs / list-filters / list-formats / list-hw-devices](#35-list-commands)
    - [version](#36-version)
    - [gui](#37-gui)
+   - [perf](#38-perf)
+   - [hwbench](#39-hwbench)
 4. [Graph JSON reference](#4-graph-json-reference)
    - [Top-level structure](#41-top-level-structure)
    - [inputs](#42-inputs)
@@ -305,6 +307,31 @@ to exit.
 The `/perf` endpoint is served by the `MetricsServer` when a pipeline is
 running.  Start the server with `--metrics-addr :9090` (or configure it in
 code via `observability.NewMetricsServer`).
+
+### 3.9 `hwbench`
+
+Benchmark hardware and software codec encode/decode throughput and optionally
+contribute the results to the MediaMolder community capability database.
+
+```sh
+mediamolder hwbench [--device <type>] [--codecs <list>] [--resolutions <list>]
+                    [--frames N] [--warmup N] [--output <path>] [--stdout]
+                    [--caps-only]
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--device` | _(none, SW only)_ | Hardware device type (`cuda`, `videotoolbox`, `vaapi`, `qsv`) |
+| `--codecs` | All supported | Comma-separated encoder names, e.g. `h264_nvenc,hevc_nvenc` |
+| `--resolutions` | 360p → 4K | Comma-separated `WxH` targets, e.g. `1920x1080,3840x2160` |
+| `--frames` | `200` | Frames to time per codec × resolution |
+| `--warmup` | `20` | Warmup frames before timing (lets GPUs reach steady state) |
+| `--output` | `hwbench_report_<ts>.json` | Path for the JSON report |
+| `--stdout` | `false` | Write JSON to stdout instead of a file |
+| `--caps-only` | `false` | Print hardware capabilities without benchmarking |
+
+See [docs/benchmarks.md](benchmarks.md) for full documentation, the JSON
+report schema, and contribution instructions.
 
 ---
 
