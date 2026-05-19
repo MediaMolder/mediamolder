@@ -75,6 +75,23 @@ button.danger:hover { background: rgba(185, 74, 74, 0.15); }
 }
 .toolbar .title { font-weight: 600; margin-right: 16px; }
 .toolbar .spacer { flex: 1; }
+.toolbar-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--text-dim);
+  cursor: pointer;
+  user-select: none;
+}
+.toolbar-check input[type="checkbox"] {
+  margin: 0;
+  cursor: pointer;
+}
+.toolbar-check:has(input:disabled) {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
 .toolbar-badge {
   display: inline-flex;
   align-items: center;
