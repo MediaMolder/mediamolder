@@ -115,6 +115,13 @@ func (r *graphRunner) handleSource(ctx context.Context, node *graph.Node, outs [
 	// stream) the frame is cloned for all but the last recipient so
 	// each consumer owns an independent reference.
 	sendFrame := func(f *av.Frame, indices []int) error {
+		// Phase 5 frame-drop: discard the frame when the real-time control
+		// loop has enabled drop mode on this source to shed pipeline load.
+		// This is a last-resort measure; it is always logged at warning level.
+		if t.ShouldDrop() {
+			f.Close()
+			return nil
+		}
 		for i, idx := range indices {
 			toSend := f
 			if i < len(indices)-1 {
