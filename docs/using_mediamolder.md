@@ -223,7 +223,36 @@ For a complete mapping table of FFmpeg options to JSON fields, see [ffmpeg-migra
 
 ---
 
-### 3.5 List commands
+### 3.5 `export`
+
+Export a MediaMolder graph (JSON) to the equivalent FFmpeg command line (the inverse of `convert-cmd`). The command is written to stdout; normalisation warnings and any unsupported-feature notes go to stderr.
+
+```sh
+mediamolder export [--from-graph] <config.json>
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--from-graph` | `false` | Normalise through `pipeline.NormalizeConfig` first, then render via `ExportGraph`; produces a more accurate result for graphs that use implicit encoders or shorthand fields |
+
+**Examples:**
+
+```sh
+# Quick export — direct config-to-command translation
+mediamolder export job.json
+
+# Graph-normalised export — resolves implicit encoders and shorthand fields
+mediamolder export --from-graph job.json
+
+# Copy the command to the clipboard (macOS)
+mediamolder export job.json | pbcopy
+```
+
+Not every MediaMolder feature has a direct FFmpeg CLI equivalent (per-node error policies, named assets, etc.). Such features are reported as notes on stderr and omitted from the command. The canonical, lossless representation of a pipeline is always the JSON file.
+
+---
+
+### 3.6 List commands
 
 These commands query the libav* libraries at runtime and return JSON arrays.
 
@@ -246,7 +275,7 @@ mediamolder list-codecs | jq '[.[] | select(.name | test("nvenc|vaapi|qsv|amf|vt
 
 ---
 
-### 3.6 `version`
+### 3.7 `version`
 
 Print the versions of all linked libav* libraries.
 
@@ -266,7 +295,7 @@ libswscale   8.3.100
 
 ---
 
-### 3.7 `gui`
+### 3.8 `gui`
 
 Launch the browser-based visual job editor.
 
@@ -289,7 +318,7 @@ MediaMolder GUI
 
 The GUI communicates with the local Go process over HTTP. JSON config files saved through the GUI are fully compatible with `mediamolder run`.
 
-### 3.8 `perf`
+### 3.9 `perf`
 
 Display a live terminal table of per-node performance data for a running
 pipeline.  Polls the pipeline's `/perf` JSON endpoint and redraws the
@@ -313,7 +342,7 @@ The `/perf` endpoint is served by the `MetricsServer` when a pipeline is
 running.  Start the server with `--metrics-addr :9090` (or configure it in
 code via `observability.NewMetricsServer`).
 
-### 3.9 `hwbench`
+### 3.10 `hwbench`
 
 Benchmark hardware and software codec encode/decode throughput and optionally
 contribute the results to the MediaMolder community capability database.
@@ -1011,7 +1040,7 @@ mediamolder validate --json job.json | jq '.issues[] | select(.severity == "ERRO
 
 ## 7. Graphical user interface
 
-The GUI is a browser-based visual editor. Start it with `mediamolder gui` (see [§3.7](#37-gui)).
+The GUI is a browser-based visual editor. Start it with `mediamolder gui` (see [§3.8](#38-gui)).
 
 ### 7.1 Launching the GUI
 
