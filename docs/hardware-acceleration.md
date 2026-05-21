@@ -500,8 +500,8 @@ required in the JSON.
 - CUDA: check `nvidia-smi` output
 
 ### "no decoder found" for hardware codec
-- FFmpeg not built with hardware acceleration support
-- Rebuild FFmpeg with appropriate `--enable-*` flags
+- The FFmpeg libraries MediaMolder links against were not built with hardware acceleration support
+- Rebuild the FFmpeg libraries with the appropriate `--enable-*` configure flags
 
 ### Poor performance with hardware encoding
 - Ensure frames are not being transferred host↔device unnecessarily
@@ -538,7 +538,7 @@ returned by `av_hwdevice_ctx_create`. Common causes:
 
 - Driver not installed / GPU not present
 - VAAPI device file (`/dev/dri/renderD128`) not accessible
-- FFmpeg not built with support for that backend
+- The FFmpeg libraries MediaMolder links against were not built with support for that backend
 
 ### Button state
 

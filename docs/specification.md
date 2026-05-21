@@ -418,7 +418,7 @@ The `mediamolder gui` HTTP server (§18) is intended for **localhost use only** 
 - **Server-level timeouts**: `ReadHeaderTimeout` (10s), `ReadTimeout` (30s), `WriteTimeout` (60s), `IdleTimeout` (120s) are set on the `http.Server` to prevent slow-loris and connection-leak attacks.
 - **Request body limits**: POST bodies are capped — `1 MiB` for `/api/validate` and `/api/run` (`jobConfigBodyLimit`), `16 KiB` for `/api/files/mkdir` (`mkdirBodyLimit`). These constants are in `internal/gui/run.go` and `internal/gui/files.go` respectively; raise them and recompile for pipelines with very large concat lists.
 - **File browser path confinement**: `GET /api/files` and `POST /api/files/mkdir` restrict browsing to a set of `defaultRoots` (home directory, cwd, filesystem root on Unix, drive letters on Windows, and mounted volumes). Paths outside the allowed roots are rejected with HTTP 400.
-- **No shell usage**: All subprocess invocations (FFmpeg, FFprobe) use `exec.Command(binary, args...)` with argument arrays — no shell interpolation, no `sh -c`.
+- **No shell usage**: Any OS-level subprocess invocations (e.g. opening a browser) use `exec.Command(binary, args...)` with argument arrays — no shell interpolation, no `sh -c`. MediaMolder does not spawn `ffmpeg` or `ffprobe` as subprocesses; all media operations go through the linked libav\* libraries via cgo.
 
 #### 16.3 cgo Boundary Safety
 - All C allocations are paired with explicit frees in `Close()` methods. The leak-detection build tag (`-tags=avleakcheck`) tracks allocations and reports leaks at process exit.

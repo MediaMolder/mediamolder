@@ -1003,17 +1003,79 @@ nodes. Five detectors are available; all are ported from
 | `scene_change_hash` | 0.395 | Robust to colour-grading and compression artefacts |
 | `scene_change_histogram` | 0.05 | Fast coarse filter; low memory |
 
+#### Wiring rules for scene detector nodes
+
+A scene detector is a **passthrough** node: it receives decoded video frames,
+inspects them, and forwards them unchanged to the next node. This means it must
+be wired **in-line** on a video path — it cannot sit at the end of the graph
+with nothing downstream.
+
+```
+[video source] ──video──▶ [scene detector] ──video──▶ [consumer]
+```
+
+**Valid video sources** (left side of the detector):
+
+| Source | Example edge `from` |
+|---|---|
+| Input node, single-stream file | `"in0:v:0"` |
+| `split` / `vsplit` filter output | `"vsplit:0"`, `"vsplit:1"`, … |
+| Any filter that produces video | `"scale_720"`, `"deinterlace"`, … |
+
+**Valid video consumers** (right side of the detector):
+
+| Consumer | Notes |
+|---|---|
+| Encoder | Most common; the detected frames are encoded as-is |
+| Video filter | Apply further processing after detection |
+| Another `go_processor` | Chain multiple detectors or processors |
+| Output (copy) | Only when the output uses stream-copy (no re-encode) |
+
+**Multi-rendition / ABR ladders**
+
+When the video is split to multiple resolutions, wire the detector on exactly
+one of the splitter outputs (typically the highest resolution, so the detector
+sees the most detail). The other outputs go straight to their scale filters.
+
+```
+                   ┌─[0]──▶ scene_detector ──▶ enc_1080
+split (outputs=4) ─┤─[1]──▶ scale_720 ──▶ enc_720
+                   │─[2]──▶ scale_540 ──▶ enc_540
+                   └─[3]──▶ scale_360 ──▶ enc_360
+```
+
+JSON edges for this pattern:
+
+```json
+{ "from": "vsplit",   "to": "scene_detector", "type": "video" },
+{ "from": "scene_detector", "to": "enc_1080", "type": "video" },
+{ "from": "vsplit:1", "to": "scale_720",      "type": "video" },
+{ "from": "vsplit:2", "to": "scale_540",      "type": "video" },
+{ "from": "vsplit:3", "to": "scale_360",      "type": "video" }
+```
+
+`"from": "vsplit"` (no index suffix) selects output 0, the same as `"vsplit:0"`.
+
+**Common mistakes**
+
+| Mistake | Symptom | Fix |
+|---|---|---|
+| Wiring to `in0:v:1` when the file has only one video stream | `STREAM_INDEX_OUT_OF_RANGE` | Use `in0:v:0`; remove the `track: 1` stream entry from the input |
+| Connecting the detector's input but not its output | `dead_node` warning; no scene data | Wire `scene_detector → encoder` (or next node) |
+| Setting `split outputs=4` but wiring 5 outputs | `Invalid argument` from libavfilter | Match the `outputs` param to the number of outgoing edges |
+| Wiring an `events` edge to carry video | Nothing encoded | `events` edges carry metadata only; use a `video` edge for the frame path |
+
 #### Edge type reference
 
 MediaMolder has several edge types that look similar but carry very different
 kinds of data:
 
-| Edge type | What it carries | Relationship to FFmpeg |
+| Edge type | What it carries | libav\* library involvement |
 |---|---|---|
-| `video`, `audio`, `subtitle` | Decoded media frames | Flows through libavformat / libavfilter |
-| `data` | FFmpeg `AVMEDIA_TYPE_DATA` streams — raw timed data tracks such as SCTE-35 splice markers, closed-caption side data, or timecode tracks | A real media stream, muxed into the container |
-| `metadata` | Container-level metadata and chapter tables copied between inputs and outputs via `metadata_reader` / `metadata_writer` nodes | Resolved at pipeline build time; no frames flow at runtime |
-| `events` | Structured event objects emitted by a `go_processor` via its `Process()` return value (scene boundaries, object detections, frame diagnostics, …) | **Never enters FFmpeg at all** — goes through a Go event bus side-channel |
+| `video`, `audio`, `subtitle` | Decoded media frames | Demuxed by libavformat, filtered by libavfilter, encoded/muxed by libavcodec/libavformat |
+| `data` | `AVMEDIA_TYPE_DATA` streams — raw timed-data tracks such as SCTE-35 splice markers, closed-caption side data, or timecode tracks | A real media stream; demuxed and muxed by libavformat alongside audio/video |
+| `metadata` | Container-level metadata and chapter tables copied between inputs and outputs via `metadata_reader` / `metadata_writer` nodes | Resolved at pipeline build time via libavformat metadata APIs; no frames flow at runtime |
+| `events` | Structured event objects emitted by a `go_processor` via its `Process()` return value (scene boundaries, object detections, frame diagnostics, …) | **None** — handled entirely by the Go runtime event bus; never touches any libav\* library |
 
 The `events` edge type is specifically for routing Go-processor event
 output to a `metadata_file_writer` sink. An `events` edge does not
