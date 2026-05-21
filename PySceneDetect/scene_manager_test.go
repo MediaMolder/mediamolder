@@ -36,7 +36,7 @@ func (d *fakeDetector) ProcessFrame(t FrameTimecode, _ *FrameData) ([]FrameTimec
 func (d *fakeDetector) PostProcess(_ FrameTimecode) ([]FrameTimecode, error) {
 	return nil, nil
 }
-func (d *fakeDetector) GetMetrics() []string    { return nil }
+func (d *fakeDetector) GetMetrics() []string     { return nil }
 func (d *fakeDetector) EventBufferLength() int64 { return 0 }
 
 // makeFD returns a minimal 8×8 BGR24 FrameData, small enough that

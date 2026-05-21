@@ -210,7 +210,8 @@ func TestThresholdDetector_StateAdvancesEvenIfSuppressed(t *testing.T) {
 // Init: dark(0) → 0 < 200 = true → "out" (Python FLOOR-style init, faithfully ported).
 // Frame 1 (bright): "out" and !isFadeOut(255) where isFadeOut=255>=200=true → not taken.
 // Frame 2 (dark): "out" and !isFadeOut(0) where isFadeOut=0>=200=false → TAKEN.
-//   fOut=frame0, duration=2-0=2, split=0+round(2*0.5)=0+1=1. Cut at frame 1.
+//
+//	fOut=frame0, duration=2-0=2, split=0+round(2*0.5)=0+1=1. Cut at frame 1.
 func TestThresholdDetector_CeilingMode(t *testing.T) {
 	d, _ := NewThresholdDetector(200.0, 0, 0.0, false, ThresholdMethodCeiling)
 	sequence := []*psd.FrameData{

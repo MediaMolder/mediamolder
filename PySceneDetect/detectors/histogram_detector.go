@@ -52,19 +52,19 @@ type HistogramDetector struct {
 	stats *psd.StatsManager
 
 	// State
-	lastHist    []float64 // normalised histogram of the previous frame; nil = first frame
-	lastCut     psd.FrameTimecode
-	hasLastCut  bool
+	lastHist     []float64 // normalised histogram of the previous frame; nil = first frame
+	lastCut      psd.FrameTimecode
+	hasLastCut   bool
 	lastHistDiff float64 // most recently computed Pearson correlation
 }
 
 // NewHistogramDetector constructs a HistogramDetector.
 //
 //   - threshold:   maximum tolerated frame-to-frame difference in [0,1]
-//                  (default 0.05).  Internally stored as 1−threshold.
+//     (default 0.05).  Internally stored as 1−threshold.
 //   - bins:        number of histogram bins (default 256).
 //   - minSceneLen: minimum scene length; accepts int frame count or "HH:MM:SS"
-//                  timecode (default 15).
+//     timecode (default 15).
 func NewHistogramDetector(threshold float64, bins int, minSceneLen any) (*HistogramDetector, error) {
 	if bins < 1 {
 		return nil, fmt.Errorf("histogram_detector: bins must be ≥ 1, got %d", bins)

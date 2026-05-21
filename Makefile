@@ -2,19 +2,30 @@
         frontend-install frontend-dev frontend-build gui gui-dev build-gui build-gui-static \
         check-deps build-debug build-gui-debug
 
+# Detect macOS: Apple ld warns about duplicate -l flags when two CGO packages
+# (av and PySceneDetect/internal) both link -lavutil and -lswscale. Pass
+# -Wl,-no_warn_duplicate_libraries via the environment (bypasses CGO security
+# restrictions on #cgo LDFLAGS). No-op on Linux (GNU ld silently deduplicates).
+UNAME_S := $(shell uname -s)
+ifeq ($(UNAME_S),Darwin)
+CGO_LDFLAGS_NODUP := -Wl,-no_warn_duplicate_libraries
+endif
+
 # Default: use system FFmpeg via pkg-config (no special flags needed).
 build: check-deps
 	go build ./...
 
 # Static: link against a local FFmpeg source tree (set FFMPEG_SRC to override).
 build-static:
-	go build -tags=ffstatic ./...
+	CGO_LDFLAGS_ALLOW='.*' CGO_LDFLAGS='$(CGO_LDFLAGS_NODUP)' \
+	  go build -tags=ffstatic ./...
 
 test:
 	go test ./...
 
 test-static:
-	go test -tags=ffstatic ./...
+	CGO_LDFLAGS_ALLOW='.*' CGO_LDFLAGS='$(CGO_LDFLAGS_NODUP)' \
+	  go test -tags=ffstatic ./...
 
 lint:
 	golangci-lint run ./...
@@ -23,7 +34,8 @@ bench:
 	go test -bench=. -benchmem ./...
 
 bench-static:
-	go test -tags=ffstatic -bench=. -benchmem ./...
+	CGO_LDFLAGS_ALLOW='.*' CGO_LDFLAGS='$(CGO_LDFLAGS_NODUP)' \
+	  go test -tags=ffstatic -bench=. -benchmem ./...
 
 clean:
 	go clean ./...
@@ -146,4 +158,5 @@ build-gui: check-deps frontend-build
 
 # Same as build-gui but linking against a local FFmpeg source tree.
 build-gui-static: frontend-build
-	go build -tags=ffstatic -o mediamolder ./cmd/mediamolder
+	CGO_LDFLAGS_ALLOW='.*' CGO_LDFLAGS='$(CGO_LDFLAGS_NODUP)' \
+	  go build -tags=ffstatic -o mediamolder ./cmd/mediamolder
