@@ -58,7 +58,7 @@ This guide covers every feature available in MediaMolder, from installing the bi
 
 ## 1. Installation
 
-See [installation guide](installation.md).
+See [installation guide](build/macos.md).
 
 ---
 
@@ -1588,4 +1588,4 @@ mediamolder version
 | [observability.md](observability.md) | Event bus, metrics, SSE API |
 | [graph-state-machine.md](graph-state-machine.md) | Graph lifecycle, pause/resume, seek |
 | [build_and_packaging.md](build_and_packaging.md) | Static linking, cross-compilation, packaging |
-| [graph_validation_design.md](graph_validation_design.md) | Validation architecture and issue code catalogue |
+| [graph_validation_design.md](architecture/graph_validation_design.md) | Validation architecture and issue code catalogue |

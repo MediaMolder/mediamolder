@@ -250,7 +250,7 @@ two refinements:
 4. Add the modified-options pin, grouping, reset, and generated-CLI
    panels as small additive changes — none of them require schema
    changes.
-5. Documentation: update [docs/gui.md](../gui.md) "Filter nodes"
+5. Documentation: update [docs/gui.md](../../gui.md) "Filter nodes"
    section once the new layout lands; mark the proposal as
    *Implemented* (with commit hash) and leave the file as the design
    record.

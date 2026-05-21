@@ -333,12 +333,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
     only from this view, decoupling the formatter from
     `pipeline.Output` shorthand fields ahead of `ExportGraph`.
   - **F1.6 — documentation.** New
-    [docs/export.md](docs/export.md) describes the two reverse
+    [docs/architecture/export.md](docs/architecture/export.md) describes the two reverse
     exporters (`Export(cfg)` vs `ExportGraph(cfg, def, warnings)`),
     when to use each, the per-class round-trip behaviour, the CLI
     entry, and the test gates that lock in the identity. Added a
     "Reverse-lowering" section to
-    [docs/field-ownership.md](docs/field-ownership.md) cross-walking
+    [docs/architecture/field-ownership.md](docs/architecture/field-ownership.md) cross-walking
     each ownership class to its source-of-truth in `def` /
     `cfg.Graph` and its emission path. Linked from the README.
 
@@ -493,7 +493,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   plumbs them through `graph.Build` but does not yet write or read
   them — that follows in Milestone B.4/B.5/B.6. See
   [graph/internal_fields.go](graph/internal_fields.go) and
-  [docs/field-ownership.md](docs/field-ownership.md).
+  [docs/architecture/field-ownership.md](docs/architecture/field-ownership.md).
 - **`pipeline.NormalizeConfig` boundary.** New
   `pipeline.NormalizeConfig(cfg) (*graph.Def, []NormalizeWarning, error)`
   is the single, deterministic entry point for lowering an authoring
@@ -508,7 +508,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   [pipeline/normalize_test.go](pipeline/normalize_test.go) gate the
   no-mutation, determinism, and shorthand-coverage contracts.
 - **Field ownership classification.** New
-  [docs/field-ownership.md](docs/field-ownership.md) classifies every
+  [docs/architecture/field-ownership.md](docs/architecture/field-ownership.md) classifies every
   `Config` / `GlobalOptions` / `Output` / `Input` field as node-local,
   authoring shorthand, muxer-owned, true global, or deferred.
   Authoritative reference for the normalization-boundary work tracked
@@ -587,7 +587,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   - Toolbar badge CSS in [frontend/src/styles.css](frontend/src/styles.css).
   Documentation: [docs/gui.md](docs/gui.md) "Asset registry" section; [docs/roadmap/ffmpeg-coverage-roadmap.md](docs/roadmap/ffmpeg-coverage-roadmap.md) §3.5.10 and §6.8 #51 marked ✅. Roadmap §6.8 #51 ✅.
 
- Closes the usability gap reported against the per-filter Inspector (the three top fields `ID` / `Type` / `Filter` were always-editable text inputs that almost never wanted to be changed, every option row showed `int · default 0 · ≤ 1` then `set mode` as separate dim lines, and booleans were rendered as a `(default) / true / false` `<select>` even when the underlying AVOption was an `int` with `min=0 max=1`). Design captured in [docs/proposals/filter-properties-redesign.md](docs/proposals/filter-properties-redesign.md). Implemented:
+ Closes the usability gap reported against the per-filter Inspector (the three top fields `ID` / `Type` / `Filter` were always-editable text inputs that almost never wanted to be changed, every option row showed `int · default 0 · ≤ 1` then `set mode` as separate dim lines, and booleans were rendered as a `(default) / true / false` `<select>` even when the underlying AVOption was an `int` with `min=0 max=1`). Design captured in [docs/architecture/proposals/filter-properties-redesign.md](docs/architecture/proposals/filter-properties-redesign.md). Implemented:
   - **Header refactor** — for `filter`, `filter_source`, and `filter_sink` graph nodes the three structural identifiers (`id`, `type`, `filter`) collapse into a single `▸ Advanced` disclosure in [frontend/src/components/Inspector.tsx](frontend/src/components/Inspector.tsx) (`FilterAdvanced`). Inside the disclosure the type is read-only (it is determined when the node is created from the Palette) and the filter swap goes through a `Replace…` confirmation that warns the user it discards every option on the node. The Inspector heading + `describeKind` subtitle ("Audio filter" / "Video filter") already conveyed the kind, so the body of the panel now leads with the filter's own description and option list.
   - **Option-row layout** — the new `.filter-option-row` block in [frontend/src/styles.css](frontend/src/styles.css) reorders each AVOption to: `NAME` (uppercase label) → help text in body colour as the row's primary descriptive line → control on the left of a flex row → quiet `0.015625–64.0` range badge tucked against the right edge. The `default <n>` token is gone (the input's placeholder shows it instead) and so is the `<type>` token (the range formatting itself conveys the type — see below). The badge is suppressed entirely for enums, booleans, strings, and options whose min/max are both libavutil sentinels.
   - **Type-aware range formatting** — `rangeHint` in [frontend/src/components/FilterForm.tsx](frontend/src/components/FilterForm.tsx) renders `float` / `double` / `rational` endpoints with at least one decimal place (`0–1` becomes `0.0–1.0`, `0.015625–64` becomes `0.015625–64.0`) and integer-typed endpoints as plain integers (no spurious `.0`). This makes the range visually disambiguate the type without needing a separate token.
