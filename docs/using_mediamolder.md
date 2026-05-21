@@ -567,6 +567,42 @@ Edges are directed connections between stream producers and consumers.
 | `chapters` | array | Chapter table (each: `{start, end, title, metadata}`, times in seconds) |
 | `streams` | array | Per-stream overrides (disposition, per-stream metadata, encoder) |
 | `cover_art` | string | Path to an image to embed as cover art |
+
+#### Container metadata — default behaviour and FFmpeg comparison
+
+> **MediaMolder does not copy container-level metadata by default.**
+> Plain `ffmpeg -i in.mp4 out.mp4` implicitly applies `-map_metadata 0`,
+> copying every tag (title, artist, encoder, …) from the first input to the
+> output. MediaMolder makes this opt-in so the caller controls exactly which
+> metadata reaches which output — especially important in multi-input jobs
+> where each output may need a different source.
+
+Three mechanisms are available, resolved in this priority order:
+
+| Mechanism | How | When to use |
+|---|---|---|
+| `Output.metadata` | Set `"metadata": {"title": "…"}` on an output | Hard-code specific tags; **replaces** any input-mapped metadata entirely |
+| `metadata_reader` + `metadata_writer` graph nodes | Wire a `metadata` edge from a reader to a writer | Multi-input jobs; fine-grained control over which input feeds which output |
+| `Input.map_metadata: true` | Add `"map_metadata": true` to an input | Single-input shorthand; mirrors FFmpeg's default; last writer wins per key when multiple inputs are flagged |
+
+For chapters the same logic applies: `Output.chapters` wins, then a `metadata_reader`/`metadata_writer` pair with `section: "chapters"`, then `Input.map_chapters: true` (first flagged input wins — FFmpeg's single-source chapters semantics).
+
+**Quickest equivalent of FFmpeg's default** — add `map_metadata` and `map_chapters` to the input:
+
+```json
+{
+  "id": "in0",
+  "url": "input.mp4",
+  "map_metadata": true,
+  "map_chapters": true,
+  "streams": [
+    { "input_index": 0, "type": "video", "track": 0 },
+    { "input_index": 0, "type": "audio", "track": 0 }
+  ]
+}
+```
+
+See `testdata/examples/40_metadata_routing.json` for the explicit graph-node form.
 | `hls` | object | HLS options (see below) |
 | `dash` | object | DASH options (see below) |
 | `kind` | string | Output mode: `""` (file), `"tee"` (fan-out) |
