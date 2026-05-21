@@ -1,6 +1,7 @@
 {
   "schema_version": "1.0",
-  "description": "Two-pass video encoding (analysis pass). Mirrors `ffmpeg -y -i in.mp4 -c:v libx264 -b:v 2M -pass 1 -passlogfile prefix -an -f null /dev/null` for the canonical first pass that writes stats; the caller would then re-run the same job with pass: 2 against the same passlogfile prefix to consume those stats and write the final muxed output.",
+  "description": "Two-pass video encoding (analysis pass). For the canonical first pass that writes stats; the caller would then re-run the same job with pass: 2 against the same passlogfile prefix to consume those stats and write the final muxed output. Note: if you edit this JSON manually, you must also update or remove the ffmpeg_cmd field.",
+  "ffmpeg_cmd": "ffmpeg -i {{input}} -map 0:v:0 -c:v libx264 -pass 1 -passlogfile {{passlog}} -map_metadata 0 -map_chapters 0 {{output}}",
   "inputs": [
     {
       "id": "in0",
@@ -8,14 +9,22 @@
       "map_metadata": true,
       "map_chapters": true,
       "streams": [
-        { "input_index": 0, "type": "video", "track": 0 }
+        {
+          "input_index": 0,
+          "type": "video",
+          "track": 0
+        }
       ]
     }
   ],
   "graph": {
     "nodes": [],
     "edges": [
-      { "from": "in0:v:0", "to": "out0:v", "type": "video" }
+      {
+        "from": "in0:v:0",
+        "to": "out0:v",
+        "type": "video"
+      }
     ]
   },
   "outputs": [

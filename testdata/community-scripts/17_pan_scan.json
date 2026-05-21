@@ -1,15 +1,24 @@
 {
   "schema_version": "1.0",
-  "description": "Pan left across an image over 5 seconds (camera pans left = crop window moves right). Matches 'pan-scan -i image.jpg -d 5 -p l -o output.mp4'. Requires testdata/sample.jpg fixture (see FIXTURES.md).",
+  "description": "Pan left across an image over 5 seconds (camera pans left = crop window moves right). Matches 'pan-scan -i image.jpg -d 5 -p l -o output.mp4'. Requires testdata/sample.jpg fixture (see FIXTURES.md). Note: if you edit this JSON manually, you must also update or remove the ffmpeg_cmd field.",
+  "ffmpeg_cmd": "ffmpeg -t 5 -i {{image}} -filter_complex [0:v]zoompan=d=125:s=hd720:x=on/(125-1)*(iw-iw/zoom):y=ih/2-(ih/zoom/2):z=1.0[zoompan0];[zoompan0]fps=fps=25[fps0] -map 0:v:0 -c:v libx264 -x264-params:v pix_fmt=yuv420p -map_metadata 0 -map_chapters 0 {{output}}",
   "inputs": [
     {
       "id": "in0",
       "url": "{{image}}",
       "map_metadata": true,
       "map_chapters": true,
-      "options": { "loop": "1", "framerate": "25", "t": "5" },
+      "options": {
+        "loop": "1",
+        "framerate": "25",
+        "t": "5"
+      },
       "streams": [
-        { "input_index": 0, "type": "video", "track": 0 }
+        {
+          "input_index": 0,
+          "type": "video",
+          "track": 0
+        }
       ]
     }
   ],
@@ -31,13 +40,27 @@
         "id": "fps0",
         "type": "filter",
         "filter": "fps",
-        "params": { "fps": "25" }
+        "params": {
+          "fps": "25"
+        }
       }
     ],
     "edges": [
-      { "from": "in0:v:0", "to": "zoompan0", "type": "video" },
-      { "from": "zoompan0","to": "fps0",     "type": "video" },
-      { "from": "fps0",    "to": "out0:v",   "type": "video" }
+      {
+        "from": "in0:v:0",
+        "to": "zoompan0",
+        "type": "video"
+      },
+      {
+        "from": "zoompan0",
+        "to": "fps0",
+        "type": "video"
+      },
+      {
+        "from": "fps0",
+        "to": "out0:v",
+        "type": "video"
+      }
     ]
   },
   "outputs": [
@@ -45,7 +68,9 @@
       "id": "out0",
       "url": "{{output}}",
       "codec_video": "libx264",
-      "encoder_params_video": { "pix_fmt": "yuv420p" }
+      "encoder_params_video": {
+        "pix_fmt": "yuv420p"
+      }
     }
   ]
 }

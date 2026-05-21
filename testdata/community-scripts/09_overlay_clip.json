@@ -1,6 +1,7 @@
 {
   "schema_version": "1.0",
-  "description": "Overlay one video clip on top of another (always-on, top-left). Matches 'overlay-clip -i bottom.mp4 -v overlay.mp4 -p 0 -o output.mp4'. Both inputs use testdata/BBB_10sec.mp4.",
+  "description": "Overlay one video clip on top of another (always-on, top-left). Matches 'overlay-clip -i bottom.mp4 -v overlay.mp4 -p 0 -o output.mp4'. Both inputs use testdata/BBB_10sec.mp4. Note: if you edit this JSON manually, you must also update or remove the ffmpeg_cmd field.",
+  "ffmpeg_cmd": "ffmpeg -i {{input}} -i {{input2}} -filter_complex [0:v][1:v]overlay=x=0:y=0[overlay0] -map 0:a:0 -map 0:v:0 -map 1:v:0 -c:v libx264 -c:a copy -map_metadata 0 -map_chapters 0 {{output}}",
   "inputs": [
     {
       "id": "in0",
@@ -8,15 +9,27 @@
       "map_metadata": true,
       "map_chapters": true,
       "streams": [
-        { "input_index": 0, "type": "video", "track": 0 },
-        { "input_index": 0, "type": "audio", "track": 0 }
+        {
+          "input_index": 0,
+          "type": "video",
+          "track": 0
+        },
+        {
+          "input_index": 0,
+          "type": "audio",
+          "track": 0
+        }
       ]
     },
     {
       "id": "in1",
       "url": "{{input2}}",
       "streams": [
-        { "input_index": 0, "type": "video", "track": 0 }
+        {
+          "input_index": 0,
+          "type": "video",
+          "track": 0
+        }
       ]
     }
   ],
@@ -26,14 +39,33 @@
         "id": "overlay0",
         "type": "filter",
         "filter": "overlay",
-        "params": { "x": "0", "y": "0" }
+        "params": {
+          "x": "0",
+          "y": "0"
+        }
       }
     ],
     "edges": [
-      { "from": "in0:v:0", "to": "overlay0",  "type": "video" },
-      { "from": "in1:v:0", "to": "overlay0",  "type": "video" },
-      { "from": "overlay0", "to": "out0:v",   "type": "video" },
-      { "from": "in0:a:0",  "to": "out0:a",   "type": "audio" }
+      {
+        "from": "in0:v:0",
+        "to": "overlay0",
+        "type": "video"
+      },
+      {
+        "from": "in1:v:0",
+        "to": "overlay0",
+        "type": "video"
+      },
+      {
+        "from": "overlay0",
+        "to": "out0:v",
+        "type": "video"
+      },
+      {
+        "from": "in0:a:0",
+        "to": "out0:a",
+        "type": "audio"
+      }
     ]
   },
   "outputs": [

@@ -1,6 +1,7 @@
 {
   "schema_version": "1.0",
-  "description": "ABR ladder: decode in.mp4 once, split video to 4 renditions (1920x1080@7Mbps, 1280x720@4Mbps, 960x540@2Mbps, 640x360@1Mbps) each encoded with libx264, plus a single AAC audio encoder whose packets are fanned out to all four MP4 outputs (encode-once, mux-many).",
+  "description": "ABR ladder: decode in.mp4 once, split video to 4 renditions (1920x1080@7Mbps, 1280x720@4Mbps, 960x540@2Mbps, 640x360@1Mbps) each encoded with libx264, plus a single AAC audio encoder whose packets are fanned out to all four MP4 outputs (encode-once, mux-many). Note: if you edit this JSON manually, you must also update or remove the ffmpeg_cmd field.",
+  "ffmpeg_cmd": "ffmpeg -i {{input}} -filter_complex [0:v]split=outputs=4[vsplit_0][vsplit_1][vsplit_2][vsplit_3];[vsplit_0]scale=h=1080:w=1920[scale_1080];[vsplit_1]scale=h=720:w=1280[scale_720];[vsplit_2]scale=h=540:w=960[scale_540];[vsplit_3]scale=h=360:w=640[scale_360] -c:v libx264 -c:a aac -map_metadata 0 -map_chapters 0 {{out_1080}} -c:v libx264 -c:a aac -map_metadata 0 -map_chapters 0 {{out_720}} -c:v libx264 -c:a aac -map_metadata 0 -map_chapters 0 {{out_540}} -c:v libx264 -c:a aac -map_metadata 0 -map_chapters 0 {{out_360}}",
   "inputs": [
     {
       "id": "in0",
@@ -109,28 +110,96 @@
       }
     ],
     "edges": [
-      { "from": "in0:v:0",   "to": "vsplit",     "type": "video" },
-
-      { "from": "vsplit:0",  "to": "scale_1080", "type": "video" },
-      { "from": "vsplit:1",  "to": "scale_720",  "type": "video" },
-      { "from": "vsplit:2",  "to": "scale_540",  "type": "video" },
-      { "from": "vsplit:3",  "to": "scale_360",  "type": "video" },
-
-      { "from": "scale_1080", "to": "enc_1080", "type": "video" },
-      { "from": "scale_720",  "to": "enc_720",  "type": "video" },
-      { "from": "scale_540",  "to": "enc_540",  "type": "video" },
-      { "from": "scale_360",  "to": "enc_360",  "type": "video" },
-
-      { "from": "enc_1080", "to": "out_1080:v", "type": "video" },
-      { "from": "enc_720",  "to": "out_720:v",  "type": "video" },
-      { "from": "enc_540",  "to": "out_540:v",  "type": "video" },
-      { "from": "enc_360",  "to": "out_360:v",  "type": "video" },
-
-      { "from": "in0:a:0",  "to": "enc_audio",     "type": "audio" },
-      { "from": "enc_audio", "to": "out_1080:a",   "type": "audio" },
-      { "from": "enc_audio", "to": "out_720:a",    "type": "audio" },
-      { "from": "enc_audio", "to": "out_540:a",    "type": "audio" },
-      { "from": "enc_audio", "to": "out_360:a",    "type": "audio" }
+      {
+        "from": "in0:v:0",
+        "to": "vsplit",
+        "type": "video"
+      },
+      {
+        "from": "vsplit:0",
+        "to": "scale_1080",
+        "type": "video"
+      },
+      {
+        "from": "vsplit:1",
+        "to": "scale_720",
+        "type": "video"
+      },
+      {
+        "from": "vsplit:2",
+        "to": "scale_540",
+        "type": "video"
+      },
+      {
+        "from": "vsplit:3",
+        "to": "scale_360",
+        "type": "video"
+      },
+      {
+        "from": "scale_1080",
+        "to": "enc_1080",
+        "type": "video"
+      },
+      {
+        "from": "scale_720",
+        "to": "enc_720",
+        "type": "video"
+      },
+      {
+        "from": "scale_540",
+        "to": "enc_540",
+        "type": "video"
+      },
+      {
+        "from": "scale_360",
+        "to": "enc_360",
+        "type": "video"
+      },
+      {
+        "from": "enc_1080",
+        "to": "out_1080:v",
+        "type": "video"
+      },
+      {
+        "from": "enc_720",
+        "to": "out_720:v",
+        "type": "video"
+      },
+      {
+        "from": "enc_540",
+        "to": "out_540:v",
+        "type": "video"
+      },
+      {
+        "from": "enc_360",
+        "to": "out_360:v",
+        "type": "video"
+      },
+      {
+        "from": "in0:a:0",
+        "to": "enc_audio",
+        "type": "audio"
+      },
+      {
+        "from": "enc_audio",
+        "to": "out_1080:a",
+        "type": "audio"
+      },
+      {
+        "from": "enc_audio",
+        "to": "out_720:a",
+        "type": "audio"
+      },
+      {
+        "from": "enc_audio",
+        "to": "out_540:a",
+        "type": "audio"
+      },
+      {
+        "from": "enc_audio",
+        "to": "out_360:a",
+        "type": "audio"
+      }
     ]
   },
   "outputs": [

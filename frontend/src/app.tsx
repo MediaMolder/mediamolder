@@ -525,7 +525,7 @@ function Editor() {
 
   /* Serialise the current graph to JSON text. Pure function over the
    * editor state; used by both Save and Save As… paths. */
-  const serialiseJob = useCallback((): string => {
+  const serialiseJob = useCallback(async (): Promise<string> => {
     const out = flowToConfig(
       job.schema_version || '1.2',
       nodes,
@@ -534,6 +534,20 @@ function Editor() {
       job.global_options,
       job.assets,
     );
+    // Refresh ffmpeg_cmd from the live export endpoint so it always reflects
+    // the current graph state. Clear the field if export fails or produces
+    // nothing (e.g. the job uses go_processor or other non-exportable nodes).
+    try {
+      const r = await fetch('/api/export-cmd', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ config: out }),
+      });
+      if (r.ok) {
+        const { command } = await r.json() as { command?: string };
+        if (command) out.ffmpeg_cmd = command;
+      }
+    } catch { /* silent: ffmpeg_cmd stays absent */ }
     return JSON.stringify(out, null, 2);
   }, [job, nodes, edges]);
 
@@ -558,7 +572,7 @@ function Editor() {
           suggestedName: suggestedFilename(),
           types: [{ description: 'MediaMolder job', accept: { 'application/json': ['.json'] } }],
         });
-        const text = serialiseJob();
+        const text = await serialiseJob();
         const fh = handle as FileSystemFileHandle & { createWritable: () => Promise<FileSystemWritableFileStream> };
         const writable = await fh.createWritable();
         await writable.write(text);
@@ -584,7 +598,7 @@ function Editor() {
   const onSave = useCallback(async () => {
     if (identity.kind === 'file' && identity.path) {
       try {
-        const text = serialiseJob();
+        const text = await serialiseJob();
         const r = await fetch('/api/file', {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
@@ -600,7 +614,7 @@ function Editor() {
     }
     if (identity.kind === 'file' && identity.handle) {
       try {
-        const text = serialiseJob();
+        const text = await serialiseJob();
         const fh = identity.handle as FileSystemFileHandle & {
           requestPermission?: (d: { mode: string }) => Promise<string>;
           createWritable: () => Promise<FileSystemWritableFileStream>;
@@ -1332,7 +1346,7 @@ function Editor() {
             } else {
               // save
               try {
-                const text = serialiseJob();
+                const text = await serialiseJob();
                 const r = await fetch('/api/file', {
                   method: 'PUT',
                   headers: { 'Content-Type': 'application/json' },

@@ -1,6 +1,7 @@
 {
   "schema_version": "1.0",
-  "description": "Decode in.mp4 -> encode video to H.264 with libx264, encode audio to AAC, set output format to Matroska -> write to out.mkv",
+  "description": "Decode in.mp4 -> encode video to H.264 with libx264, encode audio to AAC, set output format to Matroska -> write to out.mkv. Note: if you edit this JSON manually, you must also update or remove the ffmpeg_cmd field.",
+  "ffmpeg_cmd": "ffmpeg -i {{input}} -map 0:a:0 -map 0:v:0 -c:v libx264 -c:a aac -map_metadata 0 -map_chapters 0 -f matroska {{output}}",
   "inputs": [
     {
       "id": "in0",

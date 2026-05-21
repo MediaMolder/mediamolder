@@ -209,3 +209,16 @@ func TestImportSuppressFirstOutputOnly(t *testing.T) {
 		}
 	}
 }
+
+// TestParseFull_FfmpegCmd verifies that ParseFull populates FfmpegCmd with
+// the original command string.
+func TestParseFull_FfmpegCmd(t *testing.T) {
+	const cmd = "ffmpeg -i input.mp4 -c:v libx264 -c:a aac output.mp4"
+	r, err := ParseFull(cmd)
+	if err != nil {
+		t.Fatalf("ParseFull: %v", err)
+	}
+	if r.Config.FfmpegCmd != cmd {
+		t.Errorf("FfmpegCmd = %q, want %q", r.Config.FfmpegCmd, cmd)
+	}
+}

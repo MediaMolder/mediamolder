@@ -1,15 +1,22 @@
 {
   "schema_version": "1.0",
-  "description": "Create an animated WebP from a video clip. Matches 'webp -i input -c 4 -q 80 -f 15 -w 600 -o output.webp'. Requires libwebp (libwebp_anim encoder).",
+  "description": "Create an animated WebP from a video clip. Matches 'webp -i input -c 4 -q 80 -f 15 -w 600 -o output.webp'. Requires libwebp (libwebp_anim encoder). Note: if you edit this JSON manually, you must also update or remove the ffmpeg_cmd field.",
+  "ffmpeg_cmd": "ffmpeg -t 5 -i {{input}} -filter_complex [0:v]fps=fps=15[fps0];[fps0]scale=h=-1:w=600[scale0] -map 0:v:0 -c:v libwebp_anim -quality:v 80 -map_metadata 0 -map_chapters 0 {{output}}",
   "inputs": [
     {
       "id": "in0",
       "url": "{{input}}",
       "map_metadata": true,
       "map_chapters": true,
-      "options": { "t": "5" },
+      "options": {
+        "t": "5"
+      },
       "streams": [
-        { "input_index": 0, "type": "video", "track": 0 }
+        {
+          "input_index": 0,
+          "type": "video",
+          "track": 0
+        }
       ]
     }
   ],
@@ -19,19 +26,36 @@
         "id": "fps0",
         "type": "filter",
         "filter": "fps",
-        "params": { "fps": "15" }
+        "params": {
+          "fps": "15"
+        }
       },
       {
         "id": "scale0",
         "type": "filter",
         "filter": "scale",
-        "params": { "w": "600", "h": "-1" }
+        "params": {
+          "w": "600",
+          "h": "-1"
+        }
       }
     ],
     "edges": [
-      { "from": "in0:v:0", "to": "fps0",   "type": "video" },
-      { "from": "fps0",    "to": "scale0", "type": "video" },
-      { "from": "scale0",  "to": "out0:v", "type": "video" }
+      {
+        "from": "in0:v:0",
+        "to": "fps0",
+        "type": "video"
+      },
+      {
+        "from": "fps0",
+        "to": "scale0",
+        "type": "video"
+      },
+      {
+        "from": "scale0",
+        "to": "out0:v",
+        "type": "video"
+      }
     ]
   },
   "outputs": [
@@ -39,7 +63,9 @@
       "id": "out0",
       "url": "{{output}}",
       "codec_video": "libwebp_anim",
-      "encoder_params_video": { "quality": "80" }
+      "encoder_params_video": {
+        "quality": "80"
+      }
     }
   ]
 }

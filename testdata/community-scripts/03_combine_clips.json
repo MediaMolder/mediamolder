@@ -1,6 +1,7 @@
 {
   "schema_version": "1.0",
-  "description": "Combine a video file with a separate audio file. Matches 'combine-clips -i video.mp4 -a audio.aac -o output.mp4'. Requires testdata/sample.aac fixture (see FIXTURES.md).",
+  "description": "Combine a video file with a separate audio file. Matches 'combine-clips -i video.mp4 -a audio.aac -o output.mp4'. Requires testdata/sample.aac fixture (see FIXTURES.md). Note: if you edit this JSON manually, you must also update or remove the ffmpeg_cmd field.",
+  "ffmpeg_cmd": "ffmpeg -i {{input}} -i {{audio}} -filter_complex [1:a]asetnsamples=n=1024:p=0[asetnsamples0] -map 0:v:0 -map 1:a:0 -c:v copy -c:a aac -map_metadata 0 -map_chapters 0 {{output}}",
   "inputs": [
     {
       "id": "in0",
@@ -8,14 +9,22 @@
       "map_metadata": true,
       "map_chapters": true,
       "streams": [
-        { "input_index": 0, "type": "video", "track": 0 }
+        {
+          "input_index": 0,
+          "type": "video",
+          "track": 0
+        }
       ]
     },
     {
       "id": "in1",
       "url": "{{audio}}",
       "streams": [
-        { "input_index": 0, "type": "audio", "track": 0 }
+        {
+          "input_index": 0,
+          "type": "audio",
+          "track": 0
+        }
       ]
     }
   ],
@@ -25,13 +34,28 @@
         "id": "asetnsamples0",
         "type": "filter",
         "filter": "asetnsamples",
-        "params": { "n": "1024", "p": "0" }
+        "params": {
+          "n": "1024",
+          "p": "0"
+        }
       }
     ],
     "edges": [
-      { "from": "in0:v:0", "to": "out0:v", "type": "video" },
-      { "from": "in1:a:0", "to": "asetnsamples0", "type": "audio" },
-      { "from": "asetnsamples0", "to": "out0:a", "type": "audio" }
+      {
+        "from": "in0:v:0",
+        "to": "out0:v",
+        "type": "video"
+      },
+      {
+        "from": "in1:a:0",
+        "to": "asetnsamples0",
+        "type": "audio"
+      },
+      {
+        "from": "asetnsamples0",
+        "to": "out0:a",
+        "type": "audio"
+      }
     ]
   },
   "outputs": [

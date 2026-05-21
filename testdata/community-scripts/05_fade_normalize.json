@@ -1,6 +1,7 @@
 {
   "schema_version": "1.0",
-  "description": "Fade video and audio in/out, then normalize audio loudness with loudnorm. Matches 'fade-normalize -i input -d 0.5 -o output.mp4'.",
+  "description": "Fade video and audio in/out, then normalize audio loudness with loudnorm. Matches 'fade-normalize -i input -d 0.5 -o output.mp4'. Note: if you edit this JSON manually, you must also update or remove the ffmpeg_cmd field.",
+  "ffmpeg_cmd": "ffmpeg -i {{input}} -filter_complex [0:v]fade=d=0.5:st=0:t=in[fade_in];[fade_in]fade=d=0.5:st=8.5:t=out[fade_out];[0:a]afade=d=0.5:st=0:t=in[afade_in];[afade_in]afade=d=0.5:st=9.0:t=out[afade_out];[afade_out]loudnorm[loudnorm0];[loudnorm0]aformat=sample_fmts=fltp:sample_rates=48000[aformat0];[aformat0]asetnsamples=n=1024:p=0[asetnsamples0] -map 0:a:0 -map 0:v:0 -c:v libx264 -c:a aac -map_metadata 0 -map_chapters 0 {{output}}",
   "inputs": [
     {
       "id": "in0",
@@ -8,8 +9,16 @@
       "map_metadata": true,
       "map_chapters": true,
       "streams": [
-        { "input_index": 0, "type": "video", "track": 0 },
-        { "input_index": 0, "type": "audio", "track": 0 }
+        {
+          "input_index": 0,
+          "type": "video",
+          "track": 0
+        },
+        {
+          "input_index": 0,
+          "type": "audio",
+          "track": 0
+        }
       ]
     }
   ],
@@ -19,25 +28,41 @@
         "id": "fade_in",
         "type": "filter",
         "filter": "fade",
-        "params": { "t": "in", "st": "0", "d": "0.5" }
+        "params": {
+          "t": "in",
+          "st": "0",
+          "d": "0.5"
+        }
       },
       {
         "id": "fade_out",
         "type": "filter",
         "filter": "fade",
-        "params": { "t": "out", "st": "8.5", "d": "0.5" }
+        "params": {
+          "t": "out",
+          "st": "8.5",
+          "d": "0.5"
+        }
       },
       {
         "id": "afade_in",
         "type": "filter",
         "filter": "afade",
-        "params": { "t": "in", "st": "0", "d": "0.5" }
+        "params": {
+          "t": "in",
+          "st": "0",
+          "d": "0.5"
+        }
       },
       {
         "id": "afade_out",
         "type": "filter",
         "filter": "afade",
-        "params": { "t": "out", "st": "9.0", "d": "0.5" }
+        "params": {
+          "t": "out",
+          "st": "9.0",
+          "d": "0.5"
+        }
       },
       {
         "id": "loudnorm0",
@@ -48,25 +73,67 @@
         "id": "aformat0",
         "type": "filter",
         "filter": "aformat",
-        "params": { "sample_rates": "48000", "sample_fmts": "fltp" }
+        "params": {
+          "sample_rates": "48000",
+          "sample_fmts": "fltp"
+        }
       },
       {
         "id": "asetnsamples0",
         "type": "filter",
         "filter": "asetnsamples",
-        "params": { "n": "1024", "p": "0" }
+        "params": {
+          "n": "1024",
+          "p": "0"
+        }
       }
     ],
     "edges": [
-      { "from": "in0:v:0",       "to": "fade_in",       "type": "video" },
-      { "from": "fade_in",       "to": "fade_out",      "type": "video" },
-      { "from": "fade_out",      "to": "out0:v",        "type": "video" },
-      { "from": "in0:a:0",       "to": "afade_in",      "type": "audio" },
-      { "from": "afade_in",      "to": "afade_out",     "type": "audio" },
-      { "from": "afade_out",     "to": "loudnorm0",     "type": "audio" },
-      { "from": "loudnorm0",     "to": "aformat0",      "type": "audio" },
-      { "from": "aformat0",      "to": "asetnsamples0", "type": "audio" },
-      { "from": "asetnsamples0", "to": "out0:a",        "type": "audio" }
+      {
+        "from": "in0:v:0",
+        "to": "fade_in",
+        "type": "video"
+      },
+      {
+        "from": "fade_in",
+        "to": "fade_out",
+        "type": "video"
+      },
+      {
+        "from": "fade_out",
+        "to": "out0:v",
+        "type": "video"
+      },
+      {
+        "from": "in0:a:0",
+        "to": "afade_in",
+        "type": "audio"
+      },
+      {
+        "from": "afade_in",
+        "to": "afade_out",
+        "type": "audio"
+      },
+      {
+        "from": "afade_out",
+        "to": "loudnorm0",
+        "type": "audio"
+      },
+      {
+        "from": "loudnorm0",
+        "to": "aformat0",
+        "type": "audio"
+      },
+      {
+        "from": "aformat0",
+        "to": "asetnsamples0",
+        "type": "audio"
+      },
+      {
+        "from": "asetnsamples0",
+        "to": "out0:a",
+        "type": "audio"
+      }
     ]
   },
   "outputs": [

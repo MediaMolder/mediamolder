@@ -194,6 +194,12 @@ original command, use `-map_metadata -1` (and `-map_chapters -1`) before
 that output — the importer honours these suppress flags and does not set
 the corresponding field.
 
+**`ffmpeg_cmd` auto-population.** `convert-cmd` sets the top-level
+`ffmpeg_cmd` field in the produced JSON to the original source command.
+This field is advisory only — the runtime ignores it. The GUI refreshes
+it automatically on every save. See [`ffmpeg_cmd`](json-config-reference.md#ffmpeg_cmd)
+in the JSON Config Reference for the full three-rule description.
+
 For a complete mapping table of FFmpeg options to JSON fields, see [ffmpeg-migration-guide.md](ffmpeg-migration-guide.md).
 
 ---

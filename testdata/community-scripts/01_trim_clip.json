@@ -1,24 +1,44 @@
 {
   "schema_version": "1.0",
-  "description": "Trim a clip: seek to 00:00:02 and capture 5 seconds (stream copy). Matches 'trim-clip -s 00:00:02 -i input -t 00:00:05 -o output.mp4'.",
+  "description": "Trim a clip: seek to 00:00:02 and capture 5 seconds (stream copy). Matches 'trim-clip -s 00:00:02 -i input -t 00:00:05 -o output.mp4'. Note: if you edit this JSON manually, you must also update or remove the ffmpeg_cmd field.",
+  "ffmpeg_cmd": "ffmpeg -ss 00:00:02 -t 5 -i {{input}} -map 0:a:0 -map 0:v:0 -c:v copy -c:a copy -map_metadata 0 -map_chapters 0 {{output}}",
   "inputs": [
     {
       "id": "in0",
       "url": "{{input}}",
       "map_metadata": true,
       "map_chapters": true,
-      "options": { "ss": "00:00:02", "t": "5" },
+      "options": {
+        "ss": "00:00:02",
+        "t": "5"
+      },
       "streams": [
-        { "input_index": 0, "type": "video", "track": 0 },
-        { "input_index": 0, "type": "audio", "track": 0 }
+        {
+          "input_index": 0,
+          "type": "video",
+          "track": 0
+        },
+        {
+          "input_index": 0,
+          "type": "audio",
+          "track": 0
+        }
       ]
     }
   ],
   "graph": {
     "nodes": [],
     "edges": [
-      { "from": "in0:v:0", "to": "out0:v", "type": "video" },
-      { "from": "in0:a:0", "to": "out0:a", "type": "audio" }
+      {
+        "from": "in0:v:0",
+        "to": "out0:v",
+        "type": "video"
+      },
+      {
+        "from": "in0:a:0",
+        "to": "out0:a",
+        "type": "audio"
+      }
     ]
   },
   "outputs": [

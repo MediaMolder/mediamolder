@@ -1,6 +1,7 @@
 {
   "schema_version": "1.0",
-  "description": "Normalize audio to -16 LUFS (louder target than EBU R128) with loudnorm filter; copy video. Matches 'normalize -i input.mp4 -o output.mp4' (loudnorm used instead of dynaudnorm to avoid NaN-frame crashes on certain content).",
+  "description": "Normalize audio to -16 LUFS (louder target than EBU R128) with loudnorm filter; copy video. Matches 'normalize -i input.mp4 -o output.mp4' (loudnorm used instead of dynaudnorm to avoid NaN-frame crashes on certain content). Note: if you edit this JSON manually, you must also update or remove the ffmpeg_cmd field.",
+  "ffmpeg_cmd": "ffmpeg -i {{input}} -filter_complex [0:a]loudnorm=I=-16:LRA=11:TP=-1.5[loudnorm0];[loudnorm0]aformat=sample_fmts=fltp:sample_rates=48000[aformat0];[aformat0]asetnsamples=n=1024:p=0[asetnsamples0] -map 0:a:0 -map 0:v:0 -c:v copy -c:a aac -map_metadata 0 -map_chapters 0 {{output}}",
   "inputs": [
     {
       "id": "in0",
@@ -8,8 +9,16 @@
       "map_metadata": true,
       "map_chapters": true,
       "streams": [
-        { "input_index": 0, "type": "video", "track": 0 },
-        { "input_index": 0, "type": "audio", "track": 0 }
+        {
+          "input_index": 0,
+          "type": "video",
+          "track": 0
+        },
+        {
+          "input_index": 0,
+          "type": "audio",
+          "track": 0
+        }
       ]
     }
   ],
@@ -19,27 +28,57 @@
         "id": "loudnorm0",
         "type": "filter",
         "filter": "loudnorm",
-        "params": { "I": "-16", "TP": "-1.5", "LRA": "11" }
+        "params": {
+          "I": "-16",
+          "TP": "-1.5",
+          "LRA": "11"
+        }
       },
       {
         "id": "aformat0",
         "type": "filter",
         "filter": "aformat",
-        "params": { "sample_rates": "48000", "sample_fmts": "fltp" }
+        "params": {
+          "sample_rates": "48000",
+          "sample_fmts": "fltp"
+        }
       },
       {
         "id": "asetnsamples0",
         "type": "filter",
         "filter": "asetnsamples",
-        "params": { "n": "1024", "p": "0" }
+        "params": {
+          "n": "1024",
+          "p": "0"
+        }
       }
     ],
     "edges": [
-      { "from": "in0:v:0",       "to": "out0:v",        "type": "video" },
-      { "from": "in0:a:0",       "to": "loudnorm0",     "type": "audio" },
-      { "from": "loudnorm0",     "to": "aformat0",      "type": "audio" },
-      { "from": "aformat0",      "to": "asetnsamples0", "type": "audio" },
-      { "from": "asetnsamples0", "to": "out0:a",        "type": "audio" }
+      {
+        "from": "in0:v:0",
+        "to": "out0:v",
+        "type": "video"
+      },
+      {
+        "from": "in0:a:0",
+        "to": "loudnorm0",
+        "type": "audio"
+      },
+      {
+        "from": "loudnorm0",
+        "to": "aformat0",
+        "type": "audio"
+      },
+      {
+        "from": "aformat0",
+        "to": "asetnsamples0",
+        "type": "audio"
+      },
+      {
+        "from": "asetnsamples0",
+        "to": "out0:a",
+        "type": "audio"
+      }
     ]
   },
   "outputs": [
