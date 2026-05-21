@@ -4,7 +4,37 @@ The `mediamolder gui` subcommand serves a browser-based visual editor for
 building, validating, and running MediaMolder JSON pipelines. It is bundled
 into the same single binary as the CLI — no separate install or web server is
 required.
+
+For the complete CLI reference, JSON graph format, and command-line workflows,
+see [using_mediamolder.md](using_mediamolder.md).
+
 ![MediaMolder GUI](images/ABR_x264.png)
+
+## Contents
+
+- [Quick start](#quick-start)
+- [Your first pipeline (5-minute walkthrough)](#your-first-pipeline-5-minute-walkthrough)
+- [Anatomy](#anatomy)
+  - [Palette](#palette)
+  - [Canvas](#canvas)
+  - [Edge attributes](#edge-attributes)
+  - [Inspector](#inspector)
+  - [Filter nodes — expression editor](#filter-nodes--expression-editor)
+  - [Filter nodes — audio channel-routing matrix](#filter-nodes--audio-channel-routing-matrix)
+  - [Asset registry](#asset-registry)
+  - [Subtitle affordances](#subtitle-affordances)
+  - [Hardware Capabilities dialog](#hardware-capabilities-dialog)
+- [Filter categories](#filter-categories)
+- [File browser](#file-browser)
+- [Scene detection processors](#scene-detection-processors)
+- [FFmpeg CLI export](#ffmpeg-cli-export)
+- [Performance overlay](#performance-overlay)
+- [Development workflow](#development-workflow)
+- [Schema impact](#schema-impact)
+- [Security considerations](#security-considerations)
+- [Troubleshooting](#troubleshooting)
+
+---
 
 ## Quick start
 
@@ -1335,3 +1365,18 @@ without the GUI never need to include it.
 | **No live FPS in node badges.** | The pipeline is not in `Playing` state. Confirm the Run panel shows progressing frame counts; otherwise check the `error` events in the panel. |
 | **Filter not in the palette.** | The binary was built without that filter (e.g. a stripped FFmpeg). Rebuild FFmpeg with the missing component enabled. |
 | **`mediamolder` binary date didn't change after `go build ./...`.** | `go build ./...` is a compile check only. Use `make build-gui` or `go build -o mediamolder ./cmd/mediamolder` to actually overwrite the binary. |
+
+---
+
+## Related documentation
+
+| Document | Contents |
+|---|---|
+| [using_mediamolder.md](using_mediamolder.md) | Complete CLI and JSON graph reference |
+| [concepts-and-graph-basics.md](concepts-and-graph-basics.md) | Core concepts, node types, edge rules |
+| [json-config-reference.md](json-config-reference.md) | Complete field-by-field JSON schema |
+| [scene-detection.md](scene-detection.md) | Scene detector algorithms, CLI usage, pipeline JSON, events |
+| [go-processor-nodes.md](go-processor-nodes.md) | Go processor API and built-in processors |
+| [hardware-acceleration.md](hardware-acceleration.md) | Hardware setup, zero-copy paths, GPU encoder options |
+| [ffmpeg-migration-guide.md](ffmpeg-migration-guide.md) | FFmpeg CLI → JSON mapping |
+| [build_and_packaging.md](build_and_packaging.md) | Building the frontend, static linking, packaging |

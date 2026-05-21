@@ -5,7 +5,7 @@ sits between building a validated graph and actually running it.
 
 For the rules that govern when two nodes can be connected with a single
 edge versus when a transform filter must sit between them, see
-[Graph Basics](concepts-and-graph-basics.md).
+[Graph Basics](../concepts-and-graph-basics.md).
 
 ---
 
@@ -249,10 +249,10 @@ converge over multiple runs.
 
 | File | Purpose |
 |------|---------|
-| [graph/plan.go](../graph/plan.go) | Type definitions: `ExecutionPlan`, `Stage`, `Warning`, `WarningCode`, `EdgeBufSizes` |
-| [graph/compile.go](../graph/compile.go) | `Compile()` function and all analysis passes (stages, dead branches, disconnected sources, buffer hints) |
-| [graph/compile_test.go](../graph/compile_test.go) | Tests for stage grouping, dead branches, disconnected sources, buffer hints, determinism |
-| [pipeline/engine.go](../pipeline/engine.go) | Integration point: `Compile()` is called in `runGraph()` between `Build()` and resource allocation |
-| [runtime/edge_stats.go](../runtime/edge_stats.go) | `EdgeStatsRegistry` and backpressure sampler (wired in scheduler and engine) |
-| [runtime/scheduler.go](../runtime/scheduler.go) | `Scheduler.Run()` creates per-edge channels using `EdgeBufSizes` from compilation |
-| [pipeline/metrics.go](../pipeline/metrics.go) | `NodeMetrics.RecordLatency()` and latency fields in `NodeMetricsSnapshot` |
+| [graph/plan.go](../../graph/plan.go) | Type definitions: `ExecutionPlan`, `Stage`, `Warning`, `WarningCode`, `EdgeBufSizes` |
+| [graph/compile.go](../../graph/compile.go) | `Compile()` function and all analysis passes (stages, dead branches, disconnected sources, buffer hints) |
+| [graph/compile_test.go](../../graph/compile_test.go) | Tests for stage grouping, dead branches, disconnected sources, buffer hints, determinism |
+| [pipeline/engine.go](../../pipeline/engine.go) | Integration point: `Compile()` is called in `runGraph()` between `Build()` and resource allocation |
+| [runtime/edge_stats.go](../../runtime/edge_stats.go) | `EdgeStatsRegistry` and backpressure sampler (wired in scheduler and engine) |
+| [runtime/scheduler.go](../../runtime/scheduler.go) | `Scheduler.Run()` creates per-edge channels using `EdgeBufSizes` from compilation |
+| [pipeline/metrics.go](../../pipeline/metrics.go) | `NodeMetrics.RecordLatency()` and latency fields in `NodeMetricsSnapshot` |

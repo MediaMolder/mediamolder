@@ -13,12 +13,13 @@ This guide covers every feature available in MediaMolder, from installing the bi
    - [inspect](#32-inspect)
    - [validate](#33-validate)
    - [convert-cmd](#34-convert-cmd)
-   - [list-codecs / list-filters / list-formats / list-hw-devices](#35-list-commands)
-   - [version](#36-version)
-   - [gui](#37-gui)
-   - [perf](#38-perf)
-   - [hwbench](#39-hwbench)
-   - [py-scene-detect](#310-py-scene-detect)
+   - [export](#35-export)
+   - [list-codecs / list-filters / list-formats / list-hw-devices](#36-list-commands)
+   - [version](#37-version)
+   - [gui](#38-gui)
+   - [perf](#39-perf)
+   - [hwbench](#310-hwbench)
+   - [py-scene-detect](#311-py-scene-detect)
 4. [Graph JSON reference](#4-graph-json-reference)
    - [Top-level structure](#41-top-level-structure)
    - [inputs](#42-inputs)
@@ -265,23 +266,26 @@ libswscale   8.3.100
 Launch the browser-based visual job editor.
 
 ```sh
-mediamolder gui [--port <port>] [--static <path>]
+mediamolder gui [flags]
 ```
 
 | Flag | Default | Description |
 |---|---|---|
-| `--port` | `7042` | HTTP port to listen on |
-| `--static` | auto-detected | Path to the built frontend (`frontend/dist/`) |
+| `--port` | `8080` | HTTP port to listen on |
+| `--host` | `127.0.0.1` | Interface to bind; use `0.0.0.0` to expose on the LAN |
+| `--no-open` | `false` | Do not auto-open a browser tab |
+| `--examples` | `testdata/examples` | Directory of example JSON files shown in the **Graph:** dropdown; `""` to disable |
+| `--dev` | `false` | Skip embedded frontend; expects Vite dev server on `:5173` |
 
-The server starts, prints the URL, and opens the browser automatically on macOS, Windows, and Linux (via `xdg-open`). Press **Ctrl-C** to stop.
+The server starts, prints the URL, and opens the browser automatically. Press **Ctrl-C** to stop.
 
 ```
 MediaMolder GUI
-  Listening on http://localhost:7042
+  Listening on http://localhost:8080
   Press Ctrl-C to stop.
 ```
 
-The GUI communicates with the local Go process over HTTP. JSON config files saved through the GUI are fully compatible with `mediamolder run`.
+The GUI communicates with the local Go process over HTTP. JSON config files saved through the GUI are fully compatible with `mediamolder run`. For the full GUI reference, see [gui.md](gui.md).
 
 ### 3.9 `perf`
 
@@ -329,10 +333,10 @@ mediamolder hwbench [--device <type>] [--codecs <list>] [--resolutions <list>]
 | `--stdout` | `false` | Write JSON to stdout instead of a file |
 | `--caps-only` | `false` | Print hardware capabilities without benchmarking |
 
-See [docs/benchmarks.md](benchmarks.md) for full documentation, the JSON
+See [docs/architecture/benchmarks.md](architecture/benchmarks.md) for full documentation, the JSON
 report schema, and contribution instructions.
 
-### 3.10 `py-scene-detect`
+### 3.11 `py-scene-detect`
 
 Analyse a single media file for scene boundaries without encoding anything.
 Decodes every frame, runs one of five detectors ported from
@@ -1277,16 +1281,16 @@ mediamolder validate --json job.json | jq '.issues[] | select(.severity == "ERRO
 
 ## 7. Graphical user interface
 
-The GUI is a browser-based visual editor. Start it with `mediamolder gui` (see [§3.8](#38-gui)).
+The GUI is a browser-based visual editor for building, validating, and running MediaMolder JSON pipelines. Start it with `mediamolder gui` (see [§3.8](#38-gui)). For the full GUI reference — canvas, palette, inspector, hardware capabilities, scene detection nodes, FFmpeg import/export, and troubleshooting — see **[gui.md](gui.md)**.
 
 ### 7.1 Launching the GUI
 
 ```sh
 mediamolder gui
-# → opens http://localhost:7042 in the default browser
+# → opens http://localhost:8080 in the default browser
 ```
 
-To use a different port (e.g. if 7042 is taken):
+To use a different port (e.g. if 8080 is taken):
 
 ```sh
 mediamolder gui --port 9000
@@ -1579,13 +1583,14 @@ mediamolder version
 
 | Document | Contents |
 |---|---|
+| [gui.md](gui.md) | Complete GUI reference — canvas, palette, inspector, hardware, scene detection, keyboard shortcuts |
 | [concepts-and-graph-basics.md](concepts-and-graph-basics.md) | Core concepts, terminology, and design principles |
 | [json-config-reference.md](json-config-reference.md) | Complete field-by-field JSON schema reference |
 | [ffmpeg-migration-guide.md](ffmpeg-migration-guide.md) | FFmpeg command → JSON mapping table with examples |
 | [hardware-acceleration.md](hardware-acceleration.md) | Hardware setup, zero-copy paths, device context management |
 | [subtitles.md](subtitles.md) | Subtitle format support, burn-in, passthrough, charset handling |
-| [error-handling.md](error-handling.md) | Error policy, retry, fallback |
-| [observability.md](observability.md) | Event bus, metrics, SSE API |
-| [graph-state-machine.md](graph-state-machine.md) | Graph lifecycle, pause/resume, seek |
+| [architecture/error-handling.md](architecture/error-handling.md) | Error policy, retry, fallback |
+| [architecture/observability.md](architecture/observability.md) | Event bus, metrics, SSE API |
+| [architecture/graph-state-machine.md](architecture/graph-state-machine.md) | Graph lifecycle, pause/resume, seek |
 | [build_and_packaging.md](build_and_packaging.md) | Static linking, cross-compilation, packaging |
-| [graph_validation_design.md](architecture/graph_validation_design.md) | Validation architecture and issue code catalogue |
+| [architecture/graph_validation_design.md](architecture/graph_validation_design.md) | Validation architecture and issue code catalogue |
