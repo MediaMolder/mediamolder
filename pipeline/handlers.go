@@ -187,6 +187,12 @@ type graphRunner struct {
 	sinks        map[string]*sinkResources
 	trackers     map[string]*NodePerfTracker
 	goProcessors map[string]processors.Processor
+	// eventsSinks is keyed by source go_processor node ID. Each entry
+	// contains the file sinks created by the engine for "events" edges
+	// that flow from that node to metadata_file_writer nodes.
+	// These sinks are independent of the go_processor lifecycle and are
+	// closed by graphRunner.close().
+	eventsSinks map[string][]*processors.EventSink
 	// encoderOpts stores the EncoderOptions used to open each encoder,
 	// keyed by encoder node ID. Populated by createEncoder alongside
 	// encoders; used by handleEncoder to reopen the encoder with the
@@ -218,6 +224,7 @@ func newGraphRunner(cfg *Config, pipe *Pipeline) *graphRunner {
 		sinks:        make(map[string]*sinkResources),
 		trackers:     make(map[string]*NodePerfTracker),
 		goProcessors: make(map[string]processors.Processor),
+		eventsSinks:  make(map[string][]*processors.EventSink),
 		passLogFiles: make(map[string]*os.File),
 		hwDevices:    make(map[string]*av.HWDeviceContext),
 	}
@@ -248,16 +255,6 @@ func (r *graphRunner) resolveThreadType(node *graph.Node) string {
 	return r.cfg.GlobalOptions.ThreadType
 }
 
-// resolveHWDevice returns the *av.HWDeviceContext for a node using the hierarchy:
-// per-node NodeDef.device name (looked up in hwDevices) > nil (CPU path).
-// Mirrors the resolveThreadCount/resolveThreadType pattern. (Wave 10 #56)
-func (r *graphRunner) resolveHWDevice(node *graph.Node) *av.HWDeviceContext {
-	if node.Device != "" {
-		return r.hwDevices[node.Device]
-	}
-	return nil
-}
-
 func (r *graphRunner) close() {
 	for _, s := range r.sources {
 		s.Close()
@@ -270,6 +267,11 @@ func (r *graphRunner) close() {
 	}
 	for _, p := range r.goProcessors {
 		p.Close()
+	}
+	for _, sinks := range r.eventsSinks {
+		for _, s := range sinks {
+			_ = s.Close()
+		}
 	}
 	for _, f := range r.passLogFiles {
 		_ = f.Close()

@@ -72,7 +72,7 @@ func outputExt(name string) string {
 	}
 }
 
-func runExample(t *testing.T, jsonPath, name, inputAbs, subsrtAbs, subassAbs string) {
+func runExample(t *testing.T, jsonPath, name, inputAbs, _, _ string) {
 	t.Helper()
 
 	data, err := os.ReadFile(jsonPath)

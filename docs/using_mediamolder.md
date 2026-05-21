@@ -18,6 +18,7 @@ This guide covers every feature available in MediaMolder, from installing the bi
    - [gui](#37-gui)
    - [perf](#38-perf)
    - [hwbench](#39-hwbench)
+   - [py-scene-detect](#310-py-scene-detect)
 4. [Graph JSON reference](#4-graph-json-reference)
    - [Top-level structure](#41-top-level-structure)
    - [inputs](#42-inputs)
@@ -36,6 +37,7 @@ This guide covers every feature available in MediaMolder, from installing the bi
    - [Subtitles](#58-subtitles)
    - [Bitstream filters](#59-bitstream-filters)
    - [Live / device inputs](#510-live--device-inputs)
+   - [Scene detection in a pipeline](#511-scene-detection-in-a-pipeline)
 6. [Validation](#6-validation)
 7. [Graphical user interface](#7-graphical-user-interface)
    - [Launching the GUI](#71-launching-the-gui)
@@ -56,44 +58,7 @@ This guide covers every feature available in MediaMolder, from installing the bi
 
 ## 1. Installation
 
-### Prerequisites
-
-- **Go 1.23+**
-- **FFmpeg 8.1+** libraries (libavcodec 62.x, libavformat 62.x, libavfilter 11.x, libavutil 60.x)
-  - System install via Homebrew (`brew install ffmpeg`), apt, or dnf, with `pkg-config` available; **or** a source build in a sibling directory for static linking.
-
-### From source
-
-```sh
-git clone https://github.com/MediaMolder/mediamolder.git
-cd mediamolder
-```
-
-**Dynamic (system FFmpeg):**
-```sh
-go build ./...          # builds the mediamolder binary in the current directory
-go install ./cmd/mediamolder   # install to $GOPATH/bin
-```
-
-**Static (local FFmpeg source build):**
-
-Place your FFmpeg source tree at `../ffmpeg` relative to the mediamolder checkout, then:
-```sh
-go build -tags=ffstatic -o mediamolder ./cmd/mediamolder
-```
-
-### Building the GUI frontend
-
-The GUI requires a pre-built frontend bundle. If the bundle is missing, `mediamolder gui` will print the path it searched and exit with an error.
-
-```sh
-cd frontend
-npm install          # only needed once
-npm run build        # outputs to frontend/dist/
-cd ..
-```
-
-Run `mediamolder gui` from the repository root or from any directory where `frontend/dist/` exists alongside the binary.
+See [installation guide](installation.md).
 
 ---
 
@@ -137,7 +102,7 @@ Signals `SIGINT` / `SIGTERM` (Ctrl-C) cancel the run cleanly, flushing any in-pr
 
 | Flag | Description |
 |---|---|
-| `--realtime` | Enable adaptive real-time mode — see [§5.11](#511-real-time-mode) |
+| `--realtime` | Enable adaptive real-time mode — see [§5.12](#512-real-time-mode) |
 | `--json` | Output progress snapshots as JSON Lines on stderr instead of the default human-readable line |
 | `--metadata-out <path>` | Write processor metadata events (e.g. scene-change JSON) to a file; use `-` for stdout |
 | `--set KEY=VALUE` | Substitute `{{KEY}}` in the JSON config before parsing; may be repeated |
@@ -367,6 +332,63 @@ mediamolder hwbench [--device <type>] [--codecs <list>] [--resolutions <list>]
 See [docs/benchmarks.md](benchmarks.md) for full documentation, the JSON
 report schema, and contribution instructions.
 
+### 3.10 `py-scene-detect`
+
+Analyse a single media file for scene boundaries without encoding anything.
+Decodes every frame, runs one of five detectors ported from
+[PySceneDetect](https://github.com/Breakthrough/PySceneDetect) by Brandon Castellano
+(BSD-3-Clause), and writes the scene list to stdout or a file.
+
+The same five detectors are also available as `go_processor` nodes inside a
+pipeline graph (see [§5.11](#511-scene-detection-in-a-pipeline)), letting you
+detect scenes *during* a transcode in a single pass with no extra decode step.
+Use this subcommand when you need the scene list before building or running a
+graph.
+
+```sh
+mediamolder py-scene-detect [flags] <input>
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--detector` | `content` | Algorithm: `content`, `adaptive`, `threshold`, `hash`, `histogram` |
+| `--threshold` | _(detector default)_ | Override detector threshold (0 = use detector default) |
+| `--luma-only` | `false` | `content` / `adaptive`: use luma channel only |
+| `--min-scene-len` | `0.6s` | Minimum scene length — frames (`15`), seconds (`0.6s`), or timecode (`00:00:00.600`) |
+| `--output` | `-` (stdout) | Write scene list to a file; `-` = stdout |
+| `--format` | `jsonl` | Output format: `jsonl`, `csv`, or `timecodes` |
+| `--stats` | _(none)_ | Write per-frame detector statistics to a CSV file |
+| `--downscale` | `0` (auto) | Downscale factor: `0` = auto (based on frame width), `1` = disabled, `N` = N× |
+
+**Quick examples:**
+
+```sh
+# Content detector (default) — JSONL to stdout.
+mediamolder py-scene-detect input.mp4
+
+# Adaptive detector with custom threshold; write CSV.
+mediamolder py-scene-detect --detector=adaptive --threshold=2.5 \
+  --format=csv --output=scenes.csv input.mp4
+
+# Fade-to-black detection; print cut timecodes only.
+mediamolder py-scene-detect --detector=threshold --threshold=15 \
+  --format=timecodes input.mp4
+
+# Perceptual hash detector; also export per-frame stats.
+mediamolder py-scene-detect --detector=hash --stats=frame_stats.csv input.mp4
+```
+
+**Output formats:**
+
+| Format | Description |
+|---|---|
+| `jsonl` | One JSON object per scene, one per line: `{"scene":1,"start_frame":0,"start_timecode":"00:00:00.000","end_frame":149,…}` |
+| `csv` | Scene table compatible with PySceneDetect's CSV output |
+| `timecodes` | Comma-separated cut timecodes for use with FFmpeg `-ss` or chapter markers |
+
+For algorithm descriptions, parameter references, and a speed-vs-accuracy
+comparison table see [docs/scene-detection.md](scene-detection.md).
+
 ---
 
 ## 4. Graph JSON reference
@@ -588,7 +610,7 @@ Edges are directed connections between stream producers and consumers.
 | `threads` | int | Maximum worker threads (0 = auto) |
 | `hw_accel` | string | Hardware acceleration backend: `"cuda"`, `"vaapi"`, `"qsv"`, `"videotoolbox"` |
 | `hw_device` | string | Device selector: GPU index (`"0"`), `/dev/dri/renderD128` for VAAPI, etc. |
-| `realtime` | bool | Enable adaptive real-time mode: the control loop dynamically increases encoder thread counts and (as a last resort) drops frames to keep every node at or above its `fps_target`. Set via `--realtime` CLI flag or the **Real-time** checkbox in the GUI toolbar — see [§5.11](#511-real-time-mode) |
+| `realtime` | bool | Enable adaptive real-time mode: the control loop dynamically increases encoder thread counts and (as a last resort) drops frames to keep every node at or above its `fps_target`. Set via `--realtime` CLI flag or the **Real-time** checkbox in the GUI toolbar — see [§5.12](#512-real-time-mode) |
 
 ---
 
@@ -962,11 +984,226 @@ Use a format matching the capture API and set `url` to the device specifier:
 }
 ```
 
-For live streaming to RTMP/SRT where the output must pace to wall clock, combine device input with `global_options.realtime: true` — see [§5.11](#511-real-time-mode) below.
+For live streaming to RTMP/SRT where the output must pace to wall clock, combine device input with `global_options.realtime: true` — see [§5.12](#512-real-time-mode) below.
 
 ---
 
-### 5.11 Real-time mode
+### 5.11 Scene detection in a pipeline
+
+Scene detection can be embedded directly in a transcoding graph using `go_processor`
+nodes. Five detectors are available; all are ported from
+[PySceneDetect](https://github.com/Breakthrough/PySceneDetect) by Brandon Castellano
+(BSD-3-Clause). For offline use on a single file see [§3.10](#310-py-scene-detect).
+
+| Processor | Threshold default | Best for |
+|---|---|---|
+| `scene_change_content` | 27.0 | General-purpose; highest accuracy |
+| `scene_change_adaptive` | 3.0 | Action/sports; suppresses false positives on fast pans |
+| `scene_change_threshold` | 12.0 | Fade to/from black or white |
+| `scene_change_hash` | 0.395 | Robust to colour-grading and compression artefacts |
+| `scene_change_histogram` | 0.05 | Fast coarse filter; low memory |
+
+#### Wiring rules for scene detector nodes
+
+A scene detector is a **passthrough** node: it receives decoded video frames,
+inspects them, and forwards them unchanged to the next node. This means it must
+be wired **in-line** on a video path — it cannot sit at the end of the graph
+with nothing downstream.
+
+```
+[video source] ──video──▶ [scene detector] ──video──▶ [consumer]
+```
+
+**Valid video sources** (left side of the detector):
+
+| Source | Example edge `from` |
+|---|---|
+| Input node, single-stream file | `"in0:v:0"` |
+| `split` / `vsplit` filter output | `"vsplit:0"`, `"vsplit:1"`, … |
+| Any filter that produces video | `"scale_720"`, `"deinterlace"`, … |
+
+**Valid video consumers** (right side of the detector):
+
+| Consumer | Notes |
+|---|---|
+| Encoder | Most common; the detected frames are encoded as-is |
+| Video filter | Apply further processing after detection |
+| Another `go_processor` | Chain multiple detectors or processors |
+| Output (copy) | Only when the output uses stream-copy (no re-encode) |
+
+**Multi-rendition / ABR ladders**
+
+When the video is split to multiple resolutions, wire the detector on exactly
+one of the splitter outputs (typically the highest resolution, so the detector
+sees the most detail). The other outputs go straight to their scale filters.
+
+```
+                   ┌─[0]──▶ scene_detector ──▶ enc_1080
+split (outputs=4) ─┤─[1]──▶ scale_720 ──▶ enc_720
+                   │─[2]──▶ scale_540 ──▶ enc_540
+                   └─[3]──▶ scale_360 ──▶ enc_360
+```
+
+JSON edges for this pattern:
+
+```json
+{ "from": "vsplit",   "to": "scene_detector", "type": "video" },
+{ "from": "scene_detector", "to": "enc_1080", "type": "video" },
+{ "from": "vsplit:1", "to": "scale_720",      "type": "video" },
+{ "from": "vsplit:2", "to": "scale_540",      "type": "video" },
+{ "from": "vsplit:3", "to": "scale_360",      "type": "video" }
+```
+
+`"from": "vsplit"` (no index suffix) selects output 0, the same as `"vsplit:0"`.
+
+**Common mistakes**
+
+| Mistake | Symptom | Fix |
+|---|---|---|
+| Wiring to `in0:v:1` when the file has only one video stream | `STREAM_INDEX_OUT_OF_RANGE` | Use `in0:v:0`; remove the `track: 1` stream entry from the input |
+| Connecting the detector's input but not its output | `dead_node` warning; no scene data | Wire `scene_detector → encoder` (or next node) |
+| Setting `split outputs=4` but wiring 5 outputs | `Invalid argument` from libavfilter | Match the `outputs` param to the number of outgoing edges |
+| Wiring an `events` edge to carry video | Nothing encoded | `events` edges carry metadata only; use a `video` edge for the frame path |
+
+#### Edge type reference
+
+MediaMolder has several edge types that look similar but carry very different
+kinds of data:
+
+| Edge type | What it carries | libav\* library involvement |
+|---|---|---|
+| `video`, `audio`, `subtitle` | Decoded media frames | Demuxed by libavformat, filtered by libavfilter, encoded/muxed by libavcodec/libavformat |
+| `data` | `AVMEDIA_TYPE_DATA` streams — raw timed-data tracks such as SCTE-35 splice markers, closed-caption side data, or timecode tracks | A real media stream; demuxed and muxed by libavformat alongside audio/video |
+| `metadata` | Container-level metadata and chapter tables copied between inputs and outputs via `metadata_reader` / `metadata_writer` nodes | Resolved at pipeline build time via libavformat metadata APIs; no frames flow at runtime |
+| `events` | Structured event objects emitted by a `go_processor` via its `Process()` return value (scene boundaries, object detections, frame diagnostics, …) | **None** — handled entirely by the Go runtime event bus; never touches any libav\* library |
+
+The `events` edge type is specifically for routing Go-processor event
+output to a `metadata_file_writer` sink. An `events` edge does not
+carry video frames; it is a pure routing annotation that tells the
+engine "write events from node A to the `.jsonl` file of node B".
+
+#### Writing scene events to a file via graph wiring
+
+Connect a scene detector's **events** handle to a `metadata_file_writer`
+node in the GUI by dragging from the pink handle on the right of the
+detector node to the pink handle on the left of the writer node. The
+writer node only needs an `output_file` param; no `inner_processor` is
+required.
+
+JSON equivalent:
+
+```json
+{
+  "schema_version": "1.1",
+  "inputs": [
+    { "id": "src", "path": "input.mp4" }
+  ],
+  "graph": {
+    "nodes": [
+      {
+        "id": "detect",
+        "type": "go_processor",
+        "processor": "scene_change_content",
+        "params": { "threshold": 27.0, "min_scene_len": "0.6s" }
+      },
+      {
+        "id": "enc",
+        "type": "encoder",
+        "codec": "libx264",
+        "params": { "preset": "fast", "crf": 23 }
+      },
+      {
+        "id": "log",
+        "type": "go_processor",
+        "processor": "metadata_file_writer",
+        "params": { "output_file": "cuts.jsonl" }
+      }
+    ],
+    "edges": [
+      { "from": "src:v:0",      "to": "detect",   "type": "video" },
+      { "from": "detect",       "to": "enc",       "type": "video" },
+      { "from": "enc",          "to": "out:v",     "type": "video" },
+      { "from": "detect",       "to": "log",       "type": "events" }
+    ]
+  },
+  "outputs": [
+    { "id": "out", "url": "output.mp4", "codec_video": "libx264" }
+  ]
+}
+```
+
+The `events` edge wires the detector's metadata stream to the file
+writer without interrupting the video processing path. Multiple event
+sinks can be wired from the same detector — each receives a copy.
+
+**Legacy wrapper mode** (still supported for JSON-authored pipelines):
+
+```json
+{
+  "id": "detect_and_log",
+  "type": "go_processor",
+  "processor": "metadata_file_writer",
+  "params": {
+    "output_file": "cuts.jsonl",
+    "inner_processor": "scene_change_content",
+    "threshold": 27.0
+  }
+}
+```
+
+In wrapper mode the `metadata_file_writer` wraps the inner processor
+directly; no `events` edge is needed. This mode is not exposed in the
+GUI Inspector — use graph wiring instead.
+
+**CLI output** (alternative to graph wiring):
+
+```sh
+mediamolder run --metadata-out cuts.jsonl pipeline.json
+```
+
+Each detected scene boundary is emitted as a metadata event:
+
+```json
+{"node":"detect","pts":3703200,"custom":{"scene_change":true,"detector":"content","frame_index":1234,"timecode":"00:00:41.133","score":42.7}}
+```
+
+**Using the adaptive detector for action content:**
+
+```json
+{
+  "id": "detect",
+  "type": "go_processor",
+  "processor": "scene_change_adaptive",
+  "params": {
+    "threshold": 3.0,
+    "min_scene_len": "0.6s",
+    "window_width": 2,
+    "min_content_val": 15.0
+  }
+}
+```
+
+**Stats export** — pass `stats_path` to write per-frame detector scores to a CSV
+file (same format as `py-scene-detect --stats`):
+
+```json
+{
+  "id": "detect",
+  "type": "go_processor",
+  "processor": "scene_change_content",
+  "params": {
+    "threshold": 27.0,
+    "stats_path": "frame_stats.csv"
+  }
+}
+```
+
+For full parameter references and algorithm descriptions see
+[docs/scene-detection.md](scene-detection.md).
+
+---
+
+### 5.12 Real-time mode
 
 Real-time mode activates an adaptive control loop that runs every 500 ms while the pipeline is playing. It observes per-node performance and attempts to keep every node at or above its configured `fps_target`.
 
@@ -1163,7 +1400,7 @@ Selecting a node opens its configuration in the Inspector. Toggle the panel with
 | **View: Inspector** | Toggle the inspector sidebar |
 | **View: Minimap** | Toggle the minimap (bottom-right corner of canvas) |
 | **Labels: Verbose / Compact** | Switch node label density; Verbose shows all fields, Compact shows a concise summary |
-| **Real-time** *(checkbox)* | Enable adaptive real-time mode for the next run — see [§5.11](#511-real-time-mode). Toggling updates `global_options.realtime` in the graph (persisted on Save) |
+| **Real-time** *(checkbox)* | Enable adaptive real-time mode for the next run — see [§5.12](#512-real-time-mode). Toggling updates `global_options.realtime` in the graph (persisted on Save) |
 | **Run** | Send the current graph to the backend and start encoding |
 | **Stop** | Cancel the running job cleanly |
 | **Show log / Hide log** | Toggle the Run panel at the bottom of the screen (enabled only while a job is running or has finished) |

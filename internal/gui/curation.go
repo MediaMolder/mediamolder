@@ -137,6 +137,34 @@ var curatedNodes = map[string]NodeMeta{
 	"frame_counter": {Friendly: "Frame counter", Aliases: []string{"count"}},
 	"frame_info":    {Friendly: "Frame info logger", Aliases: []string{"debug", "stats"}},
 	"scene_change":  {Friendly: "Scene change detector", Aliases: []string{"scdet", "cuts"}},
+
+	// ── PySceneDetect processors ─────────────────────────────────────
+	// scene_change_content and scene_change_adaptive are the recommended
+	// general-purpose detectors and appear in the Common palette view.
+	// The remaining three are more specialised and are also registered so
+	// they appear in search results.
+	// All five algorithms are ported from PySceneDetect by Brandon Castellano
+	// (https://github.com/Breakthrough/PySceneDetect, BSD-3-Clause).
+	"scene_change_content": {
+		Friendly: "Scene change (content-aware)",
+		Aliases:  []string{"pyscenedetect", "hsv", "cuts", "content"},
+	},
+	"scene_change_adaptive": {
+		Friendly: "Scene change (adaptive)",
+		Aliases:  []string{"pyscenedetect", "adaptive", "cuts", "rolling"},
+	},
+	"scene_change_threshold": {
+		Friendly: "Scene change (threshold / fade)",
+		Aliases:  []string{"pyscenedetect", "fade", "threshold", "black"},
+	},
+	"scene_change_hash": {
+		Friendly: "Scene change (perceptual hash)",
+		Aliases:  []string{"pyscenedetect", "hash", "dct", "perceptual"},
+	},
+	"scene_change_histogram": {
+		Friendly: "Scene change (histogram)",
+		Aliases:  []string{"pyscenedetect", "histogram", "luma"},
+	},
 }
 
 // NodeMeta is the per-node curation entry.

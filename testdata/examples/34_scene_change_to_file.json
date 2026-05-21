@@ -1,6 +1,6 @@
 {
   "schema_version": "1.1",
-  "description": "Decode in.mp4 -> detect scene changes (brightness + PTS gaps) and write to scene_changes.jsonl via metadata_file_writer -> encode to H.264, copy audio -> write to out.mp4.",
+  "description": "Decode in.mp4 -> detect scene changes (brightness + PTS gaps) and write to scene_changes.jsonl -> encode to H.264, copy audio -> write to out.mp4.",
   "inputs": [
     {
       "id": "in0",
@@ -24,10 +24,9 @@
       {
         "id": "scene_detect",
         "type": "go_processor",
-        "processor": "metadata_file_writer",
+        "processor": "scene_change",
         "params": {
           "output_file": "scene_changes.jsonl",
-          "inner_processor": "scene_change",
           "threshold": 10,
           "pts_threshold": 90000
         }

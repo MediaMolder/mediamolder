@@ -10,6 +10,7 @@
   --audio: #2dd4bf;
   --subtitle: #f59e0b;
   --data: #a78bfa;
+  --events: #f472b6;
 }
 
 * { box-sizing: border-box; }
@@ -653,6 +654,7 @@ button.danger:hover { background: rgba(185, 74, 74, 0.15); }
 .react-flow__handle.handle-audio    { background: var(--audio); }
 .react-flow__handle.handle-subtitle { background: var(--subtitle); }
 .react-flow__handle.handle-data     { background: var(--data); }
+.react-flow__handle.handle-events   { background: var(--events); }
 
 /* Per-track / per-slot handle labels (source side: right of node; target side: left) */
 .handle-track-label {
@@ -681,6 +683,7 @@ button.danger:hover { background: rgba(185, 74, 74, 0.15); }
 .react-flow__edge.edge-audio    .react-flow__edge-path { stroke: var(--audio);    stroke-width: 2; }
 .react-flow__edge.edge-subtitle .react-flow__edge-path { stroke: var(--subtitle); stroke-width: 2; }
 .react-flow__edge.edge-data     .react-flow__edge-path { stroke: var(--data);     stroke-width: 2; }
+.react-flow__edge.edge-events   .react-flow__edge-path { stroke: var(--events);   stroke-width: 2; stroke-dasharray: 6 3; }
 .react-flow__edge.edge-implicit .react-flow__edge-path { stroke-dasharray: 4 3; opacity: 0.7; }
 
 /* Edge attribute popover rendered by MMEdge — opens on hover or click,
@@ -774,6 +777,7 @@ button.danger:hover { background: rgba(185, 74, 74, 0.15); }
 .react-flow__edge.edge-audio    .mm-edge-popover { border-color: var(--audio); }
 .react-flow__edge.edge-subtitle .mm-edge-popover { border-color: var(--subtitle); }
 .react-flow__edge.edge-data     .mm-edge-popover { border-color: var(--data); }
+.react-flow__edge.edge-events   .mm-edge-popover { border-color: var(--events); }
 
 /* Selected-edge highlight (so users can see what Backspace will delete). */
 .react-flow__edge.selected .react-flow__edge-path {
@@ -784,6 +788,7 @@ button.danger:hover { background: rgba(185, 74, 74, 0.15); }
 .react-flow__edge.edge-audio    .mm-edge-popover { border-color: var(--audio); }
 .react-flow__edge.edge-subtitle .mm-edge-popover { border-color: var(--subtitle); }
 .react-flow__edge.edge-data     .mm-edge-popover { border-color: var(--data); }
+.react-flow__edge.edge-events   .mm-edge-popover { border-color: var(--events); }
 
 
 /* ---------- Palette improvements ---------- */

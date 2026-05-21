@@ -2,7 +2,7 @@
 // Only fields used by the editor are typed; unknown JSON fields are preserved
 // via passthrough during round-trip in adapter.ts.
 
-export type StreamType = 'video' | 'audio' | 'subtitle' | 'data' | 'metadata' | 'attachment';
+export type StreamType = 'video' | 'audio' | 'subtitle' | 'data' | 'metadata' | 'attachment' | 'events';
 
 export interface StreamSelect {
   input_index: number;

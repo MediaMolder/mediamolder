@@ -1,7 +1,7 @@
 // Copyright (C) 2026 Thomas Vaughan
 // SPDX-License-Identifier: LGPL-2.1-or-later
 
-package observability
+package observability_test
 
 import (
 	"context"
@@ -9,11 +9,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/MediaMolder/MediaMolder/observability"
 	"github.com/MediaMolder/MediaMolder/pipeline"
 )
 
 func TestNewMetrics(t *testing.T) {
-	m := NewMetrics("test-pipeline")
+	m := observability.NewMetrics("test-pipeline")
 	if m.Fps == nil {
 		t.Error("Fps gauge should be registered")
 	}
@@ -45,7 +46,7 @@ func TestNewMetrics(t *testing.T) {
 }
 
 func TestMetricsUpdate(t *testing.T) {
-	m := NewMetrics("upd-test")
+	m := observability.NewMetrics("upd-test")
 
 	snap := pipeline.MetricsSnapshot{
 		State:   "playing",
@@ -83,8 +84,8 @@ func TestMetricsUpdate(t *testing.T) {
 }
 
 func TestMetricsServerStartStop(t *testing.T) {
-	m := NewMetrics("test")
-	srv := NewMetricsServer(":0", m.Registry())
+	m := observability.NewMetrics("test")
+	srv := observability.NewMetricsServer(":0", m.Registry())
 	addr, err := srv.Start()
 	if err != nil {
 		t.Fatalf("Start: %v", err)
@@ -117,7 +118,7 @@ func TestMetricsServerStartStop(t *testing.T) {
 
 func TestTracingInitNoop(t *testing.T) {
 	ctx := context.Background()
-	provider, err := Init(ctx, Config{})
+	provider, err := observability.Init(ctx, observability.Config{})
 	if err != nil {
 		t.Fatalf("Init noop: %v", err)
 	}
@@ -129,10 +130,10 @@ func TestTracingInitNoop(t *testing.T) {
 	if span == nil {
 		t.Error("span should not be nil")
 	}
-	EndSpanOK(span)
-	_, nodeSpan := StartNodeSpan(spanCtx, "dec", "decoder", "h264", "video")
-	EndSpanOK(nodeSpan)
-	logger := Logger(ctx)
+	observability.EndSpanOK(span)
+	_, nodeSpan := observability.StartNodeSpan(spanCtx, "dec", "decoder", "h264", "video")
+	observability.EndSpanOK(nodeSpan)
+	logger := observability.Logger(ctx)
 	if logger == nil {
 		t.Error("logger should not be nil")
 	}

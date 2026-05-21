@@ -73,8 +73,9 @@ func configToGraphDef(cfg *Config) *graph.Def {
 		outByID[cfg.Outputs[i].ID] = &cfg.Outputs[i]
 	}
 	for _, e := range cfg.Graph.Edges {
-		// Skip metadata-routing edges; they are runtime-only.
-		if e.Type == "metadata" {
+		// Skip metadata-routing and events-routing edges — they are
+		// runtime-only annotations and carry no AV frames.
+		if e.Type == "metadata" || e.Type == "events" {
 			continue
 		}
 		// Drop edges feeding a sink whose Output has the corresponding

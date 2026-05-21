@@ -272,6 +272,7 @@ func handleListNodes(w http.ResponseWriter, _ *http.Request) {
 			Name:        name,
 			Label:       prettyProcessorName(name),
 			Description: processorDescription(name),
+			Streams:     processorStreams(name),
 		})
 	}
 
@@ -465,6 +466,21 @@ func prettyEncoderName(name, longName string) string {
 	return name + " — " + longName
 }
 
+func processorStreams(name string) []string {
+	switch name {
+	case "scene_change",
+		"scene_change_content",
+		"scene_change_adaptive",
+		"scene_change_hash",
+		"scene_change_histogram",
+		"scene_change_threshold":
+		return []string{"video", "events"}
+	case "metadata_file_writer":
+		return []string{"events"}
+	}
+	return nil
+}
+
 func prettyProcessorName(name string) string {
 	parts := strings.Split(name, "_")
 	for i, p := range parts {
@@ -590,7 +606,7 @@ func virtualSourceDescription(name, desc string) string {
 	return desc + " — " + hint
 }
 
-func virtualSinkDescription(name, desc string) string {
+func virtualSinkDescription(_, desc string) string {
 	hint := "Discards every frame. Lets an analyser branch (e.g. ebur128, signalstats) terminate without a muxer output."
 	if desc == "" {
 		return hint
