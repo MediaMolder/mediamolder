@@ -1,6 +1,7 @@
 {
   "schema_version": "1.1",
-  "description": "Multi-source metadata routing via metadata_reader/metadata_writer graph nodes (Wave 2 #11). Single-input variant: container metadata is routed from in0 into out0 via an explicit graph node pair instead of the Input.MapMetadata shorthand. Mirrors `ffmpeg -i in.mp4 -map_metadata 0 -c copy out.mkv`.",
+  "description": "Multi-source metadata routing via metadata_reader/metadata_writer graph nodes (Wave 2 #11). Single-input variant: container metadata is routed from in0 into out0 via an explicit graph node pair instead of the Input.MapMetadata shorthand. Mirrors. Note: if you edit this JSON manually, you must also update or remove the ffmpeg_cmd field.",
+  "ffmpeg_cmd": "ffmpeg -i {{input}} -map 0:a:0 -map 0:v:0 -c:v copy -c:a copy -f matroska {{output}}",
   "inputs": [
     {
       "id": "in0",

@@ -18,6 +18,15 @@ import (
 type Config struct {
 	SchemaVersion string   `json:"schema_version"`
 	Description   string   `json:"description,omitempty"`
+	// FfmpegCmd is the equivalent FFmpeg command line for this job.
+	// Three rules govern its use:
+	//   1. Advisory only: the runtime ignores this field entirely.
+	//   2. Auto-populated: convert-cmd and the GUI Import dialog set it to
+	//      the original source command; the GUI save action refreshes it via
+	//      the export-cmd endpoint on every save.
+	//   3. User responsibility: if you edit this JSON manually, you must
+	//      also update or remove this field to keep it accurate.
+	FfmpegCmd string `json:"ffmpeg_cmd,omitempty"`
 	Inputs        []Input  `json:"inputs"`
 	Graph         GraphDef `json:"graph"`
 	Outputs       []Output `json:"outputs"`

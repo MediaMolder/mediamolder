@@ -1,6 +1,7 @@
 {
   "schema_version": "1.0",
-  "description": "BSF chain on output (Wave 3 #13). Stream-copies BBB_10sec.mp4 -> MPEG-TS, applying the canonical h264_mp4toannexb,h264_redundant_pps chain that every MP4-to-MPEG-TS pipeline needs to convert AVCC NAL prefixes to Annex-B start codes and inject redundant PPS for transport-stream resilience. Spec is parsed by libavcodec av_bsf_list_parse_str.",
+  "description": "BSF chain on output (Wave 3 #13). Stream-copies BBB_10sec.mp4 -> MPEG-TS, applying the canonical h264_mp4toannexb,h264_redundant_pps chain that every MP4-to-MPEG-TS pipeline needs to convert AVCC NAL prefixes to Annex-B start codes and inject redundant PPS for transport-stream resilience. Spec is parsed by libavcodec av_bsf_list_parse_str. Note: if you edit this JSON manually, you must also update or remove the ffmpeg_cmd field.",
+  "ffmpeg_cmd": "ffmpeg -i {{input}} -map 0:a:0 -map 0:v:0 -c:v copy -c:a copy -bsf:v h264_mp4toannexb,h264_redundant_pps -map_metadata 0 -map_chapters 0 -f mpegts {{output}}",
   "inputs": [
     {
       "id": "in0",
@@ -8,16 +9,32 @@
       "map_metadata": true,
       "map_chapters": true,
       "streams": [
-        { "input_index": 0, "type": "video", "track": 0 },
-        { "input_index": 0, "type": "audio", "track": 0 }
+        {
+          "input_index": 0,
+          "type": "video",
+          "track": 0
+        },
+        {
+          "input_index": 0,
+          "type": "audio",
+          "track": 0
+        }
       ]
     }
   ],
   "graph": {
     "nodes": [],
     "edges": [
-      { "from": "in0:v:0", "to": "out0:v", "type": "video" },
-      { "from": "in0:a:0", "to": "out0:a", "type": "audio" }
+      {
+        "from": "in0:v:0",
+        "to": "out0:v",
+        "type": "video"
+      },
+      {
+        "from": "in0:a:0",
+        "to": "out0:a",
+        "type": "audio"
+      }
     ]
   },
   "outputs": [

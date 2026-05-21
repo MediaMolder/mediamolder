@@ -47,7 +47,11 @@ func ParseArgs(args []string) (*pipeline.Config, error) {
 // in Waves 5–7.  Callers that want to surface import notes to the user (GUI
 // import panel, CLI convert-cmd) should use ParseFull.
 func ParseFull(cmdline string) (ImportResult, error) {
-	return ParseArgsFull(tokenize(cmdline))
+	r, err := ParseArgsFull(tokenize(cmdline))
+	if err == nil && r.Config != nil {
+		r.Config.FfmpegCmd = cmdline
+	}
+	return r, err
 }
 
 // ParseArgsFull is like ParseArgs but returns a full ImportResult that

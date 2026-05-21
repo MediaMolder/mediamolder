@@ -1,6 +1,7 @@
 {
   "schema_version": "1.1",
-  "description": "Encode a raw 320x240 yuv420p stream (testdata/sample.yuv) to MP4. Exercises Input.Kind = \"raw\" with the typed format / pixel_format / video_size / framerate fields (Wave 5 #23-#28). Matches 'ffmpeg -f rawvideo -pix_fmt yuv420p -s 320x240 -framerate 30 -i sample.yuv out.mp4'.",
+  "description": "Encode a raw 320x240 yuv420p stream (testdata/sample.yuv) to MP4. Exercises Input.Kind = \"raw\" with the typed format / pixel_format / video_size / framerate fields (Wave 5 #23-#28). Note: if you edit this JSON manually, you must also update or remove the ffmpeg_cmd field.",
+  "ffmpeg_cmd": "ffmpeg -f rawvideo -framerate 30 -pixel_format yuv420p -video_size 320x240 -i {{raw_yuv}} -map 0:v:0 -c:v libx264 -x264-params:v crf=28:preset=ultrafast -map_metadata 0 -map_chapters 0 -f mp4 {{output}}",
   "inputs": [
     {
       "id": "in0",
@@ -13,14 +14,22 @@
       "video_size": "320x240",
       "framerate": 30,
       "streams": [
-        { "input_index": 0, "type": "video", "track": 0 }
+        {
+          "input_index": 0,
+          "type": "video",
+          "track": 0
+        }
       ]
     }
   ],
   "graph": {
     "nodes": [],
     "edges": [
-      { "from": "in0:v:0", "to": "out0:v", "type": "video" }
+      {
+        "from": "in0:v:0",
+        "to": "out0:v",
+        "type": "video"
+      }
     ]
   },
   "outputs": [
@@ -29,7 +38,10 @@
       "url": "{{output}}",
       "format": "mp4",
       "codec_video": "libx264",
-      "encoder_params_video": { "preset": "ultrafast", "crf": "28" }
+      "encoder_params_video": {
+        "preset": "ultrafast",
+        "crf": "28"
+      }
     }
   ]
 }

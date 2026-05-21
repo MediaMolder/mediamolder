@@ -6,6 +6,19 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 ## [Unreleased]
 
 ### Added
+- **Advisory `ffmpeg_cmd` field in pipeline.Config.**
+  A new top-level `ffmpeg_cmd` string field (omitempty) stores the equivalent
+  FFmpeg command line for a job. Three rules govern its use:
+  1. Advisory only — the runtime ignores it entirely.
+  2. Auto-populated — `convert-cmd` and the GUI Import dialog set it to the
+     original source command; the GUI save action refreshes it via the
+     `POST /api/export-cmd` endpoint on every save.
+  3. User responsibility — manual JSON edits must also update or remove the
+     field; all built-in examples now carry an explicit warning in their
+     `description`.
+  Schema files (v1.0 and v1.1), `JobConfig` TypeScript type, and all 83
+  testdata example/community-script files updated accordingly.
+
 - **`output_format` param for scene-change `output_file`.**
   All scene-change detector nodes and `metadata_file_writer` now accept an
   `output_format` param alongside `output_file`: `"jsonl"` (default, unchanged),

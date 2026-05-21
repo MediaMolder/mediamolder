@@ -7,6 +7,8 @@ MediaMolder pipelines are defined as JSON files conforming to schema v1.0, v1.1,
 | Field            | Type     | Required | Description                              |
 |------------------|----------|----------|------------------------------------------|
 | `schema_version` | string   | yes      | `"1.0"`, `"1.1"`, or `"1.2"`             |
+| `description`    | string   | no       | Human-readable description of the job.   |
+| `ffmpeg_cmd`     | string   | no       | Equivalent FFmpeg command line. See [ffmpeg_cmd rules](#ffmpeg_cmd). |
 | `inputs`         | array    | yes      | Input sources                            |
 | `graph`          | object   | yes      | Processing graph (nodes + edges)         |
 | `outputs`        | array    | yes      | Output sinks                             |
@@ -15,6 +17,16 @@ MediaMolder pipelines are defined as JSON files conforming to schema v1.0, v1.1,
 | `filter_asset_paths` | array of string | no | Search directories for resolving relative model-file paths in filter params. See [Filter model paths](#filter-model-paths-filter_asset_paths). |
 
 Use `"1.1"` when the graph contains `go_processor` nodes. Use `"1.2"` when the graph stores editor-side data under `graph.ui` (e.g. node positions written by `mediamolder gui`); v1.2 is otherwise a strict superset of v1.1, and the runtime accepts all three versions interchangeably. Stream-copy nodes (`type: "copy"`) work under any of the three versions.
+
+## `ffmpeg_cmd`
+
+The optional `ffmpeg_cmd` string field stores an equivalent FFmpeg command line for the job. Three rules govern its use:
+
+1. **Advisory only.** The runtime ignores this field entirely — it is never read during execution.
+2. **Auto-populated on import.** `convert-cmd` and the GUI Import dialog set it to the original source command. The GUI also refreshes it via the `POST /api/export-cmd` endpoint on every save, so it always reflects the current graph state.
+3. **User responsibility on manual edits.** If you edit a job JSON by hand, you must also update or delete the `ffmpeg_cmd` field to keep it accurate. Every built-in example carries the following reminder in its `description`: *"Note: if you edit this JSON manually, you must also update or remove the ffmpeg_cmd field."*
+
+> **Tip:** delete `ffmpeg_cmd` rather than updating it manually after a complex edit — the GUI will regenerate it on the next save.
 
 ## Input
 

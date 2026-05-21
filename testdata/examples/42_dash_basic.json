@@ -1,6 +1,7 @@
 {
   "schema_version": "1.0",
-  "description": "Single-rendition DASH output exercising typed Output.DASH fields (Wave 3 #12). 2 s segments, explicit adaptation_sets, CMAF dual-pack (hls_playlist=true) so the muxer also writes an HLS sidecar manifest.",
+  "description": "Single-rendition DASH output exercising typed Output.DASH fields (Wave 3 #12). 2 s segments, explicit adaptation_sets, CMAF dual-pack (hls_playlist=true) so the muxer also writes an HLS sidecar manifest. Note: if you edit this JSON manually, you must also update or remove the ffmpeg_cmd field.",
+  "ffmpeg_cmd": "ffmpeg -i {{input}} -map 0:a:0 -map 0:v:0 -c:v libx264 -c:a aac -map_metadata 0 -map_chapters 0 -f dash -seg_duration 2 -adaptation_sets id=0,streams=v id=1,streams=a -hls_playlist 1 {{output}}",
   "inputs": [
     {
       "id": "in0",
@@ -8,16 +9,32 @@
       "map_metadata": true,
       "map_chapters": true,
       "streams": [
-        { "input_index": 0, "type": "video", "track": 0 },
-        { "input_index": 0, "type": "audio", "track": 0 }
+        {
+          "input_index": 0,
+          "type": "video",
+          "track": 0
+        },
+        {
+          "input_index": 0,
+          "type": "audio",
+          "track": 0
+        }
       ]
     }
   ],
   "graph": {
     "nodes": [],
     "edges": [
-      { "from": "in0:v:0", "to": "out0:v", "type": "video" },
-      { "from": "in0:a:0", "to": "out0:a", "type": "audio" }
+      {
+        "from": "in0:v:0",
+        "to": "out0:v",
+        "type": "video"
+      },
+      {
+        "from": "in0:a:0",
+        "to": "out0:a",
+        "type": "audio"
+      }
     ]
   },
   "outputs": [
@@ -28,7 +45,9 @@
       "codec_video": "libx264",
       "codec_audio": "aac",
       "force_key_frames": "expr:gte(t,n_forced*2)",
-      "options": { "movflags": "frag_keyframe+empty_moov" },
+      "options": {
+        "movflags": "frag_keyframe+empty_moov"
+      },
       "dash": {
         "seg_duration": 2,
         "adaptation_sets": "id=0,streams=v id=1,streams=a",

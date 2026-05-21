@@ -1,6 +1,7 @@
 {
   "schema_version": "1.0",
-  "description": "Wave 7 #41: amix filter — mix two audio sources (asplit fan-out then mix back).",
+  "description": "Wave 7 #41: amix filter — mix two audio sources (asplit fan-out then mix back). Note: if you edit this JSON manually, you must also update or remove the ffmpeg_cmd field.",
+  "ffmpeg_cmd": "ffmpeg -i {{input}} -filter_complex [0:a]asplit=_pos0=2[asplit0][asplit0];[asplit0][asplit0]amix=duration=longest:inputs=2:weights=0.7 0.3[amix0];[amix0]asetnsamples=n=1024:p=0[chunk0] -map 0:a:0 -map 0:v:0 -c:v copy -c:a aac -map_metadata 0 -map_chapters 0 {{output}}",
   "inputs": [
     {
       "id": "in0",
@@ -8,8 +9,16 @@
       "map_metadata": true,
       "map_chapters": true,
       "streams": [
-        { "input_index": 0, "type": "video", "track": 0 },
-        { "input_index": 0, "type": "audio", "track": 0 }
+        {
+          "input_index": 0,
+          "type": "video",
+          "track": 0
+        },
+        {
+          "input_index": 0,
+          "type": "audio",
+          "track": 0
+        }
       ]
     }
   ],
@@ -19,7 +28,9 @@
         "id": "asplit0",
         "type": "filter",
         "filter": "asplit",
-        "params": { "_pos0": "2" }
+        "params": {
+          "_pos0": "2"
+        }
       },
       {
         "id": "amix0",
@@ -35,16 +46,43 @@
         "id": "chunk0",
         "type": "filter",
         "filter": "asetnsamples",
-        "params": { "n": "1024", "p": "0" }
+        "params": {
+          "n": "1024",
+          "p": "0"
+        }
       }
     ],
     "edges": [
-      { "from": "in0:v:0", "to": "out0:v", "type": "video" },
-      { "from": "in0:a:0", "to": "asplit0", "type": "audio" },
-      { "from": "asplit0", "to": "amix0", "type": "audio" },
-      { "from": "asplit0", "to": "amix0", "type": "audio" },
-      { "from": "amix0", "to": "chunk0", "type": "audio" },
-      { "from": "chunk0", "to": "out0:a", "type": "audio" }
+      {
+        "from": "in0:v:0",
+        "to": "out0:v",
+        "type": "video"
+      },
+      {
+        "from": "in0:a:0",
+        "to": "asplit0",
+        "type": "audio"
+      },
+      {
+        "from": "asplit0",
+        "to": "amix0",
+        "type": "audio"
+      },
+      {
+        "from": "asplit0",
+        "to": "amix0",
+        "type": "audio"
+      },
+      {
+        "from": "amix0",
+        "to": "chunk0",
+        "type": "audio"
+      },
+      {
+        "from": "chunk0",
+        "to": "out0:a",
+        "type": "audio"
+      }
     ]
   },
   "outputs": [

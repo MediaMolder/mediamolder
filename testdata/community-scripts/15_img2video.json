@@ -1,15 +1,24 @@
 {
   "schema_version": "1.0",
-  "description": "Convert a still image to a 5-second 1280x720 video by looping the image at 25 fps. Matches 'img2video -i image.jpg -d 5 -o output.mp4'. Requires testdata/sample.jpg fixture (see FIXTURES.md).",
+  "description": "Convert a still image to a 5-second 1280x720 video by looping the image at 25 fps. Matches 'img2video -i image.jpg -d 5 -o output.mp4'. Requires testdata/sample.jpg fixture (see FIXTURES.md). Note: if you edit this JSON manually, you must also update or remove the ffmpeg_cmd field.",
+  "ffmpeg_cmd": "ffmpeg -t 5 -i {{image}} -filter_complex [0:v]scale=force_original_aspect_ratio=decrease:h=720:w=1280[scale0];[scale0]pad=h=720:w=1280:x=(ow-iw)/2:y=(oh-ih)/2[pad0];[pad0]fps=fps=25[fps0] -map 0:v:0 -c:v libx264 -x264-params:v pix_fmt=yuv420p -map_metadata 0 -map_chapters 0 {{output}}",
   "inputs": [
     {
       "id": "in0",
       "url": "{{image}}",
       "map_metadata": true,
       "map_chapters": true,
-      "options": { "loop": "1", "framerate": "25", "t": "5" },
+      "options": {
+        "loop": "1",
+        "framerate": "25",
+        "t": "5"
+      },
       "streams": [
-        { "input_index": 0, "type": "video", "track": 0 }
+        {
+          "input_index": 0,
+          "type": "video",
+          "track": 0
+        }
       ]
     }
   ],
@@ -19,26 +28,53 @@
         "id": "scale0",
         "type": "filter",
         "filter": "scale",
-        "params": { "w": "1280", "h": "720", "force_original_aspect_ratio": "decrease" }
+        "params": {
+          "w": "1280",
+          "h": "720",
+          "force_original_aspect_ratio": "decrease"
+        }
       },
       {
         "id": "pad0",
         "type": "filter",
         "filter": "pad",
-        "params": { "w": "1280", "h": "720", "x": "(ow-iw)/2", "y": "(oh-ih)/2" }
+        "params": {
+          "w": "1280",
+          "h": "720",
+          "x": "(ow-iw)/2",
+          "y": "(oh-ih)/2"
+        }
       },
       {
         "id": "fps0",
         "type": "filter",
         "filter": "fps",
-        "params": { "fps": "25" }
+        "params": {
+          "fps": "25"
+        }
       }
     ],
     "edges": [
-      { "from": "in0:v:0", "to": "scale0", "type": "video" },
-      { "from": "scale0",  "to": "pad0",   "type": "video" },
-      { "from": "pad0",    "to": "fps0",   "type": "video" },
-      { "from": "fps0",    "to": "out0:v", "type": "video" }
+      {
+        "from": "in0:v:0",
+        "to": "scale0",
+        "type": "video"
+      },
+      {
+        "from": "scale0",
+        "to": "pad0",
+        "type": "video"
+      },
+      {
+        "from": "pad0",
+        "to": "fps0",
+        "type": "video"
+      },
+      {
+        "from": "fps0",
+        "to": "out0:v",
+        "type": "video"
+      }
     ]
   },
   "outputs": [
@@ -46,7 +82,9 @@
       "id": "out0",
       "url": "{{output}}",
       "codec_video": "libx264",
-      "encoder_params_video": { "pix_fmt": "yuv420p" }
+      "encoder_params_video": {
+        "pix_fmt": "yuv420p"
+      }
     }
   ]
 }
