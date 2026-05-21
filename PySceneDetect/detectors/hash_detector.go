@@ -61,9 +61,9 @@ type HashDetector struct {
 // NewHashDetector constructs a HashDetector.
 //
 //   - threshold:    normalised Hamming distance in [0,1] that triggers a cut
-//                   (default 0.395).
+//     (default 0.395).
 //   - minSceneLen:  minimum scene length; accepts int frame count or "HH:MM:SS"
-//                   timecode (default 15).
+//     timecode (default 15).
 //   - size:         hash dimension (default 16).
 //   - lowpass:      resize factor (default 2).
 func NewHashDetector(threshold float64, minSceneLen any, size, lowpass int) (*HashDetector, error) {

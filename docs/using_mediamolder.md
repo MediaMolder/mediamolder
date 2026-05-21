@@ -18,6 +18,7 @@ This guide covers every feature available in MediaMolder, from installing the bi
    - [gui](#37-gui)
    - [perf](#38-perf)
    - [hwbench](#39-hwbench)
+   - [py-scene-detect](#310-py-scene-detect)
 4. [Graph JSON reference](#4-graph-json-reference)
    - [Top-level structure](#41-top-level-structure)
    - [inputs](#42-inputs)
@@ -36,6 +37,7 @@ This guide covers every feature available in MediaMolder, from installing the bi
    - [Subtitles](#58-subtitles)
    - [Bitstream filters](#59-bitstream-filters)
    - [Live / device inputs](#510-live--device-inputs)
+   - [Scene detection in a pipeline](#511-scene-detection-in-a-pipeline)
 6. [Validation](#6-validation)
 7. [Graphical user interface](#7-graphical-user-interface)
    - [Launching the GUI](#71-launching-the-gui)
@@ -56,44 +58,7 @@ This guide covers every feature available in MediaMolder, from installing the bi
 
 ## 1. Installation
 
-### Prerequisites
-
-- **Go 1.23+**
-- **FFmpeg 8.1+** libraries (libavcodec 62.x, libavformat 62.x, libavfilter 11.x, libavutil 60.x)
-  - System install via Homebrew (`brew install ffmpeg`), apt, or dnf, with `pkg-config` available; **or** a source build in a sibling directory for static linking.
-
-### From source
-
-```sh
-git clone https://github.com/MediaMolder/mediamolder.git
-cd mediamolder
-```
-
-**Dynamic (system FFmpeg):**
-```sh
-go build ./...          # builds the mediamolder binary in the current directory
-go install ./cmd/mediamolder   # install to $GOPATH/bin
-```
-
-**Static (local FFmpeg source build):**
-
-Place your FFmpeg source tree at `../ffmpeg` relative to the mediamolder checkout, then:
-```sh
-go build -tags=ffstatic -o mediamolder ./cmd/mediamolder
-```
-
-### Building the GUI frontend
-
-The GUI requires a pre-built frontend bundle. If the bundle is missing, `mediamolder gui` will print the path it searched and exit with an error.
-
-```sh
-cd frontend
-npm install          # only needed once
-npm run build        # outputs to frontend/dist/
-cd ..
-```
-
-Run `mediamolder gui` from the repository root or from any directory where `frontend/dist/` exists alongside the binary.
+See [installation guide](installation.md).
 
 ---
 
@@ -137,7 +102,7 @@ Signals `SIGINT` / `SIGTERM` (Ctrl-C) cancel the run cleanly, flushing any in-pr
 
 | Flag | Description |
 |---|---|
-| `--realtime` | Enable adaptive real-time mode — see [§5.11](#511-real-time-mode) |
+| `--realtime` | Enable adaptive real-time mode — see [§5.12](#512-real-time-mode) |
 | `--json` | Output progress snapshots as JSON Lines on stderr instead of the default human-readable line |
 | `--metadata-out <path>` | Write processor metadata events (e.g. scene-change JSON) to a file; use `-` for stdout |
 | `--set KEY=VALUE` | Substitute `{{KEY}}` in the JSON config before parsing; may be repeated |
@@ -367,6 +332,63 @@ mediamolder hwbench [--device <type>] [--codecs <list>] [--resolutions <list>]
 See [docs/benchmarks.md](benchmarks.md) for full documentation, the JSON
 report schema, and contribution instructions.
 
+### 3.10 `py-scene-detect`
+
+Analyse a single media file for scene boundaries without encoding anything.
+Decodes every frame, runs one of five detectors ported from
+[PySceneDetect](https://github.com/Breakthrough/PySceneDetect) by Brandon Castellano
+(BSD-3-Clause), and writes the scene list to stdout or a file.
+
+The same five detectors are also available as `go_processor` nodes inside a
+pipeline graph (see [§5.11](#511-scene-detection-in-a-pipeline)), letting you
+detect scenes *during* a transcode in a single pass with no extra decode step.
+Use this subcommand when you need the scene list before building or running a
+graph.
+
+```sh
+mediamolder py-scene-detect [flags] <input>
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--detector` | `content` | Algorithm: `content`, `adaptive`, `threshold`, `hash`, `histogram` |
+| `--threshold` | _(detector default)_ | Override detector threshold (0 = use detector default) |
+| `--luma-only` | `false` | `content` / `adaptive`: use luma channel only |
+| `--min-scene-len` | `0.6s` | Minimum scene length — frames (`15`), seconds (`0.6s`), or timecode (`00:00:00.600`) |
+| `--output` | `-` (stdout) | Write scene list to a file; `-` = stdout |
+| `--format` | `jsonl` | Output format: `jsonl`, `csv`, or `timecodes` |
+| `--stats` | _(none)_ | Write per-frame detector statistics to a CSV file |
+| `--downscale` | `0` (auto) | Downscale factor: `0` = auto (based on frame width), `1` = disabled, `N` = N× |
+
+**Quick examples:**
+
+```sh
+# Content detector (default) — JSONL to stdout.
+mediamolder py-scene-detect input.mp4
+
+# Adaptive detector with custom threshold; write CSV.
+mediamolder py-scene-detect --detector=adaptive --threshold=2.5 \
+  --format=csv --output=scenes.csv input.mp4
+
+# Fade-to-black detection; print cut timecodes only.
+mediamolder py-scene-detect --detector=threshold --threshold=15 \
+  --format=timecodes input.mp4
+
+# Perceptual hash detector; also export per-frame stats.
+mediamolder py-scene-detect --detector=hash --stats=frame_stats.csv input.mp4
+```
+
+**Output formats:**
+
+| Format | Description |
+|---|---|
+| `jsonl` | One JSON object per scene, one per line: `{"scene":1,"start_frame":0,"start_timecode":"00:00:00.000","end_frame":149,…}` |
+| `csv` | Scene table compatible with PySceneDetect's CSV output |
+| `timecodes` | Comma-separated cut timecodes for use with FFmpeg `-ss` or chapter markers |
+
+For algorithm descriptions, parameter references, and a speed-vs-accuracy
+comparison table see [docs/scene-detection.md](scene-detection.md).
+
 ---
 
 ## 4. Graph JSON reference
@@ -588,7 +610,7 @@ Edges are directed connections between stream producers and consumers.
 | `threads` | int | Maximum worker threads (0 = auto) |
 | `hw_accel` | string | Hardware acceleration backend: `"cuda"`, `"vaapi"`, `"qsv"`, `"videotoolbox"` |
 | `hw_device` | string | Device selector: GPU index (`"0"`), `/dev/dri/renderD128` for VAAPI, etc. |
-| `realtime` | bool | Enable adaptive real-time mode: the control loop dynamically increases encoder thread counts and (as a last resort) drops frames to keep every node at or above its `fps_target`. Set via `--realtime` CLI flag or the **Real-time** checkbox in the GUI toolbar — see [§5.11](#511-real-time-mode) |
+| `realtime` | bool | Enable adaptive real-time mode: the control loop dynamically increases encoder thread counts and (as a last resort) drops frames to keep every node at or above its `fps_target`. Set via `--realtime` CLI flag or the **Real-time** checkbox in the GUI toolbar — see [§5.12](#512-real-time-mode) |
 
 ---
 
@@ -962,11 +984,112 @@ Use a format matching the capture API and set `url` to the device specifier:
 }
 ```
 
-For live streaming to RTMP/SRT where the output must pace to wall clock, combine device input with `global_options.realtime: true` — see [§5.11](#511-real-time-mode) below.
+For live streaming to RTMP/SRT where the output must pace to wall clock, combine device input with `global_options.realtime: true` — see [§5.12](#512-real-time-mode) below.
 
 ---
 
-### 5.11 Real-time mode
+### 5.11 Scene detection in a pipeline
+
+Scene detection can be embedded directly in a transcoding graph using `go_processor`
+nodes. Five detectors are available; all are ported from
+[PySceneDetect](https://github.com/Breakthrough/PySceneDetect) by Brandon Castellano
+(BSD-3-Clause). For offline use on a single file see [§3.10](#310-py-scene-detect).
+
+| Processor | Threshold default | Best for |
+|---|---|---|
+| `scene_change_content` | 27.0 | General-purpose; highest accuracy |
+| `scene_change_adaptive` | 3.0 | Action/sports; suppresses false positives on fast pans |
+| `scene_change_threshold` | 12.0 | Fade to/from black or white |
+| `scene_change_hash` | 0.395 | Robust to colour-grading and compression artefacts |
+| `scene_change_histogram` | 0.05 | Fast coarse filter; low memory |
+
+**Example — detect scenes during transcode and write cuts to a file:**
+
+```json
+{
+  "schema_version": "1.1",
+  "inputs": [
+    { "id": "src", "path": "input.mp4" }
+  ],
+  "graph": {
+    "nodes": [
+      {
+        "id": "detect",
+        "type": "go_processor",
+        "processor": "scene_change_content",
+        "params": {
+          "threshold": 27.0,
+          "min_scene_len": "0.6s",
+          "filter_mode": "merge"
+        }
+      },
+      {
+        "id": "enc",
+        "type": "encoder",
+        "codec": "libx264",
+        "params": { "preset": "fast", "crf": 23 }
+      }
+    ],
+    "edges": [
+      { "from": "src:video:0",  "to": "detect:video:0" },
+      { "from": "detect:video:0", "to": "enc:video:0" }
+    ]
+  },
+  "outputs": [
+    { "id": "out", "path": "output.mp4", "streams": ["enc:video:0"] }
+  ]
+}
+```
+
+Run with metadata written to a file:
+
+```sh
+mediamolder run --metadata-out cuts.jsonl pipeline.json
+```
+
+Each detected scene boundary is emitted as a metadata event:
+
+```json
+{"node":"detect","pts":3703200,"custom":{"scene_change":true,"detector":"content","frame_index":1234,"timecode":"00:00:41.133","score":42.7}}
+```
+
+**Using the adaptive detector for action content:**
+
+```json
+{
+  "id": "detect",
+  "type": "go_processor",
+  "processor": "scene_change_adaptive",
+  "params": {
+    "threshold": 3.0,
+    "min_scene_len": "0.6s",
+    "window_width": 2,
+    "min_content_val": 15.0
+  }
+}
+```
+
+**Stats export** — pass `stats_path` to write per-frame detector scores to a CSV
+file (same format as `py-scene-detect --stats`):
+
+```json
+{
+  "id": "detect",
+  "type": "go_processor",
+  "processor": "scene_change_content",
+  "params": {
+    "threshold": 27.0,
+    "stats_path": "frame_stats.csv"
+  }
+}
+```
+
+For full parameter references and algorithm descriptions see
+[docs/scene-detection.md](scene-detection.md).
+
+---
+
+### 5.12 Real-time mode
 
 Real-time mode activates an adaptive control loop that runs every 500 ms while the pipeline is playing. It observes per-node performance and attempts to keep every node at or above its configured `fps_target`.
 
@@ -1163,7 +1286,7 @@ Selecting a node opens its configuration in the Inspector. Toggle the panel with
 | **View: Inspector** | Toggle the inspector sidebar |
 | **View: Minimap** | Toggle the minimap (bottom-right corner of canvas) |
 | **Labels: Verbose / Compact** | Switch node label density; Verbose shows all fields, Compact shows a concise summary |
-| **Real-time** *(checkbox)* | Enable adaptive real-time mode for the next run — see [§5.11](#511-real-time-mode). Toggling updates `global_options.realtime` in the graph (persisted on Save) |
+| **Real-time** *(checkbox)* | Enable adaptive real-time mode for the next run — see [§5.12](#512-real-time-mode). Toggling updates `global_options.realtime` in the graph (persisted on Save) |
 | **Run** | Send the current graph to the backend and start encoding |
 | **Stop** | Cancel the running job cleanly |
 | **Show log / Hide log** | Toggle the Run panel at the bottom of the screen (enabled only while a job is running or has finished) |

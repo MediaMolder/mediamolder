@@ -19,7 +19,7 @@ import (
 	"math"
 
 	psd "github.com/MediaMolder/MediaMolder/PySceneDetect"
-	"github.com/MediaMolder/MediaMolder/PySceneDetect/internal"
+	imgmath "github.com/MediaMolder/MediaMolder/PySceneDetect/internal"
 )
 
 // ContentWeights holds the per-channel weights used when computing the frame

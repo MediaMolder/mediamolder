@@ -32,9 +32,9 @@ import (
 	"os"
 	"strings"
 
-	"github.com/MediaMolder/MediaMolder/av"
 	psd "github.com/MediaMolder/MediaMolder/PySceneDetect"
 	"github.com/MediaMolder/MediaMolder/PySceneDetect/detectors"
+	"github.com/MediaMolder/MediaMolder/av"
 )
 
 func cmdPySceneDetect(args []string) error {
