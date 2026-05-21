@@ -2,7 +2,7 @@
 
 **Status:** authoritative reference for the F1 reverse-lowering
 exporter (sequencing in
-[private_local/followups_roadmap.md](../private_local/followups_roadmap.md),
+[private_local/followups_roadmap.md](../../private_local/followups_roadmap.md),
 F1.1 – F1.6).
 
 This page documents the two public entry points that turn a
@@ -11,9 +11,9 @@ command line, when to use each, and which fields round-trip cleanly
 versus which are reported on `ExportResult.Unsupported` because
 they have no CLI inverse.
 
-The exporter lives in [`compat/ffcli/export.go`](../compat/ffcli/export.go);
+The exporter lives in [`compat/ffcli/export.go`](../../compat/ffcli/export.go);
 the per-output / per-stream view layer lives in
-[`compat/ffcli/encoder_view.go`](../compat/ffcli/encoder_view.go).
+[`compat/ffcli/encoder_view.go`](../../compat/ffcli/encoder_view.go).
 
 ## Entry points
 
@@ -68,7 +68,7 @@ FieldOrder / Pass / PassLogFile / AudioSync / Interlaced) by:
    default; `(*exporter).buildEncoderNodes` walks `cfg.Graph.Nodes`
    in declaration order and emits `-<key>:<stream> <val>` (or the
    packed `-<codec>-params:<stream>` payload for the encoders in
-   [`codecToParamsFlag`](../compat/ffcli/encoder_view.go) —
+   [`codecToParamsFlag`](../../compat/ffcli/encoder_view.go) —
    libx264, libx264rgb, libx265, libsvtav1, librav1e, libxavs2).
 3. **Copy nodes**: `view.Codec = "copy"`, `view.Params = nil`.
 4. **`__async__*` audio-sync resamplers**:

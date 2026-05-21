@@ -1,7 +1,7 @@
 # Field Ownership
 
 **Status:** authoritative classification (Milestone A of
-[private_local/normalization_plan_revised.md](../private_local/normalization_plan_revised.md))
+[private_local/normalization_plan_revised.md](../../private_local/normalization_plan_revised.md))
 
 This document classifies every field on `pipeline.Config`,
 `pipeline.Config.GlobalOptions`, `pipeline.Output`,
@@ -299,9 +299,9 @@ runtime code never reads authoring shorthand off `Output`.
   JSON pointer of the offending field (e.g.
   `outputs[0].codec_video`, `outputs[0].streams[1].encoder`).
   Warnings flow to the GUI via the existing `EventBus` `ErrorEvent`
-  path in [pipeline/engine.go](../pipeline/engine.go) `runGraph`.
+  path in [pipeline/engine.go](../../pipeline/engine.go) `runGraph`.
 - **C.2 — Invariant.**
-  [pipeline/normalize_invariant_test.go](../pipeline/normalize_invariant_test.go)
+  [pipeline/normalize_invariant_test.go](../../pipeline/normalize_invariant_test.go)
   exercises every shorthand row, verifies the resulting `*graph.Def`
   carries typed `Internal.Encoder` / `Internal.Filter` /
   `Internal.Generated`, and runs a control with all shorthand
@@ -322,9 +322,9 @@ runtime code never reads authoring shorthand off `Output`.
     pipeline/ runtime/ graph/ | grep -v _test.go
   ```
   shows only the two documented `runLinear` exemptions in
-  [pipeline/engine.go](../pipeline/engine.go). Validation helpers
-  in [pipeline/encoder_timing.go](../pipeline/encoder_timing.go)
-  and [pipeline/color_hdr.go](../pipeline/color_hdr.go) also read
+  [pipeline/engine.go](../../pipeline/engine.go). Validation helpers
+  in [pipeline/encoder_timing.go](../../pipeline/encoder_timing.go)
+  and [pipeline/color_hdr.go](../../pipeline/color_hdr.go) also read
   these fields, but they run at config-parse time, before
   `NormalizeConfig`, so they are not runtime reads.
 

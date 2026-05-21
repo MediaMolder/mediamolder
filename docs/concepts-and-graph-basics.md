@@ -931,7 +931,7 @@ pixel format not in encoder accept list"*, or similar:
 
 - [using_mediamolder.md](using_mediamolder.md) — full CLI and GUI user guide
 - [json-config-reference.md](json-config-reference.md) — complete JSON schema reference
-- [graph-validation-design.md](graph_validation_design.md) — validation issue taxonomy
+- [graph-validation-design.md](architecture/graph_validation_design.md) — validation issue taxonomy
 - [graph-compilation.md](graph-compilation.md) — build / compile / execute internals
 - [ffmpeg-migration-guide.md](ffmpeg-migration-guide.md) — full CLI → JSON migration patterns
 - [go-processor-nodes.md](go-processor-nodes.md) — Go processor API

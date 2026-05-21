@@ -193,9 +193,9 @@ For detailed instructions see [MacOS](docs/build/macos.md), [Windows](docs/build
 - [Using MediaMolder (CLI & GUI guide)](docs/using_mediamolder.md)
 - [Concepts — Graph Model, Nodes, Edges, Lifecycle](docs/concepts-and-graph-basics.md)
 - [FFmpeg Migration Guide](docs/ffmpeg-migration-guide.md)
-- [Validation](docs/graph_validation_design.md)
+- [Validation](docs/architecture/graph_validation_design.md)
 - [JSON Config Reference](docs/json-config-reference.md)
-- [Export to FFmpeg CLI](docs/export.md)
+- [Export to FFmpeg CLI](docs/architecture/export.md)
 - [Visual Editor (GUI)](docs/gui.md)
 - [Go Processor Nodes](docs/go-processor-nodes.md)
 - [Scene Detection (PySceneDetect port)](docs/scene-detection.md)
@@ -205,9 +205,9 @@ For detailed instructions see [MacOS](docs/build/macos.md), [Windows](docs/build
 
 - [Architecture](docs/architecture/architecture.md)
 - [graph State Machine](docs/graph-state-machine.md)
-- [graph Instrumentation Roadmap](docs/graph-instrumentation-roadmap.md)
+- [graph Instrumentation Roadmap](docs/pipeline-instrumentation-roadmap.md)
 - [Clock & Sync](docs/clock-and-sync.md)
-- [Event Bus](docs/event-bus.md)
+- [Event Bus](docs/architecture/event-bus.md)
 - [Error Handling](docs/error-handling.md)
 - [Hardware Acceleration](docs/hardware-acceleration.md)
 - [Observability](docs/observability.md) — Prometheus metrics, OpenTelemetry tracing, per-node performance monitoring, `mediamolder perf` CLI
