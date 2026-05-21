@@ -347,6 +347,8 @@ All five PySceneDetect processors share these parameters:
 |-------|------|---------------|-------------|
 | `min_scene_len` | int / float64 / string | `15`, `"0.6s"`, `"00:00:00.600"` | Minimum distance between cuts. Frames (int), seconds with `s` suffix, or `HH:MM:SS.mmm` timecode. |
 | `frame_rate` | float64 | `25.0`, `29.97`, `23.976` | Stream frame rate used to interpret time-based `min_scene_len` values. The `mediamolder run` pipeline sets this automatically from the demuxed stream. |
+| `output_file` | string | absolute path | Write cut events to this file. Format controlled by `output_format`. Leave unset to publish to the event bus only. |
+| `output_format` | string | `"jsonl"` (default), `"csv"`, `"timecodes"` | Format written to `output_file`. `jsonl`: one JSON record per cut. `csv`: header row + one row per cut (Frame Index, Timecode, PTS, Score). `timecodes`: comma-separated cut timecodes, flushed at stream end. |
 
 ---
 
@@ -359,9 +361,14 @@ and in the GUI **Observations** panel. Two mechanisms write events to disk:
 
 ### `output_file` param
 
-Add `"output_file"` directly to the detector's `params`. Events are appended as
-JSON Lines — one record per cut — in the format shown above. This is the simplest
-approach and works in both pipeline JSON and CLI contexts.
+Add `"output_file"` directly to the detector's `params`. Events are appended in
+the format chosen by `"output_format"` (default `"jsonl"`).
+
+| `output_format` | Writes |
+|-----------------|--------|
+| `"jsonl"` (default) | One JSON record per cut — same as the event bus record shown above |
+| `"csv"` | Header row + one row per cut: `Frame Index,Timecode,PTS,Score` |
+| `"timecodes"` | Comma-separated cut timecodes written in a single line at stream end |
 
 ```json
 {
@@ -370,6 +377,30 @@ approach and works in both pipeline JSON and CLI contexts.
   "processor": "scene_change_content",
   "params": {
     "output_file": "/tmp/cuts.jsonl",
+    "threshold": 27.0
+  }
+}
+```
+
+CSV example:
+
+```json
+{
+  "params": {
+    "output_file": "/tmp/cuts.csv",
+    "output_format": "csv",
+    "threshold": 27.0
+  }
+}
+```
+
+Timecodes example (e.g. for FFmpeg chapter markers):
+
+```json
+{
+  "params": {
+    "output_file": "/tmp/cuts.txt",
+    "output_format": "timecodes",
     "threshold": 27.0
   }
 }
@@ -409,7 +440,8 @@ wire.
 
 The `events` edge carries no video data and is independent of video routing.
 `metadata_file_writer` here acts as a pure sink — it exposes no video handles and
-requires only `output_file`. Both mechanisms write the same JSON Lines format.
+requires only `output_file`. The `output_format` param is also accepted and applies
+the same `jsonl` / `csv` / `timecodes` logic.
 
 > **Note:** The CLI `--output` flag (see below) writes a _scene list_ — one record
 > per complete scene with start/end frame and timecode — which is a different format

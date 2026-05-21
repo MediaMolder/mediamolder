@@ -1959,7 +1959,7 @@ const SCENE_DETECTOR_META: Record<string, SceneDetectorMeta> = {
 };
 
 const SCENE_CHANGE_KNOWN_KEYS = new Set([
-  'output_file',
+  'output_file', 'output_format',
   'threshold', 'min_scene_len',
   'luma_only', 'filter_mode', 'kernel_size',
   'min_content_val',
@@ -1990,10 +1990,16 @@ function SceneChangeParams({
   const thresholdValue = Number(get('threshold', thresholdDefault));
   const minSceneLen = String(get('min_scene_len', '0.6s'));
   const outputFile = typeof params['output_file'] === 'string' ? params['output_file'] : '';
+  const outputFormat = String(get('output_format', 'jsonl'));
+
+  const fileFilter = outputFormat === 'csv' ? '.csv' : outputFormat === 'timecodes' ? '.txt' : '.jsonl';
+  const defaultFn  = outputFormat === 'csv' ? 'scene_changes.csv'
+                   : outputFormat === 'timecodes' ? 'scene_changes.txt'
+                   : 'scene_changes.jsonl';
 
   // Params not rendered by the structured UI fall through to the generic editor.
   const extraKeys = meta?.extra?.map((e) => e.key) ?? [];
-  const structuredKeys = new Set(['threshold', 'min_scene_len', 'output_file', ...extraKeys]);
+  const structuredKeys = new Set(['threshold', 'min_scene_len', 'output_file', 'output_format', ...extraKeys]);
   const overflow = Object.fromEntries(
     Object.entries(params).filter(([k]) => !SCENE_CHANGE_KNOWN_KEYS.has(k) && !structuredKeys.has(k)),
   );
@@ -2001,13 +2007,28 @@ function SceneChangeParams({
   return (
     <>
       <label>Save detections to file</label>
+      <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 4 }}>
+        <span style={{ fontSize: 11, color: 'var(--text-dim)' }}>Format</span>
+        <select
+          value={outputFormat}
+          style={{ fontSize: 11 }}
+          onChange={(e) => {
+            const { output_format: _fmt, ...rest } = params as Record<string, unknown>;
+            onChange(e.target.value === 'jsonl' ? rest : { ...rest, output_format: e.target.value });
+          }}
+        >
+          <option value="jsonl">jsonl</option>
+          <option value="csv">csv</option>
+          <option value="timecodes">timecodes (.txt)</option>
+        </select>
+      </div>
       <FileField
         label="output_file"
         value={outputFile}
         mode="save"
-        filter=".jsonl"
-        defaultFilename="scene_changes.jsonl"
-        placeholder="/path/to/cuts.jsonl"
+        filter={fileFilter}
+        defaultFilename={defaultFn}
+        placeholder={defaultFn}
         onChange={(val) => {
           const next = { ...params };
           if (val) next['output_file'] = val; else delete next['output_file'];
@@ -2015,7 +2036,10 @@ function SceneChangeParams({
         }}
       />
       <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: -4, marginBottom: 8 }}>
-        Leave blank to emit cut events to the event bus only.
+        Leave blank to emit cut events to the event bus only.{' '}
+        <code>.jsonl</code>: one JSON record per cut;{' '}
+        <code>.csv</code>: Frame Index, Timecode, PTS, Score;{' '}
+        <code>.txt</code>: comma-separated cut timecodes (written at stream end).
       </div>
 
       {meta && (
