@@ -26,8 +26,10 @@ media graph — no subprocess, no Python runtime, no inter-process overhead.
   - [`scene_change_hash`](#scene_change_hash)
   - [`scene_change_histogram`](#scene_change_histogram)
 - [Common parameters](#common-parameters)
+- [Persisting events](#persisting-events)
 - [CLI: `mediamolder py-scene-detect`](#cli-mediamolder-py-scene-detect)
 - [Output format](#output-format)
+- [Using detectors in the GUI](#using-detectors-in-the-gui)
 - [Choosing a detector](#choosing-a-detector)
 
 ---
@@ -114,7 +116,7 @@ Default weights: `(hue=1, sat=1, lum=1, edges=0)`. Luma-only mode sets `(0, 0, 1
 }
 ```
 
-Metadata emitted on each detected cut:
+Event record on each detected cut:
 
 ```json
 {
@@ -169,7 +171,7 @@ shows a similar delta) do not trigger cuts. Genuine scene boundaries spike the r
 }
 ```
 
-Metadata emitted:
+Event record on each detected cut:
 
 ```json
 {
@@ -222,7 +224,7 @@ Detects fades to/from black (or white) by tracking the mean brightness of each f
 }
 ```
 
-Metadata emitted:
+Event record on each detected cut:
 
 ```json
 {
@@ -275,7 +277,7 @@ Perceptual hashing via DCT (similar to pHash):
 }
 ```
 
-Metadata emitted:
+Event record on each detected cut:
 
 ```json
 {
@@ -321,7 +323,7 @@ Compares adjacent-frame luma histograms using the Pearson correlation coefficien
 }
 ```
 
-Metadata emitted:
+Event record on each detected cut:
 
 ```json
 {
@@ -345,6 +347,74 @@ All five PySceneDetect processors share these parameters:
 |-------|------|---------------|-------------|
 | `min_scene_len` | int / float64 / string | `15`, `"0.6s"`, `"00:00:00.600"` | Minimum distance between cuts. Frames (int), seconds with `s` suffix, or `HH:MM:SS.mmm` timecode. |
 | `frame_rate` | float64 | `25.0`, `29.97`, `23.976` | Stream frame rate used to interpret time-based `min_scene_len` values. The `mediamolder run` pipeline sets this automatically from the demuxed stream. |
+
+---
+
+## Persisting events
+
+Each detector emits an **event** on the pipeline event bus whenever it detects a cut.
+Events carry the frame index, PTS, timecode, and a detector-specific score (see the
+"Event record" blocks above). They are visible in the SSE stream at `/api/run/events`
+and in the GUI **Observations** panel. Two mechanisms write events to disk:
+
+### `output_file` param
+
+Add `"output_file"` directly to the detector's `params`. Events are appended as
+JSON Lines — one record per cut — in the format shown above. This is the simplest
+approach and works in both pipeline JSON and CLI contexts.
+
+```json
+{
+  "id": "detect",
+  "type": "go_processor",
+  "processor": "scene_change_content",
+  "params": {
+    "output_file": "/tmp/cuts.jsonl",
+    "threshold": 27.0
+  }
+}
+```
+
+### `events` edge to `metadata_file_writer`
+
+For graphs where you want to keep the detector node's params clean, or where you need
+to fan out the same events to multiple sinks, add a `metadata_file_writer` node and
+wire an **`events`** edge from the detector to it. The engine opens the file and routes
+every cut event the detector emits into it without any video data passing through the
+wire.
+
+```json
+{
+  "nodes": [
+    {
+      "id": "detect",
+      "type": "go_processor",
+      "processor": "scene_change_content",
+      "params": { "threshold": 27.0 }
+    },
+    {
+      "id": "cut_log",
+      "type": "go_processor",
+      "processor": "metadata_file_writer",
+      "params": { "output_file": "/tmp/cuts.jsonl" }
+    }
+  ],
+  "edges": [
+    { "from": "in0:v:0",       "to": "detect:default", "type": "video"  },
+    { "from": "detect:default", "to": "out0:v",         "type": "video"  },
+    { "from": "detect",         "to": "cut_log",        "type": "events" }
+  ]
+}
+```
+
+The `events` edge carries no video data and is independent of video routing.
+`metadata_file_writer` here acts as a pure sink — it exposes no video handles and
+requires only `output_file`. Both mechanisms write the same JSON Lines format.
+
+> **Note:** The CLI `--output` flag (see below) writes a _scene list_ — one record
+> per complete scene with start/end frame and timecode — which is a different format
+> from the per-cut event records written by `output_file` or `events` edges in a
+> pipeline.
 
 ---
 
@@ -382,8 +452,14 @@ mediamolder py-scene-detect --detector=adaptive --threshold=2.5 \
 mediamolder py-scene-detect --detector=threshold --threshold=15 \
   --format=timecodes input.mp4
 
-# Perceptual hash detector; also export per-frame stats.
-mediamolder py-scene-detect --detector=hash --stats=stats.csv input.mp4
+# Write scene list to a JSONL file (default format is jsonl).
+mediamolder py-scene-detect --output=scenes.jsonl input.mp4
+
+# Write scene list as CSV.
+mediamolder py-scene-detect --format=csv --output=scenes.csv input.mp4
+
+# Perceptual hash detector; write JSONL scene list and per-frame stats.
+mediamolder py-scene-detect --detector=hash --output=scenes.jsonl --stats=stats.csv input.mp4
 
 # Disable auto-downscale (process at full resolution).
 mediamolder py-scene-detect --downscale=1 input.mp4
@@ -419,6 +495,20 @@ Cut points only, comma-separated, for use with FFmpeg `-ss` flags or chapter mar
 ```
 00:00:05.960,00:00:12.480,00:00:24.160
 ```
+
+---
+
+## Using detectors in the GUI
+
+All six detectors are available as drag-and-drop nodes in the GUI palette under
+**Processors**. `scene_change_content` and `scene_change_adaptive` appear in the
+default *Common* view; the others require *All* mode or a text search (`hash`,
+`histogram`, `threshold`, `scdet`).
+
+For full GUI instructions — including how to set `output_file` from the Inspector,
+how to wire an `events` edge to a `metadata_file_writer` sink node, and a quick-
+reference detector table — see
+[GUI guide → Scene detection processors](gui.md#scene-detection-processors).
 
 ---
 

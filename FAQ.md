@@ -121,7 +121,7 @@ The current schema version is `1.0`. While the project is pre-1.0, breaking chan
 
 ### How can I contribute?
 
-Fork the repo, make your changes, and open a pull request against `main`. Sign off every commit with `git commit -s` (DCO). See [Contribution & Governance](docs/contribution_and_governance.md) for the full guidelines.
+Fork the repo, make your changes, and open a pull request against `main`. Sign off every commit with `git commit -s` (DCO). See [Contribution & Governance](contribution_and_governance.md) for the full guidelines.
 
 ## Support
 

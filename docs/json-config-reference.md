@@ -281,7 +281,7 @@ model-bearing suffix heuristic.
 | `hw_device`   | string | no       | Hardware device name/path                                                   |
 | `realtime`    | bool   | no       | Pace output to wall-clock time                                              |
 
-Per-node `params.threads` and `params.thread_type` override the global values for individual codecs. See [Threading Architecture](threading-architecture.md).
+Per-node `params.threads` and `params.thread_type` override the global values for individual codecs. See [Threading Architecture](architecture/threading-architecture.md).
 
 ## ErrorPolicy
 

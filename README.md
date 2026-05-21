@@ -204,19 +204,19 @@ For detailed instructions see [MacOS](docs/build/macos.md), [Windows](docs/build
 ### Code
 
 - [Architecture](docs/architecture/architecture.md)
-- [graph State Machine](docs/graph-state-machine.md)
-- [graph Instrumentation Roadmap](docs/pipeline-instrumentation-roadmap.md)
-- [Clock & Sync](docs/clock-and-sync.md)
+- [graph State Machine](docs/architecture/graph-state-machine.md)
+- [graph Instrumentation Roadmap](docs/roadmap/pipeline-instrumentation-roadmap.md)
+- [Clock & Sync](docs/architecture/clock-and-sync.md)
 - [Event Bus](docs/architecture/event-bus.md)
-- [Error Handling](docs/error-handling.md)
+- [Error Handling](docs/architecture/error-handling.md)
 - [Hardware Acceleration](docs/hardware-acceleration.md)
-- [Observability](docs/observability.md) — Prometheus metrics, OpenTelemetry tracing, per-node performance monitoring, `mediamolder perf` CLI
-- [Graph Compilation](docs/graph-compilation.md)
+- [Observability](docs/architecture/observability.md) — Prometheus metrics, OpenTelemetry tracing, per-node performance monitoring, `mediamolder perf` CLI
+- [Graph Compilation](docs/architecture/graph-compilation.md)
 
 ### Project
 
-- [MediaMolder Project](docs/mediamolder_project.md)
-- [Contribution & Governance](docs/contribution_and_governance.md)
-- [Project Specification](docs/specification.md)
-- [Benchmarks](docs/benchmarks.md) — `mediamolder hwbench` user tool + Go graph CI benchmarks
+- [MediaMolder Project](mediamolder_project.md)
+- [Contribution & Governance](contribution_and_governance.md)
+- [Project Specification](docs/architecture/specification.md)
+- [Benchmarks](docs/architecture/benchmarks.md) — `mediamolder hwbench` user tool + Go graph CI benchmarks
 - [Licensing](LICENSING.md)
