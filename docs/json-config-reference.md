@@ -28,12 +28,21 @@ Use `"1.1"` when the graph contains `go_processor` nodes. Use `"1.2"` when the g
 | `map_metadata` | bool | no   | Copy this input's container-level metadata onto outputs that don't set their own (FFmpeg `-map_metadata`). |
 | `map_chapters` | bool | no   | Copy this input's chapter table onto outputs that don't set their own (FFmpeg `-map_chapters`). First input wins. |
 
-> **Metadata is not copied by default.** Unlike FFmpeg (which applies
-> `-map_metadata 0` implicitly), MediaMolder requires an explicit opt-in.
-> Set `map_metadata: true` (and `map_chapters: true`) on an input to replicate
-> FFmpeg's default behaviour. Use `Output.metadata` to hard-code tags, or wire
-> `metadata_reader` / `metadata_writer` graph nodes for per-output control in
-> multi-input pipelines. See [Metadata routing nodes](#metadata-routing-nodes-metadata_reader--metadata_writer).
+> **Metadata is not copied by default in JSON configs.** Unlike FFmpeg (which
+> applies `-map_metadata 0` implicitly), a hand-authored MediaMolder JSON file
+> requires an explicit opt-in. Set `map_metadata: true` (and
+> `map_chapters: true`) on an input to replicate FFmpeg's default behaviour.
+>
+> **`convert-cmd` and the GUI Import dialog handle this automatically.** When
+> you import an FFmpeg command line that has no explicit `-map_metadata` flag,
+> the importer sets `map_metadata: true` and `map_chapters: true` on
+> `inputs[0]`, faithfully replicating FFmpeg's implicit default. To suppress
+> the copy for a specific output in the original command, use
+> `-map_metadata -1` before that output.
+>
+> Use `Output.metadata` to hard-code tags, or wire `metadata_reader` /
+> `metadata_writer` graph nodes for per-output control in multi-input
+> pipelines. See [Metadata routing nodes](#metadata-routing-nodes-metadata_reader--metadata_writer).
 | `stream_loop`  | int  | no   | Number of *additional* times to rewind on EOF. `0` = no loop, `N>0` plays N+1 times, `-1` = infinite. PTS continues monotonically across iterations. (FFmpeg `-stream_loop`). |
 | `itsoffset`    | float | no  | Shift every demuxed PTS/DTS by this many seconds (may be negative). Composes additively with the `-ss` ts_offset. (FFmpeg `-itsoffset`). |
 | `read_rate`    | float | no  | Pace packet reads to (read_rate × realtime). `1.0` = native-rate (FFmpeg `-re`); `2.0` = 2× realtime. `0` (default) disables pacing. |

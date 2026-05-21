@@ -185,6 +185,15 @@ mediamolder convert-cmd "ffmpeg -i in.mp4 -c:v libx264 out.mp4"
 mediamolder convert-cmd ffmpeg -i in.mp4 -c:v libx264 out.mp4
 ```
 
+**Metadata default handling.** FFmpeg silently applies `-map_metadata 0`
+(copy container metadata from the first input) to every output when no
+explicit flag is given. `convert-cmd` replicates this by setting
+`map_metadata: true` and `map_chapters: true` on `inputs[0]` in the
+produced JSON. To suppress metadata copying for a specific output in the
+original command, use `-map_metadata -1` (and `-map_chapters -1`) before
+that output — the importer honours these suppress flags and does not set
+the corresponding field.
+
 For a complete mapping table of FFmpeg options to JSON fields, see [ffmpeg-migration-guide.md](ffmpeg-migration-guide.md).
 
 ---
@@ -570,12 +579,18 @@ Edges are directed connections between stream producers and consumers.
 
 #### Container metadata — default behaviour and FFmpeg comparison
 
-> **MediaMolder does not copy container-level metadata by default.**
+> **MediaMolder JSON configs do not copy container-level metadata by default.**
 > Plain `ffmpeg -i in.mp4 out.mp4` implicitly applies `-map_metadata 0`,
 > copying every tag (title, artist, encoder, …) from the first input to the
-> output. MediaMolder makes this opt-in so the caller controls exactly which
-> metadata reaches which output — especially important in multi-input jobs
-> where each output may need a different source.
+> output. Hand-authored MediaMolder JSON makes this opt-in so the caller
+> controls exactly which metadata reaches which output — especially important
+> in multi-input jobs where each output may need a different source.
+>
+> **Exception: `convert-cmd` and the GUI Import dialog replicate FFmpeg's
+> default automatically.** When you import an FFmpeg command line with no
+> explicit `-map_metadata`, the importer sets `map_metadata: true` and
+> `map_chapters: true` on `inputs[0]`. You can suppress this with
+> `-map_metadata -1` in the source command.
 
 Three mechanisms are available, resolved in this priority order:
 
