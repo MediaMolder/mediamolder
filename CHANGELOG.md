@@ -6,6 +6,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 ## [Unreleased]
 
 ### Added
+- **`output_format` param for scene-change `output_file`.**
+  All scene-change detector nodes and `metadata_file_writer` now accept an
+  `output_format` param alongside `output_file`: `"jsonl"` (default, unchanged),
+  `"csv"` (header + one row per cut: Frame Index, Timecode, PTS, Score), or
+  `"timecodes"` (comma-separated cut timecodes flushed at stream end, `.txt`).
+  The GUI Inspector's **Save detections to file** panel gains a Format selector
+  that updates the file-browser filter and suggested filename automatically.
+
 - **PySceneDetect scene detection port (Phases 1–9).**
   Five scene-change detection algorithms ported from
   [PySceneDetect](https://github.com/Breakthrough/PySceneDetect) by Brandon Castellano

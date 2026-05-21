@@ -1282,9 +1282,16 @@ All PySceneDetect processors share:
 ### Writing detections to a file
 
 Every processor emits cut events on the pipeline event bus (visible in the
-**Observations** panel and the SSE stream). To also write them to a JSONL
-sidecar, set `output_file` directly on the detector node — either in the
-Inspector's **Save detections to file** field, or in the JSON `params`:
+**Observations** panel and the SSE stream). To also write them to a file,
+set `output_file` in the Inspector's **Save detections to file** field (or
+directly in the JSON `params`). Use the **Format** selector (or the
+`output_format` param) to choose the output format:
+
+| `output_format` | File | Contents |
+|---|---|---|
+| `jsonl` (default) | `.jsonl` | One JSON object per cut — same fields as the event bus record |
+| `csv` | `.csv` | Header row + one row per cut: `Frame Index,Timecode,PTS,Score` |
+| `timecodes` | `.txt` | Comma-separated cut timecodes, written in a single line at stream end |
 
 ```json
 {
@@ -1293,20 +1300,20 @@ Inspector's **Save detections to file** field, or in the JSON `params`:
   "processor": "scene_change_content",
   "params": {
     "output_file": "scene_changes.jsonl",
+    "output_format": "jsonl",
     "threshold": 27.0,
     "min_scene_len": 15
   }
 }
 ```
 
-The file is created relative to the working directory if the path is not
-absolute. Each detected cut is appended as one JSON object per line.
 Leave `output_file` blank (or omit it) to emit events to the event bus only.
 
 For processors that don't have built-in `output_file` support (e.g. custom
 YOLO detectors), the **Metadata file writer** (`metadata_file_writer`) node
 is still available as a generic wrapper — see example
-[32](../testdata/examples/32_yolov8_metadata_to_file.json).
+[32](../testdata/examples/32_yolov8_metadata_to_file.json). The
+`metadata_file_writer` node also accepts `output_format`.
 
 ### Choosing a detector
 
