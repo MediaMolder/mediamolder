@@ -1,0 +1,65 @@
+{
+  "schema_version": "1.1",
+  "description": "Decode in.mp4 -> detect scene changes using PySceneDetect HashDetector (DCT perceptual hash; normalised Hamming distance threshold 0.395, hash size 16, lowpass 2) and write events to scene_changes_hash.jsonl -> encode to H.264, copy audio -> write to out.mp4.",
+  "inputs": [
+    {
+      "id": "in0",
+      "url": "{{input}}",
+      "streams": [
+        {
+          "input_index": 0,
+          "type": "video",
+          "track": 0
+        },
+        {
+          "input_index": 0,
+          "type": "audio",
+          "track": 0
+        }
+      ]
+    }
+  ],
+  "graph": {
+    "nodes": [
+      {
+        "id": "scene_detect",
+        "type": "go_processor",
+        "processor": "metadata_file_writer",
+        "params": {
+          "output_file": "scene_changes_hash.jsonl",
+          "inner_processor": "scene_change_hash",
+          "threshold": 0.395,
+          "size": 16,
+          "lowpass": 2,
+          "min_scene_len": 15,
+          "frame_rate": 25.0
+        }
+      }
+    ],
+    "edges": [
+      {
+        "from": "in0:v:0",
+        "to": "scene_detect:default",
+        "type": "video"
+      },
+      {
+        "from": "scene_detect:default",
+        "to": "out0:v",
+        "type": "video"
+      },
+      {
+        "from": "in0:a:0",
+        "to": "out0:a",
+        "type": "audio"
+      }
+    ]
+  },
+  "outputs": [
+    {
+      "id": "out0",
+      "url": "{{output}}",
+      "codec_video": "libx264",
+      "codec_audio": "copy"
+    }
+  ]
+}
