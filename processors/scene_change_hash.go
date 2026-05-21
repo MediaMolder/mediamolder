@@ -28,6 +28,7 @@ import (
 //	"min_scene_len": int/float64/string — min frames or duration like "0.6s" (default 15)
 //	"frame_rate":    float64 — stream frame rate for FrameTimecode construction (default 25.0)
 type SceneChangeHash struct {
+	hook      fileWriteHook
 	detector  *detectors.HashDetector
 	frameRate float64
 }
@@ -38,6 +39,12 @@ func (p *SceneChangeHash) Init(params map[string]any) error {
 	lowpass := 2
 	var minSceneLen any = 15
 	p.frameRate = 25.0
+
+	var err error
+	params, err = p.hook.initFromParams("scene_change_hash", params)
+	if err != nil {
+		return err
+	}
 
 	for k, v := range params {
 		switch k {
@@ -105,7 +112,7 @@ func (p *SceneChangeHash) Process(frame *av.Frame, ctx ProcessorContext) (*av.Fr
 	}
 
 	score := math.Round(p.detector.LastHashDist()*1000) / 1000
-	return frame, &Metadata{Custom: map[string]any{
+	md := &Metadata{Custom: map[string]any{
 		"scene_change": true,
 		"detector":     "hash",
 		"frame_index":  cuts[0].FrameNum(),
@@ -113,11 +120,13 @@ func (p *SceneChangeHash) Process(frame *av.Frame, ctx ProcessorContext) (*av.Fr
 		"pts":          ctx.PTS,
 		"score":        score,
 		"hash_dist":    score,
-	}}, nil
+	}}
+	p.hook.write(ctx, md)
+	return frame, md, nil
 }
 
 func (p *SceneChangeHash) Close() error {
-	return nil
+	return p.hook.close()
 }
 
 func init() {

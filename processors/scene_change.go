@@ -30,6 +30,8 @@ import (
 //	"threshold":     float64 — 0-100, min scdet score to flag (default: 10, matching scdet).
 //	"pts_threshold": int64   — min PTS gap to flag (default: 0 = disabled).
 type SceneChange struct {
+	hook fileWriteHook
+
 	threshold    float64
 	ptsThreshold int64
 
@@ -42,6 +44,12 @@ type SceneChange struct {
 func (p *SceneChange) Init(params map[string]any) error {
 	p.threshold = 10.0 // scdet default
 	p.ptsThreshold = 0
+
+	var err error
+	params, err = p.hook.initFromParams("scene_change", params)
+	if err != nil {
+		return err
+	}
 
 	if v, ok := params["threshold"]; ok {
 		switch n := v.(type) {
@@ -137,7 +145,9 @@ func (p *SceneChange) Process(frame *av.Frame, ctx ProcessorContext) (*av.Frame,
 	custom["reasons"] = reasons
 	custom["frame_index"] = ctx.FrameIndex
 
-	return frame, &Metadata{Custom: custom}, nil
+	md := &Metadata{Custom: custom}
+	p.hook.write(ctx, md)
+	return frame, md, nil
 }
 
 func (p *SceneChange) Close() error {
@@ -145,7 +155,7 @@ func (p *SceneChange) Close() error {
 		p.prevFrame.Close()
 		p.prevFrame = nil
 	}
-	return nil
+	return p.hook.close()
 }
 
 func init() {

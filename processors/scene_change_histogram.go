@@ -28,6 +28,7 @@ import (
 //	"min_scene_len": int/float64/string — min frames or duration like "0.6s" (default 15)
 //	"frame_rate":    float64 — stream frame rate for FrameTimecode construction (default 25.0)
 type SceneChangeHistogram struct {
+	hook      fileWriteHook
 	detector  *detectors.HistogramDetector
 	frameRate float64
 }
@@ -37,6 +38,12 @@ func (p *SceneChangeHistogram) Init(params map[string]any) error {
 	bins := 256
 	var minSceneLen any = 15
 	p.frameRate = 25.0
+
+	var err error
+	params, err = p.hook.initFromParams("scene_change_histogram", params)
+	if err != nil {
+		return err
+	}
 
 	for k, v := range params {
 		switch k {
@@ -101,7 +108,7 @@ func (p *SceneChangeHistogram) Process(frame *av.Frame, ctx ProcessorContext) (*
 	// a score = 1 - correlation so that higher score means more scene change.
 	corr := math.Round(p.detector.LastHistDiff()*1000) / 1000
 	score := math.Round((1.0-p.detector.LastHistDiff())*1000) / 1000
-	return frame, &Metadata{Custom: map[string]any{
+	md := &Metadata{Custom: map[string]any{
 		"scene_change": true,
 		"detector":     "histogram",
 		"frame_index":  cuts[0].FrameNum(),
@@ -109,11 +116,13 @@ func (p *SceneChangeHistogram) Process(frame *av.Frame, ctx ProcessorContext) (*
 		"pts":          ctx.PTS,
 		"score":        score,
 		"hist_diff":    corr,
-	}}, nil
+	}}
+	p.hook.write(ctx, md)
+	return frame, md, nil
 }
 
 func (p *SceneChangeHistogram) Close() error {
-	return nil
+	return p.hook.close()
 }
 
 func init() {

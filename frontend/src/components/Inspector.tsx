@@ -1725,12 +1725,16 @@ function GoProcessorParams({
   params: Record<string, unknown>;
   onChange: (next: Record<string, unknown>) => void;
 }) {
+  const isSceneChange = processorName === 'scene_change' ||
+    processorName?.startsWith('scene_change_');
+
+  if (isSceneChange) {
+    return <SceneChangeParams processorName={processorName!} params={params} onChange={onChange} />;
+  }
+
   const FILE_PARAM_KEYS: ReadonlySet<string> = new Set(['output_file']);
   const fileEntries = Object.entries(params).filter(([k]) => FILE_PARAM_KEYS.has(k));
   const restParams = Object.fromEntries(Object.entries(params).filter(([k]) => !FILE_PARAM_KEYS.has(k)));
-
-  const isSceneChange = processorName === 'scene_change' ||
-    processorName?.startsWith('scene_change_');
 
   return (
     <>
@@ -1745,10 +1749,7 @@ function GoProcessorParams({
           onChange={(val) => onChange({ ...params, [k]: val })}
         />
       ))}
-      {isSceneChange
-        ? <SceneChangeParams processorName={processorName!} params={restParams} onChange={(next) => onChange({ ...fileEntries.reduce<Record<string, unknown>>((acc, [k, v]) => { acc[k] = v; return acc; }, {}), ...next })} />
-        : <ParamsEditor params={restParams} onChange={(next) => onChange({ ...fileEntries.reduce<Record<string, unknown>>((acc, [k, v]) => { acc[k] = v; return acc; }, {}), ...next })} />
-      }
+      <ParamsEditor params={restParams} onChange={(next) => onChange({ ...fileEntries.reduce<Record<string, unknown>>((acc, [k, v]) => { acc[k] = v; return acc; }, {}), ...next })} />
     </>
   );
 }
@@ -1928,6 +1929,7 @@ const SCENE_DETECTOR_META: Record<string, SceneDetectorMeta> = {
 };
 
 const SCENE_CHANGE_KNOWN_KEYS = new Set([
+  'output_file',
   'threshold', 'min_scene_len', 'frame_rate',
   'luma_only', 'filter_mode', 'kernel_size',
   'min_content_val',
@@ -1957,16 +1959,34 @@ function SceneChangeParams({
   const thresholdDefault = meta?.thresholdDefault ?? 0;
   const thresholdValue = Number(get('threshold', thresholdDefault));
   const minSceneLen = String(get('min_scene_len', '0.6s'));
+  const outputFile = typeof params['output_file'] === 'string' ? params['output_file'] : '';
 
   // Params not rendered by the structured UI fall through to the generic editor.
   const extraKeys = meta?.extra?.map((e) => e.key) ?? [];
-  const structuredKeys = new Set(['threshold', 'min_scene_len', ...extraKeys]);
+  const structuredKeys = new Set(['threshold', 'min_scene_len', 'output_file', ...extraKeys]);
   const overflow = Object.fromEntries(
     Object.entries(params).filter(([k]) => !SCENE_CHANGE_KNOWN_KEYS.has(k) && !structuredKeys.has(k)),
   );
 
   return (
     <>
+      <label>Save detections to file</label>
+      <FileField
+        label="output_file"
+        value={outputFile}
+        mode="save"
+        filter=".jsonl"
+        defaultFilename="scene_changes.jsonl"
+        onChange={(val) => {
+          const next = { ...params };
+          if (val) next['output_file'] = val; else delete next['output_file'];
+          onChange(next);
+        }}
+      />
+      <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: -4, marginBottom: 8 }}>
+        Leave blank to emit cut events to the event bus only.
+      </div>
+
       {meta && (
         <div style={{ fontSize: 11, color: 'var(--text-dim)', marginBottom: 8 }}>
           {meta.label}

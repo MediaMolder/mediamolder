@@ -79,8 +79,12 @@ in-app help dialog.
      built-in `scene_change` detector (mirrors FFmpeg `scdet`), and five
      PySceneDetect-ported scene detectors (`scene_change_content`,
      `scene_change_adaptive`, `scene_change_hash`, `scene_change_histogram`,
-     `scene_change_threshold`). Wrap any detector with `metadata_file_writer`
-     to write cut events to a JSONL sidecar file.
+     `scene_change_threshold`). Each detector accepts an optional
+     `output_file` param — set it in the Inspector to write cut events to a
+     `.jsonl` sidecar. Leave it blank to emit events to the event bus only
+     (visible in the SSE stream / **Observations** panel).
+     Only a **video** input handle is shown because the detectors are
+     video-only pass-through nodes.
      See [§ Scene detection processors](#scene-detection-processors).
 4. **Add a Sink.** Drag *Output file* from **Sinks**, click **Browse…** and
    pick **Save** mode in the dialog to choose a destination path and
@@ -1244,19 +1248,20 @@ All PySceneDetect processors share:
 - `frame_rate` — stream frame rate used for FrameTimecode construction.
   Should match the input's actual frame rate (default 25.0 if omitted).
 
-### Writing detections to a file — `metadata_file_writer`
+### Writing detections to a file
 
-Every processor emits cut events on the pipeline event bus. To also write them
-to a JSONL sidecar, wrap the inner processor with `metadata_file_writer`:
+Every processor emits cut events on the pipeline event bus (visible in the
+**Observations** panel and the SSE stream). To also write them to a JSONL
+sidecar, set `output_file` directly on the detector node — either in the
+Inspector's **Save detections to file** field, or in the JSON `params`:
 
 ```json
 {
   "id": "detect",
   "type": "go_processor",
-  "processor": "metadata_file_writer",
+  "processor": "scene_change_content",
   "params": {
     "output_file": "scene_changes.jsonl",
-    "inner_processor": "scene_change_content",
     "threshold": 27.0,
     "min_scene_len": 15,
     "frame_rate": 25.0
@@ -1264,15 +1269,14 @@ to a JSONL sidecar, wrap the inner processor with `metadata_file_writer`:
 }
 ```
 
-`metadata_file_writer` forwards all `params` except `output_file` and
-`inner_processor` to the wrapped processor. Each detected cut is appended as
-one JSON object per line; the file is created relative to the working directory
-if the path is not absolute.
+The file is created relative to the working directory if the path is not
+absolute. Each detected cut is appended as one JSON object per line.
+Leave `output_file` blank (or omit it) to emit events to the event bus only.
 
-In the palette, search for **Metadata file writer** or drag it from the
-**Processors** subcategory. Set `inner_processor` in the Inspector to one of
-the detector names above, then add the detector's own params directly alongside
-`output_file`.
+For processors that don't have built-in `output_file` support (e.g. custom
+YOLO detectors), the **Metadata file writer** (`metadata_file_writer`) node
+is still available as a generic wrapper — see example
+[32](../testdata/examples/32_yolov8_metadata_to_file.json).
 
 ### Choosing a detector
 

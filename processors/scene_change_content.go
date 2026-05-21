@@ -29,6 +29,7 @@ import (
 //	"kernel_size":   int     — dilation kernel size; 0 = auto (default)
 //	"frame_rate":    float64 — stream frame rate for FrameTimecode construction (default 25.0)
 type SceneChangeContent struct {
+	hook      fileWriteHook
 	detector  *detectors.ContentDetector
 	frameRate float64
 }
@@ -40,6 +41,12 @@ func (p *SceneChangeContent) Init(params map[string]any) error {
 	kernelSize := 0
 	filterMode := psd.FlashFilterModeMerge
 	p.frameRate = 25.0
+
+	var err error
+	params, err = p.hook.initFromParams("scene_change_content", params)
+	if err != nil {
+		return err
+	}
 
 	for k, v := range params {
 		switch k {
@@ -122,7 +129,7 @@ func (p *SceneChangeContent) Process(frame *av.Frame, ctx ProcessorContext) (*av
 	}
 
 	score := math.Round(p.detector.Score()*1000) / 1000
-	return frame, &Metadata{Custom: map[string]any{
+	md := &Metadata{Custom: map[string]any{
 		"scene_change": true,
 		"detector":     "content",
 		"frame_index":  cuts[0].FrameNum(),
@@ -130,11 +137,13 @@ func (p *SceneChangeContent) Process(frame *av.Frame, ctx ProcessorContext) (*av
 		"pts":          ctx.PTS,
 		"score":        score,
 		"content_val":  score,
-	}}, nil
+	}}
+	p.hook.write(ctx, md)
+	return frame, md, nil
 }
 
 func (p *SceneChangeContent) Close() error {
-	return nil
+	return p.hook.close()
 }
 
 func init() {

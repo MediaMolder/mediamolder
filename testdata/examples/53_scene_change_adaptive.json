@@ -24,10 +24,9 @@
       {
         "id": "scene_detect",
         "type": "go_processor",
-        "processor": "metadata_file_writer",
+        "processor": "scene_change_adaptive",
         "params": {
           "output_file": "scene_changes_adaptive.jsonl",
-          "inner_processor": "scene_change_adaptive",
           "adaptive_threshold": 3.0,
           "min_scene_len": 15,
           "window_width": 2,
