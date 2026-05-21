@@ -122,7 +122,9 @@ in-app help dialog.
    you have not already added explicit encoder nodes.
 5. **Connect the nodes.** Each node exposes one handle per stream type on
    each side. Drag from a source handle to a target handle of the **same
-   colour**. Mismatched stream types are rejected.
+   colour**. Mismatched stream types are rejected. `go_processor` nodes that
+   emit events also expose a **pink handle** on the right; drag it to the pink
+   handle on a `metadata_file_writer` node to write events to a file.
 6. **Run.** Click **Run** in the toolbar. The Run panel opens; each node row
    in the live metrics table shows **Packets**, **Rate**, **Errors**,
    **Avg latency**, and **Unblocked Performance** (the rate the node achieves
@@ -169,7 +171,9 @@ in-app help dialog.
 * Press <kbd>?</kbd> (or click the **Help** button) for the in-app help,
   <kbd>Esc</kbd> to dismiss any open dialog.
 * The bottom-centre **Stream types** legend shows the colour code used for
-  edges and handles. The bottom-right minimap stays clear of it.
+  edges and handles: solid lines for video (blue), audio (green), subtitle
+  (yellow), and data (purple); a pink dashed line for events. The bottom-right
+  minimap stays clear of it.
 * Edges are unlabelled by default. Hover (or click) any edge to open a
   popover listing every technical property MediaMolder can infer for that
   stream — width×height, pix_fmt, frame_rate, color_space, color_range,
@@ -323,8 +327,12 @@ against FFmpeg drift by `internal/gui/curation_test.go`
 ### Canvas
 
 * Each node exposes one source and one target handle per stream type
-  (video / audio / subtitle / data). Handles only accept connections of the
-  same type — incompatible drags are rejected.
+  (video / audio / subtitle / data). `go_processor` nodes that emit events
+  additionally expose a **pink events handle** on each side — drag from the
+  output events handle of a detector to the input events handle of a
+  `metadata_file_writer` to persist its events to a file without touching the
+  video path. Handles only accept connections of the same type — incompatible
+  drags are rejected.
 * **Input nodes grow per-track audio handles** after **Get Properties** is
   clicked.  A 16-track MOV shows 16 green dots labelled `a:1` … `a:16` on
   the right edge instead of a single generic `audio` handle.  The handle

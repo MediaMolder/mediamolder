@@ -1076,7 +1076,9 @@ kinds of data:
 
 | Edge type | What it carries | libav\* library involvement |
 |---|---|---|
-| `video`, `audio`, `subtitle` | Decoded media frames | Demuxed by libavformat, filtered by libavfilter, encoded/muxed by libavcodec/libavformat |
+| `video` | Decoded video `AVFrame` (raw pixel data) | Demuxed by libavformat, filtered by libavfilter, encoded/muxed by libavcodec/libavformat |
+| `audio` | Decoded audio `AVFrame` (raw PCM samples) | Demuxed by libavformat, filtered by libavfilter, encoded/muxed by libavcodec/libavformat |
+| `subtitle` | `AVSubtitle` events (text or bitmap) | Demuxed by libavformat; typically passed through without re-encode |
 | `data` | `AVMEDIA_TYPE_DATA` streams — raw timed-data tracks such as SCTE-35 splice markers, closed-caption side data, or timecode tracks | A real media stream; demuxed and muxed by libavformat alongside audio/video |
 | `metadata` | Container-level metadata and chapter tables copied between inputs and outputs via `metadata_reader` / `metadata_writer` nodes | Resolved at pipeline build time via libavformat metadata APIs; no frames flow at runtime |
 | `events` | Structured event objects emitted by a `go_processor` via its `Process()` return value (scene boundaries, object detections, frame diagnostics, …) | **None** — handled entirely by the Go runtime event bus; never touches any libav\* library |
