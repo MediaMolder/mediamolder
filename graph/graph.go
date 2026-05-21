@@ -19,6 +19,20 @@ const (
 	PortData       PortType = "data"
 	PortAttachment PortType = "attachment" // AVMEDIA_TYPE_ATTACHMENT streams (fonts, cover art); copy-only (Wave 11 #65)
 	PortMetadata   PortType = "metadata"   // routes container/stream metadata or chapters (Wave 2 #11)
+
+	// PortEvents carries processor-emitted event objects — the structured
+	// side-channel returned by Processor.Process() (e.g. scene-change
+	// timestamps, object-detection results). This is NOT an FFmpeg media
+	// stream and never enters libavformat. The engine uses "events" edges
+	// purely as routing annotations: when a go_processor node emits
+	// non-nil metadata, the runtime writes those events to every
+	// connected metadata_file_writer sink.
+	//
+	// Contrast with PortData: that type carries FFmpeg AVMEDIA_TYPE_DATA
+	// streams (SCTE-35 markers, closed-caption data tracks, raw timed
+	// data) that flow through the media pipeline like audio or video.
+	// PortEvents never touches the AV stack at all.
+	PortEvents PortType = "events"
 )
 
 // NodeKind classifies a node in the processing graph.

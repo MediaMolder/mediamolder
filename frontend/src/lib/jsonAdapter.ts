@@ -31,6 +31,7 @@ const STREAM_LETTER: Record<StreamType, string> = {
   data: 'd',
   metadata: 'm',
   attachment: 't',
+  events: 'e',
 };
 
 /**
@@ -343,7 +344,9 @@ function inferCopyStreams(nodeId: string, edges: EdgeDef[]): string[] {
   const seen = new Set<string>();
   for (const e of edges) {
     if (endpointHead(e.from) === nodeId || endpointHead(e.to) === nodeId) {
-      if (e.type) seen.add(e.type);
+      // "events" edges are routing annotations only; they do not represent
+      // AV streams and must not be included in a node's streams list.
+      if (e.type && e.type !== 'events') seen.add(e.type);
     }
   }
   return [...seen];

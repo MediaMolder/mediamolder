@@ -1734,7 +1734,8 @@ function GoProcessorParams({
 
   if (processorName === 'metadata_file_writer') {
     const outputFile = typeof params['output_file'] === 'string' ? params['output_file'] : '';
-    const innerProcessor = typeof params['inner_processor'] === 'string' ? params['inner_processor'] : '';
+    // inner_processor is preserved for backward-compat round-trip if present,
+    // but is no longer shown in the Inspector — connect via an "events" edge.
     const KNOWN: ReadonlySet<string> = new Set(['output_file', 'inner_processor']);
     const restParams = Object.fromEntries(Object.entries(params).filter(([k]) => !KNOWN.has(k)));
     const set = (key: string, value: unknown) => {
@@ -1750,19 +1751,13 @@ function GoProcessorParams({
           mode="save"
           filter=".jsonl"
           defaultFilename="output.jsonl"
+          placeholder="/path/to/output.jsonl"
           onChange={(val) => set('output_file', val)}
         />
-        <label style={{ marginTop: 8 }}>inner_processor</label>
-        <input
-          type="text"
-          value={innerProcessor}
-          placeholder="e.g. yolo_v8"
-          onChange={(e) => set('inner_processor', e.target.value)}
-        />
-        <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: -4, marginBottom: 4 }}>
-          Name of the processor to wrap (e.g. <code>yolo_v8</code>).
+        <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: -4, marginBottom: 8 }}>
+          Wire an <strong>events</strong> edge from an upstream go_processor to route its events here.
         </div>
-        <ParamsEditor params={restParams} onChange={(next) => onChange({ output_file: outputFile || undefined, inner_processor: innerProcessor || undefined, ...next })} />
+        <ParamsEditor params={restParams} onChange={(next) => onChange({ output_file: outputFile || undefined, ...next })} />
       </>
     );
   }
@@ -2012,6 +2007,7 @@ function SceneChangeParams({
         mode="save"
         filter=".jsonl"
         defaultFilename="scene_changes.jsonl"
+        placeholder="/path/to/cuts.jsonl"
         onChange={(val) => {
           const next = { ...params };
           if (val) next['output_file'] = val; else delete next['output_file'];
@@ -2989,6 +2985,7 @@ function FileField({
   mode,
   filter,
   defaultFilename,
+  placeholder,
   onChange,
   onBrowsePick,
 }: {
@@ -2997,6 +2994,7 @@ function FileField({
   mode: BrowseMode;
   filter?: string;
   defaultFilename?: string;
+  placeholder?: string;
   onChange: (v: string) => void;
   /** Called (in addition to onChange) only when a file is selected via the
    * file browser — never on plain text-field edits. Useful for triggering
@@ -3006,6 +3004,7 @@ function FileField({
   const [local, setLocal] = useState(value);
   const [open, setOpen] = useState(false);
   useEffect(() => setLocal(value), [value]);
+  const effectivePlaceholder = placeholder ?? (mode === 'save' ? '/path/to/output.mp4' : '/path/to/input.mp4');
   return (
     <>
       <label>{label}</label>
@@ -3016,7 +3015,7 @@ function FileField({
           onBlur={() => {
             if (local !== value) onChange(local);
           }}
-          placeholder={mode === 'save' ? '/path/to/output.mp4' : '/path/to/input.mp4'}
+          placeholder={effectivePlaceholder}
         />
         <button onClick={() => setOpen(true)} title="Browse local filesystem">Browse…</button>
       </div>

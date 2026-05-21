@@ -79,3 +79,32 @@ func (h *fileWriteHook) close() error {
 	}
 	return nil
 }
+
+// EventSink is an exported, engine-managed file writer used by the pipeline
+// to route processor metadata events through "events" edges. Unlike the
+// fileWriteHook (which is embedded in processors and managed by their
+// Init/Close lifecycle), EventSink is created directly by the engine when it
+// discovers "events" edges that point at metadata_file_writer nodes.
+type EventSink struct {
+	hook fileWriteHook
+}
+
+// NewEventSink opens path for writing JSONL event records. The caller must
+// call Close when done.
+func NewEventSink(path string) (*EventSink, error) {
+	s := &EventSink{}
+	if _, err := s.hook.initFromParams("events_sink", map[string]any{"output_file": path}); err != nil {
+		return nil, err
+	}
+	return s, nil
+}
+
+// Write appends one event record. No-op when md is nil.
+func (s *EventSink) Write(ctx ProcessorContext, md *Metadata) {
+	s.hook.write(ctx, md)
+}
+
+// Close flushes and closes the underlying file.
+func (s *EventSink) Close() error {
+	return s.hook.close()
+}

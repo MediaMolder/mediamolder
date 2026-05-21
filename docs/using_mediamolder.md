@@ -1003,7 +1003,32 @@ nodes. Five detectors are available; all are ported from
 | `scene_change_hash` | 0.395 | Robust to colour-grading and compression artefacts |
 | `scene_change_histogram` | 0.05 | Fast coarse filter; low memory |
 
-**Example — detect scenes during transcode and write cuts to a file:**
+#### Edge type reference
+
+MediaMolder has several edge types that look similar but carry very different
+kinds of data:
+
+| Edge type | What it carries | Relationship to FFmpeg |
+|---|---|---|
+| `video`, `audio`, `subtitle` | Decoded media frames | Flows through libavformat / libavfilter |
+| `data` | FFmpeg `AVMEDIA_TYPE_DATA` streams — raw timed data tracks such as SCTE-35 splice markers, closed-caption side data, or timecode tracks | A real media stream, muxed into the container |
+| `metadata` | Container-level metadata and chapter tables copied between inputs and outputs via `metadata_reader` / `metadata_writer` nodes | Resolved at pipeline build time; no frames flow at runtime |
+| `events` | Structured event objects emitted by a `go_processor` via its `Process()` return value (scene boundaries, object detections, frame diagnostics, …) | **Never enters FFmpeg at all** — goes through a Go event bus side-channel |
+
+The `events` edge type is specifically for routing Go-processor event
+output to a `metadata_file_writer` sink. An `events` edge does not
+carry video frames; it is a pure routing annotation that tells the
+engine "write events from node A to the `.jsonl` file of node B".
+
+#### Writing scene events to a file via graph wiring
+
+Connect a scene detector's **events** handle to a `metadata_file_writer`
+node in the GUI by dragging from the pink handle on the right of the
+detector node to the pink handle on the left of the writer node. The
+writer node only needs an `output_file` param; no `inner_processor` is
+required.
+
+JSON equivalent:
 
 ```json
 {
@@ -1017,31 +1042,58 @@ nodes. Five detectors are available; all are ported from
         "id": "detect",
         "type": "go_processor",
         "processor": "scene_change_content",
-        "params": {
-          "threshold": 27.0,
-          "min_scene_len": "0.6s",
-          "filter_mode": "merge"
-        }
+        "params": { "threshold": 27.0, "min_scene_len": "0.6s" }
       },
       {
         "id": "enc",
         "type": "encoder",
         "codec": "libx264",
         "params": { "preset": "fast", "crf": 23 }
+      },
+      {
+        "id": "log",
+        "type": "go_processor",
+        "processor": "metadata_file_writer",
+        "params": { "output_file": "cuts.jsonl" }
       }
     ],
     "edges": [
-      { "from": "src:video:0",  "to": "detect:video:0" },
-      { "from": "detect:video:0", "to": "enc:video:0" }
+      { "from": "src:v:0",      "to": "detect",   "type": "video" },
+      { "from": "detect",       "to": "enc",       "type": "video" },
+      { "from": "enc",          "to": "out:v",     "type": "video" },
+      { "from": "detect",       "to": "log",       "type": "events" }
     ]
   },
   "outputs": [
-    { "id": "out", "path": "output.mp4", "streams": ["enc:video:0"] }
+    { "id": "out", "url": "output.mp4", "codec_video": "libx264" }
   ]
 }
 ```
 
-Run with metadata written to a file:
+The `events` edge wires the detector's metadata stream to the file
+writer without interrupting the video processing path. Multiple event
+sinks can be wired from the same detector — each receives a copy.
+
+**Legacy wrapper mode** (still supported for JSON-authored pipelines):
+
+```json
+{
+  "id": "detect_and_log",
+  "type": "go_processor",
+  "processor": "metadata_file_writer",
+  "params": {
+    "output_file": "cuts.jsonl",
+    "inner_processor": "scene_change_content",
+    "threshold": 27.0
+  }
+}
+```
+
+In wrapper mode the `metadata_file_writer` wraps the inner processor
+directly; no `events` edge is needed. This mode is not exposed in the
+GUI Inspector — use graph wiring instead.
+
+**CLI output** (alternative to graph wiring):
 
 ```sh
 mediamolder run --metadata-out cuts.jsonl pipeline.json

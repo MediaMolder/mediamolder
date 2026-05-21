@@ -57,6 +57,10 @@ func (r *graphRunner) handleGoProcessor(ctx context.Context, node *graph.Node, i
 				PTS:        f.PTS(),
 				Metadata:   md,
 			})
+			// Also write to any EventSink nodes connected via "events" edges.
+			for _, s := range r.eventsSinks[node.ID] {
+				s.Write(pctx, md)
+			}
 		}
 
 		// If processor returned a different frame, close the original.
