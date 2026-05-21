@@ -198,6 +198,7 @@ For detailed instructions see [MacOS](docs/build/macos.md), [Windows](docs/build
 - [Export to FFmpeg CLI](docs/export.md)
 - [Visual Editor (GUI)](docs/gui.md)
 - [Go Processor Nodes](docs/go-processor-nodes.md)
+- [Scene Detection (PySceneDetect port)](docs/scene-detection.md)
 - [Yolov8 object detection/classification](docs/yolov8-guide.md)
 
 ### Code

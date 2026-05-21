@@ -217,7 +217,7 @@ func (w *sinkWriter) processOne(i int, pkt *av.Packet, dstTB [2]int, rs *sinkRes
 // end-of-stream by sending a null packet (EOF signal), then writing the
 // drained output through WritePacket. Mirrors fftools/ffmpeg_mux.c::mux_thread
 // flushing the BSF before WriteTrailer.
-func (w *sinkWriter) flushBSF(i int, dstTB [2]int, st *chanState) error {
+func (w *sinkWriter) flushBSF(i int, _ [2]int, st *chanState) error {
 	var bsf *av.BitstreamFilter
 	if i < len(w.sink.streamBSF) {
 		bsf = w.sink.streamBSF[i]

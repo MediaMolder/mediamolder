@@ -5,7 +5,7 @@ import { MULTI_AUDIO_INPUT_FILTERS } from '../lib/jsonAdapter';
 import type { NodeDef, ProbedStream } from '../lib/jobTypes';
 import { displayName, lookupFriendlyName, useNamingMode } from '../lib/friendlyNames';
 
-const STREAM_HANDLES = ['video', 'audio', 'subtitle', 'data'] as const;
+const STREAM_HANDLES = ['video', 'audio', 'subtitle', 'data', 'events'] as const;
 type StreamHandle = (typeof STREAM_HANDLES)[number];
 
 export interface MMNodeRunData {
@@ -159,13 +159,14 @@ export function MMNode({ id, data, selected }: NodeProps & { data: FlowNodeData 
       case 'audio': return AUDIO_BASE + trackIdx * TRACK_PITCH;
       case 'subtitle': return AUDIO_BASE + maxAudioSlots * TRACK_PITCH;
       case 'data': return AUDIO_BASE + maxAudioSlots * TRACK_PITCH + SLOT_PITCH;
+      case 'events': return AUDIO_BASE + maxAudioSlots * TRACK_PITCH + SLOT_PITCH * 2;
       default: return 16;
     }
   };
 
   // Ensure the node container is tall enough to contain all handle dots.
   const nodeMinHeight = maxAudioSlots > 1
-    ? slotTop('data') + 12
+    ? slotTop('events') + 12
     : undefined;
 
   const classes = [

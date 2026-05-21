@@ -8,6 +8,21 @@ export default defineConfig({
     outDir: 'dist',
     emptyOutDir: true,
     sourcemap: true,
+    rollupOptions: {
+      output: {
+        manualChunks: (id) => {
+          // React core — very stable; cache independently of app code.
+          if (id.includes('node_modules/react/') || id.includes('node_modules/react-dom/')) {
+            return 'react-vendor';
+          }
+          // Canvas + graph layout — change together, rarely.
+          if (id.includes('node_modules/@xyflow/') || id.includes('node_modules/@dagrejs/')) {
+            return 'xyflow';
+          }
+          // zustand is tiny (~3 kB minified); leave it in the main chunk.
+        },
+      },
+    },
   },
   server: {
     port: 5173,

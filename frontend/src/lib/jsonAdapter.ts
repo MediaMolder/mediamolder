@@ -31,6 +31,7 @@ const STREAM_LETTER: Record<StreamType, string> = {
   data: 'd',
   metadata: 'm',
   attachment: 't',
+  events: 'e',
 };
 
 /**
@@ -343,7 +344,9 @@ function inferCopyStreams(nodeId: string, edges: EdgeDef[]): string[] {
   const seen = new Set<string>();
   for (const e of edges) {
     if (endpointHead(e.from) === nodeId || endpointHead(e.to) === nodeId) {
-      if (e.type) seen.add(e.type);
+      // "events" edges are routing annotations only; they do not represent
+      // AV streams and must not be included in a node's streams list.
+      if (e.type && e.type !== 'events') seen.add(e.type);
     }
   }
   return [...seen];
@@ -446,7 +449,14 @@ export function configToFlow(cfg: JobConfig, opts: ConvertOptions = {}): {
         // (video-only handles for a video copy, etc.) and lets
         // describeKind render the friendly heading "Video stream copy"
         // / "Audio stream copy" instead of the generic "Stream copy".
-        ...(n.type === 'copy'
+        //
+        // For go_processor nodes, use the same edge-based inference as
+        // a fallback until the async catalog fetch resolves and overwrites
+        // with the authoritative list. This prevents showing all four
+        // handles for processors like the scene detectors that only handle
+        // video, when loading a graph that was saved before pin metadata
+        // was stored in the config.
+        ...((n.type === 'copy' || n.type === 'go_processor')
           ? { streams: inferCopyStreams(n.id, cfg.graph.edges) }
           : {}),
       },

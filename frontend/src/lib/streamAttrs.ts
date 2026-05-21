@@ -45,6 +45,7 @@ function keysFor(type: StreamType): readonly string[] {
     case 'data': return DATA_KEYS;
     case 'metadata': return [];
     case 'attachment': return [];
+    case 'events': return [];
   }
 }
 

@@ -175,15 +175,13 @@ func checkBitDepthMismatch(node *graph.Node, codec string, stream av.StreamInfo,
 			"source stream has %d bits per sample but encoder %q only accepts 8-bit pixel formats",
 			stream.BitsPerRawSample, codec,
 		),
-		Suggestion: fmt.Sprintf(
-			"use a 10-bit encoder profile (e.g. libx264 -profile:v high10) or add a scale=flags=lanczos,format=yuv420p filter",
-		),
+		Suggestion: "use a 10-bit encoder profile (e.g. libx264 -profile:v high10) or add a scale=flags=lanczos,format=yuv420p filter",
 	})
 }
 
 // checkHDRNoTonemap warns when the source is HDR (BT.2020 primaries or PQ/HLG
 // transfer) but no tonemap or zscale filter precedes the encoder.
-func checkHDRNoTonemap(node *graph.Node, g *graph.Graph, codec string, stream av.StreamInfo, r *ValidationReport) {
+func checkHDRNoTonemap(node *graph.Node, g *graph.Graph, _ string, stream av.StreamInfo, r *ValidationReport) {
 	isPQorHLG := stream.ColorTransfer == avColTrcSMPTE2084 ||
 		stream.ColorTransfer == avColTrcARIB_STD_B67
 	isHDR := isPQorHLG || stream.ColorPrimaries == avColPriBT2020

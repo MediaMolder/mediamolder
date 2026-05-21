@@ -7,28 +7,11 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
-	"runtime"
 	"testing"
 
 	"github.com/MediaMolder/MediaMolder/av"
 	"github.com/MediaMolder/MediaMolder/graph"
 )
-
-// testdataDir returns the absolute path to the testdata directory.
-func testdataDir(t *testing.T) string {
-	t.Helper()
-	_, filename, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("runtime.Caller failed")
-	}
-	return filepath.Join(filepath.Dir(filename), "..", "testdata")
-}
-
-// testdataFile returns the absolute path to a file in testdata/.
-func testdataFile(t *testing.T, name string) string {
-	t.Helper()
-	return filepath.Join(testdataDir(t), name)
-}
 
 // ---------- integration tests (require real files) ----------
 

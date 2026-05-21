@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { FlowEdge, FlowNode } from '../lib/jsonAdapter';
 import { displayUrl, nodeDisplayLabel, nodeDisplaySublabel } from '../lib/jsonAdapter';
@@ -1637,7 +1637,7 @@ function NodeForm({ def, onChange, padHints, hwDevices = [] }: { def: NodeDef; o
       {def.type === 'encoder' && <EncoderForm def={def} onChange={onChange} />}
       {isFilter && <FilterForm def={def} onChange={onChange} padHints={padHints} />}
       {def.type !== 'encoder' && !isFilter && def.type === 'go_processor' && (
-        <GoProcessorParams params={def.params ?? {}} onChange={(p) => onChange({ ...def, params: p })} />
+        <GoProcessorParams processorName={def.processor} params={def.params ?? {}} onChange={(p) => onChange({ ...def, params: p })} />
       )}
       {def.type !== 'encoder' && !isFilter && def.type !== 'go_processor' && (
         <ParamsEditor params={def.params ?? {}} onChange={(p) => onChange({ ...def, params: p })} />
@@ -1717,12 +1717,51 @@ function FilterAdvanced({
  * Renders known file-path params (output_file) as a FileField with a
  * Save browse dialog; all other params fall through to ParamsEditor. */
 function GoProcessorParams({
+  processorName,
   params,
   onChange,
 }: {
+  processorName?: string;
   params: Record<string, unknown>;
   onChange: (next: Record<string, unknown>) => void;
 }) {
+  const isSceneChange = processorName === 'scene_change' ||
+    processorName?.startsWith('scene_change_');
+
+  if (isSceneChange) {
+    return <SceneChangeParams processorName={processorName!} params={params} onChange={onChange} />;
+  }
+
+  if (processorName === 'metadata_file_writer') {
+    const outputFile = typeof params['output_file'] === 'string' ? params['output_file'] : '';
+    // inner_processor is preserved for backward-compat round-trip if present,
+    // but is no longer shown in the Inspector — connect via an "events" edge.
+    const KNOWN: ReadonlySet<string> = new Set(['output_file', 'inner_processor']);
+    const restParams = Object.fromEntries(Object.entries(params).filter(([k]) => !KNOWN.has(k)));
+    const set = (key: string, value: unknown) => {
+      const next = { ...params };
+      if (value !== '' && value !== undefined) next[key] = value; else delete next[key];
+      onChange(next);
+    };
+    return (
+      <>
+        <FileField
+          label="output_file"
+          value={outputFile}
+          mode="save"
+          filter=".jsonl"
+          defaultFilename="output.jsonl"
+          placeholder="/path/to/output.jsonl"
+          onChange={(val) => set('output_file', val)}
+        />
+        <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: -4, marginBottom: 8 }}>
+          Wire an <strong>events</strong> edge from an upstream go_processor to route its events here.
+        </div>
+        <ParamsEditor params={restParams} onChange={(next) => onChange({ output_file: outputFile || undefined, ...next })} />
+      </>
+    );
+  }
+
   const FILE_PARAM_KEYS: ReadonlySet<string> = new Set(['output_file']);
   const fileEntries = Object.entries(params).filter(([k]) => FILE_PARAM_KEYS.has(k));
   const restParams = Object.fromEntries(Object.entries(params).filter(([k]) => !FILE_PARAM_KEYS.has(k)));
@@ -1741,6 +1780,373 @@ function GoProcessorParams({
         />
       ))}
       <ParamsEditor params={restParams} onChange={(next) => onChange({ ...fileEntries.reduce<Record<string, unknown>>((acc, [k, v]) => { acc[k] = v; return acc; }, {}), ...next })} />
+    </>
+  );
+}
+
+/* ---------- SceneChangeParams ----------
+ * Pre-populated Inspector for all scene_change_* Go processors.
+ * Renders a threshold slider with detector-appropriate range and default,
+ * a min_scene_len text field, and detector-specific controls. Extra params
+ * not handled here fall through to the generic ParamsEditor. */
+
+/** Per-detector UI configuration. */
+interface SceneDetectorMeta {
+  label: string;
+  thresholdDefault: number;
+  thresholdMin: number;
+  thresholdMax: number;
+  thresholdStep: number;
+  thresholdHint: string;
+  extra?: ExtraControl[];
+}
+
+interface ExtraControl {
+  key: string;
+  label: string;
+  type: 'select' | 'number' | 'checkbox';
+  options?: Array<{ value: string; label: string }>;
+  min?: number;
+  max?: number;
+  step?: number;
+  defaultValue?: unknown;
+  hint?: string;
+}
+
+const SCENE_DETECTOR_META: Record<string, SceneDetectorMeta> = {
+  scene_change: {
+    label: 'Scene change (MAFD / scdet)',
+    thresholdDefault: 0.1,
+    thresholdMin: 0,
+    thresholdMax: 1,
+    thresholdStep: 0.01,
+    thresholdHint: 'MAFD score threshold. Lower = more sensitive.',
+  },
+  scene_change_content: {
+    label: 'Scene change — content (PySceneDetect)',
+    thresholdDefault: 27.0,
+    thresholdMin: 0,
+    thresholdMax: 100,
+    thresholdStep: 0.5,
+    thresholdHint: 'Weighted HSV delta threshold. Default 27. Lower = more sensitive.',
+    extra: [
+      {
+        key: 'luma_only',
+        label: 'Luma only',
+        type: 'checkbox',
+        defaultValue: false,
+        hint: 'When checked, only the luma (brightness) channel is used.',
+      },
+      {
+        key: 'filter_mode',
+        label: 'Flash filter',
+        type: 'select',
+        defaultValue: 'merge',
+        options: [
+          { value: 'merge', label: 'Merge (collapse adjacent cuts)' },
+          { value: 'suppress', label: 'Suppress (drop short scenes)' },
+        ],
+      },
+    ],
+  },
+  scene_change_adaptive: {
+    label: 'Scene change — adaptive (PySceneDetect)',
+    thresholdDefault: 3.0,
+    thresholdMin: 0,
+    thresholdMax: 20,
+    thresholdStep: 0.1,
+    thresholdHint: 'Adaptive ratio threshold. Default 3.0. Lower = more sensitive.',
+    extra: [
+      {
+        key: 'luma_only',
+        label: 'Luma only',
+        type: 'checkbox',
+        defaultValue: false,
+        hint: 'When checked, only the luma channel is used for the content score.',
+      },
+      {
+        key: 'min_content_val',
+        label: 'Min content val',
+        type: 'number',
+        defaultValue: 15,
+        min: 0,
+        max: 100,
+        step: 1,
+        hint: 'Minimum raw content score required for a cut. Filters low-motion transitions.',
+      },
+    ],
+  },
+  scene_change_threshold: {
+    label: 'Scene change — threshold / fade (PySceneDetect)',
+    thresholdDefault: 12.0,
+    thresholdMin: 0,
+    thresholdMax: 255,
+    thresholdStep: 1,
+    thresholdHint: 'Average pixel brightness threshold. Default 12. Detects fades to black.',
+    extra: [
+      {
+        key: 'method',
+        label: 'Method',
+        type: 'select',
+        defaultValue: 'floor',
+        options: [
+          { value: 'floor', label: 'Floor — fade to black (avg < threshold)' },
+          { value: 'ceiling', label: 'Ceiling — fade to white (avg > threshold)' },
+        ],
+      },
+      {
+        key: 'fade_bias',
+        label: 'Fade bias',
+        type: 'number',
+        defaultValue: 0,
+        min: -1,
+        max: 1,
+        step: 0.05,
+        hint: 'Skews cut toward fade-in (+1) or fade-out (−1). Default 0 = midpoint.',
+      },
+    ],
+  },
+  scene_change_hash: {
+    label: 'Scene change — perceptual hash (PySceneDetect)',
+    thresholdDefault: 0.395,
+    thresholdMin: 0,
+    thresholdMax: 1,
+    thresholdStep: 0.005,
+    thresholdHint: 'Normalised Hamming distance threshold. Default 0.395.',
+    extra: [
+      {
+        key: 'size',
+        label: 'Hash size',
+        type: 'number',
+        defaultValue: 16,
+        min: 4,
+        max: 64,
+        step: 4,
+        hint: 'DCT low-frequency block edge length. Default 16.',
+      },
+      {
+        key: 'lowpass',
+        label: 'Lowpass factor',
+        type: 'number',
+        defaultValue: 2,
+        min: 1,
+        max: 8,
+        step: 1,
+        hint: 'Resize multiplier for low-pass smoothing. Default 2 → 32×32 input to DCT.',
+      },
+    ],
+  },
+  scene_change_histogram: {
+    label: 'Scene change — histogram (PySceneDetect)',
+    thresholdDefault: 0.05,
+    thresholdMin: 0,
+    thresholdMax: 1,
+    thresholdStep: 0.005,
+    thresholdHint: 'Histogram divergence threshold (1 − Pearson correlation). Default 0.05.',
+    extra: [
+      {
+        key: 'bins',
+        label: 'Bins',
+        type: 'number',
+        defaultValue: 256,
+        min: 16,
+        max: 256,
+        step: 16,
+        hint: 'Number of histogram bins. Default 256.',
+      },
+    ],
+  },
+};
+
+const SCENE_CHANGE_KNOWN_KEYS = new Set([
+  'output_file',
+  'threshold', 'min_scene_len',
+  'luma_only', 'filter_mode', 'kernel_size',
+  'min_content_val',
+  'method', 'fade_bias', 'add_final_scene',
+  'size', 'lowpass',
+  'bins',
+  'pts_threshold',
+]);
+
+function SceneChangeParams({
+  processorName,
+  params,
+  onChange,
+}: {
+  processorName: string;
+  params: Record<string, unknown>;
+  onChange: (next: Record<string, unknown>) => void;
+}) {
+  const meta = SCENE_DETECTOR_META[processorName];
+
+  const get = (key: string, fallback: unknown) => {
+    const v = params[key];
+    return v !== undefined ? v : fallback;
+  };
+  const set = (key: string, value: unknown) => onChange({ ...params, [key]: value });
+
+  const thresholdDefault = meta?.thresholdDefault ?? 0;
+  const thresholdValue = Number(get('threshold', thresholdDefault));
+  const minSceneLen = String(get('min_scene_len', '0.6s'));
+  const outputFile = typeof params['output_file'] === 'string' ? params['output_file'] : '';
+
+  // Params not rendered by the structured UI fall through to the generic editor.
+  const extraKeys = meta?.extra?.map((e) => e.key) ?? [];
+  const structuredKeys = new Set(['threshold', 'min_scene_len', 'output_file', ...extraKeys]);
+  const overflow = Object.fromEntries(
+    Object.entries(params).filter(([k]) => !SCENE_CHANGE_KNOWN_KEYS.has(k) && !structuredKeys.has(k)),
+  );
+
+  return (
+    <>
+      <label>Save detections to file</label>
+      <FileField
+        label="output_file"
+        value={outputFile}
+        mode="save"
+        filter=".jsonl"
+        defaultFilename="scene_changes.jsonl"
+        placeholder="/path/to/cuts.jsonl"
+        onChange={(val) => {
+          const next = { ...params };
+          if (val) next['output_file'] = val; else delete next['output_file'];
+          onChange(next);
+        }}
+      />
+      <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: -4, marginBottom: 8 }}>
+        Leave blank to emit cut events to the event bus only.
+      </div>
+
+      {meta && (
+        <div style={{ fontSize: 11, color: 'var(--text-dim)', marginBottom: 8 }}>
+          {meta.label}
+          <span style={{ marginLeft: 6 }}>
+            {'— '}
+            <a
+              href="https://scenedetect.com"
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ color: 'var(--text-dim)' }}
+            >
+              PySceneDetect
+            </a>
+          </span>
+        </div>
+      )}
+
+      <label>Threshold</label>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+        <input
+          type="range"
+          min={meta?.thresholdMin ?? 0}
+          max={meta?.thresholdMax ?? 100}
+          step={meta?.thresholdStep ?? 1}
+          value={thresholdValue}
+          style={{ flex: 1 }}
+          onChange={(e) => set('threshold', parseFloat(e.target.value))}
+        />
+        <input
+          type="number"
+          value={thresholdValue}
+          min={meta?.thresholdMin ?? 0}
+          max={meta?.thresholdMax ?? 100}
+          step={meta?.thresholdStep ?? 1}
+          style={{ width: 70 }}
+          onChange={(e) => {
+            const v = parseFloat(e.target.value);
+            if (!isNaN(v)) set('threshold', v);
+          }}
+        />
+      </div>
+      {meta?.thresholdHint && (
+        <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: -4, marginBottom: 4 }}>
+          {meta.thresholdHint}
+        </div>
+      )}
+
+      <label style={{ marginTop: 8 }}>Min scene length</label>
+      <input
+        type="text"
+        value={minSceneLen}
+        placeholder="e.g. 0.6s, 15, 00:00:00.600"
+        onChange={(e) => set('min_scene_len', e.target.value)}
+      />
+      <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: -4, marginBottom: 4 }}>
+        Frames (int), seconds (<code>0.6s</code>), or timecode (<code>HH:MM:SS.mmm</code>).
+      </div>
+
+      {meta?.extra?.map((ctrl) => {
+        const value = get(ctrl.key, ctrl.defaultValue);
+        if (ctrl.type === 'checkbox') {
+          return (
+            <label key={ctrl.key} style={{ display: 'flex', alignItems: 'flex-start', gap: 6, marginTop: 6, cursor: 'pointer' }}>
+              <input
+                type="checkbox"
+                checked={Boolean(value)}
+                style={{ marginTop: 2, flexShrink: 0 }}
+                onChange={(e) => set(ctrl.key, e.target.checked)}
+              />
+              <span>
+                {ctrl.label}
+                {ctrl.hint && (
+                  <div style={{ fontSize: 11, color: 'var(--text-dim)', fontWeight: 'normal', marginTop: 2 }}>
+                    {ctrl.hint}
+                  </div>
+                )}
+              </span>
+            </label>
+          );
+        }
+        if (ctrl.type === 'select') {
+          return (
+            <Fragment key={ctrl.key}>
+              <label style={{ marginTop: 8 }}>{ctrl.label}</label>
+              <select
+                value={String(value ?? ctrl.defaultValue ?? '')}
+                onChange={(e) => set(ctrl.key, e.target.value)}
+              >
+                {ctrl.options?.map((opt) => (
+                  <option key={opt.value} value={opt.value}>{opt.label}</option>
+                ))}
+              </select>
+              {ctrl.hint && (
+                <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: -4, marginBottom: 4 }}>
+                  {ctrl.hint}
+                </div>
+              )}
+            </Fragment>
+          );
+        }
+        if (ctrl.type === 'number') {
+          return (
+            <Fragment key={ctrl.key}>
+              <label style={{ marginTop: 8 }}>{ctrl.label}</label>
+              <input
+                type="number"
+                value={Number(value ?? ctrl.defaultValue ?? 0)}
+                min={ctrl.min}
+                max={ctrl.max}
+                step={ctrl.step}
+                onChange={(e) => {
+                  const v = parseFloat(e.target.value);
+                  if (!isNaN(v)) set(ctrl.key, v);
+                }}
+              />
+              {ctrl.hint && (
+                <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: -4, marginBottom: 4 }}>
+                  {ctrl.hint}
+                </div>
+              )}
+            </Fragment>
+          );
+        }
+        return null;
+      })}
+
+      {Object.keys(overflow).length > 0 && (
+        <ParamsEditor params={overflow} onChange={(next) => onChange({ ...params, ...next })} />
+      )}
     </>
   );
 }
@@ -2579,6 +2985,7 @@ function FileField({
   mode,
   filter,
   defaultFilename,
+  placeholder,
   onChange,
   onBrowsePick,
 }: {
@@ -2587,6 +2994,7 @@ function FileField({
   mode: BrowseMode;
   filter?: string;
   defaultFilename?: string;
+  placeholder?: string;
   onChange: (v: string) => void;
   /** Called (in addition to onChange) only when a file is selected via the
    * file browser — never on plain text-field edits. Useful for triggering
@@ -2596,6 +3004,7 @@ function FileField({
   const [local, setLocal] = useState(value);
   const [open, setOpen] = useState(false);
   useEffect(() => setLocal(value), [value]);
+  const effectivePlaceholder = placeholder ?? (mode === 'save' ? '/path/to/output.mp4' : '/path/to/input.mp4');
   return (
     <>
       <label>{label}</label>
@@ -2606,7 +3015,7 @@ function FileField({
           onBlur={() => {
             if (local !== value) onChange(local);
           }}
-          placeholder={mode === 'save' ? '/path/to/output.mp4' : '/path/to/input.mp4'}
+          placeholder={effectivePlaceholder}
         />
         <button onClick={() => setOpen(true)} title="Browse local filesystem">Browse…</button>
       </div>
