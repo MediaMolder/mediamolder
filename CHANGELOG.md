@@ -6,6 +6,23 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 ## [Unreleased]
 
 ### Added
+- **PySceneDetect scene detection port (Phases 1–9).**
+  Five scene-change detection algorithms ported from
+  [PySceneDetect](https://github.com/Breakthrough/PySceneDetect) by Brandon Castellano
+  (BSD-3-Clause). New `go_processor` nodes:
+  - `scene_change_content` — weighted HSV delta with optional Canny edges
+  - `scene_change_adaptive` — rolling-window ratio over content scores; robust to
+    sustained high-motion clips
+  - `scene_change_threshold` — mean-brightness fade-to-black / fade-to-white detection
+  - `scene_change_hash` — perceptual DCT hash (Hamming distance)
+  - `scene_change_histogram` — luma histogram Pearson correlation
+
+  New `SceneManager` and `StatsManager` types in `PySceneDetect/` handle detector
+  orchestration, per-frame statistics export, and the `py-scene-detect` CLI subcommand.
+  The `mediamolder py-scene-detect` command runs offline scene detection on any media
+  file and outputs JSONL, CSV, or timecode lists. Full documentation in
+  [docs/scene-detection.md](docs/scene-detection.md).
+
 - **Per-node performance monitoring (NodePerfTracker).**
   A lightweight, lock-free state machine (`pipeline/node_perf.go`) tracks
   every pipeline node through three states — *processing*, *idle*, and
