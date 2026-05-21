@@ -83,11 +83,6 @@ func TestParseMapMetadataErrors(t *testing.T) {
 		wantErr string
 	}{
 		{
-			name:    "negative index",
-			cmd:     "ffmpeg -y -i a.mp4 -map_metadata -1 -c copy out.mkv",
-			wantErr: "invalid index",
-		},
-		{
 			name:    "non-numeric",
 			cmd:     "ffmpeg -y -i a.mp4 -map_metadata global -c copy out.mkv",
 			wantErr: "invalid index",
@@ -107,6 +102,11 @@ func TestParseMapMetadataErrors(t *testing.T) {
 			cmd:     "ffmpeg -y -i a.mp4 -map_chapters 5 -c copy out.mkv",
 			wantErr: "only 1 input",
 		},
+		{
+			name:    "too negative",
+			cmd:     "ffmpeg -y -i a.mp4 -map_metadata -2 -c copy out.mkv",
+			wantErr: "invalid index",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -118,5 +118,94 @@ func TestParseMapMetadataErrors(t *testing.T) {
 				t.Errorf("err = %q, want substring %q", err.Error(), tc.wantErr)
 			}
 		})
+	}
+}
+
+// TestImportDefaultMetadata verifies that importing an FFmpeg command with no
+// explicit -map_metadata / -map_chapters flags mirrors FFmpeg's implicit
+// default behaviour by setting MapMetadata and MapChapters on inputs[0].
+// No metadata_reader / metadata_writer nodes should be emitted in this case.
+func TestImportDefaultMetadata(t *testing.T) {
+	cfg, err := Parse("ffmpeg -i input.mp4 -c:v libx264 -c:a aac output.mp4")
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if len(cfg.Inputs) == 0 {
+		t.Fatal("no inputs")
+	}
+	if !cfg.Inputs[0].MapMetadata {
+		t.Error("inputs[0].MapMetadata should be true (FFmpeg default -map_metadata 0)")
+	}
+	if !cfg.Inputs[0].MapChapters {
+		t.Error("inputs[0].MapChapters should be true (FFmpeg default -map_chapters 0)")
+	}
+	// No extra nodes should be emitted — MapMetadata/MapChapters flags
+	// are the shorthand; reader/writer nodes are only for explicit IDX routing.
+	for _, n := range cfg.Graph.Nodes {
+		if n.Type == "metadata_reader" || n.Type == "metadata_writer" {
+			t.Errorf("unexpected %s node %q in default-metadata import", n.Type, n.ID)
+		}
+	}
+}
+
+// TestImportSuppressMetadata verifies that -map_metadata -1 and
+// -map_chapters -1 suppress the implicit default so neither
+// MapMetadata/MapChapters is set nor any reader/writer nodes are emitted.
+func TestImportSuppressMetadata(t *testing.T) {
+	cfg, err := Parse("ffmpeg -i input.mp4 -map_metadata -1 -map_chapters -1 -c copy output.mkv")
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if cfg.Inputs[0].MapMetadata {
+		t.Error("inputs[0].MapMetadata should be false after -map_metadata -1")
+	}
+	if cfg.Inputs[0].MapChapters {
+		t.Error("inputs[0].MapChapters should be false after -map_chapters -1")
+	}
+	for _, n := range cfg.Graph.Nodes {
+		if n.Type == "metadata_reader" || n.Type == "metadata_writer" {
+			t.Errorf("unexpected %s node after explicit suppress", n.Type)
+		}
+	}
+	for _, e := range cfg.Graph.Edges {
+		if e.Type == "metadata" {
+			t.Errorf("unexpected metadata edge after explicit suppress")
+		}
+	}
+}
+
+// TestImportMultiOutputDefaultMetadata verifies that with two outputs and no
+// explicit -map_metadata, both outputs get metadata from input 0. The
+// MapMetadata flag is set once on inputs[0] (it applies to all outputs).
+func TestImportMultiOutputDefaultMetadata(t *testing.T) {
+	cfg, err := Parse("ffmpeg -i input.mp4 -c copy out1.mp4 -c copy out2.mp4")
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if !cfg.Inputs[0].MapMetadata {
+		t.Error("inputs[0].MapMetadata should be true for multi-output default")
+	}
+	if !cfg.Inputs[0].MapChapters {
+		t.Error("inputs[0].MapChapters should be true for multi-output default")
+	}
+}
+
+// TestImportSuppressFirstOutputOnly verifies that -map_metadata -1 before
+// the first output suppresses only that output; the second output should
+// still get the default route (MapMetadata=true on inputs[0]).
+func TestImportSuppressFirstOutputOnly(t *testing.T) {
+	cfg, err := Parse("ffmpeg -i input.mp4 -map_metadata -1 -c copy out1.mp4 -c copy out2.mp4")
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	// out1 was explicitly suppressed; out2 gets the default.
+	if !cfg.Inputs[0].MapMetadata {
+		t.Error("inputs[0].MapMetadata should be true: out2 should receive the default metadata route")
+	}
+	// No reader/writer nodes emitted (MapMetadata flag handles the default).
+	for _, n := range cfg.Graph.Nodes {
+		if n.Type == "metadata_reader" || n.Type == "metadata_writer" {
+			t.Errorf("unexpected %s node", n.Type)
+		}
 	}
 }

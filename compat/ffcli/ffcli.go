@@ -191,11 +191,19 @@ type parser struct {
 	mapSpecs []parsedMap
 
 	// Pending `-map_metadata IDX` / `-map_chapters IDX` (Wave 2 #11).
-	// nil = unset; non-nil holds the input index. Latched onto the
-	// next output and rendered as metadata_reader+metadata_writer
-	// nodes connected by a metadata edge.
+	// nil = unset; non-nil holds the input index (-1 = explicit suppress).
+	// Latched onto the next output and rendered as
+	// metadata_reader+metadata_writer nodes connected by a metadata edge
+	// when IDX >= 0. IDX == -1 suppresses the implicit default for that
+	// output (mirrors FFmpeg `-map_metadata -1`).
 	pendingMapMetadata *int
 	pendingMapChapters *int
+	// metaDefaultApplied / chapDefaultApplied are set after the first
+	// output without an explicit -map_metadata / -map_chapters flag has
+	// been handled by setting Input.MapMetadata / Input.MapChapters on
+	// inputs[0]. Prevents duplicate application across multiple outputs.
+	metaDefaultApplied bool
+	chapDefaultApplied bool
 }
 
 func (p *parser) peek() string {
@@ -854,25 +862,27 @@ func (p *parser) parse() (*pipeline.Config, error) {
 			// `IDX = next-output-index` case (single input → single
 			// output) is also covered by Input.MapMetadata; this
 			// flag form lets multi-input jobs route per-output.
+			// IDX == -1 suppresses the default metadata copy for the
+			// next output (mirrors `ffmpeg -map_metadata -1 out.mp4`).
 			if !p.hasMore() {
 				return nil, fmt.Errorf("-map_metadata requires an argument")
 			}
 			v := p.next()
 			n, err := strconv.Atoi(v)
-			if err != nil || n < 0 {
-				return nil, fmt.Errorf("-map_metadata: invalid index %q (want non-negative integer; -1 / per-section selectors not yet supported)", v)
+			if err != nil || n < -1 {
+				return nil, fmt.Errorf("-map_metadata: invalid index %q (want -1 to suppress or non-negative integer)", v)
 			}
 			p.pendingMapMetadata = &n
 		case arg == "-map_chapters":
 			// FFmpeg `-map_chapters IDX` (Wave 2 #11). Single-source
-			// per-output chapter routing.
+			// per-output chapter routing. IDX == -1 suppresses.
 			if !p.hasMore() {
 				return nil, fmt.Errorf("-map_chapters requires an argument")
 			}
 			v := p.next()
 			n, err := strconv.Atoi(v)
-			if err != nil || n < 0 {
-				return nil, fmt.Errorf("-map_chapters: invalid index %q (want non-negative integer; -1 not yet supported)", v)
+			if err != nil || n < -1 {
+				return nil, fmt.Errorf("-map_chapters: invalid index %q (want -1 to suppress or non-negative integer)", v)
 			}
 			p.pendingMapChapters = &n
 		case arg == "-stream_loop":
@@ -1466,22 +1476,47 @@ func (p *parser) parse() (*pipeline.Config, error) {
 			}
 			p.outputs = append(p.outputs, out)
 			// Wave 2 #11: drain pending -map_metadata / -map_chapters
-			// onto this output. Emit metadata_reader + metadata_writer
-			// nodes connected by a metadata edge so the runtime can
-			// route per-output independently from any other output.
+			// onto this output.
+			//
+			// When an explicit IDX >= 0 was given, emit a
+			// metadata_reader + metadata_writer node pair so the runtime
+			// routes per-output independently. IDX == -1 suppresses.
+			//
+			// When no explicit flag was given (pendingMapMetadata == nil)
+			// apply FFmpeg's implicit default (-map_metadata 0) via
+			// Input.MapMetadata on inputs[0]. This is a one-time
+			// operation: metaDefaultApplied prevents duplicate writes
+			// when the pipeline has multiple outputs.
 			if p.pendingMapMetadata != nil {
-				if *p.pendingMapMetadata >= len(p.inputs) {
-					return nil, fmt.Errorf("-map_metadata %d: only %d input(s) declared", *p.pendingMapMetadata, len(p.inputs))
-				}
-				p.emitMetadataRoute(out.ID, p.inputs[*p.pendingMapMetadata].ID, "global")
+				idx := *p.pendingMapMetadata
 				p.pendingMapMetadata = nil
+				if idx >= 0 {
+					if idx >= len(p.inputs) {
+						return nil, fmt.Errorf("-map_metadata %d: only %d input(s) declared", idx, len(p.inputs))
+					}
+					p.emitMetadataRoute(out.ID, p.inputs[idx].ID, "global")
+				}
+				// idx == -1: explicit suppress; no route emitted.
+			} else if !p.metaDefaultApplied && len(p.inputs) > 0 {
+				// No explicit -map_metadata for this output.
+				// Mirror FFmpeg's default: copy metadata from input 0.
+				p.inputs[0].MapMetadata = true
+				p.metaDefaultApplied = true
 			}
 			if p.pendingMapChapters != nil {
-				if *p.pendingMapChapters >= len(p.inputs) {
-					return nil, fmt.Errorf("-map_chapters %d: only %d input(s) declared", *p.pendingMapChapters, len(p.inputs))
-				}
-				p.emitMetadataRoute(out.ID, p.inputs[*p.pendingMapChapters].ID, "chapters")
+				idx := *p.pendingMapChapters
 				p.pendingMapChapters = nil
+				if idx >= 0 {
+					if idx >= len(p.inputs) {
+						return nil, fmt.Errorf("-map_chapters %d: only %d input(s) declared", idx, len(p.inputs))
+					}
+					p.emitMetadataRoute(out.ID, p.inputs[idx].ID, "chapters")
+				}
+				// idx == -1: explicit suppress; no route emitted.
+			} else if !p.chapDefaultApplied && len(p.inputs) > 0 {
+				// Mirror FFmpeg's default: copy chapters from input 0.
+				p.inputs[0].MapChapters = true
+				p.chapDefaultApplied = true
 			}
 		}
 	}
