@@ -30,8 +30,7 @@
           "threshold": 27.0,
           "min_scene_len": 15,
           "luma_only": false,
-          "filter_mode": "merge",
-          "frame_rate": 25.0
+          "filter_mode": "merge"
         }
       }
     ],

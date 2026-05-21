@@ -31,8 +31,7 @@
           "min_scene_len": 15,
           "method": "floor",
           "fade_bias": 0.0,
-          "add_final_scene": false,
-          "frame_rate": 25.0
+          "add_final_scene": false
         }
       }
     ],

@@ -1012,7 +1012,20 @@ func (p *Pipeline) runGraph(ctx context.Context) (runErr error) {
 			if err != nil {
 				return fmt.Errorf("go_processor %q: %w", node.ID, err)
 			}
-			if err := proc.Init(node.Params); err != nil {
+			// Auto-inject "frame_rate" from the probed upstream video stream
+			// so processors like the scene detectors don't require the user
+			// to specify it manually. Only injected when the param is absent
+			// and the upstream stream has a valid avg_frame_rate.
+			initParams := node.Params
+			if _, hasFrameRate := initParams["frame_rate"]; !hasFrameRate {
+				if si, siErr := runner.resolveStreamInfo(dag, node); siErr == nil &&
+					si.Type == av.MediaTypeVideo &&
+					si.FrameRate[0] > 0 && si.FrameRate[1] > 0 {
+					initParams = copyParams(initParams)
+					initParams["frame_rate"] = float64(si.FrameRate[0]) / float64(si.FrameRate[1])
+				}
+			}
+			if err := proc.Init(initParams); err != nil {
 				return fmt.Errorf("go_processor %q init: %w", node.ID, err)
 			}
 			runner.goProcessors[node.ID] = proc

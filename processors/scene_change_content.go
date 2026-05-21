@@ -27,7 +27,7 @@ import (
 //	"luma_only":     bool    — use luma-only weights; default false
 //	"filter_mode":   string  — "merge" (default) or "suppress"
 //	"kernel_size":   int     — dilation kernel size; 0 = auto (default)
-//	"frame_rate":    float64 — stream frame rate for FrameTimecode construction (default 25.0)
+//	"frame_rate":    float64 — stream frame rate; auto-detected from the input stream when omitted (default 25.0 if unknown)
 type SceneChangeContent struct {
 	hook      fileWriteHook
 	detector  *detectors.ContentDetector

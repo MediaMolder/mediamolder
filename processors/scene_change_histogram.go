@@ -26,7 +26,7 @@ import (
 //	"threshold":     float64 — maximum tolerated frame-to-frame difference in [0,1] (default 0.05)
 //	"bins":          int     — number of histogram bins (default 256)
 //	"min_scene_len": int/float64/string — min frames or duration like "0.6s" (default 15)
-//	"frame_rate":    float64 — stream frame rate for FrameTimecode construction (default 25.0)
+//	"frame_rate":    float64 — stream frame rate; auto-detected from the input stream when omitted (default 25.0 if unknown)
 type SceneChangeHistogram struct {
 	hook      fileWriteHook
 	detector  *detectors.HistogramDetector
