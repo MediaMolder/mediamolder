@@ -401,13 +401,38 @@ See [docs/scene-detection.md](scene-detection.md#scene_change_histogram) for ful
 
 ### `metadata_file_writer`
 
-A decorator processor that wraps another processor and writes all emitted metadata to a [JSON Lines](https://jsonlines.org/) file. The inner processor's metadata is still returned normally (so it also reaches the event bus).
+A sink processor that writes metadata events to a [JSON Lines](https://jsonlines.org/) file. Supports two usage modes:
 
-| Param              | Type   | Default      | Description                                          |
-|--------------------|--------|--------------|------------------------------------------------------|
-| `output_file`      | string | **(required)**| Path to the `.jsonl` output file                     |
-| `inner_processor`  | string | **(required)**| Name of a registered processor to wrap               |
-| *(other params)*   |        |              | Forwarded to the inner processor's `Init()`          |
+**Events-wiring mode** (recommended for the GUI and new pipelines): omit `inner_processor` and connect an **`events`** edge from any `go_processor` node to this node. The engine opens the output file and routes every event directly — no video path change required.
+
+**Wrapper mode** (legacy / JSON-authored pipelines): set `inner_processor` to the name of another registered processor. `metadata_file_writer` wraps it, intercepts its metadata, writes it to the file, and forwards both the frame and metadata to the caller. Deprecated for new graphs; prefer events-wiring.
+
+| Param              | Type   | Default      | Description |
+|--------------------|--------|--------------|-------------|
+| `output_file`      | string | **(required)**| Path to the output file |
+| `output_format`    | string | `"jsonl"`    | Output format: `"jsonl"`, `"csv"`, or `"timecodes"` |
+| `inner_processor`  | string | *(optional)* | Wrapper mode only: name of a registered processor to wrap |
+| *(other params)*   |        |              | Wrapper mode only: forwarded to the inner processor's `Init()` |
+
+**Events-wiring mode example** (GUI / no inner processor):
+
+```json
+{
+  "nodes": [
+    { "id": "detect", "type": "go_processor", "processor": "scene_change_content",
+      "params": { "threshold": 27.0 } },
+    { "id": "cut_log", "type": "go_processor", "processor": "metadata_file_writer",
+      "params": { "output_file": "/tmp/cuts.jsonl" } }
+  ],
+  "edges": [
+    { "from": "detect",  "to": "cut_log", "type": "events" }
+  ]
+}
+```
+
+In the GUI, drag from the **pink (events) handle** on the right of a `go_processor` node to the pink handle on the left of a `metadata_file_writer` node. The events wire is drawn as a pink dashed line.
+
+**Wrapper mode example** (legacy):
 
 ```json
 {
@@ -431,7 +456,7 @@ Each line in the output file is a JSON object:
 {"frame_index":5,"pts":5000,"metadata":{"detections":[{"label":"car","confidence":0.87,"bbox":[400,200,700,450]}]}}
 ```
 
-Frames where the inner processor returns no metadata produce no output line.
+Frames where the processor returns no metadata produce no output line.
 
 ---
 

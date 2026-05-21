@@ -341,8 +341,8 @@ edge:
 
 - Has a **`from`** endpoint (producer)
 - Has a **`to`** endpoint (consumer)
-- Carries exactly **one stream type** (`"video"`, `"audio"`, `"subtitle"`, or
-  `"data"`)
+- Carries exactly **one stream type** (`"video"`, `"audio"`, `"subtitle"`,
+  `"data"`, or `"events"`)
 
 ```json
 { "from": "src:v:0", "to": "resize", "type": "video" }
@@ -352,8 +352,8 @@ The engine validates every edge at build time. Connecting a video output port
 to an audio input port is a fatal error caught before any file is opened.
 
 In the GUI, an edge is the **wire** drawn between two pads. The wire's colour
-indicates its type (video/audio/subtitle/data). The canvas prevents you from
-dropping a wire onto an incompatible pad.
+indicates its type (video/audio/subtitle/data/events). The canvas prevents you
+from dropping a wire onto an incompatible pad.
 
 ---
 
@@ -365,6 +365,7 @@ dropping a wire onto an incompatible pad.
 | `audio` | Decoded `AVFrame` (raw PCM samples) | Uncompressed between source, filters, and encoder |
 | `subtitle` | `AVSubtitle` events (text or bitmap) | Often passed through without decode |
 | `data` | Opaque packets (timecodes, KLV, SCTE-35, …) | Passed through unchanged |
+| `events` | Structured metadata objects emitted by `go_processor` nodes | **No libav\* involvement.** Rendered as a pink dashed wire in the GUI. Routes processor output (scene cuts, detections, …) to a `metadata_file_writer` sink. Does not carry video frames; never touches any libav\* library. |
 
 > **Per-frame metadata** is not a separate edge type. It rides inside
 > `AVFrame->metadata` and propagates automatically over `video` and `audio`
