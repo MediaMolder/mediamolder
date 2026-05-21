@@ -1732,6 +1732,41 @@ function GoProcessorParams({
     return <SceneChangeParams processorName={processorName!} params={params} onChange={onChange} />;
   }
 
+  if (processorName === 'metadata_file_writer') {
+    const outputFile = typeof params['output_file'] === 'string' ? params['output_file'] : '';
+    const innerProcessor = typeof params['inner_processor'] === 'string' ? params['inner_processor'] : '';
+    const KNOWN: ReadonlySet<string> = new Set(['output_file', 'inner_processor']);
+    const restParams = Object.fromEntries(Object.entries(params).filter(([k]) => !KNOWN.has(k)));
+    const set = (key: string, value: unknown) => {
+      const next = { ...params };
+      if (value !== '' && value !== undefined) next[key] = value; else delete next[key];
+      onChange(next);
+    };
+    return (
+      <>
+        <FileField
+          label="output_file"
+          value={outputFile}
+          mode="save"
+          filter=".jsonl"
+          defaultFilename="output.jsonl"
+          onChange={(val) => set('output_file', val)}
+        />
+        <label style={{ marginTop: 8 }}>inner_processor</label>
+        <input
+          type="text"
+          value={innerProcessor}
+          placeholder="e.g. yolo_v8"
+          onChange={(e) => set('inner_processor', e.target.value)}
+        />
+        <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: -4, marginBottom: 4 }}>
+          Name of the processor to wrap (e.g. <code>yolo_v8</code>).
+        </div>
+        <ParamsEditor params={restParams} onChange={(next) => onChange({ output_file: outputFile || undefined, inner_processor: innerProcessor || undefined, ...next })} />
+      </>
+    );
+  }
+
   const FILE_PARAM_KEYS: ReadonlySet<string> = new Set(['output_file']);
   const fileEntries = Object.entries(params).filter(([k]) => FILE_PARAM_KEYS.has(k));
   const restParams = Object.fromEntries(Object.entries(params).filter(([k]) => !FILE_PARAM_KEYS.has(k)));
