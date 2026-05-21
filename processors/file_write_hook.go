@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sync"
 )
 
@@ -46,6 +47,14 @@ func (h *fileWriteHook) initFromParams(processorName string, params map[string]a
 
 	if path == "" {
 		return filtered, nil
+	}
+
+	// Sanitize the path: clean away any "../" traversal components and require
+	// an absolute path so the output location is unambiguous and cannot be
+	// redirected to sensitive system files by a crafted pipeline config.
+	path = filepath.Clean(path)
+	if !filepath.IsAbs(path) {
+		return nil, fmt.Errorf("%s: output_file must be an absolute path, got %q", processorName, path)
 	}
 
 	f, err := os.Create(path)
