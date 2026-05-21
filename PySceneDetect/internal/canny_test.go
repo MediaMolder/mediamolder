@@ -10,9 +10,9 @@ func TestEstimatedKernelSize(t *testing.T) {
 	if got := EstimatedKernelSize(256, 144); got != 5 {
 		t.Errorf("256×144: got %d, want 5", got)
 	}
-	// 64×36 → sqrt(2304)=48 → round(4+48/192)=round(4.25)=4
-	if got := EstimatedKernelSize(64, 36); got != 4 {
-		t.Errorf("64×36: got %d, want 4", got)
+	// 64×36 → sqrt(2304)=48 → round(4+48/192)=round(4.25)=4 (even → pad to 5)
+	if got := EstimatedKernelSize(64, 36); got != 5 {
+		t.Errorf("64×36: got %d, want 5", got)
 	}
 }
 

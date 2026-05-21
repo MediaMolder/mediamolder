@@ -38,6 +38,31 @@ package av
 //     return 0;
 // }
 //
+// // frame_to_bgr24 converts an AVFrame of any pixel format to packed BGR24.
+// // The caller must av_free(*out_data) when done. Returns 0 on success.
+// static int frame_to_bgr24(const AVFrame *frame, uint8_t **out_data) {
+//     if (!frame || frame->width <= 0 || frame->height <= 0)
+//         return -1;
+//
+//     struct SwsContext *sws = sws_getContext(
+//         frame->width, frame->height, frame->format,
+//         frame->width, frame->height, AV_PIX_FMT_BGR24,
+//         SWS_BILINEAR, NULL, NULL, NULL);
+//     if (!sws) return AVERROR(ENOMEM);
+//
+//     int linesize = frame->width * 3;
+//     *out_data = (uint8_t *)av_malloc((size_t)linesize * frame->height);
+//     if (!*out_data) { sws_freeContext(sws); return AVERROR(ENOMEM); }
+//
+//     uint8_t *dst[4] = { *out_data, NULL, NULL, NULL };
+//     int dst_ls[4] = { linesize, 0, 0, 0 };
+//
+//     sws_scale(sws, (const uint8_t *const *)frame->data, frame->linesize,
+//               0, frame->height, dst, dst_ls);
+//     sws_freeContext(sws);
+//     return 0;
+// }
+//
 // // sad_8bit computes the Sum of Absolute Differences between two 8-bit
 // // planes, respecting stride. This simple loop auto-vectorizes well with
 // // -O2 on both ARM64 (NEON) and x86_64 (SSE/AVX).
@@ -142,7 +167,8 @@ package av
 //     return frame->format;
 // }
 //
-// static int pix_fmt_rgba(void) { return AV_PIX_FMT_RGBA; }
+// static int pix_fmt_rgba(void)  { return AV_PIX_FMT_RGBA;  }
+// static int pix_fmt_bgr24(void) { return AV_PIX_FMT_BGR24; }
 import "C"
 
 import (
@@ -199,6 +225,31 @@ func (f *Frame) ToRGBA() (*image.RGBA, error) {
 		Stride: stride,
 		Rect:   image.Rect(0, 0, w, h),
 	}, nil
+}
+
+// ToBGR24 converts the frame to packed BGR24 pixels (3 bytes per pixel, B/G/R order).
+// Returns a []byte of length width×height×3. Supports any input pixel format
+// that swscale handles (YUV420P, NV12, RGB24, etc.).
+func (f *Frame) ToBGR24() ([]byte, error) {
+	if f == nil || f.p == nil {
+		return nil, fmt.Errorf("av: ToBGR24 called on nil frame")
+	}
+	w, h := f.Width(), f.Height()
+	if w <= 0 || h <= 0 {
+		return nil, fmt.Errorf("av: ToBGR24: invalid frame dimensions %d\u00d7%d", w, h)
+	}
+
+	var outData *C.uint8_t
+	ret := C.frame_to_bgr24(f.p, &outData)
+	if ret < 0 {
+		return nil, newErr(ret)
+	}
+	defer C.av_free(unsafe.Pointer(outData))
+
+	size := w * h * 3
+	out := make([]byte, size)
+	copy(out, unsafe.Slice((*byte)(unsafe.Pointer(outData)), size))
+	return out, nil
 }
 
 // FrameSceneScore computes the Mean Absolute Frame Difference (MAFD) between
