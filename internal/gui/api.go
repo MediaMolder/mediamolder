@@ -590,7 +590,7 @@ func virtualSourceDescription(name, desc string) string {
 	return desc + " — " + hint
 }
 
-func virtualSinkDescription(name, desc string) string {
+func virtualSinkDescription(_, desc string) string {
 	hint := "Discards every frame. Lets an analyser branch (e.g. ebur128, signalstats) terminate without a muxer output."
 	if desc == "" {
 		return hint

@@ -12,7 +12,7 @@ import (
 // validateVideo performs static video format checks that require no probe data.
 // Checks VIDEO_ZERO_DIMENSION on encoder and scale nodes, VIDEO_ZERO_FRAMERATE
 // on fps filter nodes.
-func validateVideo(cfg *Config, g *graph.Graph, r *ValidationReport) {
+func validateVideo(cfg *Config, _ *graph.Graph, r *ValidationReport) {
 	for _, nd := range cfg.Graph.Nodes {
 		switch {
 		case nd.Type == "encoder":

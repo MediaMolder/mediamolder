@@ -541,7 +541,7 @@ type benchReceiveFn func(*Packet) error
 // runEncodeLoop performs warmup + timed encode, returning fps, bitrate,
 // a slice of the timed packets, and codec extradata (for decode setup).
 func runEncodeLoop(
-	ctx context.Context,
+	_ context.Context,
 	sendFrame benchSendFn,
 	receivePacket benchReceiveFn,
 	swEnc *EncoderContext, // nil for HW encoders
