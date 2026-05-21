@@ -5,6 +5,8 @@
     {
       "id": "in0",
       "url": "anullsrc=channel_layout=stereo:sample_rate=44100",
+      "map_metadata": true,
+      "map_chapters": true,
       "kind": "lavfi",
       "options": { "t": "2" },
       "streams": [

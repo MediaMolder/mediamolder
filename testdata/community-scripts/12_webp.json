@@ -5,6 +5,8 @@
     {
       "id": "in0",
       "url": "{{input}}",
+      "map_metadata": true,
+      "map_chapters": true,
       "options": { "t": "5" },
       "streams": [
         { "input_index": 0, "type": "video", "track": 0 }

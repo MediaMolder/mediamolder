@@ -5,6 +5,8 @@
     {
       "id": "in0",
       "url": "{{input}}",
+      "map_metadata": true,
+      "map_chapters": true,
       "streams": [
         {
           "input_index": 0,
