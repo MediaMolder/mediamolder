@@ -29,8 +29,7 @@
           "output_file": "scene_changes_histogram.jsonl",
           "threshold": 0.05,
           "bins": 256,
-          "min_scene_len": 15,
-          "frame_rate": 25.0
+          "min_scene_len": 15
         }
       }
     ],

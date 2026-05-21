@@ -28,7 +28,7 @@ import (
 //	"min_content_val":    float64 — minimum content_val the target frame must reach (default 15.0)
 //	"luma_only":          bool    — use luma-only weights; default false
 //	"kernel_size":        int     — dilation kernel size; 0 = auto (default)
-//	"frame_rate":         float64 — stream frame rate for FrameTimecode construction (default 25.0)
+//	"frame_rate":         float64 — stream frame rate; auto-detected from the input stream when omitted (default 25.0 if unknown)
 type SceneChangeAdaptive struct {
 	hook      fileWriteHook
 	detector  *detectors.AdaptiveDetector

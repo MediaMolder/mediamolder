@@ -31,8 +31,7 @@
           "min_scene_len": 15,
           "window_width": 2,
           "min_content_val": 15.0,
-          "luma_only": false,
-          "frame_rate": 25.0
+          "luma_only": false
         }
       }
     ],

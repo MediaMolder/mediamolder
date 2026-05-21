@@ -1245,8 +1245,9 @@ All PySceneDetect processors share:
 
 - `min_scene_len` — minimum frames between cuts; accepts an integer frame
   count, a float in seconds (`0.6`), or a duration string (`"0.6s"`). Default 15.
-- `frame_rate` — stream frame rate used for FrameTimecode construction.
-  Should match the input's actual frame rate (default 25.0 if omitted).
+- `frame_rate` — stream frame rate; **auto-detected from the probed input
+  stream** and injected automatically when not set. Override explicitly only
+  when the detected rate is wrong (e.g. VFR content with misleading headers).
 
 ### Writing detections to a file
 
@@ -1263,8 +1264,7 @@ Inspector's **Save detections to file** field, or in the JSON `params`:
   "params": {
     "output_file": "scene_changes.jsonl",
     "threshold": 27.0,
-    "min_scene_len": 15,
-    "frame_rate": 25.0
+    "min_scene_len": 15
   }
 }
 ```

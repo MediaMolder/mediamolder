@@ -1930,7 +1930,7 @@ const SCENE_DETECTOR_META: Record<string, SceneDetectorMeta> = {
 
 const SCENE_CHANGE_KNOWN_KEYS = new Set([
   'output_file',
-  'threshold', 'min_scene_len', 'frame_rate',
+  'threshold', 'min_scene_len',
   'luma_only', 'filter_mode', 'kernel_size',
   'min_content_val',
   'method', 'fade_bias', 'add_final_scene',

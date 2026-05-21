@@ -26,7 +26,7 @@ import (
 //	"size":          int     — hash dimension; hash is size×size bits (default 16)
 //	"lowpass":       int     — resize factor; frame resized to (size*lowpass)² (default 2)
 //	"min_scene_len": int/float64/string — min frames or duration like "0.6s" (default 15)
-//	"frame_rate":    float64 — stream frame rate for FrameTimecode construction (default 25.0)
+//	"frame_rate":    float64 — stream frame rate; auto-detected from the input stream when omitted (default 25.0 if unknown)
 type SceneChangeHash struct {
 	hook      fileWriteHook
 	detector  *detectors.HashDetector

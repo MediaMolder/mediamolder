@@ -28,7 +28,7 @@ import (
 //	"fade_bias":       float64 — [-1.0,1.0]; -1=cut at fade-out, 0=midpoint, +1=cut at fade-in (default 0.0)
 //	"add_final_scene": bool    — emit a cut if video ends on a fade-out (default false)
 //	                             Note: this cut cannot be surfaced through the Processor interface.
-//	"frame_rate":      float64 — stream frame rate for FrameTimecode construction (default 25.0)
+//	"frame_rate":      float64 — stream frame rate; auto-detected from the input stream when omitted (default 25.0 if unknown)
 type SceneChangeThreshold struct {
 	hook      fileWriteHook
 	detector  *detectors.ThresholdDetector

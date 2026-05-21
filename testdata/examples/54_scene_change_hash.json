@@ -30,8 +30,7 @@
           "threshold": 0.395,
           "size": 16,
           "lowpass": 2,
-          "min_scene_len": 15,
-          "frame_rate": 25.0
+          "min_scene_len": 15
         }
       }
     ],
