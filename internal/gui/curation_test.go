@@ -57,6 +57,8 @@ func TestCuratedNodesResolveToRealEntries(t *testing.T) {
 		"tonemap":       {}, // requires libavfilter built with HDR support
 		"drawtext":      {}, // requires --enable-libfreetype
 		"frame_counter": {}, "frame_info": {}, "scene_change": {},
+		"scene_change_content": {}, "scene_change_adaptive": {},
+		"scene_change_threshold": {}, "scene_change_hash": {}, "scene_change_histogram": {},
 	}
 
 	for name := range curatedNodes {
