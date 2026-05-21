@@ -24,10 +24,9 @@
       {
         "id": "scene_detect",
         "type": "go_processor",
-        "processor": "metadata_file_writer",
+        "processor": "scene_change_threshold",
         "params": {
           "output_file": "scene_changes_threshold.jsonl",
-          "inner_processor": "scene_change_threshold",
           "threshold": 12.0,
           "min_scene_len": 15,
           "method": "floor",

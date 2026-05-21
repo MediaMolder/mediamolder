@@ -24,10 +24,9 @@
       {
         "id": "scene_detect",
         "type": "go_processor",
-        "processor": "metadata_file_writer",
+        "processor": "scene_change_hash",
         "params": {
           "output_file": "scene_changes_hash.jsonl",
-          "inner_processor": "scene_change_hash",
           "threshold": 0.395,
           "size": 16,
           "lowpass": 2,

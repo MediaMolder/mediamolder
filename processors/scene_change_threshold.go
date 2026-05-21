@@ -30,6 +30,7 @@ import (
 //	                             Note: this cut cannot be surfaced through the Processor interface.
 //	"frame_rate":      float64 — stream frame rate for FrameTimecode construction (default 25.0)
 type SceneChangeThreshold struct {
+	hook      fileWriteHook
 	detector  *detectors.ThresholdDetector
 	frameRate float64
 }
@@ -41,6 +42,12 @@ func (p *SceneChangeThreshold) Init(params map[string]any) error {
 	fadeBias := 0.0
 	addFinalScene := false
 	p.frameRate = 25.0
+
+	var err error
+	params, err = p.hook.initFromParams("scene_change_threshold", params)
+	if err != nil {
+		return err
+	}
 
 	for k, v := range params {
 		switch k {
@@ -122,7 +129,7 @@ func (p *SceneChangeThreshold) Process(frame *av.Frame, ctx ProcessorContext) (*
 
 	// average_rgb score is the content_val for this detector.
 	score := math.Round(p.detector.LastAvgRGB()*1000) / 1000
-	return frame, &Metadata{Custom: map[string]any{
+	md := &Metadata{Custom: map[string]any{
 		"scene_change": true,
 		"detector":     "threshold",
 		"frame_index":  cuts[0].FrameNum(),
@@ -130,11 +137,13 @@ func (p *SceneChangeThreshold) Process(frame *av.Frame, ctx ProcessorContext) (*
 		"pts":          ctx.PTS,
 		"score":        score,
 		"average_rgb":  score,
-	}}, nil
+	}}
+	p.hook.write(ctx, md)
+	return frame, md, nil
 }
 
 func (p *SceneChangeThreshold) Close() error {
-	return nil
+	return p.hook.close()
 }
 
 func init() {

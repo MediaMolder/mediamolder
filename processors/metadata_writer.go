@@ -4,10 +4,7 @@
 package processors
 
 import (
-	"encoding/json"
 	"fmt"
-	"os"
-	"sync"
 
 	"github.com/MediaMolder/MediaMolder/av"
 )
@@ -38,22 +35,13 @@ import (
 //	  }
 //	}
 type MetadataWriter struct {
+	hook  fileWriteHook
 	inner Processor
-	file  *os.File
-	enc   *json.Encoder
-	mu    sync.Mutex // protects file writes
-}
-
-// metadataRecord is the JSON structure written per metadata event.
-type metadataRecord struct {
-	FrameIndex uint64    `json:"frame_index"`
-	PTS        int64     `json:"pts"`
-	Metadata   *Metadata `json:"metadata"`
 }
 
 func (w *MetadataWriter) Init(params map[string]any) error {
-	outPath, _ := params["output_file"].(string)
-	if outPath == "" {
+	_, hasOutputFile := params["output_file"]
+	if !hasOutputFile {
 		return fmt.Errorf("metadata_file_writer: \"output_file\" param is required")
 	}
 	innerName, _ := params["inner_processor"].(string)
@@ -67,25 +55,23 @@ func (w *MetadataWriter) Init(params map[string]any) error {
 	}
 	w.inner = inner
 
-	// Forward remaining params to the inner processor.
+	// Strip wrapper-only keys and open the file via the hook.
 	innerParams := make(map[string]any, len(params))
 	for k, v := range params {
-		if k == "output_file" || k == "inner_processor" {
+		if k == "inner_processor" {
 			continue
 		}
 		innerParams[k] = v
 	}
-	if err := w.inner.Init(innerParams); err != nil {
-		return fmt.Errorf("metadata_file_writer: inner %q Init: %w", innerName, err)
-	}
-
-	f, err := os.Create(outPath)
+	detectorParams, err := w.hook.initFromParams("metadata_file_writer", innerParams)
 	if err != nil {
 		w.inner.Close()
-		return fmt.Errorf("metadata_file_writer: open %q: %w", outPath, err)
+		return err
 	}
-	w.file = f
-	w.enc = json.NewEncoder(f)
+	if err := w.inner.Init(detectorParams); err != nil {
+		w.hook.close() //nolint:errcheck
+		return fmt.Errorf("metadata_file_writer: inner %q Init: %w", innerName, err)
+	}
 	return nil
 }
 
@@ -94,18 +80,7 @@ func (w *MetadataWriter) Process(frame *av.Frame, ctx ProcessorContext) (*av.Fra
 	if err != nil {
 		return out, md, err
 	}
-
-	if md != nil {
-		rec := metadataRecord{
-			FrameIndex: ctx.FrameIndex,
-			PTS:        ctx.PTS,
-			Metadata:   md,
-		}
-		w.mu.Lock()
-		w.enc.Encode(rec) //nolint:errcheck // best-effort file write
-		w.mu.Unlock()
-	}
-
+	w.hook.write(ctx, md)
 	return out, md, nil
 }
 
@@ -116,10 +91,8 @@ func (w *MetadataWriter) Close() error {
 			errs = append(errs, err)
 		}
 	}
-	if w.file != nil {
-		if err := w.file.Close(); err != nil {
-			errs = append(errs, err)
-		}
+	if err := w.hook.close(); err != nil {
+		errs = append(errs, err)
 	}
 	if len(errs) > 0 {
 		return errs[0]

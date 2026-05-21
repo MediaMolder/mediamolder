@@ -30,6 +30,7 @@ import (
 //	"kernel_size":        int     — dilation kernel size; 0 = auto (default)
 //	"frame_rate":         float64 — stream frame rate for FrameTimecode construction (default 25.0)
 type SceneChangeAdaptive struct {
+	hook      fileWriteHook
 	detector  *detectors.AdaptiveDetector
 	frameRate float64
 }
@@ -43,6 +44,12 @@ func (p *SceneChangeAdaptive) Init(params map[string]any) error {
 	weights := detectors.DefaultContentWeights
 	kernelSize := 0
 	p.frameRate = 25.0
+
+	var err error
+	params, err = p.hook.initFromParams("scene_change_adaptive", params)
+	if err != nil {
+		return err
+	}
 
 	for k, v := range params {
 		switch k {
@@ -133,7 +140,7 @@ func (p *SceneChangeAdaptive) Process(frame *av.Frame, ctx ProcessorContext) (*a
 	}
 
 	score := math.Round(p.detector.Score()*1000) / 1000
-	return frame, &Metadata{Custom: map[string]any{
+	md := &Metadata{Custom: map[string]any{
 		"scene_change": true,
 		"detector":     "adaptive",
 		"frame_index":  cuts[0].FrameNum(),
@@ -141,11 +148,13 @@ func (p *SceneChangeAdaptive) Process(frame *av.Frame, ctx ProcessorContext) (*a
 		"pts":          ctx.PTS,
 		"score":        score,
 		"content_val":  score,
-	}}, nil
+	}}
+	p.hook.write(ctx, md)
+	return frame, md, nil
 }
 
 func (p *SceneChangeAdaptive) Close() error {
-	return nil
+	return p.hook.close()
 }
 
 func init() {
