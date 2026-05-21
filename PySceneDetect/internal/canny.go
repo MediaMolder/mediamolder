@@ -28,6 +28,9 @@ func EstimatedKernelSize(w, h int) int {
 	if k < 1 {
 		k = 1
 	}
+	if k%2 == 0 {
+		k++ // Python: "if size % 2 == 0: size += 1"
+	}
 	return k
 }
 
