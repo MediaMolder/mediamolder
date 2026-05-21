@@ -474,7 +474,9 @@ func processorStreams(name string) []string {
 		"scene_change_hash",
 		"scene_change_histogram",
 		"scene_change_threshold":
-		return []string{"video"}
+		return []string{"video", "events"}
+	case "metadata_file_writer":
+		return []string{"events"}
 	}
 	return nil
 }

@@ -1601,7 +1601,7 @@ func validate(cfg *Config) error {
 	// Edge types must be valid.
 	validTypes := map[string]bool{
 		"video": true, "audio": true, "subtitle": true, "data": true,
-		"attachment": true, "metadata": true,
+		"attachment": true, "metadata": true, "events": true,
 	}
 	for i, e := range cfg.Graph.Edges {
 		if !validTypes[e.Type] {

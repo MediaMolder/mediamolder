@@ -9,44 +9,41 @@ import (
 	"github.com/MediaMolder/MediaMolder/av"
 )
 
-// MetadataWriter is a built-in processor that wraps another processor and
-// writes all emitted metadata to a JSON Lines (.jsonl) file. The inner
-// processor's metadata is still returned normally (so it also reaches the
-// event bus).
+// MetadataWriter is a built-in processor that captures metadata events from
+// a processor and writes them to a JSON Lines (.jsonl) file.
 //
-// Required params:
+// Two usage modes:
 //
-//	"output_file"     — path to the output .jsonl file (required)
-//	"inner_processor" — name of a registered processor to wrap (required)
+//  1. Wrapper mode (legacy / JSON config): set "inner_processor" to the name
+//     of a registered processor. MetadataWriter wraps it, intercepts the
+//     metadata return values, writes them to "output_file", and forwards the
+//     original metadata to the caller (and thus to the event bus).
 //
-// All other params are forwarded to the inner processor's Init().
-//
-// Example JSON config:
-//
-//	{
-//	  "id": "detect_and_log",
-//	  "type": "go_processor",
-//	  "processor": "metadata_file_writer",
-//	  "params": {
-//	    "output_file": "detections.jsonl",
-//	    "inner_processor": "yolo_v8",
-//	    "model": "/models/yolov8n.onnx",
-//	    "conf": 0.5
-//	  }
-//	}
+//  2. Events-wiring mode (GUI / "events" edges): omit "inner_processor". The
+//     engine detects an "events" edge pointing at this node and routes
+//     metadata events from the upstream go_processor directly to the sink via
+//     EventSink — MetadataWriter.Process is never called.  Init must still
+//     succeed so that Close can release resources opened by the engine; in
+//     pure-sink mode Init is effectively a no-op (no file is opened here —
+//     the engine opens an EventSink directly from the output_file param).
 type MetadataWriter struct {
 	hook  fileWriteHook
 	inner Processor
 }
 
 func (w *MetadataWriter) Init(params map[string]any) error {
+	innerName, _ := params["inner_processor"].(string)
+	if innerName == "" {
+		// Pure-sink mode: the engine handles file I/O via EventSink.
+		// No resources to initialise here; output_file is read by the
+		// engine directly.
+		return nil
+	}
+
+	// Wrapper mode: inner_processor is set.
 	_, hasOutputFile := params["output_file"]
 	if !hasOutputFile {
 		return fmt.Errorf("metadata_file_writer: \"output_file\" param is required")
-	}
-	innerName, _ := params["inner_processor"].(string)
-	if innerName == "" {
-		return fmt.Errorf("metadata_file_writer: \"inner_processor\" param is required (name of processor to wrap)")
 	}
 
 	inner, err := Get(innerName)
@@ -76,6 +73,12 @@ func (w *MetadataWriter) Init(params map[string]any) error {
 }
 
 func (w *MetadataWriter) Process(frame *av.Frame, ctx ProcessorContext) (*av.Frame, *Metadata, error) {
+	if w.inner == nil {
+		// Pure-sink mode: pass the frame through unchanged.
+		// (This path is not normally reached because the engine does not
+		// wire video edges to pure-sink metadata_file_writer nodes.)
+		return frame, nil, nil
+	}
 	out, md, err := w.inner.Process(frame, ctx)
 	if err != nil {
 		return out, md, err

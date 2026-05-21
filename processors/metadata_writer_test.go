@@ -13,7 +13,9 @@ import (
 	"github.com/MediaMolder/MediaMolder/av"
 )
 
-func TestMetadataWriter_MissingOutputFile(t *testing.T) {
+// TestMetadataWriter_MissingOutputFile_WrapperMode verifies that wrapper mode
+// (inner_processor present) still requires output_file.
+func TestMetadataWriter_MissingOutputFile_WrapperMode(t *testing.T) {
 	w := &MetadataWriter{}
 	err := w.Init(map[string]any{
 		"inner_processor": "frame_counter",
@@ -23,14 +25,14 @@ func TestMetadataWriter_MissingOutputFile(t *testing.T) {
 	}
 }
 
-func TestMetadataWriter_MissingInnerProcessor(t *testing.T) {
+// TestMetadataWriter_PureSinkMode verifies that Init succeeds when
+// inner_processor is absent (events-wiring / pure-sink mode).
+func TestMetadataWriter_PureSinkMode(t *testing.T) {
 	w := &MetadataWriter{}
-	err := w.Init(map[string]any{
-		"output_file": "/tmp/test.jsonl",
-	})
-	if err == nil || !strings.Contains(err.Error(), "inner_processor") {
-		t.Fatalf("expected inner_processor error, got %v", err)
+	if err := w.Init(map[string]any{"output_file": "/tmp/test.jsonl"}); err != nil {
+		t.Fatalf("pure-sink mode Init should succeed, got %v", err)
 	}
+	_ = w.Close()
 }
 
 func TestMetadataWriter_UnknownInnerProcessor(t *testing.T) {

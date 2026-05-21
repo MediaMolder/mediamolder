@@ -1008,6 +1008,14 @@ func (p *Pipeline) runGraph(ctx context.Context) (runErr error) {
 			}
 			runner.sinks[node.ID] = sink
 		case graph.KindGoProcessor:
+			// Pure-sink metadata_file_writer nodes (no inner_processor param,
+			// wired via "events" edges) are handled entirely by the engine's
+			// eventsSinks table below. Skip go_processor initialisation for them.
+			if node.Processor == "metadata_file_writer" {
+				if _, hasInner := node.Params["inner_processor"]; !hasInner {
+					continue
+				}
+			}
 			proc, err := processors.Get(node.Processor)
 			if err != nil {
 				return fmt.Errorf("go_processor %q: %w", node.ID, err)
@@ -1034,6 +1042,39 @@ func (p *Pipeline) runGraph(ctx context.Context) (runErr error) {
 			// source already emits raw packets and the sink wires the
 			// output stream from the input codecpar at openSink time.
 		}
+	}
+
+	// Build the events routing table from "events" edges.
+	// For each edge {from: srcID, to: tgtID, type: "events"} where tgtID
+	// is a pure-sink metadata_file_writer (no inner_processor), open an
+	// EventSink and register it under the source node ID.
+	nodesByID := make(map[string]*NodeDef, len(cfg.Graph.Nodes))
+	for i := range cfg.Graph.Nodes {
+		nodesByID[cfg.Graph.Nodes[i].ID] = &cfg.Graph.Nodes[i]
+	}
+	for _, e := range cfg.Graph.Edges {
+		if e.Type != "events" {
+			continue
+		}
+		srcID := edgeNodeID(e.From)
+		tgtID := edgeNodeID(e.To)
+		tgt := nodesByID[tgtID]
+		if tgt == nil || tgt.Type != "go_processor" || tgt.Processor != "metadata_file_writer" {
+			continue
+		}
+		if _, hasInner := tgt.Params["inner_processor"]; hasInner {
+			// Wrapper-mode node: events are written by the processor itself.
+			continue
+		}
+		outputFile, _ := tgt.Params["output_file"].(string)
+		if outputFile == "" {
+			return fmt.Errorf("metadata_file_writer %q: events edge requires output_file param", tgtID)
+		}
+		sink, err := processors.NewEventSink(outputFile)
+		if err != nil {
+			return fmt.Errorf("metadata_file_writer %q: %w", tgtID, err)
+		}
+		runner.eventsSinks[srcID] = append(runner.eventsSinks[srcID], sink)
 	}
 
 	// Register reconfigurable filters for live parameter changes.
