@@ -24,4 +24,6 @@ func (d *VTDecoderContext) SendPacket(_ *Packet) error  { return errNoVTSupport 
 func (d *VTDecoderContext) ReceiveFrame(_ *Frame) error { return errNoVTSupport }
 func (d *VTDecoderContext) Flush() error                { return nil }
 func (d *VTDecoderContext) Close() error                { return nil }
+func (d *VTDecoderContext) ThreadCount() int            { return 0 }
 func (d *VTDecoderContext) ActiveThreadType() int       { return 0 }
+func (d *VTDecoderContext) ThreadsBusy() int            { return -1 }
