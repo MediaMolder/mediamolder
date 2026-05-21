@@ -19,6 +19,11 @@ Everything runs in-process: no subprocesses, no network calls, no Python. Your p
 		- [`frame_counter`](#frame_counter)
 		- [`frame_info`](#frame_info)
 		- [`scene_change`](#scene_change)
+		- [`scene_change_content`](#scene_change_content)
+		- [`scene_change_adaptive`](#scene_change_adaptive)
+		- [`scene_change_threshold`](#scene_change_threshold)
+		- [`scene_change_hash`](#scene_change_hash)
+		- [`scene_change_histogram`](#scene_change_histogram)
 		- [`metadata_file_writer`](#metadata_file_writer)
 		- [`sei_hello`](#sei_hello)
 	- [Helper functions](#helper-functions)
@@ -270,6 +275,128 @@ Metadata emitted (only on detected scene changes):
 
 ```json
 { "custom": { "scene_change": true, "reasons": ["content_change"], "mafd": 42.1, "score": 38.7, "frame_index": 142 } }
+```
+
+### `scene_change_content`
+
+Port of [PySceneDetect](https://github.com/Breakthrough/PySceneDetect)'s `ContentDetector`.
+Converts each frame to HSV, computes a weighted per-channel mean pixel distance, and
+triggers a cut when the score exceeds `threshold`. Supports Canny-edge weighting for higher
+accuracy on complex scenes. See [docs/scene-detection.md](scene-detection.md#scene_change_content) for full details.
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `threshold` | float64 | 27.0 | Weighted HSV delta; lower = more sensitive |
+| `min_scene_len` | int/string | 15 | Min scene length: frames, `"0.6s"`, or timecode |
+| `luma_only` | bool | false | Use luma channel only |
+| `filter_mode` | string | `"merge"` | `"merge"` or `"suppress"` adjacent-cut handling |
+| `kernel_size` | int | 0 | Canny dilation kernel size; 0 = auto |
+| `frame_rate` | float64 | 25.0 | Stream frame rate |
+
+```json
+{
+  "id": "detect",
+  "type": "go_processor",
+  "processor": "scene_change_content",
+  "params": { "threshold": 27.0, "min_scene_len": "0.6s" }
+}
+```
+
+### `scene_change_adaptive`
+
+Port of PySceneDetect's `AdaptiveDetector`. Wraps `scene_change_content` and normalises
+each frame's content score against a rolling window mean, making it robust to sustained
+high-motion segments that would otherwise saturate the content score.
+See [docs/scene-detection.md](scene-detection.md#scene_change_adaptive) for full details.
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `threshold` | float64 | 3.0 | Adaptive ratio threshold |
+| `min_scene_len` | int/string | 15 | Min scene length |
+| `window_width` | int | 2 | Rolling-window half-width |
+| `min_content_val` | float64 | 15.0 | Minimum raw content score required |
+| `luma_only` | bool | false | Use luma channel only |
+| `frame_rate` | float64 | 25.0 | Stream frame rate |
+
+```json
+{
+  "id": "detect",
+  "type": "go_processor",
+  "processor": "scene_change_adaptive",
+  "params": { "threshold": 3.0, "min_scene_len": "0.6s", "min_content_val": 15.0 }
+}
+```
+
+### `scene_change_threshold`
+
+Port of PySceneDetect's `ThresholdDetector`. Detects fades to/from black (or white) by
+tracking per-frame mean brightness. Emits a cut at the midpoint of each fade transition
+(configurable via `fade_bias`).
+See [docs/scene-detection.md](scene-detection.md#scene_change_threshold) for full details.
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `threshold` | float64 | 12.0 | Mean brightness threshold (0–255) |
+| `min_scene_len` | int/string | 15 | Min scene length |
+| `method` | string | `"floor"` | `"floor"` = fade to black; `"ceiling"` = fade to white |
+| `fade_bias` | float64 | 0.0 | −1 = start of fade-out, +1 = start of fade-in, 0 = midpoint |
+| `add_final_scene` | bool | false | Always emit a cut at the last frame |
+| `frame_rate` | float64 | 25.0 | Stream frame rate |
+
+```json
+{
+  "id": "detect",
+  "type": "go_processor",
+  "processor": "scene_change_threshold",
+  "params": { "threshold": 12.0, "method": "floor" }
+}
+```
+
+### `scene_change_hash`
+
+Port of PySceneDetect's `HashDetector`. Computes a perceptual DCT hash of each frame
+and measures Hamming distance to the previous frame. Robust to minor colour-grading
+and compression artefact changes.
+See [docs/scene-detection.md](scene-detection.md#scene_change_hash) for full details.
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `threshold` | float64 | 0.395 | Normalised Hamming distance (0–1) |
+| `min_scene_len` | int/string | 15 | Min scene length |
+| `size` | int | 16 | DCT low-frequency block edge length |
+| `lowpass` | int | 2 | Resize multiplier (`size × lowpass` pixels per side) |
+| `frame_rate` | float64 | 25.0 | Stream frame rate |
+
+```json
+{
+  "id": "detect",
+  "type": "go_processor",
+  "processor": "scene_change_hash",
+  "params": { "threshold": 0.395, "size": 16, "lowpass": 2 }
+}
+```
+
+### `scene_change_histogram`
+
+Port of PySceneDetect's `HistogramDetector`. Compares adjacent-frame luma histograms
+using the Pearson correlation coefficient. Fastest of the five PySceneDetect processors;
+ideally used as a coarse pre-filter.
+See [docs/scene-detection.md](scene-detection.md#scene_change_histogram) for full details.
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `threshold` | float64 | 0.05 | Histogram divergence (1 − Pearson correlation) |
+| `min_scene_len` | int/string | 15 | Min scene length |
+| `bins` | int | 256 | Number of histogram bins |
+| `frame_rate` | float64 | 25.0 | Stream frame rate |
+
+```json
+{
+  "id": "detect",
+  "type": "go_processor",
+  "processor": "scene_change_histogram",
+  "params": { "threshold": 0.05, "bins": 256 }
+}
 ```
 
 ### `metadata_file_writer`
