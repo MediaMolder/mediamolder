@@ -248,16 +248,6 @@ func (r *graphRunner) resolveThreadType(node *graph.Node) string {
 	return r.cfg.GlobalOptions.ThreadType
 }
 
-// resolveHWDevice returns the *av.HWDeviceContext for a node using the hierarchy:
-// per-node NodeDef.device name (looked up in hwDevices) > nil (CPU path).
-// Mirrors the resolveThreadCount/resolveThreadType pattern. (Wave 10 #56)
-func (r *graphRunner) resolveHWDevice(node *graph.Node) *av.HWDeviceContext {
-	if node.Device != "" {
-		return r.hwDevices[node.Device]
-	}
-	return nil
-}
-
 func (r *graphRunner) close() {
 	for _, s := range r.sources {
 		s.Close()

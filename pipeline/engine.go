@@ -945,7 +945,7 @@ func (p *Pipeline) runGraph(ctx context.Context) (runErr error) {
 
 	// 3a. Open named hardware-acceleration device contexts (Wave 10 #56).
 	// These are opened before any source/encoder/filter nodes so that
-	// resolveHWDevice can look them up by name during resource creation.
+	// they can be looked up by name during resource creation.
 	for _, hd := range cfg.HardwareDevices {
 		dt := av.ParseHWDeviceType(hd.Type)
 		if dt == av.HWDeviceNone {

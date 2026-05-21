@@ -48,7 +48,7 @@ var audioEncoderAllowedRates = map[string][]int{
 // validateAudio performs static audio format checks that do not require probe
 // data. Issues are only reported when both the encoder and the explicit param
 // are set in the config (no probing required).
-func validateAudio(cfg *Config, g *graph.Graph, r *ValidationReport) {
+func validateAudio(cfg *Config, _ *graph.Graph, r *ValidationReport) {
 	for _, nd := range cfg.Graph.Nodes {
 		if nd.Type != "encoder" {
 			continue

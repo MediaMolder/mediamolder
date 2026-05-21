@@ -174,7 +174,6 @@ func TestRealtimeController_RunCancelsOnContext(t *testing.T) {
 
 func TestSnapNodePerfSnapshot_ThreadRestartsField(t *testing.T) {
 	s := snap.NodePerfSnapshot{
-		NodeID:         "enc0",
 		ThreadRestarts: 7,
 	}
 	if s.ThreadRestarts != 7 {
