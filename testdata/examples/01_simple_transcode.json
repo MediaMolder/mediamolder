@@ -1,10 +1,12 @@
 {
   "schema_version": "1.0",
-  "description": "Decode in.mp4 -> encode video to H.264 with libx264, encode audio to AAC -> write to out.mp4. Note: container-level metadata (title, artist, etc.) is NOT copied automatically. Add \"map_metadata\": true to the input to mirror FFmpeg's default behaviour.",
+  "description": "Decode in.mp4 -> encode video to H.264 with libx264, encode audio to AAC -> write to out.mp4. Container metadata is copied from the input (map_metadata: true) mirroring FFmpeg's default behaviour.",
   "inputs": [
     {
       "id": "in0",
       "url": "{{input}}",
+      "map_metadata": true,
+      "map_chapters": true,
       "streams": [
         {
           "input_index": 0,
