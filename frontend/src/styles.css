@@ -968,6 +968,10 @@ button.danger:hover { background: rgba(185, 74, 74, 0.15); }
   cursor: pointer;
 }
 .file-browser-shortcuts .shortcut:hover { background: var(--border); }
+.file-browser-shortcuts .shortcut.shortcut-recent {
+  color: var(--text-dim);
+  font-size: 11px;
+}
 .file-browser-main {
   display: flex;
   flex-direction: column;

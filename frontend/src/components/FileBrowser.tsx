@@ -1,4 +1,28 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+
+const RECENT_KEY = 'mm-file-browser-recent';
+const RECENT_MAX = 10;
+
+function loadRecent(): string[] {
+  try {
+    const raw = localStorage.getItem(RECENT_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? (parsed as string[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+function pushRecent(path: string): string[] {
+  const next = [path, ...loadRecent().filter((p) => p !== path)].slice(0, RECENT_MAX);
+  try {
+    localStorage.setItem(RECENT_KEY, JSON.stringify(next));
+  } catch {
+    // storage quota exceeded or unavailable — ignore
+  }
+  return next;
+}
 
 export type BrowseMode = 'open' | 'save';
 
@@ -53,6 +77,12 @@ export function FileBrowser({
   const [pathInput, setPathInput] = useState('');
   const [filename, setFilename] = useState(defaultFilename ?? '');
   const [selected, setSelected] = useState<FileEntry | null>(null);
+  // Recent dirs are stored in localStorage and updated on each successful
+  // directory navigation. Use a ref-backed state so pushRecent (which
+  // writes localStorage) is called exactly once per successful load.
+  const [recentDirs, setRecentDirs] = useState<string[]>(() => loadRecent());
+  // Track the last path we pushed so we don't double-record the initial load.
+  const lastPushedRef = useRef<string | null>(null);
 
   const load = useCallback(
     async (path: string) => {
@@ -71,6 +101,11 @@ export function FileBrowser({
         setData(body);
         setPathInput(body.path);
         setSelected(null);
+        // Record every successfully visited directory in the recent list.
+        if (lastPushedRef.current !== body.path) {
+          lastPushedRef.current = body.path;
+          setRecentDirs(pushRecent(body.path));
+        }
       } catch (err) {
         setError((err as Error).message);
       }
@@ -166,6 +201,16 @@ export function FileBrowser({
                 {shortcutLabel(r)}
               </button>
             ))}
+            {recentDirs.length > 0 && (
+              <>
+                <div className="shortcut-label">Recent</div>
+                {recentDirs.map((r) => (
+                  <button key={r} className="shortcut shortcut-recent" onClick={() => void load(r)} title={r}>
+                    {shortcutLabel(r)}
+                  </button>
+                ))}
+              </>
+            )}
           </div>
 
           <div className="file-browser-main">
