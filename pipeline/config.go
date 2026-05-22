@@ -1299,6 +1299,19 @@ type Options struct {
 	// Per-output overrides live on Output.Realtime.
 	PrebufferDurationSeconds float64 `json:"prebuffer_duration_seconds,omitempty"`
 	PrebufferMaxSeconds      float64 `json:"prebuffer_max_seconds,omitempty"`
+
+	// ReadRate is a global default applied to every input whose own
+	// read_rate field is zero. Paces demuxer reads to
+	// (ReadRate × realtime); 0 = unpaced; 1.0 mirrors ffmpeg -re.
+	// Set to 1.0 together with realtime:true for live-restream jobs so
+	// the demuxer doesn't race ahead of the pipeline clock.
+	ReadRate float64 `json:"read_rate,omitempty"`
+	// ReadRateInitialBurst is the global default for the per-input
+	// read_rate_initial_burst field; see Input.ReadRateInitialBurst.
+	ReadRateInitialBurst float64 `json:"read_rate_initial_burst,omitempty"`
+	// ReadRateCatchup is the global default for the per-input
+	// read_rate_catchup field; see Input.ReadRateCatchup.
+	ReadRateCatchup float64 `json:"read_rate_catchup,omitempty"`
 }
 
 // RealtimeOutputOptions holds per-output Phase 7 pre-roll overrides.
@@ -1421,6 +1434,22 @@ func validate(cfg *Config) error {
 	}
 	// All input IDs must be unique.
 	seen := map[string]bool{}
+	// Propagate global_options read_rate defaults to any input that has
+	// no per-input override set. This lets `global_options.read_rate: 1.0`
+	// pace every input without repeating the field on each input block.
+	if cfg.GlobalOptions.ReadRate != 0 {
+		for i := range cfg.Inputs {
+			if cfg.Inputs[i].ReadRate == 0 {
+				cfg.Inputs[i].ReadRate = cfg.GlobalOptions.ReadRate
+			}
+			if cfg.Inputs[i].ReadRateInitialBurst == 0 && cfg.GlobalOptions.ReadRateInitialBurst != 0 {
+				cfg.Inputs[i].ReadRateInitialBurst = cfg.GlobalOptions.ReadRateInitialBurst
+			}
+			if cfg.Inputs[i].ReadRateCatchup == 0 && cfg.GlobalOptions.ReadRateCatchup != 0 {
+				cfg.Inputs[i].ReadRateCatchup = cfg.GlobalOptions.ReadRateCatchup
+			}
+		}
+	}
 	for i, inp := range cfg.Inputs {
 		if inp.ID == "" {
 			return fmt.Errorf("input[%d] missing id", i)
