@@ -191,8 +191,13 @@ As…** buttons use the browser-native File System Access API where
 available, falling back to a `<input type=file>` / anchor download in
 Firefox and Safari.)
 
-* The left sidebar lists shortcuts for your home directory, the directory
-  the binary was launched from, and the filesystem root.
+* The left sidebar has two sections:
+  * **Shortcuts** — your home directory, the directory the binary was
+    launched from, and the filesystem root.
+  * **Recent** — the last 10 directories you navigated to, most recent
+    first.  The list is persisted in `localStorage` (key
+    `mm-file-browser-recent`) so it survives page reloads and is shared
+    across all open/save dialogs.
 * The pathbar at the top lets you type a path directly and press
   <kbd>Enter</kbd> or click **Go**, or use the **↑** button to ascend.
 * In **Open** mode, double-click a file to select it. The dialog filters by
