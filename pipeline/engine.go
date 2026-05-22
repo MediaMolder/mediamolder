@@ -1216,6 +1216,7 @@ func (p *Pipeline) runGraph(ctx context.Context) (runErr error) {
 		if cfg.GlobalOptions.PresetGroupStep != nil {
 			ctrl.groupStep = *cfg.GlobalOptions.PresetGroupStep
 		}
+		ctrl.logPath = cfg.GlobalOptions.RealtimeLogPath
 		p.mu.Lock()
 		p.realtimeCtrl = ctrl
 		p.mu.Unlock()

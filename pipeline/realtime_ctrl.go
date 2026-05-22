@@ -4,7 +4,12 @@
 package pipeline
 
 import (
+	"bufio"
 	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"os"
 	"sync"
 	"time"
 
@@ -12,6 +17,31 @@ import (
 	"github.com/MediaMolder/MediaMolder/observability"
 	"github.com/MediaMolder/MediaMolder/pipeline/snap"
 )
+
+// rtLogEntry is one line of the realtime controller debug log.
+// Written as JSONL (one JSON object per line) when RealtimeLogPath is set.
+type rtLogEntry struct {
+	T                    string         `json:"t"`                               // RFC3339Nano wall time
+	ElapsedNs            int64          `json:"elapsed_ns"`                     // pipeline elapsed time
+	Tick                 int64          `json:"tick"`                            // monotonic tick counter
+	FPSTarget            float64        `json:"fps_target"`                     // graph-level target
+	FPSActual            float64        `json:"fps_actual"`                     // graph-level actual
+	Satisfied            bool           `json:"satisfied"`
+	HighestQualityPreset string         `json:"highest_quality_preset,omitempty"`
+	GroupStep            bool           `json:"group_step"`
+	Nodes                []rtLogNode    `json:"nodes"`
+	Decisions            []snap.DecisionRecord `json:"decisions,omitempty"` // decisions made THIS tick only
+}
+
+// rtLogNode is one node's performance data plus the controller's internal
+// state for that node. The embedded NodePerfSnapshot fields appear at the
+// top level in JSON (PascalCase names, matching the existing metrics API).
+type rtLogNode struct {
+	snap.NodePerfSnapshot
+	WindowsSinceAdj    int `json:"windows_since_adj"`    // consecutive windows this node has been behind
+	WindowsSincePreset int `json:"windows_since_preset"` // ticks since last preset change
+	OvershootWindows   int `json:"overshoot_windows"`    // consecutive windows of excess headroom
+}
 
 // realtimeController is the Phase 5 adaptive control loop. It observes per-node
 // performance snapshots every rtInterval and, when a node falls behind its FPS
@@ -57,6 +87,15 @@ type realtimeController struct {
 	decMu        sync.Mutex
 	decisions    []snap.DecisionRecord
 	decisionsCap int
+
+	// Debug log: when logPath is non-empty the controller writes one
+	// JSONL record per observe() tick to this file.
+	logPath       string
+	logMu         sync.Mutex
+	logBuf        *bufio.Writer
+	logFileCloser io.Closer
+	tickCount     int64
+	tickDecisions []snap.DecisionRecord // decisions made in the current tick
 }
 
 const (
@@ -101,6 +140,16 @@ func newRealtimeController(
 
 // run is the main loop. It blocks until ctx is cancelled.
 func (c *realtimeController) run(ctx context.Context) {
+	if c.logPath != "" {
+		if err := c.openLogFile(); err != nil {
+			// Log the error but continue running without the log file
+			// rather than aborting the whole pipeline.
+			_ = fmt.Errorf("realtime log: %w", err) // surfaced via stderr below
+			_, _ = fmt.Fprintf(os.Stderr, "mediamolder: realtime controller: cannot open log %q: %v\n", c.logPath, err)
+		} else {
+			defer c.closeLogFile()
+		}
+	}
 	ticker := time.NewTicker(c.interval)
 	defer ticker.Stop()
 	for {
@@ -113,8 +162,108 @@ func (c *realtimeController) run(ctx context.Context) {
 	}
 }
 
+// openLogFile creates (or truncates) the debug log file and writes a
+// header line describing the controller configuration.
+func (c *realtimeController) openLogFile() error {
+	f, err := os.OpenFile(c.logPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+	if err != nil {
+		return err
+	}
+	c.logMu.Lock()
+	c.logBuf = bufio.NewWriterSize(f, 64*1024)
+	c.logFileCloser = f
+	c.logMu.Unlock()
+	// Write a self-describing header as the first line.
+	hdr := map[string]any{
+		"type":                   "header",
+		"version":                1,
+		"t":                      time.Now().Format(time.RFC3339Nano),
+		"highest_quality_preset": c.highestQualityPreset,
+		"group_step":             c.groupStep,
+		"target_fps":             c.targetFPS,
+		"interval_ms":            c.interval.Milliseconds(),
+		"cooldown_wins":          rtMinCooldownWindows,
+		"preset_cooldown_wins":   rtPresetCooldownWins,
+		"deficit_threshold":      rtDeficitThreshold,
+		"preset_deficit":         rtPresetDeficit,
+		"overshoot_threshold":    rtPresetOvershoot,
+		"overshoot_wins":         rtOvershootWindows,
+		"group_quorum":           rtPresetGroupQuorum,
+	}
+	return c.writeJSON(hdr)
+}
+
+// closeLogFile flushes and closes the debug log file.
+func (c *realtimeController) closeLogFile() {
+	c.logMu.Lock()
+	defer c.logMu.Unlock()
+	if c.logBuf != nil {
+		_ = c.logBuf.Flush()
+		c.logBuf = nil
+	}
+	if c.logFileCloser != nil {
+		_ = c.logFileCloser.Close()
+		c.logFileCloser = nil
+	}
+}
+
+// writeJSON marshals v as JSON and appends a newline to the log.
+func (c *realtimeController) writeJSON(v any) error {
+	c.logMu.Lock()
+	defer c.logMu.Unlock()
+	if c.logBuf == nil {
+		return nil
+	}
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	_, err = c.logBuf.Write(b)
+	if err == nil {
+		_ = c.logBuf.WriteByte('\n')
+	}
+	// Flush every write so data survives a kill/panic.
+	_ = c.logBuf.Flush()
+	return err
+}
+
+// writeLogEntry emits one JSONL tick record.
+func (c *realtimeController) writeLogEntry(shot snap.MetricsSnapshot) {
+	if c.logBuf == nil {
+		return
+	}
+	c.tickCount++
+	fpsTarget, fpsActual, satisfied := graphFPS(shot)
+	nodes := make([]rtLogNode, 0, len(shot.Perf))
+	for _, p := range shot.Perf {
+		nodes = append(nodes, rtLogNode{
+			NodePerfSnapshot:   p,
+			WindowsSinceAdj:    c.windowsSinceAdj[p.NodeID],
+			WindowsSincePreset: c.windowsSincePreset[p.NodeID],
+			OvershootWindows:   c.overshootWindows[p.NodeID],
+		})
+	}
+	entry := rtLogEntry{
+		T:                    time.Now().Format(time.RFC3339Nano),
+		ElapsedNs:            int64(shot.Elapsed),
+		Tick:                 c.tickCount,
+		FPSTarget:            fpsTarget,
+		FPSActual:            fpsActual,
+		Satisfied:            satisfied,
+		HighestQualityPreset: c.highestQualityPreset,
+		GroupStep:            c.groupStep,
+		Nodes:                nodes,
+		Decisions:            c.tickDecisions,
+	}
+	_ = c.writeJSON(entry)
+}
+
 // observe takes one performance snapshot and drives the decision logic.
 func (c *realtimeController) observe() {
+	// Reset the per-tick decision buffer so writeLogEntry only reports
+	// decisions made during this tick.
+	c.tickDecisions = c.tickDecisions[:0]
+
 	shot := c.registry.Snapshot()
 
 	// Tick every node's preset cooldown counter so successive observe()
@@ -163,6 +312,9 @@ func (c *realtimeController) observe() {
 	if c.groupStep {
 		c.maybeGroupStep(shot)
 	}
+
+	// Write one JSONL record to the debug log (no-op when log is disabled).
+	c.writeLogEntry(shot)
 }
 
 // decide applies the decision tree for one node that is behind target.
@@ -334,8 +486,12 @@ func (c *realtimeController) maybeGroupStep(shot snap.MetricsSnapshot) {
 	}
 }
 
-// logDecision appends d to the bounded ring buffer.
+// logDecision appends d to the bounded ring buffer and to the
+// per-tick slice (used by writeLogEntry to record only this-tick decisions).
 func (c *realtimeController) logDecision(d snap.DecisionRecord) {
+	// Per-tick slice (not mutex-protected: always called from observe() goroutine).
+	c.tickDecisions = append(c.tickDecisions, d)
+
 	c.decMu.Lock()
 	defer c.decMu.Unlock()
 	if len(c.decisions) >= c.decisionsCap {

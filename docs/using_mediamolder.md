@@ -676,6 +676,7 @@ See `testdata/examples/40_metadata_routing.json` for the explicit graph-node for
 | `preset_group_step` | bool | When `true` (default), step every eligible video encoder together once a quorum is simultaneously behind. |
 | `target_fps` | number | Graph-level real-time fps target. `0` = derive from the source frame rate. |
 | `encoder_input_buffer_frames` | int | Per-encoder input channel capacity in frames when `realtime: true`. `0` = pipeline default. `96` (~4 s at 24 fps) is recommended to absorb the close+reopen window during a preset switch. |
+| `realtime_log_path` | string | When non-empty and `realtime: true`, enables a per-tick debug log from the adaptive controller. Each line is a JSON object containing the full per-node performance snapshot, controller cool-down counters, and any decisions made that tick. The file is created (or truncated) at pipeline start. Example: `"/tmp/rt_debug.jsonl"`. Use `jq` to query the log after the run. |
 
 ---
 
