@@ -126,8 +126,9 @@ type EncoderOptions struct {
 // EncoderContext wraps an AVCodecContext configured for encoding.
 // It must be closed via Close().
 type EncoderContext struct {
-	p    *C.AVCodecContext
-	tctx *C.mm_codec_tctx_t // nil when execute2 not available
+	p         *C.AVCodecContext
+	tctx      *C.mm_codec_tctx_t // nil when execute2 not available
+	codecName string             // remembered for capability reporting
 }
 
 // OpenEncoder creates and opens an encoder from the given options.
@@ -254,7 +255,7 @@ func OpenEncoder(opts EncoderOptions) (*EncoderContext, error) {
 
 	tctx := C.mm_install_codec_tracker(ctx)
 	leakTrack(unsafe.Pointer(ctx), "AVCodecContext(encoder:"+opts.CodecName+")")
-	return &EncoderContext{p: ctx, tctx: tctx}, nil
+	return &EncoderContext{p: ctx, tctx: tctx, codecName: opts.CodecName}, nil
 }
 
 // Close frees the encoder context.

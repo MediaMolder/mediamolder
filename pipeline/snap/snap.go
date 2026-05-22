@@ -52,6 +52,35 @@ type MetricsSnapshot struct {
 	// Perf holds per-node performance timing snapshots collected by the
 	// NodePerfTracker instances registered via RegisterPerfTracker.
 	Perf []NodePerfSnapshot
+
+	// Realtime is the Phase 6 graph-level summary populated when adaptive
+	// real-time mode is enabled. Zero value is reported when realtime is
+	// off so existing JSON consumers see no new fields.
+	Realtime RealtimeSnapshot `json:",omitempty"`
+}
+
+// RealtimeSnapshot is the graph-level adaptive real-time summary attached to
+// MetricsSnapshot.Realtime when --realtime is enabled. All fields are
+// optional; consumers should treat zero values as "not applicable".
+type RealtimeSnapshot struct {
+	Enabled   bool             `json:",omitempty"`
+	FPSTarget float64          `json:",omitempty"` // max of per-node targets
+	FPSActual float64          `json:",omitempty"` // min of per-video-node fps
+	Satisfied bool             `json:",omitempty"`
+	Decisions []DecisionRecord `json:",omitempty"`
+}
+
+// DecisionRecord captures one autonomous step taken by the real-time
+// controller. Exposed via /realtime/decisions, `mediamolder perf
+// --decisions`, and pipeline.RealtimeDecisions().
+type DecisionRecord struct {
+	Time    time.Time `json:"time"`
+	NodeID  string    `json:"node"`
+	Action  string    `json:"action"` // "step_faster", "step_slower", "restart_threads", "drop_frames", "lock"
+	From    string    `json:"from,omitempty"`
+	To      string    `json:"to,omitempty"`
+	Deficit float64   `json:"deficit,omitempty"`
+	Reason  string    `json:"reason,omitempty"`
 }
 
 // NodePerfSnapshot is a point-in-time read of all performance data for one node.
@@ -100,4 +129,18 @@ type NodePerfSnapshot struct {
 	// triggered by the real-time adaptive control loop (Phase 5).
 	// Monotonically non-decreasing. 0 when real-time mode is disabled.
 	ThreadRestarts int64
+
+	// Phase 6: adaptive preset stepping. CodecName is the encoder codec
+	// (libx264/libx265/libsvtav1); empty for non-encoder nodes. CurrentPreset
+	// is the live preset name; PresetLadder is the ordered slowest→fastest
+	// list of presets the controller may select; PresetIndex is the
+	// position of CurrentPreset within PresetLadder (-1 when not on the
+	// ladder). PresetSwitches counts completed transitions; PresetLocked
+	// reports whether automatic stepping is disabled for this node.
+	CodecName      string   `json:",omitempty"`
+	CurrentPreset  string   `json:",omitempty"`
+	PresetLadder   []string `json:",omitempty"`
+	PresetIndex    int      `json:",omitempty"`
+	PresetSwitches int64    `json:",omitempty"`
+	PresetLocked   bool     `json:",omitempty"`
 }

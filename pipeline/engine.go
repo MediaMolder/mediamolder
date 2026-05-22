@@ -15,6 +15,7 @@ import (
 	"github.com/MediaMolder/MediaMolder/av"
 	"github.com/MediaMolder/MediaMolder/graph"
 	"github.com/MediaMolder/MediaMolder/observability"
+	"github.com/MediaMolder/MediaMolder/pipeline/snap"
 	"github.com/MediaMolder/MediaMolder/processors"
 	"github.com/MediaMolder/MediaMolder/runtime"
 	"go.opentelemetry.io/otel/trace"
@@ -38,13 +39,14 @@ type Pipeline struct {
 	seekTarget  int64 // seek target in AV_TIME_BASE units
 	seekPending bool  // true when a seek has been requested
 
-	metrics     *MetricsRegistry
-	edgeStats   *runtime.EdgeStatsRegistry
-	prom        *observability.Metrics  // optional Prometheus metrics; nil = disabled
-	obsProvider *observability.Provider // optional OTel tracing provider; nil = disabled
-	maxThreads  int                     // per-codec thread cap from SecurityConfig; 0 = unlimited
-	reconf      *reconfigurable         // live filter parameter changes (graph mode only)
-	graphRunner *graphRunner            // running graph resources (graph mode only)
+	metrics      *MetricsRegistry
+	edgeStats    *runtime.EdgeStatsRegistry
+	prom         *observability.Metrics  // optional Prometheus metrics; nil = disabled
+	obsProvider  *observability.Provider // optional OTel tracing provider; nil = disabled
+	maxThreads   int                     // per-codec thread cap from SecurityConfig; 0 = unlimited
+	reconf       *reconfigurable         // live filter parameter changes (graph mode only)
+	graphRunner  *graphRunner            // running graph resources (graph mode only)
+	realtimeCtrl *realtimeController     // Phase 6 adaptive controller; nil when --realtime is off
 }
 
 // NewPipeline creates a Pipeline from a validated Config.
@@ -172,9 +174,19 @@ func (p *Pipeline) seekState() (int64, bool) {
 
 // GetMetrics returns a point-in-time snapshot of pipeline metrics.
 func (p *Pipeline) GetMetrics() MetricsSnapshot {
-	snap := p.metrics.Snapshot()
-	snap.State = p.State().String()
-	return snap
+	shot := p.metrics.Snapshot()
+	shot.State = p.State().String()
+	// Phase 6: attach graph-level realtime summary when the adaptive
+	// controller is active.
+	p.mu.Lock()
+	ctrl := p.realtimeCtrl
+	p.mu.Unlock()
+	if ctrl != nil {
+		rt := snap.RealtimeSnapshot{Enabled: true, Decisions: ctrl.snapshotDecisions()}
+		rt.FPSTarget, rt.FPSActual, rt.Satisfied = graphFPS(shot)
+		shot.Realtime = rt
+	}
+	return shot
 }
 
 // Metrics returns the underlying MetricsRegistry for direct node updates.
@@ -1114,6 +1126,18 @@ func (p *Pipeline) runGraph(ctx context.Context) (runErr error) {
 			if enc := runner.encoders[node.ID]; enc != nil {
 				tr.SetThreadInfo(enc.ThreadCount(), threadModeString(enc.ActiveThreadType()))
 				tr.SetThreadBusyFn(enc.ThreadsBusy)
+				// Phase 6: seed preset metadata for adaptive stepping.
+				codecName := enc.CodecName()
+				initial := ""
+				if opts, ok := runner.encoderOpts[node.ID]; ok && opts.ExtraOpts != nil {
+					initial = opts.ExtraOpts["preset"]
+				}
+				if ladder, ok := LadderFor(codecName); ok {
+					if initial == "" {
+						initial = ladder.Default()
+					}
+					tr.SetPresetInfo(codecName, initial, ladder)
+				}
 			}
 		}
 		runner.trackers[node.ID] = tr
@@ -1154,6 +1178,17 @@ func (p *Pipeline) runGraph(ctx context.Context) (runErr error) {
 		prom := p.prom
 		p.mu.Unlock()
 		ctrl := newRealtimeController(budget, p.metrics, p.events, runner, dag, prom)
+		// Phase 6: pass adaptive-preset configuration through.
+		ctrl.presetFloor = cfg.GlobalOptions.PresetFloor
+		ctrl.presetCeiling = cfg.GlobalOptions.PresetCeiling
+		ctrl.targetFPS = cfg.GlobalOptions.TargetFPS
+		ctrl.groupStep = true
+		if cfg.GlobalOptions.PresetGroupStep != nil {
+			ctrl.groupStep = *cfg.GlobalOptions.PresetGroupStep
+		}
+		p.mu.Lock()
+		p.realtimeCtrl = ctrl
+		p.mu.Unlock()
 		go ctrl.run(ctx)
 	}
 
