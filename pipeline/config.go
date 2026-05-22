@@ -1813,6 +1813,41 @@ func validate(cfg *Config) error {
 			}
 		}
 	}
+
+	// Validate preset_floor / preset_ceiling when realtime mode is on.
+	// The ladder is ordered slowest(0)→fastest(N). floor is the minimum
+	// allowed index (slowest preset the controller may use) and ceiling
+	// is the maximum allowed index (fastest preset the controller may use).
+	// If floor index > ceiling index the constraints are mutually exclusive:
+	// every proposed step would be clamped to the wrong end, causing the
+	// controller to step in the wrong direction or do nothing.
+	if cfg.GlobalOptions.Realtime &&
+		cfg.GlobalOptions.PresetFloor != "" &&
+		cfg.GlobalOptions.PresetCeiling != "" {
+		for _, codecName := range []string{"libx264", "libx265", "libsvtav1"} {
+			ladder, ok := LadderFor(codecName)
+			if !ok {
+				continue
+			}
+			fi := ladder.IndexOf(cfg.GlobalOptions.PresetFloor)
+			ci := ladder.IndexOf(cfg.GlobalOptions.PresetCeiling)
+			if fi < 0 || ci < 0 {
+				continue // one or both names not on this codec's ladder — skip
+			}
+			if fi > ci {
+				return fmt.Errorf(
+					"global_options: preset_floor %q (ladder index %d) is faster than preset_ceiling %q (index %d) on the %s ladder — "+
+						"floor is the slowest-allowed preset and ceiling is the fastest-allowed; "+
+						"they are likely swapped (set preset_floor=%q, preset_ceiling=%q)",
+					cfg.GlobalOptions.PresetFloor, fi,
+					cfg.GlobalOptions.PresetCeiling, ci,
+					codecName,
+					cfg.GlobalOptions.PresetCeiling, cfg.GlobalOptions.PresetFloor,
+				)
+			}
+		}
+	}
+
 	return nil
 }
 

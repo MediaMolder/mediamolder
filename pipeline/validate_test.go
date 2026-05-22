@@ -591,3 +591,55 @@ func TestParamToInt(t *testing.T) {
 		}
 	}
 }
+
+// TestValidate_PresetFloorCeilingInverted is a regression test for the
+// silent misconfiguration where preset_floor and preset_ceiling are swapped.
+// On the libx264 ladder (slowest→fastest: placebo…medium…veryfast…ultrafast)
+// "floor=veryfast, ceiling=medium" is invalid because veryfast(7) > medium(4).
+// The validator must reject this with a clear diagnostic so operators catch it
+// before a run rather than discovering the controller is stepping backwards at
+// runtime.
+func TestValidate_PresetFloorCeilingInverted(t *testing.T) {
+	base := minCfg(
+		[]Input{defaultInput()},
+		[]NodeDef{{ID: "enc", Type: "encoder", Params: map[string]any{"codec": "libx264"}}},
+		[]EdgeDef{{From: "in0", To: "enc", Type: "video"}},
+		[]Output{defaultOutput()},
+	)
+	base.GlobalOptions.Realtime = true
+
+	t.Run("inverted_x264", func(t *testing.T) {
+		cfg := *base
+		cfg.GlobalOptions.PresetFloor = "veryfast"  // index 7 — faster than ceiling
+		cfg.GlobalOptions.PresetCeiling = "medium"  // index 4
+		if err := validate(&cfg); err == nil {
+			t.Fatal("expected error for inverted floor/ceiling, got nil")
+		}
+	})
+
+	t.Run("valid_x264", func(t *testing.T) {
+		cfg := *base
+		cfg.GlobalOptions.PresetFloor = "medium"   // index 4 — slower end
+		cfg.GlobalOptions.PresetCeiling = "veryfast" // index 7 — faster end
+		if err := validate(&cfg); err != nil {
+			t.Fatalf("unexpected error for valid floor/ceiling: %v", err)
+		}
+	})
+
+	t.Run("equal_floor_ceiling_ok", func(t *testing.T) {
+		cfg := *base
+		cfg.GlobalOptions.PresetFloor = "fast"
+		cfg.GlobalOptions.PresetCeiling = "fast"
+		if err := validate(&cfg); err != nil {
+			t.Fatalf("unexpected error for equal floor=ceiling: %v", err)
+		}
+	})
+
+	t.Run("only_floor_ok", func(t *testing.T) {
+		cfg := *base
+		cfg.GlobalOptions.PresetFloor = "medium"
+		if err := validate(&cfg); err != nil {
+			t.Fatalf("unexpected error for floor-only: %v", err)
+		}
+	})
+}
