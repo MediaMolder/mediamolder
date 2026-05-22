@@ -121,6 +121,17 @@ func NewNodePerfTracker(nodeID string, fpsTarget float64) *NodePerfTracker {
 	}
 }
 
+// SetFPSTarget sets the desired output frame rate. Safe to call after
+// construction; the updated value is reflected in the next Snapshot.
+func (t *NodePerfTracker) SetFPSTarget(fps float64) {
+	if t == nil {
+		return
+	}
+	t.mu.Lock()
+	t.fpsTarget = fps
+	t.mu.Unlock()
+}
+
 // SetThreadInfo records the av context thread configuration.
 // Called once by the handler after opening an encoder, decoder, or filter graph.
 func (t *NodePerfTracker) SetThreadInfo(configured int, mode string) {
