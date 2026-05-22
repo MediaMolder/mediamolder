@@ -49,9 +49,8 @@ type realtimeController struct {
 	overshootWindows   map[string]int
 
 	// Phase 6: configurable bounds and policy.
-	presetFloor   string  // never step slower than this (per ladder)
-	presetCeiling string  // never step faster than this (per ladder)
-	groupStep     bool    // step every eligible video encoder together when quorum met
+	highestQualityPreset string  // slowest (highest quality) preset allowed; controller may step faster freely
+	groupStep            bool    // step every eligible video encoder together when quorum met
 	targetFPS     float64 // optional graph-level fps_target override
 
 	// Phase 6: bounded decision log shared with HTTP / CLI consumers.
@@ -269,19 +268,12 @@ func (c *realtimeController) tryPresetStep(p snap.NodePerfSnapshot, n int, reaso
 	if next == p.CurrentPreset {
 		return false
 	}
-	// Apply floor/ceiling clamps.
-	if c.presetFloor != "" {
-		fi := ladder.IndexOf(c.presetFloor)
+	// Clamp: never step slower (higher quality) than highestQualityPreset.
+	if c.highestQualityPreset != "" {
+		qi := ladder.IndexOf(c.highestQualityPreset)
 		ni := ladder.IndexOf(next)
-		if fi >= 0 && ni >= 0 && ni < fi {
-			next = c.presetFloor
-		}
-	}
-	if c.presetCeiling != "" {
-		ci := ladder.IndexOf(c.presetCeiling)
-		ni := ladder.IndexOf(next)
-		if ci >= 0 && ni >= 0 && ni > ci {
-			next = c.presetCeiling
+		if qi >= 0 && ni >= 0 && ni < qi {
+			next = c.highestQualityPreset
 		}
 	}
 	if next == p.CurrentPreset {

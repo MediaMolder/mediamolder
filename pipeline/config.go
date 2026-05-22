@@ -1271,8 +1271,10 @@ type Options struct {
 
 	// Phase 6 — adaptive encoder preset stepping.
 	//
-	// PresetFloor: never step slower than this preset (per codec ladder).
-	// PresetCeiling: never step faster than this preset.
+	// HighestQualityPreset: the slowest (highest quality) preset the
+	//   controller is allowed to use. The controller may step freely to
+	//   any faster preset when needed to keep up with real time. If
+	//   unset, the encoder's initial preset is used as the quality bound.
 	// PresetGroupStep: when non-nil, overrides the default true setting
 	//   for the group-quorum step rule (steps every eligible video encoder
 	//   together when enough are simultaneously behind).
@@ -1282,8 +1284,7 @@ type Options struct {
 	//   frames; 0 = pipeline default (~8). The recommended realtime
 	//   value is 96 (~4 s @ 24 fps) so a preset close+reopen does not
 	//   stall upstream filters during the transition.
-	PresetFloor              string  `json:"preset_floor,omitempty"`
-	PresetCeiling            string  `json:"preset_ceiling,omitempty"`
+	HighestQualityPreset     string  `json:"highest_quality_preset,omitempty"`
 	PresetGroupStep          *bool   `json:"preset_group_step,omitempty"`
 	TargetFPS                float64 `json:"target_fps,omitempty"`
 	EncoderInputBufferFrames int     `json:"encoder_input_buffer_frames,omitempty"`
@@ -1814,37 +1815,25 @@ func validate(cfg *Config) error {
 		}
 	}
 
-	// Validate preset_floor / preset_ceiling when realtime mode is on.
-	// The ladder is ordered slowest(0)→fastest(N). floor is the minimum
-	// allowed index (slowest preset the controller may use) and ceiling
-	// is the maximum allowed index (fastest preset the controller may use).
-	// If floor index > ceiling index the constraints are mutually exclusive:
-	// every proposed step would be clamped to the wrong end, causing the
-	// controller to step in the wrong direction or do nothing.
-	if cfg.GlobalOptions.Realtime &&
-		cfg.GlobalOptions.PresetFloor != "" &&
-		cfg.GlobalOptions.PresetCeiling != "" {
+	// Validate highest_quality_preset when realtime mode is on.
+	// It must name a preset that exists on at least one known codec ladder.
+	if cfg.GlobalOptions.Realtime && cfg.GlobalOptions.HighestQualityPreset != "" {
+		found := false
 		for _, codecName := range []string{"libx264", "libx265", "libsvtav1"} {
 			ladder, ok := LadderFor(codecName)
 			if !ok {
 				continue
 			}
-			fi := ladder.IndexOf(cfg.GlobalOptions.PresetFloor)
-			ci := ladder.IndexOf(cfg.GlobalOptions.PresetCeiling)
-			if fi < 0 || ci < 0 {
-				continue // one or both names not on this codec's ladder — skip
+			if ladder.IndexOf(cfg.GlobalOptions.HighestQualityPreset) >= 0 {
+				found = true
+				break
 			}
-			if fi > ci {
-				return fmt.Errorf(
-					"global_options: preset_floor %q (ladder index %d) is faster than preset_ceiling %q (index %d) on the %s ladder — "+
-						"floor is the slowest-allowed preset and ceiling is the fastest-allowed; "+
-						"they are likely swapped (set preset_floor=%q, preset_ceiling=%q)",
-					cfg.GlobalOptions.PresetFloor, fi,
-					cfg.GlobalOptions.PresetCeiling, ci,
-					codecName,
-					cfg.GlobalOptions.PresetCeiling, cfg.GlobalOptions.PresetFloor,
-				)
-			}
+		}
+		if !found {
+			return fmt.Errorf(
+				"global_options: highest_quality_preset %q is not a recognised preset on any known codec ladder",
+				cfg.GlobalOptions.HighestQualityPreset,
+			)
 		}
 	}
 
