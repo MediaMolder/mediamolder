@@ -6,6 +6,22 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 ## [Unreleased]
 
 ### Added
+- **Design: adaptive encoder preset stepping & real-time output buffering
+  (Phases 6 and 7).** `docs/architecture/node_perf_monitoring_design.md` gains
+  two new design phases. Phase 6 specifies GOP-boundary preset stepping for
+  `libx264`, `libx265`, and `libsvtav1` (close+reopen at next IDR for x264/x265,
+  hot `svt_av1_enc_set_parameter` for SVT-AV1), an extended real-time control
+  decision tree with overshoot detection, group-step coordination across ABR
+  renditions, a bounded `RealtimeDecisionLog` exposed via API/CLI/GUI/
+  Prometheus, graph-level FPS gauges, configurable encoder-input buffer
+  sizing, and CLI/Core API/GUI control surfaces (`--preset-floor`,
+  `--preset-ceiling`, `mediamolder preset get/set/clear`, Inspector preset
+  override). Phase 7 specifies per-output pre-roll buffering (default 4 s,
+  PTS-based duration accounting, oldest-drop on overflow), a graph-level
+  `Pipeline.Ready()` signal, and readiness surfaces on stdout/`--ready-fd`,
+  HTTP `/realtime/ready[/stream]`, Prometheus, event bus, and GUI toolbar
+  pill. No code changes yet — design only.
+
 - **Advisory `ffmpeg_cmd` field in pipeline.Config.**
   A new top-level `ffmpeg_cmd` string field (omitempty) stores the equivalent
   FFmpeg command line for a job. Three rules govern its use:
