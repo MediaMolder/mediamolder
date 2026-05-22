@@ -656,6 +656,11 @@ type Output struct {
 	DisableAudio    bool `json:"an,omitempty"`
 	DisableSubtitle bool `json:"sn,omitempty"`
 	DisableData     bool `json:"dn,omitempty"`
+	// Realtime, when non-nil, overrides the global Phase 7 pre-roll
+	// settings for this output only (e.g. an audio-only HLS variant
+	// can set PrebufferDurationSeconds: 1.0 while video variants keep
+	// the global 4.0 s default).
+	Realtime *RealtimeOutputOptions `json:"realtime,omitempty"`
 	// Metadata is the container-level metadata table written into the
 	// output (`-metadata key=value` in FFmpeg). When non-nil it
 	// completely replaces any metadata mapped from inputs via
@@ -1282,6 +1287,25 @@ type Options struct {
 	PresetGroupStep          *bool   `json:"preset_group_step,omitempty"`
 	TargetFPS                float64 `json:"target_fps,omitempty"`
 	EncoderInputBufferFrames int     `json:"encoder_input_buffer_frames,omitempty"`
+
+	// Phase 7 — real-time output buffering & readiness signal.
+	//
+	// PrebufferDurationSeconds: target per-output preroll fill (seconds)
+	//   before the muxer is allowed to write. Default 4.0 s for video
+	//   outputs (1.0 s for audio-only outputs). 0 disables prerolling.
+	// PrebufferMaxSeconds: hard cap on the preroll buffer; once exceeded
+	//   the oldest packet is dropped (oldest-drop ring). Defaults to
+	//   2 × PrebufferDurationSeconds.
+	// Per-output overrides live on Output.Realtime.
+	PrebufferDurationSeconds float64 `json:"prebuffer_duration_seconds,omitempty"`
+	PrebufferMaxSeconds      float64 `json:"prebuffer_max_seconds,omitempty"`
+}
+
+// RealtimeOutputOptions holds per-output Phase 7 pre-roll overrides.
+// When a field is zero the corresponding global default applies.
+type RealtimeOutputOptions struct {
+	PrebufferDurationSeconds float64 `json:"prebuffer_duration_seconds,omitempty"`
+	PrebufferMaxSeconds      float64 `json:"prebuffer_max_seconds,omitempty"`
 }
 
 // ErrorPolicy defines how a node handles errors.

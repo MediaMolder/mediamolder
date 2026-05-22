@@ -131,6 +131,17 @@ type PresetSwitchCompleted struct {
 
 func (PresetSwitchCompleted) eventTag() {}
 
+// RealTimeReady is emitted exactly once by the per-output preroll
+// aggregator (Phase 7) when every output sink has reached its fill
+// target (READY / READY_PARTIAL / STREAMING). It marks the moment the
+// pipeline is safe to begin muxing to downstream consumers.
+type RealTimeReady struct {
+	When      time.Time
+	PerOutput map[string]string // node id → state
+}
+
+func (RealTimeReady) eventTag() {}
+
 // MetricsEmitter periodically posts MetricsSnapshotEvent to the event bus
 // and optionally bridges metrics to Prometheus collectors.
 type MetricsEmitter struct {

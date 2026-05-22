@@ -72,6 +72,13 @@ type Metrics struct {
 	PipelineFPSActual  *prometheus.GaugeVec   // graph-level achieved fps
 	RealtimeDecisions  *prometheus.CounterVec // labelled by action
 
+	// Phase 7: per-output preroll buffer.
+	OutputBufferDuration  *prometheus.GaugeVec   // labels: node
+	OutputBufferTarget    *prometheus.GaugeVec   // labels: node
+	OutputBufferState     *prometheus.GaugeVec   // labels: node,state
+	OutputBufferEvictions *prometheus.CounterVec // labels: node,reason
+	PipelineReady         *prometheus.GaugeVec   // 1 once all outputs ready
+
 	registry *prometheus.Registry
 
 	// mu guards prevStallCount and prevRestartCount for counter delta
@@ -285,6 +292,38 @@ func NewMetrics(pipelineID string) *Metrics {
 			Help:        "Real-time controller decisions, labelled by action.",
 			ConstLabels: constLabels,
 		}, []string{"action"}),
+
+		// --- Phase 7: per-output preroll buffer ---
+
+		OutputBufferDuration: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name:        "mediamolder_output_buffer_duration_seconds",
+			Help:        "Current preroll buffered duration per output, in seconds.",
+			ConstLabels: constLabels,
+		}, []string{"node"}),
+
+		OutputBufferTarget: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name:        "mediamolder_output_buffer_target_seconds",
+			Help:        "Per-output preroll fill target, in seconds.",
+			ConstLabels: constLabels,
+		}, []string{"node"}),
+
+		OutputBufferState: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name:        "mediamolder_output_buffer_state",
+			Help:        "1 for the active preroll state of each output (FILLING/READY/READY_PARTIAL/STREAMING/DRAINING).",
+			ConstLabels: constLabels,
+		}, []string{"node", "state"}),
+
+		OutputBufferEvictions: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name:        "mediamolder_output_buffer_evictions_total",
+			Help:        "Packets dropped from the preroll buffer, labelled by reason (overflow).",
+			ConstLabels: constLabels,
+		}, []string{"node", "reason"}),
+
+		PipelineReady: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name:        "mediamolder_pipeline_ready",
+			Help:        "1 when every output sink has reached READY/READY_PARTIAL/STREAMING, 0 otherwise.",
+			ConstLabels: constLabels,
+		}, []string{}),
 	}
 
 	reg.MustRegister(
@@ -302,6 +341,9 @@ func NewMetrics(pipelineID string) *Metrics {
 		// Phase 6
 		m.NodePresetCurrent, m.NodePresetSwitches,
 		m.PipelineFPSTarget, m.PipelineFPSActual, m.RealtimeDecisions,
+		// Phase 7
+		m.OutputBufferDuration, m.OutputBufferTarget, m.OutputBufferState,
+		m.OutputBufferEvictions, m.PipelineReady,
 	)
 
 	return m
@@ -406,6 +448,24 @@ func (m *Metrics) Update(s snap.MetricsSnapshot) {
 		// Decisions are append-only in the snapshot; the controller
 		// also bumps the counter directly when it emits them, so this
 		// pass only updates the gauges.
+
+		// Phase 7: per-output preroll gauges.
+		ready := 0.0
+		if s.Realtime.Ready {
+			ready = 1.0
+		}
+		m.PipelineReady.WithLabelValues().Set(ready)
+		for _, o := range s.Realtime.Outputs {
+			m.OutputBufferDuration.WithLabelValues(o.NodeID).Set(o.BufferedDur.Seconds())
+			m.OutputBufferTarget.WithLabelValues(o.NodeID).Set(o.TargetDur.Seconds())
+			for _, st := range []string{"FILLING", "READY", "READY_PARTIAL", "STREAMING", "DRAINING"} {
+				v := 0.0
+				if st == o.State {
+					v = 1.0
+				}
+				m.OutputBufferState.WithLabelValues(o.NodeID, st).Set(v)
+			}
+		}
 	}
 }
 
