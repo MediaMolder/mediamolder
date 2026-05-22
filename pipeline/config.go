@@ -1313,6 +1313,15 @@ type Options struct {
 	// ReadRateCatchup is the global default for the per-input
 	// read_rate_catchup field; see Input.ReadRateCatchup.
 	ReadRateCatchup float64 `json:"read_rate_catchup,omitempty"`
+
+	// RealtimeLogPath, when non-empty, enables a per-tick debug log written
+	// by the real-time adaptive controller. Each line is a JSON object
+	// containing the full NodePerfSnapshot for every node, the controller's
+	// internal cool-down counters, and any decisions made that tick.
+	// Useful for post-hoc diagnosis of performance anomalies.
+	// The file is created (or truncated) when the pipeline starts.
+	// Only active when realtime:true. Example: "/tmp/rt_debug.jsonl".
+	RealtimeLogPath string `json:"realtime_log_path,omitempty"`
 }
 
 // RealtimeOutputOptions holds per-output Phase 7 pre-roll overrides.

@@ -313,7 +313,8 @@
         "prebuffer_max_seconds": { "type": "number", "minimum": 0, "description": "Phase 7 hard cap on the preroll buffer; once exceeded the oldest packet is dropped. Defaults to 2 × prebuffer_duration_seconds." },
         "read_rate": { "type": "number", "minimum": 0, "description": "Global default demuxer read-rate applied to every input whose own read_rate is unset. Paces packet reads to (read_rate × realtime); 0 = unpaced; 1.0 mirrors ffmpeg -re. Set to 1.0 with realtime:true for live-restream jobs." },
         "read_rate_initial_burst": { "type": "number", "minimum": 0, "description": "Global default for per-input read_rate_initial_burst. Seconds of unpaced burst allowed before the read-rate pacer engages. Defaults to 0.5 (FFmpeg default) when read_rate is non-zero and this field is unset." },
-        "read_rate_catchup": { "type": "number", "minimum": 0, "description": "Global default for per-input read_rate_catchup. Multiplier used when the demuxer falls behind real-time; must be >= read_rate. Defaults to read_rate × 1.05 when unset." }
+        "read_rate_catchup": { "type": "number", "minimum": 0, "description": "Global default for per-input read_rate_catchup. Multiplier used when the demuxer falls behind real-time; must be >= read_rate. Defaults to read_rate × 1.05 when unset." },
+        "realtime_log_path": { "type": "string", "description": "When non-empty and realtime:true, the adaptive controller writes one JSONL record per observation tick (every 500 ms) to this file. Each record contains the full per-node performance snapshot, controller cool-down counters, and any decisions made that tick. Use for post-hoc diagnosis of realtime performance anomalies. The file is created (or truncated) when the pipeline starts. Example: \"/tmp/rt_debug.jsonl\"." }
       }
     },
     "error_policy": {

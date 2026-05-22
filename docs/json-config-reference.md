@@ -315,6 +315,7 @@ model-bearing suffix heuristic.
 | `read_rate`   | number | no      | Global default demuxer read-rate for all inputs whose own `read_rate` is unset. `1.0` mirrors FFmpeg `-re`; `0` disables pacing. |
 | `read_rate_initial_burst` | number | no | Global default for per-input `read_rate_initial_burst`. |
 | `read_rate_catchup` | number | no | Global default for per-input `read_rate_catchup`. |
+| `realtime_log_path` | string | no | When non-empty and `realtime: true`, the adaptive controller writes one JSONL record per observation tick (every 500 ms) to this file. Each record contains the full per-node `NodePerfSnapshot`, the controller's internal cool-down counters (`windows_since_adj`, `windows_since_preset`, `overshoot_windows`), and any decisions made that tick. The first line is a header record (`"type":"header"`) with all tunable constants. Use for post-hoc diagnosis of real-time performance anomalies. The file is created (or truncated) at pipeline start. Example: `"/tmp/rt_debug.jsonl"`. |
 
 Per-node `params.threads` and `params.thread_type` override the global values for individual codecs. See [Threading Architecture](architecture/threading-architecture.md).
 
