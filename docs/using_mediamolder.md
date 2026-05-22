@@ -671,7 +671,11 @@ See `testdata/examples/40_metadata_routing.json` for the explicit graph-node for
 | `threads` | int | Maximum worker threads (0 = auto) |
 | `hw_accel` | string | Hardware acceleration backend: `"cuda"`, `"vaapi"`, `"qsv"`, `"videotoolbox"` |
 | `hw_device` | string | Device selector: GPU index (`"0"`), `/dev/dri/renderD128` for VAAPI, etc. |
-| `realtime` | bool | Enable adaptive real-time mode: the control loop dynamically increases encoder thread counts and (as a last resort) drops frames to keep every node at or above its `fps_target`. Set via `--realtime` CLI flag or the **Real-time** checkbox in the GUI toolbar — see [§5.12](#512-real-time-mode) |
+| `realtime` | bool | Enable adaptive real-time mode: the control loop dynamically steps encoder presets, increases thread counts, and (as a last resort) drops frames to keep every node at or above its `fps_target`. Set via `--realtime` CLI flag or the **Real-time** checkbox in the GUI toolbar — see [§5.12](#512-real-time-mode) |
+| `highest_quality_preset` | string | The slowest (highest quality) preset the adaptive controller is allowed to use. The controller may step freely to any faster preset to maintain real-time throughput. Only meaningful when `realtime: true`. Example: `"medium"` permits stepping from `medium` all the way to `ultrafast`. Omit to allow the full ladder. |
+| `preset_group_step` | bool | When `true` (default), step every eligible video encoder together once a quorum is simultaneously behind. |
+| `target_fps` | number | Graph-level real-time fps target. `0` = derive from the source frame rate. |
+| `encoder_input_buffer_frames` | int | Per-encoder input channel capacity in frames when `realtime: true`. `0` = pipeline default. `96` (~4 s at 24 fps) is recommended to absorb the close+reopen window during a preset switch. |
 
 ---
 
@@ -1291,8 +1295,9 @@ In the GUI, check the **Real-time** checkbox in the toolbar before pressing **Ru
 | Condition | Action |
 |---|---|
 | Node behind `fps_target` + `ActiveFrac > 90%` + threads fully occupied | Increase codec thread count by 2 (graceful restart) |
-| Thread budget exhausted + `FPSDeficit > 1 fps` | Enable frame-drop mode on the upstream source (1 in 4 frames skipped); emit `RealTimeViolation` event |
-| Node behind target + `ActiveFrac > 90%` + threads underutilised | Sequential bottleneck — emit advisory violation; recommend a faster codec preset |
+| Node behind `fps_target` + threads fully occupied + codec is sequential bottleneck | Step every video encoder one preset faster (GOP-boundary close+reopen for x264/x265; hot reconfig for SVT-AV1). Respects `highest_quality_preset` as the slowest allowed preset |
+| Thread budget exhausted + preset already at fastest + `FPSDeficit > 1 fps` | Enable frame-drop mode on the upstream source (1 in 4 frames skipped); emit `RealTimeViolation` event |
+| Node over-headroom after a preset step for ≥ 3 s | Step one preset slower (back toward higher quality) |
 | Node behind target + `StalledFrac > 50%` | Downstream bottleneck — do not act on this node; the control loop addresses the actual bottleneck downstream |
 
 **Thread budget:** the total CPU threads available across all encoder nodes defaults to `runtime.NumCPU()` minus 2 reserved for the Go runtime. Hardware-accelerated nodes (NVENC, VideoToolbox, etc.) are exempt and do not consume the CPU budget.

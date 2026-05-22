@@ -1010,7 +1010,7 @@ the trigger for a preset step.
       Apply preset step on each affected node:
           newPreset, clamped = ladder.Step(currentPreset, +1)
           if clamped:
-              emit RealTimeViolation{Reason: "preset floor reached"}
+              emit RealTimeViolation{Reason: "highest quality preset reached"}
               fall through to frame-drop mode
           else:
               tracker.RequestPresetChange(newPreset)
@@ -1093,7 +1093,7 @@ single node:
 |---|---|---|
 | `mediamolder_pipeline_fps_target` | Gauge | The graph's wall-clock fps target (input source frame rate, or `--target-fps` override) |
 | `mediamolder_pipeline_fps_actual` | Gauge | Min of every output sink's measured FPS over the last 1 s window |
-| `mediamolder_pipeline_realtime_satisfied` | Gauge | (already exists in §5b) updated to consider preset floor and overshoot |
+| `mediamolder_pipeline_realtime_satisfied` | Gauge | (already exists in §5b) updated to consider `highest_quality_preset` and overshoot |
 | `mediamolder_node_preset_switches_total` | Counter | Per-node preset change count, labelled by `from` / `to` |
 | `mediamolder_node_preset_current` | Gauge (string-encoded) | Current preset as a numeric index 0=slowest |
 
@@ -1101,7 +1101,7 @@ In the GUI:
 
 - The toolbar gains a small "Real-time" status pill showing
   `<actual> / <target> fps`, green if `realtime_satisfied = 1`, amber if
-  preset floor is reached but no drops yet, red if drops are active.
+  `highest_quality_preset` is reached but no drops yet, red if drops are active.
 - Hovering each encoder node in the canvas shows a tooltip with the live
   preset, last switch time, switch count, and "next switch eligible at" time
   (current time + cooldown remaining).
@@ -1113,10 +1113,9 @@ In the GUI:
 
 ```
 mediamolder run --realtime \
-  --preset-floor=medium       # never step faster than this preset
-  --preset-ceiling=slower      # never step slower than this preset
-  --preset-group=true          # step all video encoders together (default)
-  --target-fps=24              # explicit graph fps target; overrides source rate
+  --highest-quality-preset=medium   # slowest (highest quality) preset the controller may use
+  --preset-group=true               # step all video encoders together (default)
+  --target-fps=24                   # explicit graph fps target; overrides source rate
   pipeline.json
 ```
 
@@ -1141,7 +1140,7 @@ existing metrics HTTP server (the only operator-control channel today; we add
 type RealtimeOptions struct {
     Enabled              bool
     TargetFPS            float64       // 0 = derive from source
-    HighestQualityPreset string        // codec-relative; "" = no quality bound (step all the way to fastest)
+    HighestQualityPreset string        // codec-relative; "" = no quality bound (step all the way to placebo)
     Group                bool          // group-step all video encoders
 }
 
@@ -1169,9 +1168,8 @@ section:
 
 - **Enable real-time** — same checkbox that already exists in the toolbar.
 - **Target FPS** — number input; blank = derive from source.
-- **Preset floor** — dropdown populated from the most-restrictive ladder among
-  all selected encoders; greys out presets faster than the floor.
-- **Preset ceiling** — dropdown, same logic on the slow side.
+- **Highest quality preset** — dropdown populated from the codec ladder; limits
+  how far toward the slow end the controller may step back under light load.
 - **Group video encoders** — checkbox; default checked.
 
 Each encoder node's Inspector gains:
