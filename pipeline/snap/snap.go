@@ -68,6 +68,26 @@ type RealtimeSnapshot struct {
 	FPSActual float64          `json:",omitempty"` // min of per-video-node fps
 	Satisfied bool             `json:",omitempty"`
 	Decisions []DecisionRecord `json:",omitempty"`
+	// Outputs holds the Phase 7 per-output preroll readiness. Empty
+	// when realtime mode is off or no outputs are configured.
+	Outputs []OutputBufferSnapshot `json:",omitempty"`
+	// Ready is true once every entry of Outputs is in
+	// {READY, READY_PARTIAL, STREAMING}.
+	Ready bool `json:",omitempty"`
+	// ReadyAt is the wall-clock time at which Ready first became true;
+	// zero when still filling.
+	ReadyAt time.Time `json:",omitempty"`
+}
+
+// OutputBufferSnapshot is the per-output Phase 7 preroll state attached
+// to MetricsSnapshot for the GUI toolbar pill, /realtime/ready, and the
+// pipeline_output_buffer_* Prometheus metrics.
+type OutputBufferSnapshot struct {
+	NodeID      string        `json:"node_id"`
+	State       string        `json:"state"`
+	BufferedDur time.Duration `json:"buffered_ns"`
+	TargetDur   time.Duration `json:"target_ns"`
+	Evictions   int64         `json:"evictions"`
 }
 
 // DecisionRecord captures one autonomous step taken by the real-time

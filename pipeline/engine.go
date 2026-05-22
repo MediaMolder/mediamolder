@@ -47,6 +47,7 @@ type Pipeline struct {
 	reconf       *reconfigurable         // live filter parameter changes (graph mode only)
 	graphRunner  *graphRunner            // running graph resources (graph mode only)
 	realtimeCtrl *realtimeController     // Phase 6 adaptive controller; nil when --realtime is off
+	ready        *graphReady             // Phase 7 per-output preroll aggregator; nil when realtime off
 }
 
 // NewPipeline creates a Pipeline from a validated Config.
@@ -184,6 +185,25 @@ func (p *Pipeline) GetMetrics() MetricsSnapshot {
 	if ctrl != nil {
 		rt := snap.RealtimeSnapshot{Enabled: true, Decisions: ctrl.snapshotDecisions()}
 		rt.FPSTarget, rt.FPSActual, rt.Satisfied = graphFPS(shot)
+		// Phase 7: per-output preroll readiness.
+		p.mu.Lock()
+		ready := p.ready
+		p.mu.Unlock()
+		if ready != nil {
+			r, since, outs := ready.State()
+			rt.Ready = r
+			rt.ReadyAt = since
+			rt.Outputs = make([]snap.OutputBufferSnapshot, 0, len(outs))
+			for _, o := range outs {
+				rt.Outputs = append(rt.Outputs, snap.OutputBufferSnapshot{
+					NodeID:      o.NodeID,
+					State:       o.State,
+					BufferedDur: o.BufferedDur,
+					TargetDur:   o.TargetDur,
+					Evictions:   o.Evictions,
+				})
+			}
+		}
 		shot.Realtime = rt
 	}
 	return shot
@@ -952,8 +972,19 @@ func (p *Pipeline) runGraph(ctx context.Context) (runErr error) {
 		p.graphRunner = nil
 		p.reconf = nil
 		p.edgeStats = nil
+		p.ready = nil
 		p.mu.Unlock()
 	}()
+
+	// Phase 7: when realtime is on, the per-output preroll aggregator
+	// must exist before openSink() runs so each sink can register its
+	// preroll into it. The Ready() channel is exposed via Pipeline.Ready
+	// and the AND-aggregator goroutine starts once the scheduler is up.
+	if cfg.GlobalOptions.Realtime {
+		p.mu.Lock()
+		p.ready = newGraphReady()
+		p.mu.Unlock()
+	}
 
 	// 3a. Open named hardware-acceleration device contexts (Wave 10 #56).
 	// These are opened before any source/encoder/filter nodes so that
@@ -1192,6 +1223,13 @@ func (p *Pipeline) runGraph(ctx context.Context) (runErr error) {
 		go ctrl.run(ctx)
 	}
 
+	// Phase 7: start the per-output preroll aggregator. It closes
+	// Pipeline.Ready() once every registered preroll signals readiness
+	// and posts a single RealTimeReady event on the bus.
+	if p.ready != nil {
+		go p.ready.run(ctx, p.events)
+	}
+
 	// Wrap handler with per-node OTel spans.
 	handler := runtime.NodeHandler(runner.handle)
 	if obs != nil {
@@ -1243,4 +1281,41 @@ func threadModeString(active int) string {
 	default:
 		return "unknown"
 	}
+}
+
+// ReadyState is a point-in-time snapshot of the Phase 7 per-output
+// preroll aggregator, returned by Pipeline.ReadyState() and emitted in
+// the RealTimeReady event.
+type ReadyState struct {
+	Ready   bool              `json:"ready"`
+	Since   time.Time         `json:"since,omitempty"`
+	Outputs []OutputReadyView `json:"outputs,omitempty"`
+}
+
+// Ready returns a channel that closes once every output's preroll
+// buffer has reached its fill target (READY/READY_PARTIAL/STREAMING).
+// When real-time mode is off it returns a closed channel so callers
+// gating on Ready() do not block.
+func (p *Pipeline) Ready() <-chan struct{} {
+	p.mu.Lock()
+	r := p.ready
+	p.mu.Unlock()
+	if r == nil {
+		closed := make(chan struct{})
+		close(closed)
+		return closed
+	}
+	return r.Ready()
+}
+
+// ReadyState returns a snapshot of per-output preroll readiness.
+func (p *Pipeline) ReadyState() ReadyState {
+	p.mu.Lock()
+	r := p.ready
+	p.mu.Unlock()
+	if r == nil {
+		return ReadyState{Ready: false}
+	}
+	ready, since, outs := r.State()
+	return ReadyState{Ready: ready, Since: since, Outputs: outs}
 }

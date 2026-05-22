@@ -5,9 +5,11 @@ package observability
 
 import (
 	"encoding/json"
+	"fmt"
 	"net"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/MediaMolder/MediaMolder/pipeline/snap"
 )
@@ -20,6 +22,13 @@ type RealtimeController interface {
 	ClearPresetOverride(nodeID string) error
 	RealtimeDecisions() []snap.DecisionRecord
 	RealtimeStatus() snap.RealtimeSnapshot
+}
+
+// ReadyReporter is the optional sub-interface for Phase 7 per-output
+// preroll readiness. Implemented on *pipeline.Pipeline via Ready() and
+// ReadyState() / via RealtimeStatus().Outputs.
+type ReadyReporter interface {
+	Ready() <-chan struct{}
 }
 
 // RegisterRealtimeHandlers wires the Phase 6 control surface on the
@@ -112,6 +121,87 @@ func (s *MetricsServer) RegisterRealtimeHandlers(ctrl RealtimeController) {
 		}
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		_ = json.NewEncoder(w).Encode(ctrl.RealtimeStatus())
+	})
+
+	// Phase 7: graph-level readiness.
+	s.mux.HandleFunc("/realtime/ready", func(w http.ResponseWriter, r *http.Request) {
+		setCORSHeaders(w)
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		st := ctrl.RealtimeStatus()
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		body := map[string]any{
+			"ready":    st.Ready,
+			"ready_at": st.ReadyAt,
+			"outputs":  st.Outputs,
+		}
+		if !st.Ready {
+			w.WriteHeader(http.StatusTooEarly) // 425
+		}
+		_ = json.NewEncoder(w).Encode(body)
+	})
+
+	rdy, _ := ctrl.(ReadyReporter)
+	s.mux.HandleFunc("/realtime/ready/stream", func(w http.ResponseWriter, r *http.Request) {
+		setCORSHeaders(w)
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			http.Error(w, "streaming unsupported", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Connection", "keep-alive")
+
+		writeEvent := func() {
+			st := ctrl.RealtimeStatus()
+			buf, _ := json.Marshal(map[string]any{
+				"ready":    st.Ready,
+				"ready_at": st.ReadyAt,
+				"outputs":  st.Outputs,
+			})
+			fmt.Fprintf(w, "data: %s\n\n", buf)
+			flusher.Flush()
+		}
+		writeEvent()
+
+		var readyCh <-chan struct{}
+		if rdy != nil {
+			readyCh = rdy.Ready()
+		}
+		t := time.NewTicker(500 * time.Millisecond)
+		defer t.Stop()
+		last := ctrl.RealtimeStatus()
+		for {
+			select {
+			case <-r.Context().Done():
+				return
+			case <-readyCh:
+				writeEvent()
+				readyCh = nil // closed channel fires forever
+			case <-t.C:
+				cur := ctrl.RealtimeStatus()
+				changed := cur.Ready != last.Ready || len(cur.Outputs) != len(last.Outputs)
+				if !changed {
+					for i := range cur.Outputs {
+						if cur.Outputs[i].State != last.Outputs[i].State {
+							changed = true
+							break
+						}
+					}
+				}
+				if changed {
+					writeEvent()
+					last = cur
+				}
+			}
+		}
 	})
 }
 

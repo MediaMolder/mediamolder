@@ -1243,6 +1243,9 @@ Each encoder node's Inspector gains:
 
 ## 6b. Phase 7 — Real-Time Output Buffering & Readiness Signal
 
+> **Status: implemented** ([pipeline/output_buffer.go](../../pipeline/output_buffer.go),
+> [docs/realtime-output.md](../realtime-output.md)).
+
 ### Motivation
 
 Real-time delivery has two distinct goals:
@@ -1494,7 +1497,10 @@ type OutputReadyState struct {
      simulated 3 s encoder outage with 4 s pre-roll.
    - `--ready-fd=3` writes exactly one byte on ready.
 10. Documentation: `docs/realtime-output.md` describing the readiness contract
-    for downstream consumers; reference from `README.md`.
+    for downstream consumers; reference from `README.md`. Update 
+	`docs/using-mediamolder.md` and `docs/gui.md`, explaining the
+	usage of the real-time mode, including new `--prebuffer` flag, 
+	Inspector controls, and the new toolbar pill.
 
 ### Open questions specific to Phase 7
 

@@ -168,6 +168,12 @@ type sinkResources struct {
 	// -fs (max_file_size) and output-side -t/-to enforcement to
 	// halt every stream consistently after the first hit.
 	stopAll atomic.Bool
+
+	// preroll holds the Phase 7 per-output pre-roll buffer when the
+	// pipeline is in real-time mode and prebuffer_duration_seconds > 0.
+	// nil when prerolling is disabled; the sink handler then writes
+	// straight through to the muxer as before.
+	preroll *OutputPreroll
 }
 
 type sinkRescale struct {
@@ -282,6 +288,7 @@ func (r *graphRunner) close() {
 				_ = b.Close()
 			}
 		}
+		s.preroll.Close()
 	}
 	for _, d := range r.hwDevices {
 		_ = d.Close()
