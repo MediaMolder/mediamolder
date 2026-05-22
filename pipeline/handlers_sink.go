@@ -874,7 +874,7 @@ func (r *graphRunner) openSink(_ *graph.Graph, node *graph.Node) (*sinkResources
 		maxFileSize:   out.MaxFileSize,
 		shortest:      out.Shortest,
 		shortestPTSus: noLimitUS,
-		preroll:       r.buildPreroll(out, muxer),
+		preroll:       r.buildPreroll(out, rescales),
 	}, nil
 }
 
@@ -889,7 +889,16 @@ func (r *graphRunner) openSink(_ *graph.Graph, node *graph.Node) (*sinkResources
 // overrides on `out.Realtime` take precedence over the global defaults.
 // Default fill target is 4 s (1 s for audio-only outputs); hard cap
 // defaults to 2 × target.
-func (r *graphRunner) buildPreroll(out *Output, muxer muxWriter) *OutputPreroll {
+//
+// rescales carries the per-channel time-base info for the packets that
+// will arrive at the preroll during Phase A. Phase A packets are
+// unrescaled encoder output, so we must use rescales[i].srcTB (the
+// encoder's output time_base) rather than the post-WriteHeader mux
+// stream time_base. Using the mux TB on encoder-TB PTS would produce
+// a span calculation that is off by a factor of ~(muxTB.den / encTB.den)
+// — typically hundreds of times too small — causing the preroll to
+// never reach its fill target.
+func (r *graphRunner) buildPreroll(out *Output, rescales []*sinkRescale) *OutputPreroll {
 	if r.cfg == nil || !r.cfg.GlobalOptions.Realtime {
 		return nil
 	}
@@ -916,13 +925,16 @@ func (r *graphRunner) buildPreroll(out *Output, muxer muxWriter) *OutputPreroll 
 	if maxDur <= 0 {
 		maxDur = 2 * target
 	}
-	var tbs [][2]int
-	for i := 0; i < 32; i++ {
-		tb := muxer.StreamTimeBase(i)
-		if tb[0] <= 0 || tb[1] <= 0 {
-			break
+	// Use the encoder output (source) time bases, not the post-WriteHeader
+	// mux stream time bases. Packets in Phase A are unrescaled.
+	const avTimeBase = 1_000_000 // AV_TIME_BASE fallback
+	tbs := make([][2]int, len(rescales))
+	for i, rs := range rescales {
+		if rs != nil && rs.srcTB[0] > 0 && rs.srcTB[1] > 0 {
+			tbs[i] = rs.srcTB
+		} else {
+			tbs[i] = [2]int{1, avTimeBase}
 		}
-		tbs = append(tbs, tb)
 	}
 	pre := NewOutputPreroll(out.ID,
 		time.Duration(target*float64(time.Second)),
