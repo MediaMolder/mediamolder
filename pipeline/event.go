@@ -106,6 +106,31 @@ type RealTimeViolation struct {
 
 func (RealTimeViolation) eventTag() {}
 
+// PresetSwitchPlanned is emitted by the adaptive control loop (Phase 6) when
+// it requests an encoder preset change. The actual switch is performed by
+// the encoder handler at its next IDR (close+reopen for x264/x265) or at
+// the next frame boundary (hot reconfig for SVT-AV1).
+type PresetSwitchPlanned struct {
+	NodeID string
+	From   string
+	To     string
+	Time   time.Time
+}
+
+func (PresetSwitchPlanned) eventTag() {}
+
+// PresetSwitchCompleted is emitted by the encoder handler after a preset
+// transition has actually taken effect on the live encoder context.
+type PresetSwitchCompleted struct {
+	NodeID     string
+	From       string
+	To         string
+	DurationNs int64
+	Time       time.Time
+}
+
+func (PresetSwitchCompleted) eventTag() {}
+
 // MetricsEmitter periodically posts MetricsSnapshotEvent to the event bus
 // and optionally bridges metrics to Prometheus collectors.
 type MetricsEmitter struct {

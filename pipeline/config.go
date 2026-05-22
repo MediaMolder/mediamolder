@@ -1263,6 +1263,25 @@ type Options struct {
 	HardwareAccel  string `json:"hw_accel,omitempty"`
 	HardwareDevice string `json:"hw_device,omitempty"`
 	Realtime       bool   `json:"realtime,omitempty"`
+
+	// Phase 6 — adaptive encoder preset stepping.
+	//
+	// PresetFloor: never step slower than this preset (per codec ladder).
+	// PresetCeiling: never step faster than this preset.
+	// PresetGroupStep: when non-nil, overrides the default true setting
+	//   for the group-quorum step rule (steps every eligible video encoder
+	//   together when enough are simultaneously behind).
+	// TargetFPS: graph-level real-time fps target; 0 = derive from
+	//   per-node fps_target params.
+	// EncoderInputBufferFrames: per-encoder input channel capacity in
+	//   frames; 0 = pipeline default (~8). The recommended realtime
+	//   value is 96 (~4 s @ 24 fps) so a preset close+reopen does not
+	//   stall upstream filters during the transition.
+	PresetFloor              string  `json:"preset_floor,omitempty"`
+	PresetCeiling            string  `json:"preset_ceiling,omitempty"`
+	PresetGroupStep          *bool   `json:"preset_group_step,omitempty"`
+	TargetFPS                float64 `json:"target_fps,omitempty"`
+	EncoderInputBufferFrames int     `json:"encoder_input_buffer_frames,omitempty"`
 }
 
 // ErrorPolicy defines how a node handles errors.

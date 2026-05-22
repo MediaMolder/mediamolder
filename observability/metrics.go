@@ -65,6 +65,13 @@ type Metrics struct {
 	PipelineFramesInFlight    *prometheus.GaugeVec // populated in Phase 4/5
 	PipelineRealtimeSatisfied *prometheus.GaugeVec
 
+	// Phase 6: adaptive preset stepping observability.
+	NodePresetCurrent  *prometheus.GaugeVec   // ladder index (0 = slowest)
+	NodePresetSwitches *prometheus.CounterVec // lifetime preset transitions
+	PipelineFPSTarget  *prometheus.GaugeVec   // graph-level realtime target
+	PipelineFPSActual  *prometheus.GaugeVec   // graph-level achieved fps
+	RealtimeDecisions  *prometheus.CounterVec // labelled by action
+
 	registry *prometheus.Registry
 
 	// mu guards prevStallCount and prevRestartCount for counter delta
@@ -246,6 +253,38 @@ func NewMetrics(pipelineID string) *Metrics {
 			Help:        "1 if all nodes are meeting their fps_target, 0 otherwise.",
 			ConstLabels: constLabels,
 		}, []string{}),
+
+		// --- Phase 6: adaptive preset stepping ---
+
+		NodePresetCurrent: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name:        "mediamolder_node_preset_current",
+			Help:        "Current encoder preset, expressed as ladder index (0 = slowest).",
+			ConstLabels: constLabels,
+		}, []string{"node", "codec"}),
+
+		NodePresetSwitches: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name:        "mediamolder_node_preset_switches_total",
+			Help:        "Number of completed adaptive preset transitions.",
+			ConstLabels: constLabels,
+		}, []string{"node"}),
+
+		PipelineFPSTarget: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name:        "mediamolder_pipeline_fps_target",
+			Help:        "Graph-level real-time fps target (max of per-node targets).",
+			ConstLabels: constLabels,
+		}, []string{}),
+
+		PipelineFPSActual: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name:        "mediamolder_pipeline_fps_actual",
+			Help:        "Graph-level achieved fps (min of per-video-node fps).",
+			ConstLabels: constLabels,
+		}, []string{}),
+
+		RealtimeDecisions: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name:        "mediamolder_realtime_decisions_total",
+			Help:        "Real-time controller decisions, labelled by action.",
+			ConstLabels: constLabels,
+		}, []string{"action"}),
 	}
 
 	reg.MustRegister(
@@ -260,6 +299,9 @@ func NewMetrics(pipelineID string) *Metrics {
 		m.NodeThreadRestarts,
 		m.NodeFrameLatency,
 		m.PipelineFramesInFlight, m.PipelineRealtimeSatisfied,
+		// Phase 6
+		m.NodePresetCurrent, m.NodePresetSwitches,
+		m.PipelineFPSTarget, m.PipelineFPSActual, m.RealtimeDecisions,
 	)
 
 	return m
@@ -342,6 +384,11 @@ func (m *Metrics) Update(s snap.MetricsSnapshot) {
 				allMet = false
 			}
 		}
+
+		// Phase 6: per-node current preset (ladder index).
+		if p.CurrentPreset != "" && len(p.PresetLadder) > 0 && p.PresetIndex >= 0 {
+			m.NodePresetCurrent.WithLabelValues(p.NodeID, p.CodecName).Set(float64(p.PresetIndex))
+		}
 	}
 
 	if anyTarget {
@@ -350,6 +397,15 @@ func (m *Metrics) Update(s snap.MetricsSnapshot) {
 			satisfied = 1.0
 		}
 		m.PipelineRealtimeSatisfied.WithLabelValues().Set(satisfied)
+	}
+
+	// Phase 6: graph-level fps_target / fps_actual + decision counter.
+	if s.Realtime.Enabled {
+		m.PipelineFPSTarget.WithLabelValues().Set(s.Realtime.FPSTarget)
+		m.PipelineFPSActual.WithLabelValues().Set(s.Realtime.FPSActual)
+		// Decisions are append-only in the snapshot; the controller
+		// also bumps the counter directly when it emits them, so this
+		// pass only updates the gauges.
 	}
 }
 

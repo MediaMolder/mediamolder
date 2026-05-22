@@ -6,6 +6,42 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 ## [Unreleased]
 
 ### Added
+- **Phase 6 — adaptive encoder preset stepping (backend foundation).**
+  When real-time mode is on and the thread-budget heuristic has nothing left
+  to allocate (or an encoder is consistently behind/ahead of its FPS target),
+  the realtime controller now steps encoder presets along a per-codec
+  ladder. Per-codec ladders are defined for `libx264` and `libx265`
+  (`placebo`..`ultrafast`) and `libsvtav1` (`0`..`13`). Two encoder
+  mechanisms are wired through `av.EncoderContext`:
+  `PresetCapRestartIDR` (close+reopen on the next IDR, used by libx264 /
+  libx265) and `PresetCapHotReconfig` (`av_opt_set("preset", …, CHILDREN)`
+  used by libsvtav1). The controller honours optional `preset_floor` /
+  `preset_ceiling` clamps, a per-node cool-down window, group-step quorum
+  across video encoders, and an overshoot back-off so heavily over-budget
+  jobs roll their presets back toward higher quality. A bounded
+  `RealtimeDecisionLog` and graph-level `RealtimeStatus` snapshot
+  (`FPSTarget` / `FPSActual` / `Satisfied`) ride on every
+  `MetricsSnapshot`. New `pipeline.Pipeline` methods
+  (`SetPresetOverride`, `ClearPresetOverride`, `RealtimeDecisions`,
+  `RealtimeStatus`) expose the surface for CLI / HTTP / GUI consumers.
+  Five new Prometheus metrics are registered:
+  `mediamolder_node_preset_current`,
+  `mediamolder_node_preset_switches_total`,
+  `mediamolder_pipeline_fps_target`,
+  `mediamolder_pipeline_fps_actual`, and
+  `mediamolder_realtime_decisions_total`. Two new pipeline events
+  (`PresetSwitchPlanned` / `PresetSwitchCompleted`) surface state
+  transitions to the event bus. Five new `global_options` fields are
+  added to schema v1.0 and v1.1 (`preset_floor`, `preset_ceiling`,
+  `preset_group_step`, `target_fps`, `encoder_input_buffer_frames`).
+  An `observability.MetricsServer.RegisterRealtimeHandlers` helper
+  exposes loopback-gated `/realtime/preset`,
+  `/realtime/preset/clear`, `/realtime/decisions`, and
+  `/realtime/status` endpoints. CLI surface (`mediamolder preset
+  get/set/clear`, `mediamolder perf --decisions`,
+  `--preset-floor` / `--preset-ceiling` / `--target-fps`) and GUI
+  controls remain TODO and will be added in a follow-up commit.
+
 - **Design: adaptive encoder preset stepping & real-time output buffering
   (Phases 6 and 7).** `docs/architecture/node_perf_monitoring_design.md` gains
   two new design phases. Phase 6 specifies GOP-boundary preset stepping for

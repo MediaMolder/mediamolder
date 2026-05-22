@@ -1211,23 +1211,33 @@ Each encoder node's Inspector gains:
 1. **Audio encoders and real-time control.** AAC at 128 kb/s is not CPU-bound.
    Phase 6 only acts on video encoder nodes; audio is filtered out of the
    decision tree by `node.Kind == graph.KindEncoder && streamType == video`.
+   Answer - this is acceptable. The same is true for all other node types in a 
+   graph running in real-time mode. The video encoder is by far the most CPU
+   intensive node type in a graph, and therefore we can focus our attention only
+   on the video encoder nodes.
 2. **B-frame look-ahead and "next IDR".** With x264 `bframes=3 b_pyramid=normal`
    the look-ahead can hold 16+ frames. Forcing IDR at the next *input* PTS
    means the look-ahead must flush first; the actual switch lands ~16 frames
    later. The decision log records the input PTS at which the switch was
    requested *and* the PTS of the first frame under the new preset.
+   Answer - While resetting encoders causes the lookahead to reset, a future 
+   improvement, modifying the encoders, will enable the work already done to
+   be saved and reused by the reset encoder instance.
 3. **Mismatched ladders across renditions.** ABR jobs may mix codecs (libx264
    + libsvtav1). Group-step is then defined by ladder-relative index, not
    ladder name. The coordinator computes a *minimum step size* in normalised
    units (1 step = 1 ladder position) so each codec moves one position even
    though the absolute names differ.
+   Answer - mixed codecs are not supported by realtime mode
 4. **Two-pass encodes.** Two-pass jobs cannot change preset mid-pass without
    invalidating the stats file. Real-time mode is implicitly single-pass; the
    schema validator should warn when `realtime: true` is combined with
    `pass: 2`.
+   Answer - 2 pass mode is not supported in realtime mode 
 5. **Quality regression visibility.** Stepping faster sacrifices bitrate
    efficiency. The decision log records BD-rate estimates (lookup table, not
    live PSNR) at switch time so the operator can audit quality cost.
+   Answer - this is a known, well-understood and acceptable tradeoff.
 
 ---
 
