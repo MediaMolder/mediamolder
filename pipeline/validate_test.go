@@ -592,14 +592,9 @@ func TestParamToInt(t *testing.T) {
 	}
 }
 
-// TestValidate_PresetFloorCeilingInverted is a regression test for the
-// silent misconfiguration where preset_floor and preset_ceiling are swapped.
-// On the libx264 ladder (slowest→fastest: placebo…medium…veryfast…ultrafast)
-// "floor=veryfast, ceiling=medium" is invalid because veryfast(7) > medium(4).
-// The validator must reject this with a clear diagnostic so operators catch it
-// before a run rather than discovering the controller is stepping backwards at
-// runtime.
-func TestValidate_PresetFloorCeilingInverted(t *testing.T) {
+// TestValidate_HighestQualityPreset verifies that highest_quality_preset is
+// validated against known codec ladders when realtime mode is on.
+func TestValidate_HighestQualityPreset(t *testing.T) {
 	base := minCfg(
 		[]Input{defaultInput()},
 		[]NodeDef{{ID: "enc", Type: "encoder", Params: map[string]any{"codec": "libx264"}}},
@@ -608,38 +603,36 @@ func TestValidate_PresetFloorCeilingInverted(t *testing.T) {
 	)
 	base.GlobalOptions.Realtime = true
 
-	t.Run("inverted_x264", func(t *testing.T) {
+	t.Run("known_preset_ok", func(t *testing.T) {
 		cfg := *base
-		cfg.GlobalOptions.PresetFloor = "veryfast"  // index 7 — faster than ceiling
-		cfg.GlobalOptions.PresetCeiling = "medium"  // index 4
+		cfg.GlobalOptions.HighestQualityPreset = "medium"
+		if err := validate(&cfg); err != nil {
+			t.Fatalf("unexpected error for known preset: %v", err)
+		}
+	})
+
+	t.Run("unknown_preset_rejected", func(t *testing.T) {
+		cfg := *base
+		cfg.GlobalOptions.HighestQualityPreset = "bogus_preset"
 		if err := validate(&cfg); err == nil {
-			t.Fatal("expected error for inverted floor/ceiling, got nil")
+			t.Fatal("expected error for unknown preset, got nil")
 		}
 	})
 
-	t.Run("valid_x264", func(t *testing.T) {
+	t.Run("empty_is_ok", func(t *testing.T) {
 		cfg := *base
-		cfg.GlobalOptions.PresetFloor = "medium"   // index 4 — slower end
-		cfg.GlobalOptions.PresetCeiling = "veryfast" // index 7 — faster end
+		cfg.GlobalOptions.HighestQualityPreset = ""
 		if err := validate(&cfg); err != nil {
-			t.Fatalf("unexpected error for valid floor/ceiling: %v", err)
+			t.Fatalf("unexpected error for empty preset: %v", err)
 		}
 	})
 
-	t.Run("equal_floor_ceiling_ok", func(t *testing.T) {
+	t.Run("not_validated_when_realtime_off", func(t *testing.T) {
 		cfg := *base
-		cfg.GlobalOptions.PresetFloor = "fast"
-		cfg.GlobalOptions.PresetCeiling = "fast"
+		cfg.GlobalOptions.Realtime = false
+		cfg.GlobalOptions.HighestQualityPreset = "bogus_preset"
 		if err := validate(&cfg); err != nil {
-			t.Fatalf("unexpected error for equal floor=ceiling: %v", err)
-		}
-	})
-
-	t.Run("only_floor_ok", func(t *testing.T) {
-		cfg := *base
-		cfg.GlobalOptions.PresetFloor = "medium"
-		if err := validate(&cfg); err != nil {
-			t.Fatalf("unexpected error for floor-only: %v", err)
+			t.Fatalf("unexpected error when realtime is off: %v", err)
 		}
 	})
 }

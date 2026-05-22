@@ -39,8 +39,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   mechanisms are wired through `av.EncoderContext`:
   `PresetCapRestartIDR` (close+reopen on the next IDR, used by libx264 /
   libx265) and `PresetCapHotReconfig` (`av_opt_set("preset", …, CHILDREN)`
-  used by libsvtav1). The controller honours optional `preset_floor` /
-  `preset_ceiling` clamps, a per-node cool-down window, group-step quorum
+  used by libsvtav1). The controller honours an optional `highest_quality_preset`
+  clamp (the slowest/highest-quality preset the controller may use; it may step
+  freely to any faster preset to maintain real time), a per-node cool-down window, group-step quorum
   across video encoders, and an overshoot back-off so heavily over-budget
   jobs roll their presets back toward higher quality. A bounded
   `RealtimeDecisionLog` and graph-level `RealtimeStatus` snapshot
@@ -56,14 +57,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   `mediamolder_realtime_decisions_total`. Two new pipeline events
   (`PresetSwitchPlanned` / `PresetSwitchCompleted`) surface state
   transitions to the event bus. Five new `global_options` fields are
-  added to schema v1.0 and v1.1 (`preset_floor`, `preset_ceiling`,
+  added to schema v1.0 and v1.1 (`highest_quality_preset`,
   `preset_group_step`, `target_fps`, `encoder_input_buffer_frames`).
   An `observability.MetricsServer.RegisterRealtimeHandlers` helper
   exposes loopback-gated `/realtime/preset`,
   `/realtime/preset/clear`, `/realtime/decisions`, and
   `/realtime/status` endpoints. CLI surface (`mediamolder preset
   get/set/clear`, `mediamolder perf --decisions`,
-  `--preset-floor` / `--preset-ceiling` / `--target-fps`) and GUI
+  `--highest-quality-preset` / `--target-fps`) and GUI
   controls remain TODO and will be added in a follow-up commit.
 
 - **Design: adaptive encoder preset stepping & real-time output buffering

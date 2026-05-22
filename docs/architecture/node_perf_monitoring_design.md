@@ -1139,11 +1139,10 @@ existing metrics HTTP server (the only operator-control channel today; we add
 ```go
 // pipeline package additions
 type RealtimeOptions struct {
-    Enabled       bool
-    TargetFPS     float64       // 0 = derive from source
-    PresetFloor   string        // codec-relative; "" = ladder fastest
-    PresetCeiling string        // codec-relative; "" = configured starting preset
-    Group         bool          // group-step all video encoders
+    Enabled              bool
+    TargetFPS            float64       // 0 = derive from source
+    HighestQualityPreset string        // codec-relative; "" = no quality bound (step all the way to fastest)
+    Group                bool          // group-step all video encoders
 }
 
 // On a live Pipeline:

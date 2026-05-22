@@ -1210,8 +1210,7 @@ func (p *Pipeline) runGraph(ctx context.Context) (runErr error) {
 		p.mu.Unlock()
 		ctrl := newRealtimeController(budget, p.metrics, p.events, runner, dag, prom)
 		// Phase 6: pass adaptive-preset configuration through.
-		ctrl.presetFloor = cfg.GlobalOptions.PresetFloor
-		ctrl.presetCeiling = cfg.GlobalOptions.PresetCeiling
+		ctrl.highestQualityPreset = cfg.GlobalOptions.HighestQualityPreset
 		ctrl.targetFPS = cfg.GlobalOptions.TargetFPS
 		ctrl.groupStep = true
 		if cfg.GlobalOptions.PresetGroupStep != nil {
