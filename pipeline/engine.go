@@ -1212,6 +1212,18 @@ func (p *Pipeline) runGraph(ctx context.Context) (runErr error) {
 		// Phase 6: pass adaptive-preset configuration through.
 		ctrl.highestQualityPreset = cfg.GlobalOptions.HighestQualityPreset
 		ctrl.targetFPS = cfg.GlobalOptions.TargetFPS
+		// Propagate the graph-level FPS target to per-encoder perf trackers.
+		// observe() skips nodes with FPSTarget <= 0, so without this the RT
+		// controller never evaluates any node and all preset decisions stall.
+		if ctrl.targetFPS > 0 {
+			for _, node := range dag.Order {
+				if node.Kind == graph.KindEncoder {
+					if tr := runner.trackers[node.ID]; tr != nil {
+						tr.SetFPSTarget(ctrl.targetFPS)
+					}
+				}
+			}
+		}
 		ctrl.groupStep = true
 		if cfg.GlobalOptions.PresetGroupStep != nil {
 			ctrl.groupStep = *cfg.GlobalOptions.PresetGroupStep
