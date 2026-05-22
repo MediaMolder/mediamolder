@@ -5,6 +5,7 @@ package pipeline
 
 import (
 	"context"
+	"sort"
 	"sync"
 	"time"
 
@@ -327,10 +328,18 @@ func (c *realtimeController) maybeGroupStep(shot snap.MetricsSnapshot) {
 	if float64(len(behind))/float64(len(eligible)) < rtPresetGroupQuorum {
 		return
 	}
+	// Step at most one encoder per tick, prioritising the most-behind node.
+	// Stepping all encoders simultaneously causes them to flush+drain+close+reopen
+	// at the same time, starving downstream muxers for ~2s. With a 500ms tick
+	// the remaining encoders will be stepped on subsequent ticks once their
+	// per-node cool-down allows it.
+	sort.Slice(eligible, func(i, j int) bool {
+		return eligible[i].FPSDeficit > eligible[j].FPSDeficit
+	})
 	for _, p := range eligible {
-		// Step every eligible encoder, not only those currently behind,
-		// so an upstream stage doesn't become the new bottleneck.
-		c.tryPresetStep(p, +1, "group quorum")
+		if c.tryPresetStep(p, +1, "group quorum") {
+			break // one restart per tick; stagger the rest
+		}
 	}
 }
 
