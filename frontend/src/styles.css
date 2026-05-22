@@ -1577,6 +1577,7 @@ button.danger:hover { background: rgba(185, 74, 74, 0.15); }
 .run-log .log-time { color: var(--text-dim); margin-right: 6px; }
 .run-log-warn { color: #e6c46b; }
 .run-log-error { color: #f5b7b1; }
+.run-log-decision { color: #7ec8e3; }  /* RT-controller decisions — cyan tint */
 
 /* ---------- Rate-control group ---------- */
 .rate-control-group {

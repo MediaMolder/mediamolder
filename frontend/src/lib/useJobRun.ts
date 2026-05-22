@@ -20,6 +20,53 @@ export interface NodeMetric {
   OutputPTS: number;     // ns — latest output timestamp written (sink nodes only)
 }
 
+// NodePerfSnapshot mirrors pipeline/snap.NodePerfSnapshot.
+export interface NodePerfSnapshot {
+  NodeID: string;
+  FPS: number;
+  FPSTarget: number;
+  FPSDeficit: number;
+  ActiveFrac: number;
+  IdleFrac: number;
+  StalledFrac: number;
+  StallCount: number;
+  MaxStallDuration: number; // ns
+  QueueFillFrac: number;
+  Elapsed: number;          // ns
+  ThreadsConfigured: number;
+  ThreadMode: string;
+  ThreadsBusy: number;
+  EstimatedCPUCores: number;
+  FrameLatencyMean: number; // ns (EWMA)
+  ThreadRestarts: number;
+  CodecName?: string;
+  CurrentPreset?: string;
+  PresetLadder?: string[];
+  PresetIndex?: number;
+  PresetSwitches?: number;
+  PresetLocked?: boolean;
+}
+
+// DecisionRecord mirrors pipeline/snap.DecisionRecord.
+export interface DecisionRecord {
+  time: string;    // RFC3339
+  node: string;
+  action: string;
+  from?: string;
+  to?: string;
+  deficit?: number;
+  reason?: string;
+}
+
+// RealtimeSnapshot mirrors pipeline/snap.RealtimeSnapshot.
+export interface RealtimeSnapshot {
+  Enabled?: boolean;
+  FPSTarget?: number;
+  FPSActual?: number;
+  Satisfied?: boolean;
+  Decisions?: DecisionRecord[];
+}
+
 export interface MetricsSnapshot {
   State: string;
   Elapsed: number;
@@ -28,6 +75,8 @@ export interface MetricsSnapshot {
   MediaPTS: number;      // ns
   MediaDuration: number; // ns (0 = live / unknown)
   OutputPTS: number;     // ns — aggregated across sink nodes (max)
+  Perf: NodePerfSnapshot[];
+  Realtime?: RealtimeSnapshot;
 }
 
 export interface NodeError {
