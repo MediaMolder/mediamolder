@@ -11,7 +11,7 @@
 // License: https://github.com/Breakthrough/PySceneDetect/blob/main/LICENSE
 //
 
-package pyscenedetect
+package goscenedetect
 
 // Ported from scenedetect/common.py.
 

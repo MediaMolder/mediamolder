@@ -72,8 +72,8 @@ func run(args []string) error {
 		return cmdMigrate(args[1:])
 	case "hwbench":
 		return cmdHWBench(args[1:])
-	case "py-scene-detect":
-		return cmdPySceneDetect(args[1:])
+	case "go-scene-detect":
+		return cmdGoSceneDetect(args[1:])
 	case "help", "--help", "-h":
 		usage()
 		return nil
@@ -504,7 +504,7 @@ Commands:
   list-filters           List available filters.
   list-formats           List available formats.
   list-processors        List registered go_processor processors.
-  py-scene-detect <input> Detect scene changes using PySceneDetect algorithms.
+  go-scene-detect <input> Detect scene changes using PySceneDetect algorithms.
                          Flags: --detector=NAME (content|adaptive|threshold|hash|histogram),
                                 --threshold=F, --luma-only, --min-scene-len=V,
                                 --output=PATH, --format=jsonl|csv|timecodes,

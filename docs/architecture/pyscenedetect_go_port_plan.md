@@ -23,12 +23,12 @@ decoded AVFrame stream.
 
 ## Target folder layout
 
-All ported files live under `PySceneDetect/`. Each file carries the verbatim PySceneDetect
+All ported files live under `go_scene_detect/`. Each file carries the verbatim PySceneDetect
 copyright notice from the corresponding Python source file, plus a reference to the BSD
 3-Clause license URL above. 
 
 ```
-PySceneDetect/
+go_scene_detect/
   LICENSE                          BSD 3-Clause text (verbatim from upstream)
   README.md                        Go port notes, upstream reference, build instructions
   doc.go                           Package-level godoc
@@ -56,7 +56,7 @@ PySceneDetect/
     scene_change_hash.go           processors.Processor wrapper → HashDetector
     scene_change_histogram.go      processors.Processor wrapper → HistogramDetector
   cmd/
-    py_scene_detect.go             `mediamolder py-scene-detect` CLI subcommand
+    cmd_go_scene_detect.go         `mediamolder go-scene-detect` CLI subcommand
   testdata/
     (reference frames and expected output for regression tests)
 ```
@@ -85,7 +85,7 @@ Example for `content_detector.go` (matches `scenedetect/detectors/content_detect
 ```
 
 Files with no direct Python counterpart (e.g. `processors/scene_change_content.go`,
-`cmd/py_scene_detect.go`) carry only the MediaMolder copyright.
+`cmd/cmd_go_scene_detect.go`) carry only the MediaMolder copyright.
 
 ---
 
@@ -383,20 +383,20 @@ Detector-specific fields (e.g. `adaptive_ratio`, `hash_dist`, `hist_diff`,
 
 ---
 
-## CLI subcommand: `mediamolder py-scene-detect`
+## CLI subcommand: `mediamolder go-scene-detect`
 
-The command name `py-scene-detect` explicitly attributes the feature to PySceneDetect in
-every invocation. The help text (`mediamolder py-scene-detect --help`) must include:
+The command name `go-scene-detect` explicitly attributes the feature to PySceneDetect in
+every invocation. The help text (`mediamolder go-scene-detect --help`) must include:
 
 ```
-py-scene-detect uses algorithms ported directly from PySceneDetect by Brandon Castellano.
+go-scene-detect uses algorithms ported directly from PySceneDetect by Brandon Castellano.
 See https://github.com/Breakthrough/PySceneDetect and https://scenedetect.com for details.
 ```
 
 New subcommand added to `cmd/mediamolder/main.go`:
 
 ```sh
-mediamolder py-scene-detect [flags] <input.[mp4|mkv|...]>
+mediamolder go-scene-detect [flags] <input.[mp4|mkv|...]>
 ```
 
 | Flag               | Default   | Description |
@@ -422,7 +422,7 @@ already produced by the `scene_change` processor.
 ## Implementation phases
 
 ### Phase 1 — Core types and interface (2–3 days)
-1. Create `PySceneDetect/` directory; add `LICENSE`, `README.md`, copyright header template.
+1. Create `go_scene_detect/` directory; add `LICENSE`, `README.md`, copyright header template.
 2. Implement `FrameTimecode` with tests.
 3. Define `SceneDetector` interface.
 4. Implement `FlashFilter` (MERGE + SUPPRESS modes).
@@ -465,8 +465,8 @@ already produced by the `scene_change` processor.
 27. Implement `SceneManager` with `AddDetector`, `DetectScenes` (channel-based), frame
     buffer for lookahead, downscale/crop support.
 28. Wire `SceneManager.GetSceneList()` to return `[]Scene` (start/end `FrameTimecode` pairs).
-29. Add `mediamolder py-scene-detect` CLI subcommand (`cmd/mediamolder/py_scene_detect.go`).
-30. Integration test: run `py-scene-detect` on a reference clip, assert output JSONL matches
+29. Add `mediamolder go-scene-detect` CLI subcommand (`cmd/mediamolder/cmd_go_scene_detect.go`).
+30. Integration test: run `go-scene-detect` on a reference clip, assert output JSONL matches
     expected scene boundaries.
 
 ### Phase 8 — GUI integration (~1 day)
@@ -487,7 +487,7 @@ already produced by the `scene_change` processor.
     > licensed under the BSD 3-Clause License.
 36. Update `docs/go-processor-nodes.md` with new processor names.
 37. Update `CHANGELOG.md`.
-38. `go test ./PySceneDetect/...` and `go test ./processors/...` must pass.
+38. `go test ./go_scene_detect/...` and `go test ./processors/...` must pass.
 39. Run `gofmt -s` and `goimports` across all new files.
 
 ---

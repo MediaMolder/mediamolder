@@ -138,7 +138,7 @@ var curatedNodes = map[string]NodeMeta{
 	"frame_info":    {Friendly: "Frame info logger", Aliases: []string{"debug", "stats"}},
 	"scene_change":  {Friendly: "Scene change detector", Aliases: []string{"scdet", "cuts"}},
 
-	// ── PySceneDetect processors ─────────────────────────────────────
+	// ── go-scene-detect processors ─────────────────────────────────────
 	// scene_change_content and scene_change_adaptive are the recommended
 	// general-purpose detectors and appear in the Common palette view.
 	// The remaining three are more specialised and are also registered so
@@ -147,23 +147,23 @@ var curatedNodes = map[string]NodeMeta{
 	// (https://github.com/Breakthrough/PySceneDetect, BSD-3-Clause).
 	"scene_change_content": {
 		Friendly: "Scene change (content-aware)",
-		Aliases:  []string{"pyscenedetect", "hsv", "cuts", "content"},
+		Aliases:  []string{"goscenedetect", "hsv", "cuts", "content"},
 	},
 	"scene_change_adaptive": {
 		Friendly: "Scene change (adaptive)",
-		Aliases:  []string{"pyscenedetect", "adaptive", "cuts", "rolling"},
+		Aliases:  []string{"goscenedetect", "adaptive", "cuts", "rolling"},
 	},
 	"scene_change_threshold": {
 		Friendly: "Scene change (threshold / fade)",
-		Aliases:  []string{"pyscenedetect", "fade", "threshold", "black"},
+		Aliases:  []string{"goscenedetect", "fade", "threshold", "black"},
 	},
 	"scene_change_hash": {
 		Friendly: "Scene change (perceptual hash)",
-		Aliases:  []string{"pyscenedetect", "hash", "dct", "perceptual"},
+		Aliases:  []string{"goscenedetect", "hash", "dct", "perceptual"},
 	},
 	"scene_change_histogram": {
 		Friendly: "Scene change (histogram)",
-		Aliases:  []string{"pyscenedetect", "histogram", "luma"},
+		Aliases:  []string{"goscenedetect", "histogram", "luma"},
 	},
 }
 

@@ -5,7 +5,7 @@
 //
 // Copyright (C) 2025 Brandon Castellano <http://www.bcastell.com>.
 
-package pyscenedetect
+package goscenedetect
 
 import (
 	"math"

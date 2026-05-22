@@ -19,7 +19,7 @@ This guide covers every feature available in MediaMolder, from installing the bi
    - [gui](#38-gui)
    - [perf](#39-perf)
    - [hwbench](#310-hwbench)
-   - [py-scene-detect](#311-py-scene-detect)
+   - [go-scene-detect](#311-go-scene-detect)
 4. [Graph JSON reference](#4-graph-json-reference)
    - [Top-level structure](#41-top-level-structure)
    - [inputs](#42-inputs)
@@ -351,7 +351,7 @@ mediamolder hwbench [--device <type>] [--codecs <list>] [--resolutions <list>]
 See [docs/architecture/benchmarks.md](architecture/benchmarks.md) for full documentation, the JSON
 report schema, and contribution instructions.
 
-### 3.11 `py-scene-detect`
+### 3.11 `go-scene-detect`
 
 Analyse a single media file for scene boundaries without encoding anything.
 Decodes every frame, runs one of five detectors ported from
@@ -365,7 +365,7 @@ Use this subcommand when you need the scene list before building or running a
 graph.
 
 ```sh
-mediamolder py-scene-detect [flags] <input>
+mediamolder go-scene-detect [flags] <input>
 ```
 
 | Flag | Default | Description |
@@ -383,18 +383,18 @@ mediamolder py-scene-detect [flags] <input>
 
 ```sh
 # Content detector (default) — JSONL to stdout.
-mediamolder py-scene-detect input.mp4
+mediamolder go-scene-detect input.mp4
 
 # Adaptive detector with custom threshold; write CSV.
-mediamolder py-scene-detect --detector=adaptive --threshold=2.5 \
+mediamolder go-scene-detect --detector=adaptive --threshold=2.5 \
   --format=csv --output=scenes.csv input.mp4
 
 # Fade-to-black detection; print cut timecodes only.
-mediamolder py-scene-detect --detector=threshold --threshold=15 \
+mediamolder go-scene-detect --detector=threshold --threshold=15 \
   --format=timecodes input.mp4
 
 # Perceptual hash detector; also export per-frame stats.
-mediamolder py-scene-detect --detector=hash --stats=frame_stats.csv input.mp4
+mediamolder go-scene-detect --detector=hash --stats=frame_stats.csv input.mp4
 ```
 
 **Output formats:**
@@ -1054,7 +1054,7 @@ For live streaming to RTMP/SRT where the output must pace to wall clock, combine
 Scene detection can be embedded directly in a transcoding graph using `go_processor`
 nodes. Five detectors are available; all are ported from
 [PySceneDetect](https://github.com/Breakthrough/PySceneDetect) by Brandon Castellano
-(BSD-3-Clause). For offline use on a single file see [§3.10](#310-py-scene-detect).
+(BSD-3-Clause). For offline use on a single file see [§3.10](#310-go-scene-detect).
 
 | Processor | Threshold default | Best for |
 |---|---|---|
@@ -1247,7 +1247,7 @@ Each detected scene boundary is emitted as a metadata event:
 ```
 
 **Stats export** — pass `stats_path` to write per-frame detector scores to a CSV
-file (same format as `py-scene-detect --stats`):
+file (same format as `go-scene-detect --stats`):
 
 ```json
 {

@@ -1,4 +1,4 @@
-# PySceneDetect — Go Port
+# Go Port of PySceneDetect
 
 This package is a direct Go port of **[PySceneDetect](https://github.com/Breakthrough/PySceneDetect)**
 by **Brandon Castellano**, licensed under the BSD 3-Clause License.
@@ -17,11 +17,12 @@ by **Brandon Castellano**, licensed under the BSD 3-Clause License.
 Every algorithm, data structure, and default parameter in this package is ported directly
 from PySceneDetect v0.7. The Python source code is the authoritative reference; the Go port
 aims to produce identical scene boundaries for the same input video and detector settings.
+The author of PySceneDetect asked us to call our port "GoSceneDetect".
 
 ## Package layout
 
 ```
-PySceneDetect/
+go_scene_detect/
   LICENSE                 BSD 3-Clause (verbatim from upstream)
   README.md               This file
   doc.go                  Package godoc
@@ -33,7 +34,7 @@ PySceneDetect/
                           HashDetector, HistogramDetector (Phases 3–6)
   internal/               Image math primitives: colorspace, DCT, Canny, histogram (Phase 2)
   processors/             processors.Processor wrappers for use in MediaMolder graphs (Phase 7)
-  cmd/                    `mediamolder py-scene-detect` CLI subcommand (Phase 7)
+  cmd/                    `mediamolder go-scene-detect` CLI subcommand (Phase 7)
 ```
 
 ## Usage in MediaMolder
@@ -42,7 +43,7 @@ Scene detection via this package is exposed through:
 
 1. **Graph processor nodes** — add a `scene_change_content` (or `scene_change_adaptive`,
    `scene_change_threshold`, etc.) node to a pipeline JSON config.
-2. **CLI** — `mediamolder py-scene-detect --detector content input.mp4`
+2. **CLI** — `mediamolder go-scene-detect --detector content input.mp4`
 
 Both surfaces credit PySceneDetect in their help text and output metadata.
 
@@ -67,5 +68,5 @@ The image processing primitives in `internal/` use libswscale via the existing C
 in `av/`. No new Go modules or C libraries are required.
 
 ```sh
-go test ./PySceneDetect/...
+go test ./go_scene_detect/...
 ```

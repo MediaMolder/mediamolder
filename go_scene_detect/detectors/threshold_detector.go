@@ -18,7 +18,7 @@ import (
 	"fmt"
 	"math"
 
-	psd "github.com/MediaMolder/MediaMolder/PySceneDetect"
+	psd "github.com/MediaMolder/MediaMolder/go_scene_detect"
 )
 
 // thresholdValueKey is the per-frame stat written to StatsManager.

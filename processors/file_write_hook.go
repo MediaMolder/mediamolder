@@ -35,9 +35,9 @@ type metadataRecord struct {
 //
 // When output_file is absent or empty, all methods are no-ops.
 type fileWriteHook struct {
-	file      *os.File
-	enc       *json.Encoder // non-nil only for fmtJSONL
-	format    outputFormat
+	file       *os.File
+	enc        *json.Encoder // non-nil only for fmtJSONL
+	format     outputFormat
 	csvHdrDone bool     // CSV: have we written the header row yet?
 	tcBuf      []string // timecodes: buffered until close
 	mu         sync.Mutex
