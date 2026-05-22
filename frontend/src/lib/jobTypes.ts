@@ -585,6 +585,12 @@ export interface ErrorPolicy {
 export interface JobConfig {
   schema_version: string;
   description?: string;
+  /** Equivalent FFmpeg command line for this job. Advisory only — the runtime
+   *  ignores this field entirely. Auto-populated when importing via convert-cmd
+   *  or the GUI Import dialog; refreshed on every GUI save via the export-cmd
+   *  endpoint. If you edit this JSON manually, you must also update or remove
+   *  this field. */
+  ffmpeg_cmd?: string;
   inputs: Input[];
   graph: GraphDef;
   outputs: Output[];

@@ -1361,6 +1361,14 @@ button.danger:hover { background: rgba(185, 74, 74, 0.15); }
   height: 4px;
   border-radius: 2px;
 }
+/* Events edge is dashed — render swatch as a dashed top border */
+.legend-swatch-dashed {
+  background: transparent !important;
+  height: 0;
+  border-top: 3px dashed;
+  margin-top: 2px;
+  border-radius: 0;
+}
 
 /* ---------- Onboarding overlay ---------- */
 .canvas-onboarding {

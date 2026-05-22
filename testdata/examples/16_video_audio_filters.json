@@ -1,10 +1,13 @@
 {
   "schema_version": "1.0",
-  "description": "Decode in.mp4 -> scale video to 1920x1080, encode to H.264 with libx264, normalize audio loudness with loudnorm, encode audio to AAC -> write to out.mp4",
+  "description": "Decode in.mp4 -> scale video to 1920x1080, encode to H.264 with libx264, normalize audio loudness with loudnorm, encode audio to AAC -> write to out.mp4. Note: if you edit this JSON manually, you must also update or remove the ffmpeg_cmd field.",
+  "ffmpeg_cmd": "ffmpeg -i {{input}} -filter_complex [0:v]scale=h=1080:w=1920[scale0];[0:a]loudnorm[loudnorm0];[loudnorm0]aformat=sample_fmts=fltp:sample_rates=48000[resample0];[resample0]asetnsamples=n=1024:p=0[chunkaudio0] -map 0:a:0 -map 0:v:0 -c:v libx264 -c:a aac -map_metadata 0 -map_chapters 0 {{output}}",
   "inputs": [
     {
       "id": "in0",
       "url": "{{input}}",
+      "map_metadata": true,
+      "map_chapters": true,
       "streams": [
         {
           "input_index": 0,
@@ -39,13 +42,19 @@
         "id": "resample0",
         "type": "filter",
         "filter": "aformat",
-        "params": { "sample_rates": "48000", "sample_fmts": "fltp" }
+        "params": {
+          "sample_rates": "48000",
+          "sample_fmts": "fltp"
+        }
       },
       {
         "id": "chunkaudio0",
         "type": "filter",
         "filter": "asetnsamples",
-        "params": { "n": "1024", "p": "0" }
+        "params": {
+          "n": "1024",
+          "p": "0"
+        }
       }
     ],
     "edges": [

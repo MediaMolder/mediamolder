@@ -1,10 +1,13 @@
 {
   "schema_version": "1.1",
-  "description": "Decode in.mp4 -> scale to 720p -> run YOLOv8 detection with a custom 5-class model at 320x320 input -> encode to H.264, encode audio to AAC -> write to out.mp4. Demonstrates chaining a filter before a go_processor.",
+  "description": "Decode in.mp4 -> scale to 720p -> run YOLOv8 detection with a custom 5-class model at 320x320 input -> encode to H.264, encode audio to AAC -> write to out.mp4. Demonstrates chaining a filter before a go_processor. Note: if you edit this JSON manually, you must also update or remove the ffmpeg_cmd field.",
+  "ffmpeg_cmd": "ffmpeg -i {{input}} -filter_complex [0:v]scale=h=720:w=1280[scale0_default] -map 0:a:0 -map 0:v:0 -c:v libx264 -c:a aac -map_metadata 0 -map_chapters 0 {{output}}",
   "inputs": [
     {
       "id": "in0",
       "url": "{{input}}",
+      "map_metadata": true,
+      "map_chapters": true,
       "streams": [
         {
           "input_index": 0,

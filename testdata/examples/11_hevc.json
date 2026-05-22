@@ -1,10 +1,13 @@
 {
   "schema_version": "1.0",
-  "description": "Decode in.mp4 -> encode video to H.265/HEVC with libx265, encode audio to AAC -> write to out.mp4",
+  "description": "Decode in.mp4 -> encode video to H.265/HEVC with libx265, encode audio to AAC -> write to out.mp4. Note: if you edit this JSON manually, you must also update or remove the ffmpeg_cmd field.",
+  "ffmpeg_cmd": "ffmpeg -i {{input}} -map 0:a:0 -map 0:v:0 -c:v libx265 -c:a aac -map_metadata 0 -map_chapters 0 {{output}}",
   "inputs": [
     {
       "id": "in0",
       "url": "{{input}}",
+      "map_metadata": true,
+      "map_chapters": true,
       "streams": [
         {
           "input_index": 0,

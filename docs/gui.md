@@ -4,7 +4,37 @@ The `mediamolder gui` subcommand serves a browser-based visual editor for
 building, validating, and running MediaMolder JSON pipelines. It is bundled
 into the same single binary as the CLI — no separate install or web server is
 required.
+
+For the complete CLI reference, JSON graph format, and command-line workflows,
+see [using_mediamolder.md](using_mediamolder.md).
+
 ![MediaMolder GUI](images/ABR_x264.png)
+
+## Contents
+
+- [Quick start](#quick-start)
+- [Your first pipeline (5-minute walkthrough)](#your-first-pipeline-5-minute-walkthrough)
+- [Anatomy](#anatomy)
+  - [Palette](#palette)
+  - [Canvas](#canvas)
+  - [Edge attributes](#edge-attributes)
+  - [Inspector](#inspector)
+  - [Filter nodes — expression editor](#filter-nodes--expression-editor)
+  - [Filter nodes — audio channel-routing matrix](#filter-nodes--audio-channel-routing-matrix)
+  - [Asset registry](#asset-registry)
+  - [Subtitle affordances](#subtitle-affordances)
+  - [Hardware Capabilities dialog](#hardware-capabilities-dialog)
+- [Filter categories](#filter-categories)
+- [File browser](#file-browser)
+- [Scene detection processors](#scene-detection-processors)
+- [FFmpeg CLI export](#ffmpeg-cli-export)
+- [Performance overlay](#performance-overlay)
+- [Development workflow](#development-workflow)
+- [Schema impact](#schema-impact)
+- [Security considerations](#security-considerations)
+- [Troubleshooting](#troubleshooting)
+
+---
 
 ## Quick start
 
@@ -92,7 +122,9 @@ in-app help dialog.
    you have not already added explicit encoder nodes.
 5. **Connect the nodes.** Each node exposes one handle per stream type on
    each side. Drag from a source handle to a target handle of the **same
-   colour**. Mismatched stream types are rejected.
+   colour**. Mismatched stream types are rejected. `go_processor` nodes that
+   emit events also expose a **pink handle** on the right; drag it to the pink
+   handle on a `metadata_file_writer` node to write events to a file.
 6. **Run.** Click **Run** in the toolbar. The Run panel opens; each node row
    in the live metrics table shows **Packets**, **Rate**, **Errors**,
    **Avg latency**, and **Unblocked Performance** (the rate the node achieves
@@ -139,7 +171,9 @@ in-app help dialog.
 * Press <kbd>?</kbd> (or click the **Help** button) for the in-app help,
   <kbd>Esc</kbd> to dismiss any open dialog.
 * The bottom-centre **Stream types** legend shows the colour code used for
-  edges and handles. The bottom-right minimap stays clear of it.
+  edges and handles: solid lines for video (blue), audio (green), subtitle
+  (yellow), and data (purple); a pink dashed line for events. The bottom-right
+  minimap stays clear of it.
 * Edges are unlabelled by default. Hover (or click) any edge to open a
   popover listing every technical property MediaMolder can infer for that
   stream — width×height, pix_fmt, frame_rate, color_space, color_range,
@@ -293,8 +327,12 @@ against FFmpeg drift by `internal/gui/curation_test.go`
 ### Canvas
 
 * Each node exposes one source and one target handle per stream type
-  (video / audio / subtitle / data). Handles only accept connections of the
-  same type — incompatible drags are rejected.
+  (video / audio / subtitle / data). `go_processor` nodes that emit events
+  additionally expose a **pink events handle** on each side — drag from the
+  output events handle of a detector to the input events handle of a
+  `metadata_file_writer` to persist its events to a file without touching the
+  video path. Handles only accept connections of the same type — incompatible
+  drags are rejected.
 * **Input nodes grow per-track audio handles** after **Get Properties** is
   clicked.  A 16-track MOV shows 16 green dots labelled `a:1` … `a:16` on
   the right edge instead of a single generic `audio` handle.  The handle
@@ -1252,9 +1290,16 @@ All PySceneDetect processors share:
 ### Writing detections to a file
 
 Every processor emits cut events on the pipeline event bus (visible in the
-**Observations** panel and the SSE stream). To also write them to a JSONL
-sidecar, set `output_file` directly on the detector node — either in the
-Inspector's **Save detections to file** field, or in the JSON `params`:
+**Observations** panel and the SSE stream). To also write them to a file,
+set `output_file` in the Inspector's **Save detections to file** field (or
+directly in the JSON `params`). Use the **Format** selector (or the
+`output_format` param) to choose the output format:
+
+| `output_format` | File | Contents |
+|---|---|---|
+| `jsonl` (default) | `.jsonl` | One JSON object per cut — same fields as the event bus record |
+| `csv` | `.csv` | Header row + one row per cut: `Frame Index,Timecode,PTS,Score` |
+| `timecodes` | `.txt` | Comma-separated cut timecodes, written in a single line at stream end |
 
 ```json
 {
@@ -1263,20 +1308,20 @@ Inspector's **Save detections to file** field, or in the JSON `params`:
   "processor": "scene_change_content",
   "params": {
     "output_file": "scene_changes.jsonl",
+    "output_format": "jsonl",
     "threshold": 27.0,
     "min_scene_len": 15
   }
 }
 ```
 
-The file is created relative to the working directory if the path is not
-absolute. Each detected cut is appended as one JSON object per line.
 Leave `output_file` blank (or omit it) to emit events to the event bus only.
 
 For processors that don't have built-in `output_file` support (e.g. custom
 YOLO detectors), the **Metadata file writer** (`metadata_file_writer`) node
 is still available as a generic wrapper — see example
-[32](../testdata/examples/32_yolov8_metadata_to_file.json).
+[32](../testdata/examples/32_yolov8_metadata_to_file.json). The
+`metadata_file_writer` node also accepts `output_format`.
 
 ### Choosing a detector
 
@@ -1335,3 +1380,18 @@ without the GUI never need to include it.
 | **No live FPS in node badges.** | The pipeline is not in `Playing` state. Confirm the Run panel shows progressing frame counts; otherwise check the `error` events in the panel. |
 | **Filter not in the palette.** | The binary was built without that filter (e.g. a stripped FFmpeg). Rebuild FFmpeg with the missing component enabled. |
 | **`mediamolder` binary date didn't change after `go build ./...`.** | `go build ./...` is a compile check only. Use `make build-gui` or `go build -o mediamolder ./cmd/mediamolder` to actually overwrite the binary. |
+
+---
+
+## Related documentation
+
+| Document | Contents |
+|---|---|
+| [using_mediamolder.md](using_mediamolder.md) | Complete CLI and JSON graph reference |
+| [concepts-and-graph-basics.md](concepts-and-graph-basics.md) | Core concepts, node types, edge rules |
+| [json-config-reference.md](json-config-reference.md) | Complete field-by-field JSON schema |
+| [scene-detection.md](scene-detection.md) | Scene detector algorithms, CLI usage, pipeline JSON, events |
+| [go-processor-nodes.md](go-processor-nodes.md) | Go processor API and built-in processors |
+| [hardware-acceleration.md](hardware-acceleration.md) | Hardware setup, zero-copy paths, GPU encoder options |
+| [ffmpeg-migration-guide.md](ffmpeg-migration-guide.md) | FFmpeg CLI → JSON mapping |
+| [build_and_packaging.md](build_and_packaging.md) | Building the frontend, static linking, packaging |

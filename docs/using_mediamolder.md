@@ -13,12 +13,13 @@ This guide covers every feature available in MediaMolder, from installing the bi
    - [inspect](#32-inspect)
    - [validate](#33-validate)
    - [convert-cmd](#34-convert-cmd)
-   - [list-codecs / list-filters / list-formats / list-hw-devices](#35-list-commands)
-   - [version](#36-version)
-   - [gui](#37-gui)
-   - [perf](#38-perf)
-   - [hwbench](#39-hwbench)
-   - [py-scene-detect](#310-py-scene-detect)
+   - [export](#35-export)
+   - [list-codecs / list-filters / list-formats / list-hw-devices](#36-list-commands)
+   - [version](#37-version)
+   - [gui](#38-gui)
+   - [perf](#39-perf)
+   - [hwbench](#310-hwbench)
+   - [py-scene-detect](#311-py-scene-detect)
 4. [Graph JSON reference](#4-graph-json-reference)
    - [Top-level structure](#41-top-level-structure)
    - [inputs](#42-inputs)
@@ -58,7 +59,7 @@ This guide covers every feature available in MediaMolder, from installing the bi
 
 ## 1. Installation
 
-See [installation guide](installation.md).
+See [installation guide](build/macos.md).
 
 ---
 
@@ -184,6 +185,21 @@ mediamolder convert-cmd "ffmpeg -i in.mp4 -c:v libx264 out.mp4"
 mediamolder convert-cmd ffmpeg -i in.mp4 -c:v libx264 out.mp4
 ```
 
+**Metadata default handling.** FFmpeg silently applies `-map_metadata 0`
+(copy container metadata from the first input) to every output when no
+explicit flag is given. `convert-cmd` replicates this by setting
+`map_metadata: true` and `map_chapters: true` on `inputs[0]` in the
+produced JSON. To suppress metadata copying for a specific output in the
+original command, use `-map_metadata -1` (and `-map_chapters -1`) before
+that output — the importer honours these suppress flags and does not set
+the corresponding field.
+
+**`ffmpeg_cmd` auto-population.** `convert-cmd` sets the top-level
+`ffmpeg_cmd` field in the produced JSON to the original source command.
+This field is advisory only — the runtime ignores it. The GUI refreshes
+it automatically on every save. See [`ffmpeg_cmd`](json-config-reference.md#ffmpeg_cmd)
+in the JSON Config Reference for the full three-rule description.
+
 For a complete mapping table of FFmpeg options to JSON fields, see [ffmpeg-migration-guide.md](ffmpeg-migration-guide.md).
 
 ---
@@ -265,23 +281,26 @@ libswscale   8.3.100
 Launch the browser-based visual job editor.
 
 ```sh
-mediamolder gui [--port <port>] [--static <path>]
+mediamolder gui [flags]
 ```
 
 | Flag | Default | Description |
 |---|---|---|
-| `--port` | `7042` | HTTP port to listen on |
-| `--static` | auto-detected | Path to the built frontend (`frontend/dist/`) |
+| `--port` | `8080` | HTTP port to listen on |
+| `--host` | `127.0.0.1` | Interface to bind; use `0.0.0.0` to expose on the LAN |
+| `--no-open` | `false` | Do not auto-open a browser tab |
+| `--examples` | `testdata/examples` | Directory of example JSON files shown in the **Graph:** dropdown; `""` to disable |
+| `--dev` | `false` | Skip embedded frontend; expects Vite dev server on `:5173` |
 
-The server starts, prints the URL, and opens the browser automatically on macOS, Windows, and Linux (via `xdg-open`). Press **Ctrl-C** to stop.
+The server starts, prints the URL, and opens the browser automatically. Press **Ctrl-C** to stop.
 
 ```
 MediaMolder GUI
-  Listening on http://localhost:7042
+  Listening on http://localhost:8080
   Press Ctrl-C to stop.
 ```
 
-The GUI communicates with the local Go process over HTTP. JSON config files saved through the GUI are fully compatible with `mediamolder run`.
+The GUI communicates with the local Go process over HTTP. JSON config files saved through the GUI are fully compatible with `mediamolder run`. For the full GUI reference, see [gui.md](gui.md).
 
 ### 3.9 `perf`
 
@@ -329,10 +348,10 @@ mediamolder hwbench [--device <type>] [--codecs <list>] [--resolutions <list>]
 | `--stdout` | `false` | Write JSON to stdout instead of a file |
 | `--caps-only` | `false` | Print hardware capabilities without benchmarking |
 
-See [docs/benchmarks.md](benchmarks.md) for full documentation, the JSON
+See [docs/architecture/benchmarks.md](architecture/benchmarks.md) for full documentation, the JSON
 report schema, and contribution instructions.
 
-### 3.10 `py-scene-detect`
+### 3.11 `py-scene-detect`
 
 Analyse a single media file for scene boundaries without encoding anything.
 Decodes every frame, runs one of five detectors ported from
@@ -563,6 +582,48 @@ Edges are directed connections between stream producers and consumers.
 | `chapters` | array | Chapter table (each: `{start, end, title, metadata}`, times in seconds) |
 | `streams` | array | Per-stream overrides (disposition, per-stream metadata, encoder) |
 | `cover_art` | string | Path to an image to embed as cover art |
+
+#### Container metadata — default behaviour and FFmpeg comparison
+
+> **MediaMolder JSON configs do not copy container-level metadata by default.**
+> Plain `ffmpeg -i in.mp4 out.mp4` implicitly applies `-map_metadata 0`,
+> copying every tag (title, artist, encoder, …) from the first input to the
+> output. Hand-authored MediaMolder JSON makes this opt-in so the caller
+> controls exactly which metadata reaches which output — especially important
+> in multi-input jobs where each output may need a different source.
+>
+> **Exception: `convert-cmd` and the GUI Import dialog replicate FFmpeg's
+> default automatically.** When you import an FFmpeg command line with no
+> explicit `-map_metadata`, the importer sets `map_metadata: true` and
+> `map_chapters: true` on `inputs[0]`. You can suppress this with
+> `-map_metadata -1` in the source command.
+
+Three mechanisms are available, resolved in this priority order:
+
+| Mechanism | How | When to use |
+|---|---|---|
+| `Output.metadata` | Set `"metadata": {"title": "…"}` on an output | Hard-code specific tags; **replaces** any input-mapped metadata entirely |
+| `metadata_reader` + `metadata_writer` graph nodes | Wire a `metadata` edge from a reader to a writer | Multi-input jobs; fine-grained control over which input feeds which output |
+| `Input.map_metadata: true` | Add `"map_metadata": true` to an input | Single-input shorthand; mirrors FFmpeg's default; last writer wins per key when multiple inputs are flagged |
+
+For chapters the same logic applies: `Output.chapters` wins, then a `metadata_reader`/`metadata_writer` pair with `section: "chapters"`, then `Input.map_chapters: true` (first flagged input wins — FFmpeg's single-source chapters semantics).
+
+**Quickest equivalent of FFmpeg's default** — add `map_metadata` and `map_chapters` to the input:
+
+```json
+{
+  "id": "in0",
+  "url": "input.mp4",
+  "map_metadata": true,
+  "map_chapters": true,
+  "streams": [
+    { "input_index": 0, "type": "video", "track": 0 },
+    { "input_index": 0, "type": "audio", "track": 0 }
+  ]
+}
+```
+
+See `testdata/examples/40_metadata_routing.json` for the explicit graph-node form.
 | `hls` | object | HLS options (see below) |
 | `dash` | object | DASH options (see below) |
 | `kind` | string | Output mode: `""` (file), `"tee"` (fan-out) |
@@ -1072,7 +1133,9 @@ kinds of data:
 
 | Edge type | What it carries | libav\* library involvement |
 |---|---|---|
-| `video`, `audio`, `subtitle` | Decoded media frames | Demuxed by libavformat, filtered by libavfilter, encoded/muxed by libavcodec/libavformat |
+| `video` | Decoded video `AVFrame` (raw pixel data) | Demuxed by libavformat, filtered by libavfilter, encoded/muxed by libavcodec/libavformat |
+| `audio` | Decoded audio `AVFrame` (raw PCM samples) | Demuxed by libavformat, filtered by libavfilter, encoded/muxed by libavcodec/libavformat |
+| `subtitle` | `AVSubtitle` events (text or bitmap) | Demuxed by libavformat; typically passed through without re-encode |
 | `data` | `AVMEDIA_TYPE_DATA` streams — raw timed-data tracks such as SCTE-35 splice markers, closed-caption side data, or timecode tracks | A real media stream; demuxed and muxed by libavformat alongside audio/video |
 | `metadata` | Container-level metadata and chapter tables copied between inputs and outputs via `metadata_reader` / `metadata_writer` nodes | Resolved at pipeline build time via libavformat metadata APIs; no frames flow at runtime |
 | `events` | Structured event objects emitted by a `go_processor` via its `Process()` return value (scene boundaries, object detections, frame diagnostics, …) | **None** — handled entirely by the Go runtime event bus; never touches any libav\* library |
@@ -1277,16 +1340,16 @@ mediamolder validate --json job.json | jq '.issues[] | select(.severity == "ERRO
 
 ## 7. Graphical user interface
 
-The GUI is a browser-based visual editor. Start it with `mediamolder gui` (see [§3.8](#38-gui)).
+The GUI is a browser-based visual editor for building, validating, and running MediaMolder JSON pipelines. Start it with `mediamolder gui` (see [§3.8](#38-gui)). For the full GUI reference — canvas, palette, inspector, hardware capabilities, scene detection nodes, FFmpeg import/export, and troubleshooting — see **[gui.md](gui.md)**.
 
 ### 7.1 Launching the GUI
 
 ```sh
 mediamolder gui
-# → opens http://localhost:7042 in the default browser
+# → opens http://localhost:8080 in the default browser
 ```
 
-To use a different port (e.g. if 7042 is taken):
+To use a different port (e.g. if 8080 is taken):
 
 ```sh
 mediamolder gui --port 9000
@@ -1579,13 +1642,14 @@ mediamolder version
 
 | Document | Contents |
 |---|---|
+| [gui.md](gui.md) | Complete GUI reference — canvas, palette, inspector, hardware, scene detection, keyboard shortcuts |
 | [concepts-and-graph-basics.md](concepts-and-graph-basics.md) | Core concepts, terminology, and design principles |
 | [json-config-reference.md](json-config-reference.md) | Complete field-by-field JSON schema reference |
 | [ffmpeg-migration-guide.md](ffmpeg-migration-guide.md) | FFmpeg command → JSON mapping table with examples |
 | [hardware-acceleration.md](hardware-acceleration.md) | Hardware setup, zero-copy paths, device context management |
 | [subtitles.md](subtitles.md) | Subtitle format support, burn-in, passthrough, charset handling |
-| [error-handling.md](error-handling.md) | Error policy, retry, fallback |
-| [observability.md](observability.md) | Event bus, metrics, SSE API |
-| [graph-state-machine.md](graph-state-machine.md) | Graph lifecycle, pause/resume, seek |
+| [architecture/error-handling.md](architecture/error-handling.md) | Error policy, retry, fallback |
+| [architecture/observability.md](architecture/observability.md) | Event bus, metrics, SSE API |
+| [architecture/graph-state-machine.md](architecture/graph-state-machine.md) | Graph lifecycle, pause/resume, seek |
 | [build_and_packaging.md](build_and_packaging.md) | Static linking, cross-compilation, packaging |
-| [graph_validation_design.md](graph_validation_design.md) | Validation architecture and issue code catalogue |
+| [architecture/graph_validation_design.md](architecture/graph_validation_design.md) | Validation architecture and issue code catalogue |

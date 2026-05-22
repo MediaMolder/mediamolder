@@ -1,12 +1,19 @@
 {
   "schema_version": "1.0",
-  "description": "Two-pass EBU R128 loudnorm shuttle (analysis pass). Mirrors `ffmpeg -y -i in.mp4 -af loudnorm=I=-16:TP=-1.5:LRA=11:print_format=json:stats_file=mm-loudnorm-0.json -f null /dev/null` for the canonical first pass that writes JSON measurements; the caller would then re-run the same job with loudnorm_pass: 2 against the same loudnorm_statsfile prefix, and the runtime would inject measured_I / measured_TP / measured_LRA / measured_thresh / offset into the loudnorm filter for a deterministic, linearly-scaled second pass.",
+  "description": "Two-pass EBU R128 loudnorm shuttle (analysis pass). For the canonical first pass that writes JSON measurements; the caller would then re-run the same job with loudnorm_pass: 2 against the same loudnorm_statsfile prefix, and the runtime would inject measured_I / measured_TP / measured_LRA / measured_thresh / offset into the loudnorm filter for a deterministic, linearly-scaled second pass. Note: if you edit this JSON manually, you must also update or remove the ffmpeg_cmd field.",
+  "ffmpeg_cmd": "ffmpeg -i {{input}} -filter_complex [0:a]loudnorm=I=-16:LRA=11:TP=-1.5[loudnorm0];[loudnorm0]aformat=sample_fmts=fltp:sample_rates=48000[resample0];[resample0]asetnsamples=n=1024:p=0[chunkaudio0] -map 0:a:0 -c:a aac -map_metadata 0 -map_chapters 0 {{output}}",
   "inputs": [
     {
       "id": "in0",
       "url": "{{input}}",
+      "map_metadata": true,
+      "map_chapters": true,
       "streams": [
-        { "input_index": 0, "type": "audio", "track": 0 }
+        {
+          "input_index": 0,
+          "type": "audio",
+          "track": 0
+        }
       ]
     }
   ],
@@ -16,26 +23,52 @@
         "id": "loudnorm0",
         "type": "filter",
         "filter": "loudnorm",
-        "params": { "I": -16, "TP": -1.5, "LRA": 11 }
+        "params": {
+          "I": -16,
+          "TP": -1.5,
+          "LRA": 11
+        }
       },
       {
         "id": "resample0",
         "type": "filter",
         "filter": "aformat",
-        "params": { "sample_rates": "48000", "sample_fmts": "fltp" }
+        "params": {
+          "sample_rates": "48000",
+          "sample_fmts": "fltp"
+        }
       },
       {
         "id": "chunkaudio0",
         "type": "filter",
         "filter": "asetnsamples",
-        "params": { "n": "1024", "p": "0" }
+        "params": {
+          "n": "1024",
+          "p": "0"
+        }
       }
     ],
     "edges": [
-      { "from": "in0:a:0", "to": "loudnorm0", "type": "audio" },
-      { "from": "loudnorm0", "to": "resample0", "type": "audio" },
-      { "from": "resample0", "to": "chunkaudio0", "type": "audio" },
-      { "from": "chunkaudio0", "to": "out0:a", "type": "audio" }
+      {
+        "from": "in0:a:0",
+        "to": "loudnorm0",
+        "type": "audio"
+      },
+      {
+        "from": "loudnorm0",
+        "to": "resample0",
+        "type": "audio"
+      },
+      {
+        "from": "resample0",
+        "to": "chunkaudio0",
+        "type": "audio"
+      },
+      {
+        "from": "chunkaudio0",
+        "to": "out0:a",
+        "type": "audio"
+      }
     ]
   },
   "outputs": [

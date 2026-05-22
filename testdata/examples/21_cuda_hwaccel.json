@@ -1,10 +1,13 @@
 {
   "schema_version": "1.0",
-  "description": "Decode in.mp4 using CUDA hardware acceleration -> encode video to H.264 with h264_nvenc (NVIDIA GPU), copy audio stream -> write to out.mp4",
+  "description": "Decode in.mp4 using CUDA hardware acceleration -> encode video to H.264 with h264_nvenc (NVIDIA GPU), copy audio stream -> write to out.mp4. Note: if you edit this JSON manually, you must also update or remove the ffmpeg_cmd field.",
+  "ffmpeg_cmd": "ffmpeg -hwaccel cuda -i {{input}} -map 0:a:0 -map 0:v:0 -c:v h264_nvenc -c:a copy -map_metadata 0 -map_chapters 0 {{output}}",
   "inputs": [
     {
       "id": "in0",
       "url": "{{input}}",
+      "map_metadata": true,
+      "map_chapters": true,
       "streams": [
         {
           "input_index": 0,

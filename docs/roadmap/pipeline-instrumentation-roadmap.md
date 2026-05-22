@@ -256,7 +256,7 @@ The original eight metrics have been wired.  Additionally, 14 new per-node
 performance metrics (`mediamolder_node_active_fraction`,
 `mediamolder_node_fps`, `mediamolder_node_stall_count_total`, etc.) are
 populated from `NodePerfSnapshot` on every emitter tick — see
-[docs/observability.md](observability.md#per-node-performance-metrics) for
+[docs/observability.md](../architecture/observability.md#per-node-performance-metrics) for
 the complete list.  The `MetricsEmitter` gained
 `RegisterPerfHandler`/`RegisterPerfStreamHandler` callbacks so the
 `MetricsServer` can serve `/perf` (JSON) and `/perf/stream` (SSE at 2 Hz).

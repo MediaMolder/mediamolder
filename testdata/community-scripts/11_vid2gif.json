@@ -1,13 +1,20 @@
 {
   "schema_version": "1.0",
-  "description": "Convert a video clip to an animated GIF using palettegen + paletteuse for optimal quality. Matches 'vid2gif -s 00:00:00 -i input -t 00:00:05 -f 10 -w 320 -o output.gif'.",
+  "description": "Convert a video clip to an animated GIF using palettegen + paletteuse for optimal quality. Matches 'vid2gif -s 00:00:00 -i input -t 00:00:05 -f 10 -w 320 -o output.gif'. Note: if you edit this JSON manually, you must also update or remove the ffmpeg_cmd field.",
+  "ffmpeg_cmd": "ffmpeg -t 5 -i {{input}} -filter_complex [0:v]fps=fps=10[fps0];[fps0]scale=flags=lanczos:h=-1:w=320[scale0];[scale0]format=pix_fmts=bgr8[format0] -map 0:v:0 -c:v gif {{output}}",
   "inputs": [
     {
       "id": "in0",
       "url": "{{input}}",
-      "options": { "t": "5" },
+      "options": {
+        "t": "5"
+      },
       "streams": [
-        { "input_index": 0, "type": "video", "track": 0 }
+        {
+          "input_index": 0,
+          "type": "video",
+          "track": 0
+        }
       ]
     }
   ],
@@ -17,26 +24,50 @@
         "id": "fps0",
         "type": "filter",
         "filter": "fps",
-        "params": { "fps": "10" }
+        "params": {
+          "fps": "10"
+        }
       },
       {
         "id": "scale0",
         "type": "filter",
         "filter": "scale",
-        "params": { "w": "320", "h": "-1", "flags": "lanczos" }
+        "params": {
+          "w": "320",
+          "h": "-1",
+          "flags": "lanczos"
+        }
       },
       {
         "id": "format0",
         "type": "filter",
         "filter": "format",
-        "params": { "pix_fmts": "bgr8" }
+        "params": {
+          "pix_fmts": "bgr8"
+        }
       }
     ],
     "edges": [
-      { "from": "in0:v:0", "to": "fps0",    "type": "video" },
-      { "from": "fps0",    "to": "scale0",  "type": "video" },
-      { "from": "scale0",  "to": "format0", "type": "video" },
-      { "from": "format0", "to": "out0:v",  "type": "video" }
+      {
+        "from": "in0:v:0",
+        "to": "fps0",
+        "type": "video"
+      },
+      {
+        "from": "fps0",
+        "to": "scale0",
+        "type": "video"
+      },
+      {
+        "from": "scale0",
+        "to": "format0",
+        "type": "video"
+      },
+      {
+        "from": "format0",
+        "to": "out0:v",
+        "type": "video"
+      }
     ]
   },
   "outputs": [

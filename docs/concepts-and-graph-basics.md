@@ -341,8 +341,8 @@ edge:
 
 - Has a **`from`** endpoint (producer)
 - Has a **`to`** endpoint (consumer)
-- Carries exactly **one stream type** (`"video"`, `"audio"`, `"subtitle"`, or
-  `"data"`)
+- Carries exactly **one stream type** (`"video"`, `"audio"`, `"subtitle"`,
+  `"data"`, or `"events"`)
 
 ```json
 { "from": "src:v:0", "to": "resize", "type": "video" }
@@ -352,8 +352,8 @@ The engine validates every edge at build time. Connecting a video output port
 to an audio input port is a fatal error caught before any file is opened.
 
 In the GUI, an edge is the **wire** drawn between two pads. The wire's colour
-indicates its type (video/audio/subtitle/data). The canvas prevents you from
-dropping a wire onto an incompatible pad.
+indicates its type (video/audio/subtitle/data/events). The canvas prevents you
+from dropping a wire onto an incompatible pad.
 
 ---
 
@@ -365,6 +365,7 @@ dropping a wire onto an incompatible pad.
 | `audio` | Decoded `AVFrame` (raw PCM samples) | Uncompressed between source, filters, and encoder |
 | `subtitle` | `AVSubtitle` events (text or bitmap) | Often passed through without decode |
 | `data` | Opaque packets (timecodes, KLV, SCTE-35, …) | Passed through unchanged |
+| `events` | Structured metadata objects emitted by `go_processor` nodes | **No libav\* involvement.** Rendered as a pink dashed wire in the GUI. Routes processor output (scene cuts, detections, …) to a `metadata_file_writer` sink. Does not carry video frames; never touches any libav\* library. |
 
 > **Per-frame metadata** is not a separate edge type. It rides inside
 > `AVFrame->metadata` and propagates automatically over `video` and `audio`
@@ -931,8 +932,8 @@ pixel format not in encoder accept list"*, or similar:
 
 - [using_mediamolder.md](using_mediamolder.md) — full CLI and GUI user guide
 - [json-config-reference.md](json-config-reference.md) — complete JSON schema reference
-- [graph-validation-design.md](graph_validation_design.md) — validation issue taxonomy
-- [graph-compilation.md](graph-compilation.md) — build / compile / execute internals
+- [graph-validation-design.md](architecture/graph_validation_design.md) — validation issue taxonomy
+- [graph-compilation.md](architecture/graph-compilation.md) — build / compile / execute internals
 - [ffmpeg-migration-guide.md](ffmpeg-migration-guide.md) — full CLI → JSON migration patterns
 - [go-processor-nodes.md](go-processor-nodes.md) — Go processor API
 - [hardware-acceleration.md](hardware-acceleration.md) — `hwupload` / `hwdownload` and HW encoder setup

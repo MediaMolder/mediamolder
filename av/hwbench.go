@@ -177,17 +177,17 @@ type BenchmarkConfig struct {
 
 // DefaultBenchmarkCodecs is the set of encoders tested when BenchmarkConfig.Codecs is nil.
 var DefaultBenchmarkCodecs = []string{
-	"libx264",        // H.264 SW
-	"libx265",        // HEVC SW (may not be present in all builds)
-	"h264_nvenc",     // H.264 NVENC  (NVIDIA)
-	"hevc_nvenc",     // HEVC NVENC   (NVIDIA)
-	"av1_nvenc",      // AV1  NVENC   (Ada Lovelace+)
+	"libx264",           // H.264 SW
+	"libx265",           // HEVC SW (may not be present in all builds)
+	"h264_nvenc",        // H.264 NVENC  (NVIDIA)
+	"hevc_nvenc",        // HEVC NVENC   (NVIDIA)
+	"av1_nvenc",         // AV1  NVENC   (Ada Lovelace+)
 	"h264_videotoolbox", // H.264 VT  (macOS)
 	"hevc_videotoolbox", // HEVC VT   (macOS)
-	"h264_vaapi",     // H.264 VAAPI  (Linux Intel/AMD)
-	"hevc_vaapi",     // HEVC VAAPI   (Linux Intel/AMD)
-	"h264_qsv",       // H.264 QSV    (Intel oneVPL)
-	"hevc_qsv",       // HEVC QSV     (Intel oneVPL)
+	"h264_vaapi",        // H.264 VAAPI  (Linux Intel/AMD)
+	"hevc_vaapi",        // HEVC VAAPI   (Linux Intel/AMD)
+	"h264_qsv",          // H.264 QSV    (Intel oneVPL)
+	"hevc_qsv",          // HEVC QSV     (Intel oneVPL)
 }
 
 // BenchmarkResult holds the measured encode and decode throughput for one
@@ -481,14 +481,14 @@ func benchEncodeSW(
 	pixFmt int,
 ) ([]*Packet, []byte, float64, float64, error) {
 	opts := EncoderOptions{
-		CodecName:   codecName,
-		Width:       res.Width,
-		Height:      res.Height,
-		PixFmt:      pixFmt,
-		FrameRate:   cfg.FrameRate,
-		TimeBase:    [2]int{cfg.FrameRate[1], cfg.FrameRate[0]},
+		CodecName:    codecName,
+		Width:        res.Width,
+		Height:       res.Height,
+		PixFmt:       pixFmt,
+		FrameRate:    cfg.FrameRate,
+		TimeBase:     [2]int{cfg.FrameRate[1], cfg.FrameRate[0]},
 		GlobalHeader: true,
-		ExtraOpts:   map[string]string{"preset": "ultrafast", "tune": "zerolatency"},
+		ExtraOpts:    map[string]string{"preset": "ultrafast", "tune": "zerolatency"},
 	}
 	enc, err := OpenEncoder(opts)
 	if err != nil {
@@ -511,11 +511,11 @@ func benchEncodeHW(
 ) ([]*Packet, []byte, float64, float64, error) {
 	opts := HWEncoderOptions{
 		EncoderOptions: EncoderOptions{
-			CodecName:   codecName,
-			Width:       res.Width,
-			Height:      res.Height,
-			FrameRate:   cfg.FrameRate,
-			TimeBase:    [2]int{cfg.FrameRate[1], cfg.FrameRate[0]},
+			CodecName:    codecName,
+			Width:        res.Width,
+			Height:       res.Height,
+			FrameRate:    cfg.FrameRate,
+			TimeBase:     [2]int{cfg.FrameRate[1], cfg.FrameRate[0]},
 			GlobalHeader: true,
 		},
 		HWDevice: cfg.HWDevice,

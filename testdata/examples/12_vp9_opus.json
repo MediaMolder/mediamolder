@@ -1,10 +1,13 @@
 {
   "schema_version": "1.0",
-  "description": "Decode in.mp4 -> encode video to VP9 with libvpx-vp9, encode audio to Opus with libopus -> write to out.webm",
+  "description": "Decode in.mp4 -> encode video to VP9 with libvpx-vp9, encode audio to Opus with libopus -> write to out.webm. Note: if you edit this JSON manually, you must also update or remove the ffmpeg_cmd field.",
+  "ffmpeg_cmd": "ffmpeg -i {{input}} -map 0:a:0 -map 0:v:0 -c:v libvpx-vp9 -c:a libopus -map_metadata 0 -map_chapters 0 {{output}}",
   "inputs": [
     {
       "id": "in0",
       "url": "{{input}}",
+      "map_metadata": true,
+      "map_chapters": true,
       "streams": [
         {
           "input_index": 0,

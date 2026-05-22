@@ -1,19 +1,30 @@
 {
   "schema_version": "1.0",
-  "description": "Force IDR keyframes every 2 seconds via the canonical HLS/DASH idiom `-force_key_frames \"expr:gte(t,n_forced*2)\"`. Mirrors `ffmpeg -y -i in.mp4 -c:v libx264 -force_key_frames \"expr:gte(t,n_forced*2)\" out.mp4`. The runtime parses the spec at config-load (rejects malformed expressions up-front), builds a per-encoder forceKeyFramesMatcher in handleEncoder, and stamps `frame.pict_type = AV_PICTURE_TYPE_I` before SendFrame on each match — libavcodec honours that as an IDR request regardless of the encoder's GOP cadence (faithful port of fftools/ffmpeg_enc.c::forced_kf_apply).",
+  "description": "Force IDR keyframes every 2 seconds via the canonical HLS/DASH idiom `-force_key_frames \"expr:gte(t,n_forced*2)\"`. The runtime parses the spec at config-load (rejects malformed expressions up-front), builds a per-encoder forceKeyFramesMatcher in handleEncoder, and stamps `frame.pict_type = AV_PICTURE_TYPE_I` before SendFrame on each match — libavcodec honours that as an IDR request regardless of the encoder's GOP cadence (faithful port of fftools/ffmpeg_enc.c::forced_kf_apply). Note: if you edit this JSON manually, you must also update or remove the ffmpeg_cmd field.",
+  "ffmpeg_cmd": "ffmpeg -i {{input}} -map 0:v:0 -c:v libx264 -map_metadata 0 -map_chapters 0 {{output}}",
   "inputs": [
     {
       "id": "in0",
       "url": "{{input}}",
+      "map_metadata": true,
+      "map_chapters": true,
       "streams": [
-        { "input_index": 0, "type": "video", "track": 0 }
+        {
+          "input_index": 0,
+          "type": "video",
+          "track": 0
+        }
       ]
     }
   ],
   "graph": {
     "nodes": [],
     "edges": [
-      { "from": "in0:v:0", "to": "out0:v", "type": "video" }
+      {
+        "from": "in0:v:0",
+        "to": "out0:v",
+        "type": "video"
+      }
     ]
   },
   "outputs": [

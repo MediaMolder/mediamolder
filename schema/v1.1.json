@@ -16,6 +16,10 @@
       "type": "string",
       "description": "Optional human-readable description of the pipeline job."
     },
+    "ffmpeg_cmd": {
+      "type": "string",
+      "description": "Equivalent FFmpeg command line (advisory only — the runtime ignores this field; auto-populated on import via convert-cmd or the GUI; refreshed on every GUI save; if you edit this JSON manually, you must also update or remove this field)."
+    },
     "inputs": {
       "type": "array",
       "minItems": 1,

@@ -1,13 +1,24 @@
 {
   "schema_version": "1.1",
-  "description": "Detect scene changes and write timestamps to scene_changes.jsonl, then encode to H.264 / copy audio. Matches 'scene-detect -i input -t 0.4 -o output.txt' (detection via MediaMolder's scene_change go_processor).",
+  "description": "Detect scene changes and write timestamps to scene_changes.jsonl, then encode to H.264 / copy audio. Matches 'scene-detect -i input -t 0.4 -o output.txt' (detection via MediaMolder's scene_change go_processor). Note: if you edit this JSON manually, you must also update or remove the ffmpeg_cmd field.",
+  "ffmpeg_cmd": "ffmpeg -i {{input}} -map 0:a:0 -map 0:v:0 -c:v libx264 -c:a copy -map_metadata 0 -map_chapters 0 {{output}}",
   "inputs": [
     {
       "id": "in0",
       "url": "{{input}}",
+      "map_metadata": true,
+      "map_chapters": true,
       "streams": [
-        { "input_index": 0, "type": "video", "track": 0 },
-        { "input_index": 0, "type": "audio", "track": 0 }
+        {
+          "input_index": 0,
+          "type": "video",
+          "track": 0
+        },
+        {
+          "input_index": 0,
+          "type": "audio",
+          "track": 0
+        }
       ]
     }
   ],
@@ -26,9 +37,21 @@
       }
     ],
     "edges": [
-      { "from": "in0:v:0",          "to": "scene_detect:default", "type": "video" },
-      { "from": "scene_detect:default", "to": "out0:v",           "type": "video" },
-      { "from": "in0:a:0",          "to": "out0:a",               "type": "audio" }
+      {
+        "from": "in0:v:0",
+        "to": "scene_detect:default",
+        "type": "video"
+      },
+      {
+        "from": "scene_detect:default",
+        "to": "out0:v",
+        "type": "video"
+      },
+      {
+        "from": "in0:a:0",
+        "to": "out0:a",
+        "type": "audio"
+      }
     ]
   },
   "outputs": [

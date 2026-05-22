@@ -7,6 +7,8 @@ MediaMolder pipelines are defined as JSON files conforming to schema v1.0, v1.1,
 | Field            | Type     | Required | Description                              |
 |------------------|----------|----------|------------------------------------------|
 | `schema_version` | string   | yes      | `"1.0"`, `"1.1"`, or `"1.2"`             |
+| `description`    | string   | no       | Human-readable description of the job.   |
+| `ffmpeg_cmd`     | string   | no       | Equivalent FFmpeg command line. See [ffmpeg_cmd rules](#ffmpeg_cmd). |
 | `inputs`         | array    | yes      | Input sources                            |
 | `graph`          | object   | yes      | Processing graph (nodes + edges)         |
 | `outputs`        | array    | yes      | Output sinks                             |
@@ -15,6 +17,16 @@ MediaMolder pipelines are defined as JSON files conforming to schema v1.0, v1.1,
 | `filter_asset_paths` | array of string | no | Search directories for resolving relative model-file paths in filter params. See [Filter model paths](#filter-model-paths-filter_asset_paths). |
 
 Use `"1.1"` when the graph contains `go_processor` nodes. Use `"1.2"` when the graph stores editor-side data under `graph.ui` (e.g. node positions written by `mediamolder gui`); v1.2 is otherwise a strict superset of v1.1, and the runtime accepts all three versions interchangeably. Stream-copy nodes (`type: "copy"`) work under any of the three versions.
+
+## `ffmpeg_cmd`
+
+The optional `ffmpeg_cmd` string field stores an equivalent FFmpeg command line for the job. Three rules govern its use:
+
+1. **Advisory only.** The runtime ignores this field entirely — it is never read during execution.
+2. **Auto-populated on import.** `convert-cmd` and the GUI Import dialog set it to the original source command. The GUI also refreshes it via the `POST /api/export-cmd` endpoint on every save, so it always reflects the current graph state.
+3. **User responsibility on manual edits.** If you edit a job JSON by hand, you must also update or delete the `ffmpeg_cmd` field to keep it accurate. Every built-in example carries the following reminder in its `description`: *"Note: if you edit this JSON manually, you must also update or remove the ffmpeg_cmd field."*
+
+> **Tip:** delete `ffmpeg_cmd` rather than updating it manually after a complex edit — the GUI will regenerate it on the next save.
 
 ## Input
 
@@ -27,6 +39,22 @@ Use `"1.1"` when the graph contains `go_processor` nodes. Use `"1.2"` when the g
 | `options`  | object | no       | Demuxer options (key-value). Includes per-input timing flags `ss` (start), `t` (duration), `to` (end), accepting seconds or `HH:MM:SS[.ms]`. These restrict the demuxer so every downstream stage sees only the trimmed window. Surfaced as the **Timing** section on the Input form in the GUI. |
 | `map_metadata` | bool | no   | Copy this input's container-level metadata onto outputs that don't set their own (FFmpeg `-map_metadata`). |
 | `map_chapters` | bool | no   | Copy this input's chapter table onto outputs that don't set their own (FFmpeg `-map_chapters`). First input wins. |
+
+> **Metadata is not copied by default in JSON configs.** Unlike FFmpeg (which
+> applies `-map_metadata 0` implicitly), a hand-authored MediaMolder JSON file
+> requires an explicit opt-in. Set `map_metadata: true` (and
+> `map_chapters: true`) on an input to replicate FFmpeg's default behaviour.
+>
+> **`convert-cmd` and the GUI Import dialog handle this automatically.** When
+> you import an FFmpeg command line that has no explicit `-map_metadata` flag,
+> the importer sets `map_metadata: true` and `map_chapters: true` on
+> `inputs[0]`, faithfully replicating FFmpeg's implicit default. To suppress
+> the copy for a specific output in the original command, use
+> `-map_metadata -1` before that output.
+>
+> Use `Output.metadata` to hard-code tags, or wire `metadata_reader` /
+> `metadata_writer` graph nodes for per-output control in multi-input
+> pipelines. See [Metadata routing nodes](#metadata-routing-nodes-metadata_reader--metadata_writer).
 | `stream_loop`  | int  | no   | Number of *additional* times to rewind on EOF. `0` = no loop, `N>0` plays N+1 times, `-1` = infinite. PTS continues monotonically across iterations. (FFmpeg `-stream_loop`). |
 | `itsoffset`    | float | no  | Shift every demuxed PTS/DTS by this many seconds (may be negative). Composes additively with the `-ss` ts_offset. (FFmpeg `-itsoffset`). |
 | `read_rate`    | float | no  | Pace packet reads to (read_rate × realtime). `1.0` = native-rate (FFmpeg `-re`); `2.0` = 2× realtime. `0` (default) disables pacing. |
@@ -281,7 +309,7 @@ model-bearing suffix heuristic.
 | `hw_device`   | string | no       | Hardware device name/path                                                   |
 | `realtime`    | bool   | no       | Pace output to wall-clock time                                              |
 
-Per-node `params.threads` and `params.thread_type` override the global values for individual codecs. See [Threading Architecture](threading-architecture.md).
+Per-node `params.threads` and `params.thread_type` override the global values for individual codecs. See [Threading Architecture](architecture/threading-architecture.md).
 
 ## ErrorPolicy
 

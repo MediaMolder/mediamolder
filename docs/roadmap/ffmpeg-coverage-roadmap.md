@@ -8,7 +8,7 @@
 
 ## 1. Testing with a wide range of FFmpeg commands
 
-To validate the universal capability of mediamolder, a set of 35 example FFmpeg commands was identified in a public Github repository [NapoleonWils0n/ffmpeg-scripts](https://github.com/NapoleonWils0n/ffmpeg-scripts). A new test suite [pipeline/community_scripts_test.go](../pipeline/community_scripts_test.go) was developed. This document tracks our progress in being able to support these FFmpeg jobs by converting them to MediaMolder JSON jobs under [testdata/community-scripts/](../testdata/community-scripts/).
+To validate the universal capability of mediamolder, a set of 35 example FFmpeg commands was identified in a public Github repository [NapoleonWils0n/ffmpeg-scripts](https://github.com/NapoleonWils0n/ffmpeg-scripts). A new test suite [pipeline/community_scripts_test.go](../../pipeline/community_scripts_test.go) was developed. This document tracks our progress in being able to support these FFmpeg jobs by converting them to MediaMolder JSON jobs under [testdata/community-scripts/](../../testdata/community-scripts/).
 
 Current state (commit `04f1a0c7`):
 
@@ -406,18 +406,18 @@ All are now done. Listed in the order they were addressed:
    `-map_metadata` / `-map_chapters` semantics with FFmpeg-faithful
    precedence (output overrides win; first-input-wins for chapters).
    Schemas v1.0/v1.1 + `frontend/src/lib/jobTypes.ts` synced; round-trip
-   coverage in [pipeline/metadata_test.go](../pipeline/metadata_test.go).
+   coverage in [pipeline/metadata_test.go](../../pipeline/metadata_test.go).
    The heavier `KindMetadataReader` / `KindMetadataWriter` graph node
    kinds remain **deferred** — the shorthand covers the common case and
    the graph-kind work is reserved for a future PR that has a real
    per-stream / multi-source metadata-routing scenario to anchor it.
 6. **Production-pattern conformance corpus stub** (§3.6.2) — ✅ **done (stub).**
    Six manifest JSONs seeded
-   under [testdata/production-patterns/](../testdata/production-patterns/)
+   under [testdata/production-patterns/](../../testdata/production-patterns/)
    (`01_animated_drawtext.json`, `02_abr_ladder.json`,
    `03_full_gpu_scale_npp_nvenc.json`, `04_hdr_zscale_tonemap.json`,
    `05_loudnorm_two_pass.json`, `06_raw_yuv_input.json`); harness lives
-   at [compat/ffcli/production_patterns_test.go](../compat/ffcli/production_patterns_test.go)
+   at [compat/ffcli/production_patterns_test.go](../../compat/ffcli/production_patterns_test.go)
    (`TestProductionPatternsCorpus`). Each manifest carries the
    canonical FFmpeg command, a free-form description, a structured
    `blockers: [string]` list naming the missing capability keys, and
@@ -430,9 +430,9 @@ All are now done. Listed in the order they were addressed:
    to pass". Capability inventory mining:
    `go test -v -run TestProductionPatternsCorpus ./compat/ffcli/ 2>&1 | grep '^.*blocked-by:'`.
 7. **Filter-expression `eval-expression` HTTP endpoint** (§3.1.6) — ✅ **done.**
-   `av.EvalExpression` ([av/expr.go](../av/expr.go)) wraps libavutil's
+   `av.EvalExpression` ([av/expr.go](../../av/expr.go)) wraps libavutil's
    `av_expr_parse_and_eval`; `GET /api/filters/{name}/eval-expression?expr=…&t=…&w=…`
-   ([internal/gui/filter_eval.go](../internal/gui/filter_eval.go)
+   ([internal/gui/filter_eval.go](../../internal/gui/filter_eval.go)
    `handleFilterEvalExpression`) registered on the GUI mux. Ships a
    curated variable table per common filter (drawtext, overlay,
    crop, scale, pad, rotate, zoompan, setpts/asetpts, volume — names
@@ -441,8 +441,8 @@ All are now done. Listed in the order they were addressed:
    bindings. Response shape: `{filter, expr, variables, ok, value, error}`,
    HTTP 200 for both success and parse-failure (the `ok` flag is the
    truth). Round-trips covered in
-   [av/expr_test.go](../av/expr_test.go) (`TestEvalExpression`) and
-   [internal/gui/filter_eval_test.go](../internal/gui/filter_eval_test.go)
+   [av/expr_test.go](../../av/expr_test.go) (`TestEvalExpression`) and
+   [internal/gui/filter_eval_test.go](../../internal/gui/filter_eval_test.go)
    (`TestHandleFilterEvalExpression`): `between(t,1,8)`, scrolling
    `w-mod(40*t,w+tw)`, `W-w` overlay arithmetic, syntax errors,
    unknown identifiers, fallback-on-unknown-filter, missing `expr`.
@@ -451,12 +451,12 @@ All are now done. Listed in the order they were addressed:
    §3.1 #6 remain open.
 8. **Quoting/escaping fuzzer** (§3.6.5) — ✅ **done.**
    Three Go-native fuzzers seeded against the bug class:
-   [pipeline/fuzz_filter_spec_test.go](../pipeline/fuzz_filter_spec_test.go)
+   [pipeline/fuzz_filter_spec_test.go](../../pipeline/fuzz_filter_spec_test.go)
    `FuzzBuildFilterSpec` drives the filter-spec renderer with
    arbitrary value bytes; asserts no panic, no unquoted `,`/`;`
    leaks (the exact 04f1a0c7 regression), and balanced single-quote
    runs under libavfilter's `'…'` + outside-`\X` escape grammar.
-   [compat/ffcli/fuzz_quoting_test.go](../compat/ffcli/fuzz_quoting_test.go)
+   [compat/ffcli/fuzz_quoting_test.go](../../compat/ffcli/fuzz_quoting_test.go)
    `FuzzTokenize` exercises the shell-style tokenizer (no token can
    contain an unquoted space when the input had no quote bytes; total
    token byte budget never exceeds input length), and
@@ -661,11 +661,11 @@ real jobs."
     collision). CMAF = `HLS.SegmentType="fmp4"` or
     `DASH.HLSPlaylist=true`. ABR ladders continue to use the
     explicit per-encoder graph node pattern from
-    [testdata/examples/35_abr_ladder.json](../testdata/examples/35_abr_ladder.json),
+    [testdata/examples/35_abr_ladder.json](../../testdata/examples/35_abr_ladder.json),
     bound to the playlist via the typed `MasterPlName` /
     `VarStreamMap` (HLS) or `AdaptationSets` (DASH). Smoke tests
-    [41_hls_vod.json](../testdata/examples/41_hls_vod.json) +
-    [42_dash_basic.json](../testdata/examples/42_dash_basic.json).
+    [41_hls_vod.json](../../testdata/examples/41_hls_vod.json) +
+    [42_dash_basic.json](../../testdata/examples/42_dash_basic.json).
 13. **BSF chains on output** (§2.5) — ✅ `Output.BSFVideo` /
     `BSFAudio` / `BSFSubtitle` accept FFmpeg chain syntax
     (`f1[=k=v[:k=v]][,f2]`) parsed by `av_bsf_list_parse_str`.
@@ -690,7 +690,7 @@ real jobs."
     `-mastering_display_metadata` (canonical x265
     `G(x,y)B(x,y)R(x,y)WP(x,y)L(max,min)` grammar) and
     `-content_light_level "MaxCLL,MaxFALL"`. End-to-end coverage
-    in [44_hdr10.json](../testdata/examples/44_hdr10.json).
+    in [44_hdr10.json](../../testdata/examples/44_hdr10.json).
 15. **`setsar` / `setdar` shorthand on `Output`** (§3.3.9) — ✅ done.
     `Output.SAR` / `Output.DAR` accept the canonical `A:B`, `A/B`,
     or decimal-float forms (parsed by `pipeline.parseAspectRatio`,
@@ -707,7 +707,7 @@ real jobs."
     explicit aliases. New av-layer surface: `EncoderOptions
     .SampleAspectRatio` is plumbed into `AVCodecContext
     .sample_aspect_ratio` in `OpenEncoder`. End-to-end coverage
-    in [45_setdar_shorthand.json](../testdata/examples/45_setdar_shorthand.json)
+    in [45_setdar_shorthand.json](../../testdata/examples/45_setdar_shorthand.json)
     plus `TestApplyDARShorthand` / `TestApplySARShorthand`
     (ffprobe-asserts the muxed-in SAR matches 16:15 for DV-PAL
     and 8:9 for NTSC respectively).
@@ -725,7 +725,7 @@ real jobs."
     `IsChildConsts`) on every `EncoderOption` returned by
     `EncoderOptionsByName` and `FilterOptionsByName`; (b) a
     curated `(filter, option) → expression-typed` registry lives
-    in [internal/gui/filter_eval.go](../internal/gui/filter_eval.go)
+    in [internal/gui/filter_eval.go](../../internal/gui/filter_eval.go)
     (`filterExprOptions`, paired with the existing
     `filterExprVars` table that the eval-expression endpoint
     already uses, so a single source of truth feeds both the GUI
@@ -742,7 +742,7 @@ real jobs."
     .fps/.enable; setpts.expr; asetpts.expr; volume.volume/.enable).
 20. **Syntax-highlighted GUI expression input** (§3.1.6.b, §3.5.8) —
     ✅ done. New
-    [frontend/src/components/controls/ExpressionInput.tsx](../frontend/src/components/controls/ExpressionInput.tsx)
+    [frontend/src/components/controls/ExpressionInput.tsx](../../frontend/src/components/controls/ExpressionInput.tsx)
     renders a transparent `<textarea>` over a styled `<pre>`
     overlay (no Monaco / CodeMirror dependency) that
     syntax-colours functions vs. variables vs. numbers vs.
@@ -950,7 +950,7 @@ Close remaining ⚠️/❌ items in §2.3 that are not hardware-related.
     **36c — `KindFilterSource` runtime handler.** ✅ Wave 7.
     New
     `handleFilterSource` worker in
-    [pipeline/handlers.go](../pipeline/handlers.go) — owns
+    [pipeline/handlers.go](../../pipeline/handlers.go) — owns
     an `av.FilterGraph` built via `NewSourceFilterGraph`,
     pumps frames from buffersink into N outbound channels
     until EOF or `ctx.Done()`. Optional `Params["duration"]`
@@ -991,7 +991,7 @@ Close remaining ⚠️/❌ items in §2.3 that are not hardware-related.
     inside `-filter_complex` (deferred to Wave 7 #40's
     parser if not yet built; otherwise inline mini-parser).
     Fixture
-    [testdata/examples/49_movie_logo_overlay.json](../testdata/examples/49_movie_logo_overlay.json)
+    [testdata/examples/49_movie_logo_overlay.json](../../testdata/examples/49_movie_logo_overlay.json)
     — `[0:v][movie=logo.png]overlay=W-w-10:10`. Wave 8 #44
     cross-references this for the asset picker.
 
@@ -1043,9 +1043,9 @@ Close remaining ⚠️/❌ items in §2.3 that are not hardware-related.
     `channelmap`, `join`, `amerge`, `amix=weights`) (§2.3, §1.1) — ✅ Wave 7
     Backend already supports these filters; landed three end-to-end
     fixtures that exercise the full path through the runtime:
-    [testdata/examples/46_audio_pan.json](../testdata/examples/46_audio_pan.json)
-    (downmix matrix), [testdata/examples/47_audio_channelmap.json](../testdata/examples/47_audio_channelmap.json)
-    (channel-label swap), [testdata/examples/48_audio_amix_weights.json](../testdata/examples/48_audio_amix_weights.json)
+    [testdata/examples/46_audio_pan.json](../../testdata/examples/46_audio_pan.json)
+    (downmix matrix), [testdata/examples/47_audio_channelmap.json](../../testdata/examples/47_audio_channelmap.json)
+    (channel-label swap), [testdata/examples/48_audio_amix_weights.json](../../testdata/examples/48_audio_amix_weights.json)
     (asplit → amix with weights). `amerge` and `channelsplit`/`join`
     require distinct upstream channel layouts / per-output-pad
     routing that the typed-edges runtime cannot express today
@@ -1085,7 +1085,7 @@ wave delivers every §2.8 / §3.5 GUI item that the schema can now back.
     (all of `pipeline.knownFilterSources` from Wave 7 #36a) plus
     `nullsink` / `anullsink` discard sinks and an `Input.Kind="lavfi"`
     shorthand. Backend palette emission lives in
-    [internal/gui/api.go](../internal/gui/api.go) `handleListNodes`,
+    [internal/gui/api.go](../../internal/gui/api.go) `handleListNodes`,
     which now walks `av.ListFilters()` a second time and emits
     `Type="filter_source"` / `"filter_sink"` entries for the curated
     allow-list under the existing "Sources" / "Sinks" categories
@@ -1093,15 +1093,15 @@ wave delivers every §2.8 / §3.5 GUI item that the schema can now back.
     `knownFilterSinks` — only filters actually built into the
     running libavfilter appear, so e.g. `mandelbrot` is hidden when
     the binary lacks it). Frontend wiring extends
-    [`spawnNodeFrom`](../frontend/src/lib/spawn.ts) so dragging a
+    [`spawnNodeFrom`](../../frontend/src/lib/spawn.ts) so dragging a
     `filter_source` entry creates a `NodeDef{type:"filter_source",
     filter:<name>, params:{duration:"5"}}` (the default
     duration satisfies the Wave 7 #36c "must be bounded" validator;
     `anullsrc` / `aevalsrc` skip it because they are always lazy);
-    [`MMNode`](../frontend/src/components/MMNode.tsx) hides the
+    [`MMNode`](../../frontend/src/components/MMNode.tsx) hides the
     target handle for `filter_source` and the source handle for
     `filter_sink` so the React-Flow node looks like an input/output;
-    [`Inspector`](../frontend/src/components/Inspector.tsx) routes
+    [`Inspector`](../../frontend/src/components/Inspector.tsx) routes
     the new types through the existing `FilterForm` so AVOption-typed
     parameter editing works for free. The `lavfi_input` palette
     entry materialises as a top-level `Input{kind:"lavfi",

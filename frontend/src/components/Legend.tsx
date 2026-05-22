@@ -9,6 +9,7 @@ export function Legend() {
       <span className="legend-row"><span className="legend-swatch" style={{ background: 'var(--audio)' }} /> Audio</span>
       <span className="legend-row"><span className="legend-swatch" style={{ background: 'var(--subtitle)' }} /> Subtitle</span>
       <span className="legend-row"><span className="legend-swatch" style={{ background: 'var(--data)' }} /> Data</span>
+      <span className="legend-row"><span className="legend-swatch legend-swatch-dashed" style={{ borderColor: 'var(--events)' }} /> Events</span>
     </div>
   );
 }
