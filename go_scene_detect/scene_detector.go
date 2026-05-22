@@ -11,7 +11,7 @@
 // License: https://github.com/Breakthrough/PySceneDetect/blob/main/LICENSE
 //
 
-package pyscenedetect
+package goscenedetect
 
 // Ported from scenedetect/detector.py.
 
@@ -121,13 +121,13 @@ func NewFlashFilter(mode FlashFilterMode, length any) (FlashFilter, error) {
 		if isDigitString(s) {
 			n, err := strconv.ParseInt(s, 10, 64)
 			if err != nil {
-				return FlashFilter{}, fmt.Errorf("pyscenedetect: FlashFilter: invalid frame count %q: %w", s, err)
+				return FlashFilter{}, fmt.Errorf("goscenedetect: FlashFilter: invalid frame count %q: %w", s, err)
 			}
 			f.minFrames = n
 		} else {
 			secs, err := parseTimecodeToSecs(s, 100.0)
 			if err != nil {
-				return FlashFilter{}, fmt.Errorf("pyscenedetect: FlashFilter: invalid length %q: %w", s, err)
+				return FlashFilter{}, fmt.Errorf("goscenedetect: FlashFilter: invalid length %q: %w", s, err)
 			}
 			f.minSecs = secs
 			f.hasMinSecs = true
@@ -136,7 +136,7 @@ func NewFlashFilter(mode FlashFilterMode, length any) (FlashFilter, error) {
 		f.minSecs = v.Seconds()
 		f.hasMinSecs = true
 	default:
-		return FlashFilter{}, fmt.Errorf("pyscenedetect: FlashFilter: unsupported length type %T", length)
+		return FlashFilter{}, fmt.Errorf("goscenedetect: FlashFilter: unsupported length type %T", length)
 	}
 	return f, nil
 }
@@ -199,7 +199,7 @@ func (f *FlashFilter) Filter(t FrameTimecode, aboveThreshold bool) []FrameTimeco
 	case FlashFilterModeSuppress:
 		return f.filterSuppress(t, aboveThreshold)
 	default:
-		panic(fmt.Sprintf("pyscenedetect: FlashFilter: unhandled mode %d", f.mode))
+		panic(fmt.Sprintf("goscenedetect: FlashFilter: unhandled mode %d", f.mode))
 	}
 }
 

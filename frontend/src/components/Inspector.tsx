@@ -1823,7 +1823,7 @@ const SCENE_DETECTOR_META: Record<string, SceneDetectorMeta> = {
     thresholdHint: 'MAFD score threshold. Lower = more sensitive.',
   },
   scene_change_content: {
-    label: 'Scene change — content (PySceneDetect)',
+    label: 'Scene change — content (go-scene-detect)',
     thresholdDefault: 27.0,
     thresholdMin: 0,
     thresholdMax: 100,
@@ -1850,7 +1850,7 @@ const SCENE_DETECTOR_META: Record<string, SceneDetectorMeta> = {
     ],
   },
   scene_change_adaptive: {
-    label: 'Scene change — adaptive (PySceneDetect)',
+    label: 'Scene change — adaptive (go-scene-detect)',
     thresholdDefault: 3.0,
     thresholdMin: 0,
     thresholdMax: 20,
@@ -1877,7 +1877,7 @@ const SCENE_DETECTOR_META: Record<string, SceneDetectorMeta> = {
     ],
   },
   scene_change_threshold: {
-    label: 'Scene change — threshold / fade (PySceneDetect)',
+    label: 'Scene change — threshold / fade (go-scene-detect)',
     thresholdDefault: 12.0,
     thresholdMin: 0,
     thresholdMax: 255,
@@ -1907,7 +1907,7 @@ const SCENE_DETECTOR_META: Record<string, SceneDetectorMeta> = {
     ],
   },
   scene_change_hash: {
-    label: 'Scene change — perceptual hash (PySceneDetect)',
+    label: 'Scene change — perceptual hash (go-scene-detect)',
     thresholdDefault: 0.395,
     thresholdMin: 0,
     thresholdMax: 1,
@@ -1937,7 +1937,7 @@ const SCENE_DETECTOR_META: Record<string, SceneDetectorMeta> = {
     ],
   },
   scene_change_histogram: {
-    label: 'Scene change — histogram (PySceneDetect)',
+    label: 'Scene change — histogram (go-scene-detect)',
     thresholdDefault: 0.05,
     thresholdMin: 0,
     thresholdMax: 1,

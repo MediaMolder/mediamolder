@@ -1,6 +1,6 @@
 {
   "schema_version": "1.1",
-  "description": "Decode in.mp4 -> detect scene changes using PySceneDetect ThresholdDetector (fade-to-black tracking via average frame brightness; threshold 12.0, method floor, fade_bias 0.0) and write events to scene_changes_threshold.jsonl -> encode to H.264, copy audio -> write to out.mp4. Note: if you edit this JSON manually, you must also update or remove the ffmpeg_cmd field.",
+  "description": "Decode in.mp4 -> detect scene changes using go-scene-detect ThresholdDetector (fade-to-black tracking via average frame brightness; threshold 12.0, method floor, fade_bias 0.0) and write events to scene_changes_threshold.jsonl -> encode to H.264, copy audio -> write to out.mp4. Note: if you edit this JSON manually, you must also update or remove the ffmpeg_cmd field.",
   "ffmpeg_cmd": "ffmpeg -i {{input}} -map 0:a:0 -map 0:v:0 -c:v libx264 -c:a copy -map_metadata 0 -map_chapters 0 {{output}}",
   "inputs": [
     {

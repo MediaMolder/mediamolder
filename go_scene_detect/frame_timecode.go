@@ -10,7 +10,7 @@
 // License: https://github.com/Breakthrough/PySceneDetect/blob/main/LICENSE
 //
 
-package pyscenedetect
+package goscenedetect
 
 // Ported from scenedetect/common.py, class FrameTimecode.
 
@@ -39,7 +39,7 @@ type FrameTimecode struct {
 // a frame rate. frameNum is clamped to 0 if negative.
 func NewFrameTimecode(frameNum int64, fps float64) (FrameTimecode, error) {
 	if fps <= 0 {
-		return FrameTimecode{}, fmt.Errorf("pyscenedetect: fps must be > 0, got %g", fps)
+		return FrameTimecode{}, fmt.Errorf("goscenedetect: fps must be > 0, got %g", fps)
 	}
 	if frameNum < 0 {
 		frameNum = 0
@@ -51,7 +51,7 @@ func NewFrameTimecode(frameNum int64, fps float64) (FrameTimecode, error) {
 // rounding to the nearest frame boundary. secs is clamped to 0 if negative.
 func FrameTimecodeFromSeconds(secs float64, fps float64) (FrameTimecode, error) {
 	if fps <= 0 {
-		return FrameTimecode{}, fmt.Errorf("pyscenedetect: fps must be > 0, got %g", fps)
+		return FrameTimecode{}, fmt.Errorf("goscenedetect: fps must be > 0, got %g", fps)
 	}
 	if secs < 0 {
 		secs = 0
@@ -70,7 +70,7 @@ func FrameTimecodeFromSeconds(secs float64, fps float64) (FrameTimecode, error) 
 // Matches PySceneDetect's FrameTimecode.__init__ parsing behaviour.
 func ParseFrameTimecode(s string, fps float64) (FrameTimecode, error) {
 	if fps <= 0 {
-		return FrameTimecode{}, fmt.Errorf("pyscenedetect: fps must be > 0, got %g", fps)
+		return FrameTimecode{}, fmt.Errorf("goscenedetect: fps must be > 0, got %g", fps)
 	}
 	secs, err := parseTimecodeToSecs(s, fps)
 	if err != nil {
@@ -186,17 +186,17 @@ func (t FrameTimecode) GreaterEq(other FrameTimecode) bool {
 func parseTimecodeToSecs(s string, fps float64) (float64, error) {
 	s = strings.TrimSpace(s)
 	if s == "" {
-		return 0, fmt.Errorf("pyscenedetect: empty timecode string")
+		return 0, fmt.Errorf("goscenedetect: empty timecode string")
 	}
 
 	// Trailing 's': treat as seconds value.
 	if strings.HasSuffix(s, "s") {
 		num, err := strconv.ParseFloat(s[:len(s)-1], 64)
 		if err != nil {
-			return 0, fmt.Errorf("pyscenedetect: invalid seconds value %q: %w", s, err)
+			return 0, fmt.Errorf("goscenedetect: invalid seconds value %q: %w", s, err)
 		}
 		if num < 0 {
-			return 0, fmt.Errorf("pyscenedetect: timecode must be >= 0, got %q", s)
+			return 0, fmt.Errorf("goscenedetect: timecode must be >= 0, got %q", s)
 		}
 		return num, nil
 	}
@@ -205,7 +205,7 @@ func parseTimecodeToSecs(s string, fps float64) (float64, error) {
 	if strings.Contains(s, ":") {
 		parts := strings.Split(s, ":")
 		if len(parts) < 2 || len(parts) > 3 {
-			return 0, fmt.Errorf("pyscenedetect: invalid timecode %q (wrong number of ':' separators)", s)
+			return 0, fmt.Errorf("goscenedetect: invalid timecode %q (wrong number of ':' separators)", s)
 		}
 		var hrs, mins int
 		var secs float64
@@ -213,25 +213,25 @@ func parseTimecodeToSecs(s string, fps float64) (float64, error) {
 		if len(parts) == 3 {
 			hrs, err = strconv.Atoi(parts[0])
 			if err != nil {
-				return 0, fmt.Errorf("pyscenedetect: invalid hours in %q: %w", s, err)
+				return 0, fmt.Errorf("goscenedetect: invalid hours in %q: %w", s, err)
 			}
 			mins, err = strconv.Atoi(parts[1])
 			if err != nil {
-				return 0, fmt.Errorf("pyscenedetect: invalid minutes in %q: %w", s, err)
+				return 0, fmt.Errorf("goscenedetect: invalid minutes in %q: %w", s, err)
 			}
 			secs, err = strconv.ParseFloat(parts[2], 64)
 		} else {
 			mins, err = strconv.Atoi(parts[0])
 			if err != nil {
-				return 0, fmt.Errorf("pyscenedetect: invalid minutes in %q: %w", s, err)
+				return 0, fmt.Errorf("goscenedetect: invalid minutes in %q: %w", s, err)
 			}
 			secs, err = strconv.ParseFloat(parts[1], 64)
 		}
 		if err != nil {
-			return 0, fmt.Errorf("pyscenedetect: invalid seconds in %q: %w", s, err)
+			return 0, fmt.Errorf("goscenedetect: invalid seconds in %q: %w", s, err)
 		}
 		if hrs < 0 || mins < 0 || secs < 0 || mins >= 60 || secs >= 60 {
-			return 0, fmt.Errorf("pyscenedetect: timecode %q out of valid range", s)
+			return 0, fmt.Errorf("goscenedetect: timecode %q out of valid range", s)
 		}
 		return float64(hrs)*3600 + float64(mins)*60 + secs, nil
 	}
@@ -248,10 +248,10 @@ func parseTimecodeToSecs(s string, fps float64) (float64, error) {
 	if allDigits {
 		n, err := strconv.ParseInt(s, 10, 64)
 		if err != nil {
-			return 0, fmt.Errorf("pyscenedetect: invalid frame number %q: %w", s, err)
+			return 0, fmt.Errorf("goscenedetect: invalid frame number %q: %w", s, err)
 		}
 		if fps <= 0 {
-			return 0, fmt.Errorf("pyscenedetect: fps required to convert frame number %q to seconds", s)
+			return 0, fmt.Errorf("goscenedetect: fps required to convert frame number %q to seconds", s)
 		}
 		return float64(n) / fps, nil
 	}
@@ -259,10 +259,10 @@ func parseTimecodeToSecs(s string, fps float64) (float64, error) {
 	// Otherwise: decimal seconds without 's' suffix.
 	num, err := strconv.ParseFloat(s, 64)
 	if err != nil {
-		return 0, fmt.Errorf("pyscenedetect: cannot parse timecode %q: %w", s, err)
+		return 0, fmt.Errorf("goscenedetect: cannot parse timecode %q: %w", s, err)
 	}
 	if num < 0 {
-		return 0, fmt.Errorf("pyscenedetect: timecode must be >= 0, got %q", s)
+		return 0, fmt.Errorf("goscenedetect: timecode must be >= 0, got %q", s)
 	}
 	return num, nil
 }

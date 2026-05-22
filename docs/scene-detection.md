@@ -19,7 +19,7 @@ media graph — no subprocess, no Python runtime, no inter-process overhead.
 
 - [Detector comparison](#detector-comparison)
 - [The `scene_change` processor (scdet)](#the-scene_change-processor-scdet)
-- [PySceneDetect processors](#pyscenedetect-processors)
+- [go-scene-detect processors](#go-scene-detect-processors)
   - [`scene_change_content`](#scene_change_content)
   - [`scene_change_adaptive`](#scene_change_adaptive)
   - [`scene_change_threshold`](#scene_change_threshold)
@@ -27,7 +27,7 @@ media graph — no subprocess, no Python runtime, no inter-process overhead.
   - [`scene_change_histogram`](#scene_change_histogram)
 - [Common parameters](#common-parameters)
 - [Persisting events](#persisting-events)
-- [CLI: `mediamolder py-scene-detect`](#cli-mediamolder-py-scene-detect)
+- [CLI: `mediamolder go-scene-detect`](#cli-mediamolder-go-scene-detect)
 - [Output format](#output-format)
 - [Using detectors in the GUI](#using-detectors-in-the-gui)
 - [Choosing a detector](#choosing-a-detector)
@@ -72,7 +72,7 @@ The original MediaMolder scene-change processor uses the same algorithm as FFmpe
 
 ---
 
-## PySceneDetect processors
+## go-scene-detect processors
 
 All five processors below are Go ports of the algorithms in
 [PySceneDetect v0.7](https://github.com/Breakthrough/PySceneDetect) by Brandon Castellano.
@@ -341,7 +341,7 @@ Event record on each detected cut:
 
 ## Common parameters
 
-All five PySceneDetect processors share these parameters:
+All five go-scene-detect processors share these parameters:
 
 | Param | Type | Accepted forms | Description |
 |-------|------|---------------|-------------|
@@ -450,13 +450,13 @@ the same `jsonl` / `csv` / `timecodes` logic.
 
 ---
 
-## CLI: `mediamolder py-scene-detect`
+## CLI: `mediamolder go-scene-detect`
 
-The `py-scene-detect` subcommand runs scene detection on a media file outside a full
+The `go-scene-detect` subcommand runs scene detection on a media file outside a full
 pipeline, writing the detected scene list to stdout or a file.
 
 ```
-mediamolder py-scene-detect [flags] <input>
+mediamolder go-scene-detect [flags] <input>
 ```
 
 | Flag | Default | Description |
@@ -474,27 +474,27 @@ mediamolder py-scene-detect [flags] <input>
 
 ```sh
 # Detect scenes with the default content detector.
-mediamolder py-scene-detect input.mp4
+mediamolder go-scene-detect input.mp4
 
 # Use the adaptive detector with a custom threshold; write CSV.
-mediamolder py-scene-detect --detector=adaptive --threshold=2.5 \
+mediamolder go-scene-detect --detector=adaptive --threshold=2.5 \
   --format=csv --output=scenes.csv input.mp4
 
 # Fade/black detection; write only the cut timecodes.
-mediamolder py-scene-detect --detector=threshold --threshold=15 \
+mediamolder go-scene-detect --detector=threshold --threshold=15 \
   --format=timecodes input.mp4
 
 # Write scene list to a JSONL file (default format is jsonl).
-mediamolder py-scene-detect --output=scenes.jsonl input.mp4
+mediamolder go-scene-detect --output=scenes.jsonl input.mp4
 
 # Write scene list as CSV.
-mediamolder py-scene-detect --format=csv --output=scenes.csv input.mp4
+mediamolder go-scene-detect --format=csv --output=scenes.csv input.mp4
 
 # Perceptual hash detector; write JSONL scene list and per-frame stats.
-mediamolder py-scene-detect --detector=hash --output=scenes.jsonl --stats=stats.csv input.mp4
+mediamolder go-scene-detect --detector=hash --output=scenes.jsonl --stats=stats.csv input.mp4
 
 # Disable auto-downscale (process at full resolution).
-mediamolder py-scene-detect --downscale=1 input.mp4
+mediamolder go-scene-detect --downscale=1 input.mp4
 ```
 
 ---
