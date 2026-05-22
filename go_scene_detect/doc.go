@@ -11,7 +11,7 @@
 // License: https://github.com/Breakthrough/PySceneDetect/blob/main/LICENSE
 //
 
-// Package pyscenedetect is a direct Go port of PySceneDetect by Brandon
+// Package goscenedetect is a direct Go port of PySceneDetect by Brandon
 // Castellano (https://github.com/Breakthrough/PySceneDetect).
 //
 // Every algorithm and default parameter is ported faithfully from PySceneDetect
@@ -33,11 +33,11 @@
 //
 // In MediaMolder, detectors are accessed via processor nodes registered as
 // "scene_change_content", "scene_change_adaptive", etc., or through the
-// `mediamolder py-scene-detect` CLI subcommand.
+// `mediamolder go-scene-detect` CLI subcommand.
 //
 // # Attribution
 //
 // This package is a port of PySceneDetect, licensed under the BSD 3-Clause
 // License. All credit for the detection algorithms belongs to Brandon Castellano
 // and the PySceneDetect contributors. See LICENSE for the full license text.
-package pyscenedetect
+package goscenedetect

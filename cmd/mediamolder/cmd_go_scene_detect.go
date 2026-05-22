@@ -3,14 +3,14 @@
 
 package main
 
-// cmdPySceneDetect implements the `mediamolder py-scene-detect` subcommand.
+// cmdGoSceneDetect implements the `mediamolder go-scene-detect` subcommand.
 //
-// py-scene-detect uses algorithms ported directly from PySceneDetect by Brandon Castellano.
+// go-scene-detect uses algorithms ported directly from PySceneDetect by Brandon Castellano.
 // See https://github.com/Breakthrough/PySceneDetect and https://scenedetect.com for details.
 //
 // Usage:
 //
-//	mediamolder py-scene-detect [flags] <input>
+//	mediamolder go-scene-detect [flags] <input>
 //
 // Flags:
 //
@@ -32,17 +32,17 @@ import (
 	"os"
 	"strings"
 
-	psd "github.com/MediaMolder/MediaMolder/PySceneDetect"
-	"github.com/MediaMolder/MediaMolder/PySceneDetect/detectors"
+	psd "github.com/MediaMolder/MediaMolder/go_scene_detect"
+	"github.com/MediaMolder/MediaMolder/go_scene_detect/detectors"
 	"github.com/MediaMolder/MediaMolder/av"
 )
 
-func cmdPySceneDetect(args []string) error {
-	fs := flag.NewFlagSet("py-scene-detect", flag.ContinueOnError)
+func cmdGoSceneDetect(args []string) error {
+	fs := flag.NewFlagSet("go-scene-detect", flag.ContinueOnError)
 	fs.Usage = func() {
-		fmt.Fprint(os.Stderr, `Usage: mediamolder py-scene-detect [flags] <input>
+		fmt.Fprint(os.Stderr, `Usage: mediamolder go-scene-detect [flags] <input>
 
-py-scene-detect uses algorithms ported directly from PySceneDetect by Brandon Castellano.
+go-scene-detect uses algorithms ported directly from PySceneDetect by Brandon Castellano.
 See https://github.com/Breakthrough/PySceneDetect and https://scenedetect.com for details.
 
 Flags:
@@ -80,21 +80,21 @@ Flags:
 	}
 	if fs.NArg() < 1 {
 		fs.Usage()
-		return fmt.Errorf("py-scene-detect: input file required")
+		return fmt.Errorf("go-scene-detect: input file required")
 	}
 	inputPath := fs.Arg(0)
 
 	// ── Open input ──────────────────────────────────────────────────────────
 	input, err := av.OpenInput(inputPath, nil)
 	if err != nil {
-		return fmt.Errorf("py-scene-detect: open %q: %w", inputPath, err)
+		return fmt.Errorf("go-scene-detect: open %q: %w", inputPath, err)
 	}
 	defer input.Close()
 
 	// ── Find video stream ───────────────────────────────────────────────────
 	streams, err := input.AllStreams()
 	if err != nil {
-		return fmt.Errorf("py-scene-detect: enumerate streams: %w", err)
+		return fmt.Errorf("go-scene-detect: enumerate streams: %w", err)
 	}
 	vidIdx := -1
 	for _, s := range streams {
@@ -104,12 +104,12 @@ Flags:
 		}
 	}
 	if vidIdx < 0 {
-		return fmt.Errorf("py-scene-detect: no video stream in %q", inputPath)
+		return fmt.Errorf("go-scene-detect: no video stream in %q", inputPath)
 	}
 
 	si, err := input.StreamInfo(vidIdx)
 	if err != nil {
-		return fmt.Errorf("py-scene-detect: stream info: %w", err)
+		return fmt.Errorf("go-scene-detect: stream info: %w", err)
 	}
 
 	fps := 25.0
@@ -120,14 +120,14 @@ Flags:
 	// ── Open decoder ────────────────────────────────────────────────────────
 	dec, err := av.OpenDecoder(input, vidIdx)
 	if err != nil {
-		return fmt.Errorf("py-scene-detect: open decoder: %w", err)
+		return fmt.Errorf("go-scene-detect: open decoder: %w", err)
 	}
 	defer dec.Close()
 
 	// ── Create detector ─────────────────────────────────────────────────────
 	d, err := pysdCreateDetector(*detectorFlag, *thresholdFlag, *lumaOnlyFlag, *minSceneLenFlag)
 	if err != nil {
-		return fmt.Errorf("py-scene-detect: %w", err)
+		return fmt.Errorf("go-scene-detect: %w", err)
 	}
 
 	// ── Create stats manager (optional) ────────────────────────────────────
@@ -160,10 +160,10 @@ Flags:
 	decErr := <-decodeErrCh
 
 	if detErr != nil {
-		return fmt.Errorf("py-scene-detect: detect: %w", detErr)
+		return fmt.Errorf("go-scene-detect: detect: %w", detErr)
 	}
 	if decErr != nil {
-		return fmt.Errorf("py-scene-detect: decode: %w", decErr)
+		return fmt.Errorf("go-scene-detect: decode: %w", decErr)
 	}
 
 	fmt.Fprintf(os.Stderr, "Processed %d frames. Detected %d cuts.\n",
@@ -172,7 +172,7 @@ Flags:
 	// ── Write stats CSV ─────────────────────────────────────────────────────
 	if *statsFlag != "" && stats != nil {
 		if err := stats.SaveToCSV(*statsFlag); err != nil {
-			return fmt.Errorf("py-scene-detect: save stats: %w", err)
+			return fmt.Errorf("go-scene-detect: save stats: %w", err)
 		}
 	}
 
@@ -185,7 +185,7 @@ Flags:
 	} else {
 		f, err := os.Create(*outputFlag)
 		if err != nil {
-			return fmt.Errorf("py-scene-detect: create output %q: %w", *outputFlag, err)
+			return fmt.Errorf("go-scene-detect: create output %q: %w", *outputFlag, err)
 		}
 		defer f.Close()
 		out = f
@@ -199,7 +199,7 @@ Flags:
 	case "timecodes":
 		return pysdWriteTimecodes(out, scenes)
 	default:
-		return fmt.Errorf("py-scene-detect: unknown format %q (want jsonl, csv, timecodes)", *formatFlag)
+		return fmt.Errorf("go-scene-detect: unknown format %q (want jsonl, csv, timecodes)", *formatFlag)
 	}
 }
 

@@ -18,8 +18,8 @@ package detectors
 import (
 	"math"
 
-	psd "github.com/MediaMolder/MediaMolder/PySceneDetect"
-	imgmath "github.com/MediaMolder/MediaMolder/PySceneDetect/internal"
+	psd "github.com/MediaMolder/MediaMolder/go_scene_detect"
+	imgmath "github.com/MediaMolder/MediaMolder/go_scene_detect/internal"
 )
 
 // ContentWeights holds the per-channel weights used when computing the frame

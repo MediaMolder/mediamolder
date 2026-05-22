@@ -18,9 +18,9 @@ import (
 	"fmt"
 	"sort"
 
-	imgmath "github.com/MediaMolder/MediaMolder/PySceneDetect/internal"
+	imgmath "github.com/MediaMolder/MediaMolder/go_scene_detect/internal"
 
-	psd "github.com/MediaMolder/MediaMolder/PySceneDetect"
+	psd "github.com/MediaMolder/MediaMolder/go_scene_detect"
 )
 
 // HashDetector detects scene cuts by computing a perceptual hash (DCT-based)

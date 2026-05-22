@@ -11,7 +11,7 @@
 // License: https://github.com/Breakthrough/PySceneDetect/blob/main/LICENSE
 //
 
-package pyscenedetect
+package goscenedetect
 
 // Ported from scenedetect/stats_manager.py.
 
@@ -131,7 +131,7 @@ func (s *StatsManager) IsSaveRequired() bool { return s.dirty }
 func (s *StatsManager) SaveToCSV(path string) error {
 	f, err := os.Create(path)
 	if err != nil {
-		return fmt.Errorf("pyscenedetect: StatsManager.SaveToCSV: %w", err)
+		return fmt.Errorf("goscenedetect: StatsManager.SaveToCSV: %w", err)
 	}
 	defer f.Close()
 
@@ -142,7 +142,7 @@ func (s *StatsManager) SaveToCSV(path string) error {
 	header = append(header, "Frame Number", "Timecode")
 	header = append(header, s.keys...)
 	if err := w.Write(header); err != nil {
-		return fmt.Errorf("pyscenedetect: StatsManager.SaveToCSV: write header: %w", err)
+		return fmt.Errorf("goscenedetect: StatsManager.SaveToCSV: write header: %w", err)
 	}
 
 	// Write rows in ascending frame-number order.
@@ -159,12 +159,12 @@ func (s *StatsManager) SaveToCSV(path string) error {
 			row = append(row, strconv.FormatFloat(v, 'f', -1, 64))
 		}
 		if err := w.Write(row); err != nil {
-			return fmt.Errorf("pyscenedetect: StatsManager.SaveToCSV: write row %d: %w", fn, err)
+			return fmt.Errorf("goscenedetect: StatsManager.SaveToCSV: write row %d: %w", fn, err)
 		}
 	}
 	w.Flush()
 	if err := w.Error(); err != nil {
-		return fmt.Errorf("pyscenedetect: StatsManager.SaveToCSV: flush: %w", err)
+		return fmt.Errorf("goscenedetect: StatsManager.SaveToCSV: flush: %w", err)
 	}
 	s.dirty = false
 	return nil
@@ -178,7 +178,7 @@ func (s *StatsManager) SaveToCSV(path string) error {
 func (s *StatsManager) SaveToJSONL(path string) error {
 	f, err := os.Create(path)
 	if err != nil {
-		return fmt.Errorf("pyscenedetect: StatsManager.SaveToJSONL: %w", err)
+		return fmt.Errorf("goscenedetect: StatsManager.SaveToJSONL: %w", err)
 	}
 	defer f.Close()
 
@@ -196,7 +196,7 @@ func (s *StatsManager) SaveToJSONL(path string) error {
 			obj[k] = v
 		}
 		if err := enc.Encode(obj); err != nil {
-			return fmt.Errorf("pyscenedetect: StatsManager.SaveToJSONL: encode frame %d: %w", fn, err)
+			return fmt.Errorf("goscenedetect: StatsManager.SaveToJSONL: encode frame %d: %w", fn, err)
 		}
 	}
 	s.dirty = false

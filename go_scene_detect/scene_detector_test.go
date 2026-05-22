@@ -6,7 +6,7 @@
 // Copyright (C) 2025 Brandon Castellano <http://www.bcastell.com>.
 // SPDX-License-Identifier: BSD-3-Clause
 
-package pyscenedetect
+package goscenedetect
 
 import (
 	"testing"

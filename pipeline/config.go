@@ -16,8 +16,8 @@ import (
 // Config is the top-level MediaMolder pipeline configuration (JSON schema v1.0).
 // It maps 1:1 with the JSON command payload described in the project specification.
 type Config struct {
-	SchemaVersion string   `json:"schema_version"`
-	Description   string   `json:"description,omitempty"`
+	SchemaVersion string `json:"schema_version"`
+	Description   string `json:"description,omitempty"`
 	// FfmpegCmd is the equivalent FFmpeg command line for this job.
 	// Three rules govern its use:
 	//   1. Advisory only: the runtime ignores this field entirely.
@@ -26,7 +26,7 @@ type Config struct {
 	//      the export-cmd endpoint on every save.
 	//   3. User responsibility: if you edit this JSON manually, you must
 	//      also update or remove this field to keep it accurate.
-	FfmpegCmd string `json:"ffmpeg_cmd,omitempty"`
+	FfmpegCmd     string   `json:"ffmpeg_cmd,omitempty"`
 	Inputs        []Input  `json:"inputs"`
 	Graph         GraphDef `json:"graph"`
 	Outputs       []Output `json:"outputs"`
@@ -418,7 +418,7 @@ type GraphDef struct {
 // GraphUI carries optional layout metadata for the visual editor. All fields
 // are optional and ignored by the runtime.
 type GraphUI struct {
-	Positions    map[string]UIPosition      `json:"positions,omitempty"`
+	Positions map[string]UIPosition `json:"positions,omitempty"`
 	// ProbedInputs caches stream-probe results keyed by input id. It is
 	// written by the GUI when saving a job so that reopening it restores
 	// track handles and stream info without re-probing the source file.

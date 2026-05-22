@@ -6,7 +6,7 @@ package detectors
 import (
 	"testing"
 
-	psd "github.com/MediaMolder/MediaMolder/PySceneDetect"
+	psd "github.com/MediaMolder/MediaMolder/go_scene_detect"
 )
 
 func makeTC(n int64) psd.FrameTimecode {
