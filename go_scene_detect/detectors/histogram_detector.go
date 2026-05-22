@@ -18,9 +18,9 @@ import (
 	"fmt"
 	"math"
 
-	imgmath "github.com/MediaMolder/MediaMolder/PySceneDetect/internal"
+	imgmath "github.com/MediaMolder/MediaMolder/go_scene_detect/internal"
 
-	psd "github.com/MediaMolder/MediaMolder/PySceneDetect"
+	psd "github.com/MediaMolder/MediaMolder/go_scene_detect"
 )
 
 // HistogramDetector detects scene cuts by comparing per-frame luminance

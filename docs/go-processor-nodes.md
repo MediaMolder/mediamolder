@@ -379,7 +379,7 @@ See [docs/scene-detection.md](scene-detection.md#scene_change_hash) for full det
 ### `scene_change_histogram`
 
 Port of PySceneDetect's `HistogramDetector`. Compares adjacent-frame luma histograms
-using the Pearson correlation coefficient. Fastest of the five PySceneDetect processors;
+using the Pearson correlation coefficient. Fastest of the five go-scene-detect processors;
 ideally used as a coarse pre-filter.
 See [docs/scene-detection.md](scene-detection.md#scene_change_histogram) for full details.
 

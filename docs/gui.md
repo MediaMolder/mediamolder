@@ -107,7 +107,7 @@ in-app help dialog.
    * **Processors** — Go-side custom blocks that operate on decoded frames.
      Ships with frame analysis helpers (`frame_counter`, `frame_info`), the
      built-in `scene_change` detector (mirrors FFmpeg `scdet`), and five
-     PySceneDetect-ported scene detectors (`scene_change_content`,
+     go-scene-detect processors (`scene_change_content`,
      `scene_change_adaptive`, `scene_change_hash`, `scene_change_histogram`,
      `scene_change_threshold`). Each detector accepts an optional
      `output_file` param — set it in the Inspector to write cut events to a
@@ -1267,7 +1267,7 @@ MediaMolder ships six scene-change processor algorithms ported from
 plus the built-in `scene_change` detector that mirrors FFmpeg's `scdet` filter.
 All are available in the palette under **Processors** — `scene_change_content`
 and `scene_change_adaptive` appear in *Common* view; the rest require *All* or
-a free-text search (type `pyscenedetect`, `cuts`, `fade`, `hash`, or
+a free-text search (type `goscenedetect`, `cuts`, `fade`, `hash`, or
 `histogram`).
 
 | Processor | Algorithm | Key params | Example |
@@ -1279,7 +1279,7 @@ a free-text search (type `pyscenedetect`, `cuts`, `fade`, `hash`, or
 | `scene_change_histogram` | Pearson correlation on luma histograms (HistogramDetector) | `threshold` 0–1 (default 0.05), `bins` | [55](../testdata/examples/55_scene_change_histogram.json) |
 | `scene_change_threshold` | Average-brightness fade-in/out tracking (ThresholdDetector) | `threshold` 0–255 (default 12.0), `method` (`floor`/`ceiling`), `fade_bias` | [56](../testdata/examples/56_scene_change_threshold.json) |
 
-All PySceneDetect processors share:
+All go-scene-detect processors share:
 
 - `min_scene_len` — minimum frames between cuts; accepts an integer frame
   count, a float in seconds (`0.6`), or a duration string (`"0.6s"`). Default 15.

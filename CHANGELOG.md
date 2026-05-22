@@ -27,7 +27,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   The GUI Inspector's **Save detections to file** panel gains a Format selector
   that updates the file-browser filter and suggested filename automatically.
 
-- **PySceneDetect scene detection port (Phases 1–9).**
+- **go-scene-detect: scene detection port (Phases 1–9).**
   Five scene-change detection algorithms ported from
   [PySceneDetect](https://github.com/Breakthrough/PySceneDetect) by Brandon Castellano
   (BSD-3-Clause). New `go_processor` nodes:
@@ -38,9 +38,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   - `scene_change_hash` — perceptual DCT hash (Hamming distance)
   - `scene_change_histogram` — luma histogram Pearson correlation
 
-  New `SceneManager` and `StatsManager` types in `PySceneDetect/` handle detector
-  orchestration, per-frame statistics export, and the `py-scene-detect` CLI subcommand.
-  The `mediamolder py-scene-detect` command runs offline scene detection on any media
+  New `SceneManager` and `StatsManager` types in `go_scene_detect/` handle detector
+  orchestration, per-frame statistics export, and the `go-scene-detect` CLI subcommand.
+  The `mediamolder go-scene-detect` command runs offline scene detection on any media
   file and outputs JSONL, CSV, or timecode lists. Full documentation in
   [docs/scene-detection.md](docs/scene-detection.md).
 

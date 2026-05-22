@@ -20,7 +20,7 @@ import (
 	"strconv"
 	"strings"
 
-	psd "github.com/MediaMolder/MediaMolder/PySceneDetect"
+	psd "github.com/MediaMolder/MediaMolder/go_scene_detect"
 )
 
 // bufferEntry holds a (timecode, content_val) pair for the AdaptiveDetector window.
@@ -237,7 +237,7 @@ func (d *AdaptiveDetector) EventBufferLength() int64 {
 }
 
 // resolveMinSceneLen converts a TimecodeLike value to a frame count given the
-// stream's frame rate. Mirrors the parsing logic in pyscenedetect.NewFlashFilter.
+// stream's frame rate. Mirrors the parsing logic in goscenedetect.NewFlashFilter.
 func resolveMinSceneLen(v any, fps float64) (int64, error) {
 	switch n := v.(type) {
 	case nil:

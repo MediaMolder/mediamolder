@@ -6,7 +6,7 @@ package detectors
 import (
 	"testing"
 
-	psd "github.com/MediaMolder/MediaMolder/PySceneDetect"
+	psd "github.com/MediaMolder/MediaMolder/go_scene_detect"
 )
 
 // TestThresholdDetector_ImplementsSceneDetector is a compile-time interface check.

@@ -9,8 +9,8 @@ import (
 	"fmt"
 	"math"
 
-	psd "github.com/MediaMolder/MediaMolder/PySceneDetect"
-	"github.com/MediaMolder/MediaMolder/PySceneDetect/detectors"
+	psd "github.com/MediaMolder/MediaMolder/go_scene_detect"
+	"github.com/MediaMolder/MediaMolder/go_scene_detect/detectors"
 	"github.com/MediaMolder/MediaMolder/av"
 )
 

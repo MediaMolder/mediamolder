@@ -10,7 +10,7 @@
 // included LICENSE file, or visit one of the above pages for details.
 // License: https://github.com/Breakthrough/PySceneDetect/blob/main/LICENSE
 
-package pyscenedetect
+package goscenedetect
 
 // Ported from scenedetect/scene_manager.py.
 
@@ -314,7 +314,7 @@ func (sm *SceneManager) applyCrop(frame *FrameData) *FrameData {
 
 // downscaleFrame reduces frame by an integer factor using box (area) averaging.
 // This is equivalent to cv2.resize with INTER_AREA for exact integer scale
-// factors, and avoids a CGO dependency in the root pyscenedetect package.
+// factors, and avoids a CGO dependency in the root goscenedetect package.
 func (sm *SceneManager) downscaleFrame(frame *FrameData, factor int) *FrameData {
 	dstW := max(1, frame.Width/factor)
 	dstH := max(1, frame.Height/factor)
