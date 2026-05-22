@@ -1070,7 +1070,8 @@ func (p *Pipeline) runGraph(ctx context.Context) (runErr error) {
 		if outputFile == "" {
 			return fmt.Errorf("metadata_file_writer %q: events edge requires output_file param", tgtID)
 		}
-		sink, err := processors.NewEventSink(outputFile)
+		outputFormat, _ := tgt.Params["output_format"].(string)
+		sink, err := processors.NewEventSink(outputFile, outputFormat)
 		if err != nil {
 			return fmt.Errorf("metadata_file_writer %q: %w", tgtID, err)
 		}

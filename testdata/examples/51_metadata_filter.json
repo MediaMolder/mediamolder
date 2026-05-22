@@ -1,12 +1,19 @@
 {
   "schema_version": "1.1",
-  "description": "BBB_10sec.mp4 video → vf_metadata mode=add (inject mm.test=hello onto every AVFrame) → vf_metadata mode=print (dump all keys to frame_metadata.txt) → libx264 → mp4. Demonstrates that AVFrame->metadata propagates through libavfilter as a regular `filter` node — no new node kind is required for per-frame metadata (Wave 7 #39). The same pattern works for audio via `ametadata`.",
+  "description": "BBB_10sec.mp4 video → vf_metadata mode=add (inject mm.test=hello onto every AVFrame) → vf_metadata mode=print (dump all keys to frame_metadata.txt) → libx264 → mp4. Demonstrates that AVFrame->metadata propagates through libavfilter as a regular `filter` node — no new node kind is required for per-frame metadata (Wave 7 #39). The same pattern works for audio via `ametadata`. Note: if you edit this JSON manually, you must also update or remove the ffmpeg_cmd field.",
+  "ffmpeg_cmd": "ffmpeg -i {{input}} -filter_complex [0:v]metadata=key=mm.test:mode=add:value=hello[addmd];[addmd]metadata=file=frame_metadata.txt:mode=print[printmd] -map 0:v:0 -c:v libx264 -x264-params:v crf=30:preset=ultrafast -map_metadata 0 -map_chapters 0 -f mp4 {{output}}",
   "inputs": [
     {
       "id": "in0",
       "url": "{{input}}",
+      "map_metadata": true,
+      "map_chapters": true,
       "streams": [
-        { "input_index": 0, "type": "video", "track": 0 }
+        {
+          "input_index": 0,
+          "type": "video",
+          "track": 0
+        }
       ]
     }
   ],
@@ -16,19 +23,38 @@
         "id": "addmd",
         "type": "filter",
         "filter": "metadata",
-        "params": { "mode": "add", "key": "mm.test", "value": "hello" }
+        "params": {
+          "mode": "add",
+          "key": "mm.test",
+          "value": "hello"
+        }
       },
       {
         "id": "printmd",
         "type": "filter",
         "filter": "metadata",
-        "params": { "mode": "print", "file": "frame_metadata.txt" }
+        "params": {
+          "mode": "print",
+          "file": "frame_metadata.txt"
+        }
       }
     ],
     "edges": [
-      { "from": "in0:v:0", "to": "addmd", "type": "video" },
-      { "from": "addmd", "to": "printmd", "type": "video" },
-      { "from": "printmd", "to": "out0:v", "type": "video" }
+      {
+        "from": "in0:v:0",
+        "to": "addmd",
+        "type": "video"
+      },
+      {
+        "from": "addmd",
+        "to": "printmd",
+        "type": "video"
+      },
+      {
+        "from": "printmd",
+        "to": "out0:v",
+        "type": "video"
+      }
     ]
   },
   "outputs": [
@@ -37,7 +63,10 @@
       "url": "{{output}}",
       "format": "mp4",
       "codec_video": "libx264",
-      "encoder_params_video": { "preset": "ultrafast", "crf": "30" }
+      "encoder_params_video": {
+        "preset": "ultrafast",
+        "crf": "30"
+      }
     }
   ]
 }

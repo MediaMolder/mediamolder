@@ -9,7 +9,7 @@ Contributions are welcome. Follow these guidelines:
 
 ## Developer Certificate of Origin (DCO)
 
-All contributions must include a `Signed-off-by` line in the commit message, certifying that you wrote or have the right to submit the code under the project's LGPL-2.1-or-later license. This is the [Developer Certificate of Origin v1.1](../DCO).
+All contributions must include a `Signed-off-by` line in the commit message, certifying that you wrote or have the right to submit the code under the project's LGPL-2.1-or-later license. This is the [Developer Certificate of Origin v1.1](DCO).
 
 Add the sign-off automatically with `git commit -s`:
 
@@ -29,7 +29,7 @@ If you forget, amend the commit before pushing:
 git commit --amend -s
 ```
 
-By signing off you are agreeing to the terms of the [DCO](../DCO). Every commit in a pull request must carry a valid `Signed-off-by` line; PRs that fail the DCO check will not be merged.
+By signing off you are agreeing to the terms of the [DCO](DCO). Every commit in a pull request must carry a valid `Signed-off-by` line; PRs that fail the DCO check will not be merged.
 
 ## Bug Reports
 
@@ -58,4 +58,4 @@ Feature requests can also be submitted as GitHub issues. Describe the use case a
 
 ## Security Vulnerabilities
 
-Do **not** file security vulnerabilities as public issues. Instead, report them via [GitHub Security Advisories](https://github.com/MediaMolder/mediamolder/security/advisories/new) so they can be triaged privately. See [security.md](security.md) for MediaMolder's security model.
+Do **not** file security vulnerabilities as public issues. Instead, report them via [GitHub Security Advisories](https://github.com/MediaMolder/mediamolder/security/advisories/new) so they can be triaged privately. See [security.md](docs/architecture/security.md) for MediaMolder's security model.

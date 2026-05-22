@@ -1,10 +1,13 @@
 {
   "schema_version": "1.0",
-  "description": "Decode in.mp4 -> copy video and audio streams, apply h264_mp4toannexb bitstream filter to video -> write to out.ts (MPEG-TS)",
+  "description": "Decode in.mp4 -> copy video and audio streams, apply h264_mp4toannexb bitstream filter to video -> write to out.ts (MPEG-TS). Note: if you edit this JSON manually, you must also update or remove the ffmpeg_cmd field.",
+  "ffmpeg_cmd": "ffmpeg -i {{input}} -map 0:a:0 -map 0:v:0 -c:v copy -c:a copy -bsf:v h264_mp4toannexb -map_metadata 0 -map_chapters 0 {{output}}",
   "inputs": [
     {
       "id": "in0",
       "url": "{{input}}",
+      "map_metadata": true,
+      "map_chapters": true,
       "streams": [
         {
           "input_index": 0,

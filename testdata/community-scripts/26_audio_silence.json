@@ -1,14 +1,23 @@
 {
   "schema_version": "1.0",
-  "description": "Generate a fixed-duration silent stereo WAV using libavfilter's anullsrc virtual source (FFmpeg's '-f lavfi -i anullsrc=...'). Demonstrates Input.Kind = \"lavfi\". Matches 'audio-silence -t 00:00:02 -o silence.wav' (and ffmpeg -f lavfi -i anullsrc=cl=stereo:r=44100 -t 2 silence.wav).",
+  "description": "Generate a fixed-duration silent stereo WAV using libavfilter's anullsrc virtual source. Demonstrates Input.Kind = \"lavfi\". Matches 'audio-silence -t 00:00:02 -o silence.wav'. Note: if you edit this JSON manually, you must also update or remove the ffmpeg_cmd field.",
+  "ffmpeg_cmd": "ffmpeg -f lavfi -t 2 -i anullsrc=channel_layout=stereo:sample_rate=44100 -filter_complex [0:a]aformat=channel_layouts=stereo:sample_fmts=s16:sample_rates=44100[aformat0] -map 0:a:0 -c:a pcm_s16le -map_metadata 0 -map_chapters 0 -f wav {{output}}",
   "inputs": [
     {
       "id": "in0",
       "url": "anullsrc=channel_layout=stereo:sample_rate=44100",
+      "map_metadata": true,
+      "map_chapters": true,
       "kind": "lavfi",
-      "options": { "t": "2" },
+      "options": {
+        "t": "2"
+      },
       "streams": [
-        { "input_index": 0, "type": "audio", "track": 0 }
+        {
+          "input_index": 0,
+          "type": "audio",
+          "track": 0
+        }
       ]
     }
   ],
@@ -18,12 +27,24 @@
         "id": "aformat0",
         "type": "filter",
         "filter": "aformat",
-        "params": { "sample_fmts": "s16", "sample_rates": "44100", "channel_layouts": "stereo" }
+        "params": {
+          "sample_fmts": "s16",
+          "sample_rates": "44100",
+          "channel_layouts": "stereo"
+        }
       }
     ],
     "edges": [
-      { "from": "in0:a:0",  "to": "aformat0", "type": "audio" },
-      { "from": "aformat0", "to": "out0:a",   "type": "audio" }
+      {
+        "from": "in0:a:0",
+        "to": "aformat0",
+        "type": "audio"
+      },
+      {
+        "from": "aformat0",
+        "to": "out0:a",
+        "type": "audio"
+      }
     ]
   },
   "outputs": [

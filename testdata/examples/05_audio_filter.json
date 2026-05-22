@@ -1,10 +1,13 @@
 {
   "schema_version": "1.0",
-  "description": "Decode in.mp4 -> copy video stream, boost audio volume by 2x, encode audio to AAC -> write to out.mp4",
+  "description": "Decode in.mp4 -> copy video stream, boost audio volume by 2x, encode audio to AAC -> write to out.mp4. Note: if you edit this JSON manually, you must also update or remove the ffmpeg_cmd field.",
+  "ffmpeg_cmd": "ffmpeg -i {{input}} -filter_complex [0:a]volume=volume=2.0[volume0];[volume0]asetnsamples=n=1024:p=0[chunkaudio0] -map 0:a:0 -map 0:v:0 -c:v libx264 -c:a aac -map_metadata 0 -map_chapters 0 {{output}}",
   "inputs": [
     {
       "id": "in0",
       "url": "{{input}}",
+      "map_metadata": true,
+      "map_chapters": true,
       "streams": [
         {
           "input_index": 0,
@@ -33,7 +36,10 @@
         "id": "chunkaudio0",
         "type": "filter",
         "filter": "asetnsamples",
-        "params": { "n": "1024", "p": "0" }
+        "params": {
+          "n": "1024",
+          "p": "0"
+        }
       }
     ],
     "edges": [

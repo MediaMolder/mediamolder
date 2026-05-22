@@ -1,10 +1,13 @@
 {
   "schema_version": "1.1",
-  "description": "Decode in.mp4 -> detect scene changes using PySceneDetect HashDetector (DCT perceptual hash; normalised Hamming distance threshold 0.395, hash size 16, lowpass 2) and write events to scene_changes_hash.jsonl -> encode to H.264, copy audio -> write to out.mp4.",
+  "description": "Decode in.mp4 -> detect scene changes using PySceneDetect HashDetector (DCT perceptual hash; normalised Hamming distance threshold 0.395, hash size 16, lowpass 2) and write events to scene_changes_hash.jsonl -> encode to H.264, copy audio -> write to out.mp4. Note: if you edit this JSON manually, you must also update or remove the ffmpeg_cmd field.",
+  "ffmpeg_cmd": "ffmpeg -i {{input}} -map 0:a:0 -map 0:v:0 -c:v libx264 -c:a copy -map_metadata 0 -map_chapters 0 {{output}}",
   "inputs": [
     {
       "id": "in0",
       "url": "{{input}}",
+      "map_metadata": true,
+      "map_chapters": true,
       "streams": [
         {
           "input_index": 0,

@@ -8,7 +8,7 @@ Version 1.x should be considered experimental.
 ### 2. Goals
 
 - **Deliver a modern media processing engine** that improves orchestration, usability, execution, observability, and reliability.
-  See [MediaMolder Advantages](docs/mediamolder_advantages.md)
+  See [MediaMolder Advantages](private_local/mediamolder_advantages.md)
 - **Provide a fully declarative, version-controlled configuration model** using JSON pipeline files and native Go structs.
 - **Significantly improve usability with an intuitive graphical user interface**,
   including a live **Hardware Capabilities dialog** that shows every available

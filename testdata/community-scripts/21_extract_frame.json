@@ -1,13 +1,20 @@
 {
   "schema_version": "1.0",
-  "description": "Extract a single frame at a specific timestamp as a JPEG. Matches 'extract-frame -i input.mp4 -ss 00:00:02 -o frame.jpg' (and ffmpeg -ss 2 -i in.mp4 -frames:v 1 frame.jpg). Demonstrates Output.MaxFramesVideo plumbing.",
+  "description": "Extract a single frame at a specific timestamp as a JPEG. Matches 'extract-frame -i input.mp4 -ss 00:00:02 -o frame.jpg'. Demonstrates Output.MaxFramesVideo plumbing. Note: if you edit this JSON manually, you must also update or remove the ffmpeg_cmd field.",
+  "ffmpeg_cmd": "ffmpeg -ss 2 -i {{input}} -filter_complex [0:v]format=pix_fmts=yuvj420p[fmt0] -map 0:v:0 -c:v mjpeg -pix_fmt:v yuvj420p -frames:v 1 -f mjpeg {{output}}",
   "inputs": [
     {
       "id": "in0",
       "url": "{{input}}",
-      "options": { "ss": "2" },
+      "options": {
+        "ss": "2"
+      },
       "streams": [
-        { "input_index": 0, "type": "video", "track": 0 }
+        {
+          "input_index": 0,
+          "type": "video",
+          "track": 0
+        }
       ]
     }
   ],
@@ -17,12 +24,22 @@
         "id": "fmt0",
         "type": "filter",
         "filter": "format",
-        "params": { "pix_fmts": "yuvj420p" }
+        "params": {
+          "pix_fmts": "yuvj420p"
+        }
       }
     ],
     "edges": [
-      { "from": "in0:v:0", "to": "fmt0",   "type": "video" },
-      { "from": "fmt0",    "to": "out0:v", "type": "video" }
+      {
+        "from": "in0:v:0",
+        "to": "fmt0",
+        "type": "video"
+      },
+      {
+        "from": "fmt0",
+        "to": "out0:v",
+        "type": "video"
+      }
     ]
   },
   "outputs": [
@@ -31,7 +48,9 @@
       "url": "{{output}}",
       "format": "mjpeg",
       "codec_video": "mjpeg",
-      "encoder_params_video": { "pix_fmt": "yuvj420p" },
+      "encoder_params_video": {
+        "pix_fmt": "yuvj420p"
+      },
       "max_frames_video": 1
     }
   ]

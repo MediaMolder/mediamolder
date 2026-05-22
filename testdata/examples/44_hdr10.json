@@ -1,21 +1,40 @@
 {
   "schema_version": "1.0",
-  "description": "HDR10 metadata on output (Wave 3 #14). Transcodes BBB_10sec.mp4 to HEVC MP4 with full Rec.2020 + PQ color tagging plus SMPTE ST 2086 mastering display + CTA-861.3 MaxCLL/MaxFALL side data. Mirrors ffmpeg -color_primaries bt2020 -color_trc smpte2084 -colorspace bt2020nc -color_range tv -mastering_display_metadata G(8500,39850)B(6550,2300)R(35400,14600)WP(15635,16450)L(10000000,1) -content_light_level 1000,400. Note: the source is SDR, so colour values are tagging only; the resulting MP4 carries the HDR boxes (mdcv/clli) for downstream players to read.",
+  "description": "HDR10 metadata on output (Wave 3 #14). Transcodes BBB_10sec.mp4 to HEVC MP4 with full Rec.2020 + PQ color tagging plus SMPTE ST 2086 mastering display + CTA-861.3 MaxCLL/MaxFALL side data. Note: the source is SDR, so colour values are tagging only; the resulting MP4 carries the HDR boxes (mdcv/clli) for downstream players to read. Note: if you edit this JSON manually, you must also update or remove the ffmpeg_cmd field.",
+  "ffmpeg_cmd": "ffmpeg -i {{input}} -map 0:a:0 -map 0:v:0 -c:v libx265 -c:a copy -x265-params:v crf=32:preset=ultrafast:log-level=error -map_metadata 0 -map_chapters 0 -f mp4 {{output}}",
   "inputs": [
     {
       "id": "in0",
       "url": "{{input}}",
+      "map_metadata": true,
+      "map_chapters": true,
       "streams": [
-        { "input_index": 0, "type": "video", "track": 0 },
-        { "input_index": 0, "type": "audio", "track": 0 }
+        {
+          "input_index": 0,
+          "type": "video",
+          "track": 0
+        },
+        {
+          "input_index": 0,
+          "type": "audio",
+          "track": 0
+        }
       ]
     }
   ],
   "graph": {
     "nodes": [],
     "edges": [
-      { "from": "in0:v:0", "to": "out0:v", "type": "video" },
-      { "from": "in0:a:0", "to": "out0:a", "type": "audio" }
+      {
+        "from": "in0:v:0",
+        "to": "out0:v",
+        "type": "video"
+      },
+      {
+        "from": "in0:a:0",
+        "to": "out0:a",
+        "type": "audio"
+      }
     ]
   },
   "outputs": [
@@ -25,7 +44,11 @@
       "format": "mp4",
       "codec_video": "libx265",
       "codec_audio": "copy",
-      "encoder_params_video": { "preset": "ultrafast", "crf": "32", "x265-params": "log-level=error" },
+      "encoder_params_video": {
+        "preset": "ultrafast",
+        "crf": "32",
+        "x265-params": "log-level=error"
+      },
       "color": {
         "range": "tv",
         "primaries": "bt2020",

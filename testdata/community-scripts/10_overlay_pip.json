@@ -1,20 +1,35 @@
 {
   "schema_version": "1.0",
-  "description": "Picture-in-picture: scale overlay video to 1/4 width, place in bottom-right corner. Matches 'overlay-pip -i bottom.mp4 -v pip.mp4 -p 0 -x br -w 0 -o output.mp4'.",
+  "description": "Picture-in-picture: scale overlay video to 1/4 width, place in bottom-right corner. Matches 'overlay-pip -i bottom.mp4 -v pip.mp4 -p 0 -x br -w 0 -o output.mp4'. Note: if you edit this JSON manually, you must also update or remove the ffmpeg_cmd field.",
+  "ffmpeg_cmd": "ffmpeg -i {{input}} -i {{input2}} -filter_complex [1:v]scale=h=-1:w=iw/4[scale_pip];[0:v][scale_pip]overlay=x=W-w-10:y=H-h-10[overlay0] -map 0:a:0 -map 0:v:0 -map 1:v:0 -c:v libx264 -c:a copy -map_metadata 0 -map_chapters 0 {{output}}",
   "inputs": [
     {
       "id": "in0",
       "url": "{{input}}",
+      "map_metadata": true,
+      "map_chapters": true,
       "streams": [
-        { "input_index": 0, "type": "video", "track": 0 },
-        { "input_index": 0, "type": "audio", "track": 0 }
+        {
+          "input_index": 0,
+          "type": "video",
+          "track": 0
+        },
+        {
+          "input_index": 0,
+          "type": "audio",
+          "track": 0
+        }
       ]
     },
     {
       "id": "in1",
       "url": "{{input2}}",
       "streams": [
-        { "input_index": 0, "type": "video", "track": 0 }
+        {
+          "input_index": 0,
+          "type": "video",
+          "track": 0
+        }
       ]
     }
   ],
@@ -24,21 +39,47 @@
         "id": "scale_pip",
         "type": "filter",
         "filter": "scale",
-        "params": { "w": "iw/4", "h": "-1" }
+        "params": {
+          "w": "iw/4",
+          "h": "-1"
+        }
       },
       {
         "id": "overlay0",
         "type": "filter",
         "filter": "overlay",
-        "params": { "x": "W-w-10", "y": "H-h-10" }
+        "params": {
+          "x": "W-w-10",
+          "y": "H-h-10"
+        }
       }
     ],
     "edges": [
-      { "from": "in1:v:0",   "to": "scale_pip", "type": "video" },
-      { "from": "in0:v:0",   "to": "overlay0",  "type": "video" },
-      { "from": "scale_pip", "to": "overlay0",  "type": "video" },
-      { "from": "overlay0",  "to": "out0:v",    "type": "video" },
-      { "from": "in0:a:0",   "to": "out0:a",    "type": "audio" }
+      {
+        "from": "in1:v:0",
+        "to": "scale_pip",
+        "type": "video"
+      },
+      {
+        "from": "in0:v:0",
+        "to": "overlay0",
+        "type": "video"
+      },
+      {
+        "from": "scale_pip",
+        "to": "overlay0",
+        "type": "video"
+      },
+      {
+        "from": "overlay0",
+        "to": "out0:v",
+        "type": "video"
+      },
+      {
+        "from": "in0:a:0",
+        "to": "out0:a",
+        "type": "audio"
+      }
     ]
   },
   "outputs": [
