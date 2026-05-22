@@ -40,6 +40,7 @@ package av
 //     return 0;
 // }
 // static AVRational out_stream_time_base(AVFormatContext *ctx, int idx) {
+//     if (idx < 0 || idx >= (int)ctx->nb_streams) { AVRational z = {0,0}; return z; }
 //     return ctx->streams[idx]->time_base;
 // }
 // static int set_stream_codec_tag(AVFormatContext *ctx, int idx, uint32_t tag) {
