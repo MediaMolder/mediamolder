@@ -75,8 +75,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   decision tree with overshoot detection, group-step coordination across ABR
   renditions, a bounded `RealtimeDecisionLog` exposed via API/CLI/GUI/
   Prometheus, graph-level FPS gauges, configurable encoder-input buffer
-  sizing, and CLI/Core API/GUI control surfaces (`--preset-floor`,
-  `--preset-ceiling`, `mediamolder preset get/set/clear`, Inspector preset
+  sizing, and CLI/Core API/GUI control surfaces (`--highest-quality-preset`,
+  `mediamolder preset get/set/clear`, Inspector preset
   override). Phase 7 specifies per-output pre-roll buffering (default 4 s,
   PTS-based duration accounting, oldest-drop on overflow), a graph-level
   `Pipeline.Ready()` signal, and readiness surfaces on stdout/`--ready-fd`,
