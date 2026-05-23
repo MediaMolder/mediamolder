@@ -1527,6 +1527,371 @@ type OutputReadyState struct {
 
 ---
 
+## 6c. Phase 8 — Real-Time Controller Observability
+
+### Motivation
+
+Phases 5–7 build a sophisticated adaptive control loop. Once a job starts,
+however, the operator sees only a toolbar FPS pill and decision badges on
+individual encoder nodes. The controller's *reasoning* is invisible:
+
+- Which inputs triggered a decision? (Was the encoder truly CPU-bound, or
+  source-starved at 4% ActiveFrac?)
+- How far along the preset ladder has each encoder moved?
+- How long until the cooldown expires and the next step is eligible?
+- Which nodes are contributing to the FPS deficit vs. which are healthy?
+- What is the current fill level of each encoder's input buffer?
+
+This phase introduces a **first-class RT Controller Node** in the GUI — a
+dedicated canvas element that consolidates all controller inputs and outputs
+in one inspectable view — along with a CLI live-watch mode and a typed HTTP
+snapshot endpoint that backs both surfaces.
+
+### Data model
+
+Two new types are added to `pipeline/snap/snap.go`:
+
+```go
+// ControllerNodeSnapshot combines observation inputs and controller outputs
+// for one controlled (video encoder) node. It is the unit rendered per-row
+// in the RT Controller Node inspector.
+type ControllerNodeSnapshot struct {
+    NodeID string
+
+    // ── Inputs: what the controller observes each tick ────────────────────
+    FPS               float64       // measured output FPS over last window
+    FPSTarget         float64       // configured target
+    FPSDeficit        float64       // FPSTarget − FPS; positive = behind
+    ActiveFrac        float64       // fraction of time in PROCESSING
+    StalledFrac       float64       // fraction of time blocked on output (downstream pressure)
+    IdleFrac          float64       // fraction of time waiting for input (source-starved)
+    ThreadsConfigured int           // codec thread count
+    ThreadsBusy       int           // in-flight codec tasks; −1 = unavailable
+    InputBufferFillFrac  float64       // encoder frame-input queue fill level [0, 1]
+    OutputBufferFillFrac float64       // encoder packet-output queue fill level [0, 1]
+    FrameLatencyMean     time.Duration // EWMA frame-processing latency
+
+    // ── Outputs / controller state for this node ──────────────────────────
+    CurrentPreset     string   // active encoder preset name ("slow", "medium", …)
+    PresetIndex       int      // position in PresetLadder; 0 = slowest
+    PresetLadder      []string // full ordered ladder slowest → fastest
+    PresetLocked      bool     // manual override is active
+    PresetSwitches    int64    // total completed preset transitions
+    WindowsSincePreset int     // controller ticks elapsed since last preset change
+    CooldownRemaining  int     // max(0, rtPresetCooldownWins − WindowsSincePreset)
+    OvershootWindows   int     // consecutive ticks of positive headroom (step-back candidate)
+    ThreadRestarts     int64   // total graceful codec restarts (Phase 5)
+}
+
+// SinkNodeSnapshot captures the output buffer state of a muxer/sink node.
+// Sink output buffer fullness is the primary upstream backpressure signal.
+type SinkNodeSnapshot struct {
+    NodeID               string
+    OutputBufferFillFrac float64 // muxer write-queue fill level [0, 1]
+}
+
+// RTControllerSnapshot is the full per-tick state of the real-time
+// controller. Returned by GET /realtime/snapshot and pushed via SSE.
+type RTControllerSnapshot struct {
+    // ── Controller-global state ───────────────────────────────────────────
+    Enabled   bool
+    Status    string        // "disabled" | "observing" | "cooldown" | "satisfied" | "dropping"
+    Tick      int64         // monotonic tick counter (in JSON; not shown in --watch display)
+    Elapsed   time.Duration // wall-clock time since pipeline start
+    FPSTarget float64       // graph-level target (max of per-node targets)
+    FPSActual float64       // graph-level actual (min of video-only node FPS)
+    Satisfied bool
+
+    // ── Configuration (read-only at runtime) ─────────────────────────────
+    HighestQualityPreset string // preset ceiling; "" = unconstrained
+    GroupStep            bool   // all video encoders step together
+    CooldownWindows      int    // rtPresetCooldownWins constant in effect
+    TickIntervalMs       int64  // controller polling interval (default 500)
+
+    // ── Per-node data for every controlled video encoder ─────────────────
+    Nodes []ControllerNodeSnapshot
+
+    // ── Output-buffer state of all sink (muxer) nodes ─────────────────────
+    // Sinks are not directly controlled but their buffer fullness is the
+    // primary backpressure indicator. Shown as a separate section in --watch.
+    Sinks []SinkNodeSnapshot
+
+    // ── Recent decisions (last 10) for the live feed ──────────────────────
+    RecentDecisions []DecisionRecord
+}
+```
+
+`Status` is derived each tick from the aggregate node state:
+
+| Condition | Status |
+|---|---|
+| `!Enabled` | `"disabled"` |
+| Any node has `CooldownRemaining > 0` | `"cooldown"` |
+| Any node is actively dropping frames | `"dropping"` |
+| `Satisfied` | `"satisfied"` |
+| otherwise | `"observing"` |
+
+A new method `realtimeController.ControllerSnapshot(shot snap.MetricsSnapshot) RTControllerSnapshot` constructs this value each tick from the live `MetricsSnapshot` and the controller's internal counters (`windowsSincePreset`, `overshootWindows`).
+
+### HTTP endpoints
+
+Two endpoints are added to the existing `MetricsServer`:
+
+**`GET /realtime/snapshot`**
+Returns a single `RTControllerSnapshot` as JSON, reflecting the last
+completed controller tick. Suitable for one-shot polling (e.g. a script
+that checks the preset state once).
+
+Response codes: `200` when realtime is enabled; `404` when the pipeline
+has no realtime controller.
+
+**`GET /realtime/snapshot/stream`**
+Server-Sent Events stream. One `data:` event per controller tick (~500 ms),
+each carrying a JSON-encoded `RTControllerSnapshot`. The client subscribes
+once and receives live updates without polling.
+
+```
+GET /realtime/snapshot/stream HTTP/1.1
+Accept: text/event-stream
+
+data: {"enabled":true,"status":"observing","tick":42,...}
+
+data: {"enabled":true,"status":"cooldown","tick":43,...}
+```
+
+The existing `/realtime/ready/stream` SSE endpoint (Phase 7) is unchanged.
+The two streams are independent and may be consumed simultaneously.
+
+### CLI watch mode
+
+`mediamolder perf --watch` renders a live-updating terminal table that
+mirrors the `RTControllerSnapshot`, refreshing on each SSE event from
+`/realtime/snapshot/stream`. The display is structured in two sections:
+
+```
+┌─ RT Controller ─────────────────────────────────────────── elapsed=21.0s ─┐
+│  Status: observing   FPS: 23.9 / 24.0   HighestQuality: slow               │
+│  ← controller observes each row ───────────────────────────┬── → applies ─ │
+├──────────┬────────────────── PERFORMANCE ──────────────────┴── APPLIED ─── ┤
+│ Node     │ fps   deficit  active  stalled  in buf   out buf  │ preset  cd   │
+├──────────┼───────────────────────────────────────────────────┼─────────────┤
+│ enc_1080 │ 23.9  +0.1    96%     0%       ███░ 58%  ████░ 78%│ slow    0   │
+│ enc_720  │ 24.0  -0.0    94%     1%       ██░░ 40%  ███░░ 62%│ slow    0   │
+│ enc_540  │ 24.0  -0.1    88%     2%       █░░░ 22%  ██░░░ 44%│ slow    3   │
+│ enc_360  │ 24.0  -0.2    72%     3%       ░░░░ 12%  █░░░░ 28%│ slow    3   │
+├──────────┴──────────────────────────────────── SINKS ──────────────────────┤
+│ sink_1   out buf  ████░ 82%                                                 │
+│ sink_2   out buf  ███░░ 60%                                                 │
+└─────────────────────────────────────────────────────────────────────────────┘
+[21.0s] enc_1080 noop/cooldown — deficit=0.1 active=0.96 cd=3
+[20.5s] enc_540  step_faster  slow→medium — deficit=1.2 active=0.91
+```
+
+`PERFORMANCE` columns contain what the controller reads from each encoder node
+each tick; `APPLIED` columns contain the settings the controller has written.
+These are the controller's perspective, not data flowing into or out of the
+encoder itself. The `SINKS` section shows the muxer write-queue fill level
+for each sink; this is the most important backpressure indicator.
+
+Columns:
+- **fps**: `FPS` (measured)
+- **deficit**: `FPSDeficit`; `+` = behind, `−` = headroom
+- **active**: `ActiveFrac` as a percentage
+- **stalled**: `StalledFrac` as a percentage (downstream backpressure)
+- **in buf**: four-block bar of `InputBufferFillFrac`; fill level of the encoder's
+  frame-input queue; full bar = upstream frames accumulating faster than encoding
+- **out buf**: four-block bar of `OutputBufferFillFrac`; fill level of the encoder's
+  packet-output queue; full bar = downstream muxer or sink is the bottleneck
+- **preset**: `CurrentPreset`
+- **cd**: `CooldownRemaining`; `0` = eligible for next step
+
+Sink rows show only `out buf` (`OutputBufferFillFrac`), the muxer write-queue
+fill level.
+
+Color coding (ANSI 256-color or true-color terminal):
+- `deficit` column: red when `> rtPresetDeficit (0.5)`, green when negative.
+- `active` column: red when `> 90%` (compute pressure), cyan when `< 20%`
+  (source-starved, no action can help).
+- `in buf` bar: yellow when `> 75%` (encoder accumulating a frame backlog), red
+  when `> 90%` (overflow imminent; oldest-drop logic may activate).
+- `out buf` bar: yellow when `> 75%`, red when `> 90%` (sink is the bottleneck;
+  applies to both encoder output and sink write queues).
+- `preset` column: green at the ceiling (highest quality), amber mid-ladder,
+  red at `ultrafast`.
+- Status line: coloured header matching the `Status` field.
+
+The decision feed at the bottom is a scrolling ring of the last 5 decisions,
+each printed on one line. No external dependencies (no `termbox`, no `tview`);
+output is plain ANSI escape codes for broad terminal compatibility.
+
+### GUI — RT Controller Node
+
+#### Node appearance
+
+When `realtime: true` is active the canvas renders a dedicated **RT Controller
+Node** anchored above the encoder row. It is not a media node and carries no
+AV data edges; it is rendered in the same SVG/canvas layer as media nodes but
+with a visually distinct style:
+
+- **Shape**: full-width rounded rectangle spanning from the leftmost to the
+  rightmost controlled encoder node, positioned one node-height above them.
+- **Border**: dashed (`stroke-dasharray: 6 3`), 1.5 px, using the editor's
+  accent colour (indigo-500 in light mode, indigo-400 in dark mode).
+- **Fill**: translucent accent tint (5% opacity), so the nodes behind remain
+  legible if the RT node is wide.
+- **Header strip**: a narrow solid-fill strip across the top of the rectangle
+  containing a `⚙` icon, the label "Real-Time Controller", and the status
+  badge (see below).
+- **Status badge**: pill-shaped label in the header strip.
+  - Grey "disabled" — realtime mode off.
+  - Blue "observing" — measuring, FPS target met.
+  - Amber "cooldown (Ns)" — in post-step cooldown; shows cooldown windows remaining.
+  - Green "satisfied" — target met at the highest-quality preset ceiling.
+  - Red "dropping" — frame-drop mode active.
+- **FPS readout**: `23.9 / 24.0 fps` displayed in the header strip to the
+  right of the status badge.
+- **Per-node mini-indicators**: one small dot per controlled encoder, arranged
+  horizontally below the header strip, each centred above its encoder node.
+  Dot colour: green (on target), amber (in cooldown), red (behind / stepping).
+  Hovering a dot shows a tooltip with `preset: slow | deficit: +0.1 | cd: 0`.
+
+#### Control edges
+
+A dashed downward arrow connects the RT Controller Node to each encoder node
+it controls. These are rendered as purely cosmetic edges (not in the data-flow
+graph) to make the control relationship explicit. The arrow style:
+`stroke-dasharray: 4 4`, 1 px, semi-transparent accent colour.
+
+When hovering a control edge a tooltip shows the last decision for that node
+and the time it was made.
+
+#### Inspector (on click)
+
+Clicking the RT Controller Node opens the standard right-hand Inspector panel.
+The inspector has two tabs:
+
+---
+
+**Tab 1 — Observed** (what the controller reads from each node)
+
+A table with one row per controlled node, updating live at tick rate:
+
+| Node | FPS | Deficit | Active | Stalled | Idle | In Buf | Out Buf | Latency | Threads |
+|------|-----|---------|--------|---------|------|--------|---------|---------|---------|
+| enc_1080 | 23.9 | +0.1 | 96% | 0% | 4% | ███░ 58% | ████░ 78% | 8.2 ms | 10/10 |
+
+Row colouring follows the same rules as the CLI watch mode. Horizontal fill
+bars in the **In Buf** and **Out Buf** cells are more legible than percentages
+alone and visually communicate proximity to overflow. Threads is rendered as
+`busy / configured`; when `ThreadsBusy = −1` (codec-internal pool, e.g.
+libx264) the cell shows `— / 10`.
+
+---
+
+**Tab 2 — Applied** (what the controller has written to each node)
+
+Three sub-sections:
+
+*Current state* — a table mirroring the APPLIED columns of the CLI:
+
+| Node | Preset | Position | Switches | Cooldown | Overshoot wins | Locked |
+|------|--------|----------|----------|----------|----------------|--------|
+| enc_1080 | slow | 3 / 10 | 2 | 0 | 1 | — |
+
+**Position** is rendered as a mini ladder bar: filled blocks = steps taken from
+the best quality end; empty blocks = remaining headroom before ultrafast.
+Example for `slow` on the 10-step x264 ladder: `███░░░░░░░`.
+
+*Configuration* — a read-only summary of the controller parameters currently
+in effect: `HighestQualityPreset`, `GroupStep`, `CooldownWindows`,
+`TickIntervalMs`.
+
+*Decision log* — a scrolling feed of the last 20 `DecisionRecord` entries,
+newest at the top, rendered as a monospaced list:
+
+```
+21.0s  enc_1080  noop/cooldown   deficit=+0.1  active=96%  cd=3
+20.5s  enc_540   step_faster     slow → medium  deficit=+1.2  active=91%
+19.9s  enc_1080  step_faster     slower → slow  deficit=+2.3  active=97%
+```
+
+A **"Tail"** toggle auto-scrolls to the newest entry; when toggled off the
+user can scroll freely. A **"Clear"** button resets the visible feed (does not
+affect the in-process ring buffer).
+
+---
+
+#### Manual override controls
+
+At the bottom of Tab 2, below the decision log, each controlled node has an
+inline row:
+
+```
+enc_1080   [medium ▾] [Override]  [Clear]
+```
+
+The dropdown is populated from `PresetLadder`. **Override** calls
+`POST /realtime/preset` (existing Phase 6 endpoint). **Clear** calls
+`POST /realtime/preset/clear`. While a node is locked its dot indicator in
+the node header carries a small padlock icon.
+
+#### Placement in the canvas
+
+The RT Controller Node is inserted at the top of the graph layout during
+the compile phase when `realtime: true` is detected. The graph layout engine
+reserves vertical space for it so media nodes do not overlap. When realtime
+is disabled at runtime the node collapses to zero height and the control edges
+disappear; the canvas reflows to fill the freed space.
+
+### Phase 8 deliverables
+
+1. `pipeline/snap/snap.go` — `ControllerNodeSnapshot` and
+   `RTControllerSnapshot` types.
+2. `pipeline/realtime_ctrl.go` — `ControllerSnapshot()` method that constructs
+   an `RTControllerSnapshot` from the live `MetricsSnapshot` and internal
+   counters.
+3. `pipeline/realtime_api.go` — `RealtimeControllerSnapshot()` pipeline method;
+   `/realtime/snapshot` and `/realtime/snapshot/stream` HTTP handlers on
+   `MetricsServer`.
+4. `cmd/mediamolder/cmd_perf.go` — `--watch` flag; SSE consumer; ANSI
+   rendering loop with colour output.
+5. Frontend `frontend/src/lib/` — `RTControllerNode` canvas component (shape,
+   header strip, status badge, FPS readout, per-node dots, control edges,
+   hover tooltips).
+6. Frontend `frontend/src/lib/` — `RTControllerInspector` panel with two tabs,
+   live subscription to `/realtime/snapshot/stream`, colour-coded rows,
+   ladder-position bar, decision log feed, manual override controls.
+7. Frontend canvas layout — reserve space for the RT Controller Node when
+   `global_options.realtime.enabled` is true; collapse when disabled.
+8. Tests:
+   - `ControllerSnapshot()` returns correct `Status` for each controller state.
+   - `CooldownRemaining` is `max(0, rtPresetCooldownWins − windowsSincePreset)`.
+   - SSE stream fires exactly once per tick; connection close does not panic.
+   - `--watch` renders a table with the correct column values for a given
+     snapshot; ANSI colour codes appear for over-threshold deficit.
+   - GUI: `RTControllerNode` renders with correct style when realtime is
+     enabled and is absent from the canvas when disabled.
+
+### Open questions specific to Phase 8
+
+1. **Canvas layout with many encoders.** An ABR job with 6–8 encoders makes
+   the RT Controller Node very wide. Consider showing only a summary count
+   ("4 / 6 on target") at narrow widths, expanding per-node dots only when
+   the canvas is wide enough.
+2. **Multiple source nodes.** When a pipeline has two independent source→encoder
+   chains, there is logically one RT Controller overseeing both. The canvas
+   node spans both encoder groups with a gap between them matching the media
+   graph layout.
+3. **SSE back-pressure.** A slow client consuming `/realtime/snapshot/stream`
+   should not stall the controller. The SSE handler should drop events (not
+   block) when its write buffer is full, emitting an `error: buffer_full` SSE
+   event so the client knows it missed ticks.
+4. **`--watch` on a remote pipeline.** `mediamolder perf --watch` should
+   accept `--host` / `--port` flags to watch a running pipeline on a different
+   machine, consuming the same `/realtime/snapshot/stream` SSE endpoint.
+
+---
+
 ## 7. Worked Example: Identifying a Bottleneck
 
 Suppose a pipeline is `source → scale_filter → libx265_encoder → muxer_sink` running at 18 fps instead of the expected 30 fps. The performance snapshot shows:
