@@ -8,6 +8,7 @@ package gui
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io/fs"
@@ -17,6 +18,8 @@ import (
 	"path"
 	"strings"
 	"time"
+
+	"github.com/MediaMolder/MediaMolder/observability"
 )
 
 // Options configures the GUI server.
@@ -29,11 +32,35 @@ type Options struct {
 	// ExamplesDir is an optional filesystem directory served at /examples/.
 	// When empty, examples are unavailable.
 	ExamplesDir string
+	// MetricsAddr, when non-empty, starts a separate metrics/perf HTTP server
+	// on this address (e.g. ":9090"). Exposes /perf, /perf/stream,
+	// /metrics (Prometheus), /health, and (for realtime jobs) /realtime/*.
+	// The server reflects the most recently started running job.
+	MetricsAddr string
 }
 
-// NewServer wires the HTTP handlers and returns an *http.Server ready to
+// Server wraps the main GUI HTTP server and an optional metrics/perf server.
+// Call ListenAndServe to start; Shutdown stops both servers.
+type Server struct {
+	main    *http.Server
+	metrics *observability.MetricsServer
+}
+
+// ListenAndServe starts the main GUI HTTP server.
+func (s *Server) ListenAndServe() error { return s.main.ListenAndServe() }
+
+// Shutdown gracefully stops the main GUI server and, if running, the metrics server.
+func (s *Server) Shutdown(ctx context.Context) error {
+	err := s.main.Shutdown(ctx)
+	if s.metrics != nil {
+		_ = s.metrics.Shutdown(ctx)
+	}
+	return err
+}
+
+// NewServer wires the HTTP handlers and returns a *Server ready to
 // ListenAndServe.
-func NewServer(opts Options) (*http.Server, error) {
+func NewServer(opts Options) (*Server, error) {
 	mux := http.NewServeMux()
 	jobs := newJobManager()
 
@@ -79,7 +106,7 @@ func NewServer(opts Options) (*http.Server, error) {
 	// first GET /api/hwaccel request does not stall the browser.
 	go probeHWAccelOnce()
 
-	return &http.Server{
+	mainSrv := &http.Server{
 		Addr:              opts.Addr,
 		Handler:           logRequests(mux),
 		ReadHeaderTimeout: 10 * time.Second,
@@ -89,7 +116,25 @@ func NewServer(opts Options) (*http.Server, error) {
 		// by a fixed write deadline.
 		WriteTimeout: 0,
 		IdleTimeout:  120 * time.Second,
-	}, nil
+	}
+
+	s := &Server{main: mainSrv}
+
+	if opts.MetricsAddr != "" {
+		prom := observability.NewMetrics("gui")
+		ms := observability.NewMetricsServer(opts.MetricsAddr, prom.Registry())
+		ms.RegisterPerfHandler(jobs.latestMetrics)
+		ms.RegisterPerfStreamHandler(jobs.latestMetrics)
+		ms.RegisterRealtimeHandlers(&jobManagerRealtimeCtrl{m: jobs})
+		actualAddr, err := ms.Start()
+		if err != nil {
+			return nil, fmt.Errorf("metrics server: %w", err)
+		}
+		fmt.Fprintf(os.Stderr, "metrics: http://%s  (/perf, /metrics, /health)\n", actualAddr)
+		s.metrics = ms
+	}
+
+	return s, nil
 }
 
 func handleHealth(w http.ResponseWriter, _ *http.Request) {

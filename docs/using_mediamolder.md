@@ -104,6 +104,7 @@ Signals `SIGINT` / `SIGTERM` (Ctrl-C) cancel the run cleanly, flushing any in-pr
 | Flag | Description |
 |---|---|
 | `--realtime` | Enable adaptive real-time mode — see [§5.12](#512-real-time-mode) |
+| `--metrics-addr <addr>` | Start a metrics/perf HTTP server on this address while the job runs (e.g. `:9090`). Exposes `/perf`, `/perf/stream`, `/metrics` (Prometheus), `/health`, and — with `--realtime` — `/realtime/*` endpoints. Leave empty (default) to disable. Use with `mediamolder perf` or `mediamolder watch` in a second terminal. |
 | `--json` | Output progress snapshots as JSON Lines on stderr instead of the default human-readable line |
 | `--metadata-out <path>` | Write processor metadata events (e.g. scene-change JSON) to a file; use `-` for stdout |
 | `--set KEY=VALUE` | Substitute `{{KEY}}` in the JSON config before parsing; may be repeated |
@@ -291,6 +292,7 @@ mediamolder gui [flags]
 | `--no-open` | `false` | Do not auto-open a browser tab |
 | `--examples` | `testdata/examples` | Directory of example JSON files shown in the **Graph:** dropdown; `""` to disable |
 | `--dev` | `false` | Skip embedded frontend; expects Vite dev server on `:5173` |
+| `--metrics-addr` | _(disabled)_ | Start a metrics/perf server on this address (e.g. `:9090`). Reflects the most recently started running job. Use with `mediamolder perf` in a second terminal. |
 
 The server starts, prints the URL, and opens the browser automatically. Press **Ctrl-C** to stop.
 
@@ -305,8 +307,8 @@ The GUI communicates with the local Go process over HTTP. JSON config files save
 ### 3.9 `perf`
 
 Display a live terminal table of per-node performance data for a running
-pipeline.  Polls the pipeline's `/perf` JSON endpoint and redraws the
-display in place at the configured interval.
+pipeline.  Polls the `/perf` JSON endpoint exposed by a metrics server and
+redraws the display in place at the configured interval.
 
 ```sh
 mediamolder perf [--url <url>] [--interval <duration>]
@@ -322,9 +324,24 @@ The table columns are **NODE**, **FPS**, **TARGET**, **DEFICIT**, **ACTIVE%**,
 colour-coded green/amber/red relative to the FPS target.  Press **Ctrl-C**
 to exit.
 
-The `/perf` endpoint is served by the `MetricsServer` when a pipeline is
-running.  Start the server with `--metrics-addr :9090` (or configure it in
-code via `observability.NewMetricsServer`).
+**Starting the metrics server.** Pass `--metrics-addr :9090` to `run` or
+`gui` to enable the endpoint while a job is running:
+
+```sh
+# Terminal 1 — run the job and expose metrics on :9090
+mediamolder run --metrics-addr :9090 job.json
+
+# Terminal 2 — watch live per-node performance
+mediamolder perf
+
+# Or with the GUI
+mediamolder gui --metrics-addr :9090
+```
+
+The metrics server also exposes `/metrics` (Prometheus), `/health`, and
+— when `--realtime` is active — the `/realtime/*` control endpoints used
+by `mediamolder watch`.  When embedding MediaMolder as a Go library, create
+the server directly with `observability.NewMetricsServer`.
 
 ### 3.10 `hwbench`
 

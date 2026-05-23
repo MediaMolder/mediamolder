@@ -17,6 +17,7 @@ import (
 	"github.com/MediaMolder/MediaMolder/av"
 	"github.com/MediaMolder/MediaMolder/compat/ffcli"
 	"github.com/MediaMolder/MediaMolder/graph"
+	"github.com/MediaMolder/MediaMolder/observability"
 	"github.com/MediaMolder/MediaMolder/pipeline"
 	"github.com/MediaMolder/MediaMolder/processors"
 )
@@ -103,13 +104,14 @@ func cmdRun(args []string) error {
 	prebufferFlag := fs.Duration("prebuffer", 0, "Phase 7: per-output pre-roll fill target before muxer writes start (e.g. 4s). 0 = use job/default.")
 	prebufferMaxFlag := fs.Duration("prebuffer-max", 0, "Phase 7: hard cap on the pre-roll buffer; oldest packet dropped when exceeded. 0 = 2x prebuffer.")
 	readyFDFlag := fs.Int("ready-fd", -1, "Phase 7: when realtime is on, write a single 0x01 byte to this fd once the graph is READY (and close it). Useful for systemd READY=1 wrappers.")
+	metricsAddr := fs.String("metrics-addr", "", "start a metrics/perf HTTP server on this address (e.g. :9090); exposes /perf, /perf/stream, /metrics (Prometheus), and (with --realtime) /realtime/* endpoints")
 	var sets setVars
 	fs.Var(&sets, "set", "set a template variable in the job JSON: KEY=VALUE replaces every {{KEY}} occurrence (may be repeated)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if fs.NArg() < 1 {
-		return fmt.Errorf("usage: mediamolder run [--json] [--realtime] [--metadata-out=path] [--set KEY=VALUE ...] <config.json>")
+		return fmt.Errorf("usage: mediamolder run [--json] [--realtime] [--metrics-addr :9090] [--metadata-out=path] [--set KEY=VALUE ...] <config.json>")
 	}
 	rawBytes, err := os.ReadFile(fs.Arg(0))
 	if err != nil {
@@ -139,6 +141,28 @@ func cmdRun(args []string) error {
 	eng, err := pipeline.NewPipeline(cfg)
 	if err != nil {
 		return err
+	}
+
+	// Start the optional metrics/perf HTTP server.
+	if *metricsAddr != "" {
+		prom := observability.NewMetrics("pipeline")
+		eng.SetPrometheus(prom)
+		ms := observability.NewMetricsServer(*metricsAddr, prom.Registry())
+		ms.RegisterPerfHandler(eng.GetMetrics)
+		ms.RegisterPerfStreamHandler(eng.GetMetrics)
+		if cfg.GlobalOptions.Realtime {
+			ms.RegisterRealtimeHandlers(eng)
+		}
+		actualAddr, err := ms.Start()
+		if err != nil {
+			return fmt.Errorf("metrics server: %w", err)
+		}
+		fmt.Fprintf(os.Stderr, "metrics: http://%s  (/perf, /metrics, /health)\n", actualAddr)
+		defer func() {
+			shutCtx, shutCancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer shutCancel()
+			_ = ms.Shutdown(shutCtx)
+		}()
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
