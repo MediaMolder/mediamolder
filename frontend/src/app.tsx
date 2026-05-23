@@ -1056,6 +1056,7 @@ function Editor() {
       className="app-shell"
       data-palette={showPalette ? 'shown' : 'hidden'}
       data-inspector={showInspector ? 'shown' : 'hidden'}
+      data-rtc-inspector={showInspector && selectedId === '__rtc__' ? 'shown' : undefined}
     >
       <div className="toolbar">
         <span className="title">MediaMolder</span>

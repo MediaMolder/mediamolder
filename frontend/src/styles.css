@@ -65,6 +65,13 @@ button.danger:hover { background: rgba(185, 74, 74, 0.15); }
 .app-shell[data-palette="hidden"][data-inspector="hidden"] {
   grid-template-columns: 0 1fr 0;
 }
+/* Widen the inspector column when the RT Controller panel is open. */
+.app-shell[data-rtc-inspector="shown"] {
+  grid-template-columns: 220px 1fr 560px;
+}
+.app-shell[data-palette="hidden"][data-rtc-inspector="shown"] {
+  grid-template-columns: 0 1fr 560px;
+}
 .toolbar {
   grid-area: toolbar;
   display: flex;
