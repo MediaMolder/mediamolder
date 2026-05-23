@@ -9,38 +9,42 @@ import (
 	"time"
 )
 
+// pacerStreamState mirrors the per-stream lag-recovery fields in
+// fftools/ffmpeg_demux.c's DemuxStream (ds->lag, ds->resume_wc,
+// ds->resume_pts, ds->first_dts). One instance is allocated lazily
+// the first time a given stream index calls maybeSleep.
+type pacerStreamState struct {
+	streamTSOffset int64     // first ptsUS for this stream (mirrors ds->first_dts)
+	lagUS          int64     // last recorded lag in us; 0 when not in catchup
+	resumeWC       time.Time // wall-clock time when catchup mode last started
+	resumePTSus    int64     // ptsUS when catchup mode last started
+}
+
 // readRatePacer enforces FFmpeg's `-readrate` / `-re` /
 // `-readrate_initial_burst` / `-readrate_catchup` semantics on a
 // demux loop. The algorithm is a faithful port of
-// fftools/ffmpeg_demux.c::readrate_sleep:
+// fftools/ffmpeg_demux.c::readrate_sleep.
 //
-//	max_pts = stream_ts_offset + initial_burst
-//	          + (wallclock_elapsed × readrate)
-//	if pts > max_pts: sleep(pts - max_pts)
+// Per-stream state (streamTSOffset, lagUS, resumeWC, resumePTSus)
+// mirrors DemuxStream in ffmpeg_demux.c; a single pacer serves all
+// streams of one input, with the wall-clock start shared across
+// streams. This is required for correctness with container formats
+// (e.g. AVI) where audio is prefetched significantly ahead of video:
+// without per-stream lag state a late-arriving video packet resets
+// the shared resumePTSus, forcing the next (already-ahead) audio
+// packet into a multi-hundred-millisecond sleep.
 //
-// Lag detection switches the multiplier to readrate_catchup until
-// the lag is recovered (matches the same 0.3 s threshold FFmpeg
-// uses in readrate_sleep). All times are AV_TIME_BASE microseconds.
-//
-// FFmpeg's implementation is per-stream; ours is per-input
-// (effectively per-source goroutine). The single-stream view is
-// faithful for the common live-restream case where every selected
-// stream advances together; if a future job needs independent
-// per-stream pacing the struct can be promoted to a map keyed by
-// stream index without changing the maybeSleep contract.
+// All times are AV_TIME_BASE microseconds.
 type readRatePacer struct {
 	rate    float64 // ReadRate: 1.0 = realtime
 	burst   float64 // ReadRateInitialBurst: seconds of media unpaced at start
 	catchup float64 // ReadRateCatchup: rate during lag recovery
+	burstUS int64   // burst window in us, precomputed from burst
 
-	mu             sync.Mutex
-	initialised    bool
-	wallStart      time.Time
-	streamTSOffset int64 // first packet's PTS in AV_TIME_BASE us; pacing baseline
-	burstUS        int64 // burst window in AV_TIME_BASE us, precomputed
-	resumeWC       time.Time
-	resumePTSus    int64
-	lagUS          int64
+	mu        sync.Mutex
+	wallStart time.Time               // shared across all streams
+	streams   map[int]*pacerStreamState
+
 }
 
 func newReadRatePacer(rate, burst, catchup float64) *readRatePacer {
@@ -49,59 +53,68 @@ func newReadRatePacer(rate, burst, catchup float64) *readRatePacer {
 		burst:   burst,
 		catchup: catchup,
 		burstUS: int64(burst * 1_000_000),
+		streams: make(map[int]*pacerStreamState),
 	}
 }
 
-// maybeSleep blocks the caller for as long as the configured
-// ReadRate requires before this packet should be released
-// downstream. ptsUS is the packet's PTS in AV_TIME_BASE
-// microseconds, in post-shift coordinates (matches the
-// `ds->dts` value FFmpeg uses inside readrate_sleep, which is
-// also already shifted by ts_offset). Returns immediately when
-// the context is cancelled.
-func (p *readRatePacer) maybeSleep(ctx context.Context, ptsUS int64) {
+// maybeSleep blocks the caller for as long as the configured ReadRate
+// requires before this packet should be released downstream. ptsUS is
+// the packet PTS in AV_TIME_BASE microseconds (post ts_offset shift,
+// matching ffmpeg_demux.c::readrate_sleep's use of ds->dts after
+// ts_fixup). streamIdx is the AVStream index for the packet. Returns
+// immediately when the context is cancelled.
+func (p *readRatePacer) maybeSleep(ctx context.Context, ptsUS int64, streamIdx int) {
 	if p == nil {
 		return
 	}
 	p.mu.Lock()
-	if !p.initialised {
-		p.initialised = true
+
+	// Shared wall-clock start: set on the very first call across all streams.
+	if p.wallStart.IsZero() {
 		p.wallStart = time.Now()
-		p.streamTSOffset = ptsUS
-		p.mu.Unlock()
-		return
 	}
+
+	// Per-stream state: allocate on first use.
+	ss := p.streams[streamIdx]
+	if ss == nil {
+		ss = &pacerStreamState{streamTSOffset: ptsUS}
+		p.streams[streamIdx] = ss
+		p.mu.Unlock()
+		return // first packet for this stream initialises the offset; no sleep
+	}
+
 	now := time.Now()
 	wcElapsedUS := now.Sub(p.wallStart).Microseconds()
-	maxPTSus := p.streamTSOffset + p.burstUS + int64(float64(wcElapsedUS)*p.rate)
+	maxPTSus := ss.streamTSOffset + p.burstUS + int64(float64(wcElapsedUS)*p.rate)
 
-	// Burst window: no pacing for the first burstUS of media time.
-	if ptsUS <= p.streamTSOffset+p.burstUS {
+	// Burst window: no pacing for the first burstUS of this stream's media time.
+	if ptsUS <= ss.streamTSOffset+p.burstUS {
 		p.mu.Unlock()
 		return
 	}
 
 	// Lag detection mirrors readrate_sleep's 0.3 s threshold.
+	// lag > 0 means the source is behind the wallclock budget.
 	const lagThresholdUS = int64(0.3 * 1_000_000)
 	lag := maxPTSus - ptsUS
 	if lag < 0 {
 		lag = 0
 	}
-	if (p.lagUS == 0 && lag > lagThresholdUS) || (lag > p.lagUS+lagThresholdUS) {
-		p.lagUS = lag
-		p.resumeWC = now
-		p.resumePTSus = ptsUS
+	if (ss.lagUS == 0 && lag > lagThresholdUS) || (lag > ss.lagUS+lagThresholdUS) {
+		ss.lagUS = lag
+		ss.resumeWC = now
+		ss.resumePTSus = ptsUS
 	}
-	if p.lagUS != 0 && lag == 0 {
-		p.lagUS = 0
-		p.resumeWC = time.Time{}
-		p.resumePTSus = 0
+	if ss.lagUS != 0 && lag == 0 {
+		ss.lagUS = 0
+		ss.resumeWC = time.Time{}
+		ss.resumePTSus = 0
 	}
 
 	var limitPTSus int64
-	if !p.resumeWC.IsZero() {
-		elapsedUS := now.Sub(p.resumeWC).Microseconds()
-		limitPTSus = p.resumePTSus + int64(float64(elapsedUS)*p.catchup)
+	if !ss.resumeWC.IsZero() {
+		elapsedUS := now.Sub(ss.resumeWC).Microseconds()
+		limitPTSus = ss.resumePTSus + int64(float64(elapsedUS)*p.catchup)
 	} else {
 		limitPTSus = maxPTSus
 	}
