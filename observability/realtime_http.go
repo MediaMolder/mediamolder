@@ -22,6 +22,8 @@ type RealtimeController interface {
 	ClearPresetOverride(nodeID string) error
 	RealtimeDecisions() []snap.DecisionRecord
 	RealtimeStatus() snap.RealtimeSnapshot
+	// Phase 8: full per-tick controller snapshot.
+	RealtimeControllerSnapshot() snap.RTControllerSnapshot
 }
 
 // ReadyReporter is the optional sub-interface for Phase 7 per-output
@@ -200,6 +202,61 @@ func (s *MetricsServer) RegisterRealtimeHandlers(ctrl RealtimeController) {
 					writeEvent()
 					last = cur
 				}
+			}
+		}
+	})
+
+	// Phase 8: per-tick controller inspector.
+	//
+	//   GET /realtime/snapshot        → one JSON-encoded RTControllerSnapshot; 404 when disabled.
+	//   GET /realtime/snapshot/stream → SSE stream; one event per ~500 ms tick.
+	s.mux.HandleFunc("/realtime/snapshot", func(w http.ResponseWriter, r *http.Request) {
+		setCORSHeaders(w)
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		cs := ctrl.RealtimeControllerSnapshot()
+		if !cs.Enabled {
+			http.Error(w, "realtime mode not active", http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		_ = json.NewEncoder(w).Encode(cs)
+	})
+
+	s.mux.HandleFunc("/realtime/snapshot/stream", func(w http.ResponseWriter, r *http.Request) {
+		setCORSHeaders(w)
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			http.Error(w, "streaming unsupported", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Connection", "keep-alive")
+
+		ticker := time.NewTicker(500 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-r.Context().Done():
+				return
+			case <-ticker.C:
+				cs := ctrl.RealtimeControllerSnapshot()
+				if !cs.Enabled {
+					// Realtime was disabled mid-run; send a terminal event and close.
+					fmt.Fprintf(w, "event: error\ndata: realtime mode not active\n\n")
+					flusher.Flush()
+					return
+				}
+				buf, _ := json.Marshal(cs)
+				fmt.Fprintf(w, "data: %s\n\n", buf)
+				flusher.Flush()
 			}
 		}
 	})

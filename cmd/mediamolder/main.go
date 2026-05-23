@@ -27,6 +27,10 @@ func main() {
 		runPerf(os.Args[2:])
 		return
 	}
+	if len(os.Args) >= 2 && os.Args[1] == "watch" {
+		runWatch(os.Args[2:])
+		return
+	}
 	if err := run(os.Args[1:]); err != nil {
 		fmt.Fprintf(os.Stderr, "mediamolder: %v\n", err)
 		os.Exit(1)

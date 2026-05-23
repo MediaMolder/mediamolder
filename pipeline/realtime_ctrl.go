@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/MediaMolder/MediaMolder/graph"
@@ -20,26 +21,26 @@ import (
 
 // rtPrerollStatus is the per-output preroll buffer state logged each tick.
 type rtPrerollStatus struct {
-	NodeID      string `json:"node_id"`
-	State       string `json:"state"`
-	BufferedNs  int64  `json:"buffered_ns"`
-	TargetNs    int64  `json:"target_ns"`
-	Evictions   int64  `json:"evictions"`
+	NodeID     string `json:"node_id"`
+	State      string `json:"state"`
+	BufferedNs int64  `json:"buffered_ns"`
+	TargetNs   int64  `json:"target_ns"`
+	Evictions  int64  `json:"evictions"`
 }
 
 // rtLogEntry is one line of the realtime controller debug log.
 // Written as JSONL (one JSON object per line) when RealtimeLogPath is set.
 type rtLogEntry struct {
-	T                    string            `json:"t"`                               // RFC3339Nano wall time
-	ElapsedNs            int64             `json:"elapsed_ns"`                      // pipeline elapsed time
-	Tick                 int64             `json:"tick"`                            // monotonic tick counter
-	FPSTarget            float64           `json:"fps_target"`                      // graph-level target
-	FPSActual            float64           `json:"fps_actual"`                      // graph-level actual
-	Satisfied            bool              `json:"satisfied"`
-	HighestQualityPreset string            `json:"highest_quality_preset,omitempty"`
-	GroupStep            bool              `json:"group_step"`
-	Nodes                []rtLogNode       `json:"nodes"`
-	Prerolls             []rtPrerollStatus `json:"prerolls,omitempty"`
+	T                    string                `json:"t"`          // RFC3339Nano wall time
+	ElapsedNs            int64                 `json:"elapsed_ns"` // pipeline elapsed time
+	Tick                 int64                 `json:"tick"`       // monotonic tick counter
+	FPSTarget            float64               `json:"fps_target"` // graph-level target
+	FPSActual            float64               `json:"fps_actual"` // graph-level actual
+	Satisfied            bool                  `json:"satisfied"`
+	HighestQualityPreset string                `json:"highest_quality_preset,omitempty"`
+	GroupStep            bool                  `json:"group_step"`
+	Nodes                []rtLogNode           `json:"nodes"`
+	Prerolls             []rtPrerollStatus     `json:"prerolls,omitempty"`
 	Decisions            []snap.DecisionRecord `json:"decisions,omitempty"` // decisions made THIS tick only
 }
 
@@ -91,7 +92,7 @@ type realtimeController struct {
 	// Phase 6: configurable bounds and policy.
 	highestQualityPreset string  // slowest (highest quality) preset allowed; controller may step faster freely
 	groupStep            bool    // step every eligible video encoder together when quorum met
-	targetFPS     float64 // optional graph-level fps_target override
+	targetFPS            float64 // optional graph-level fps_target override
 
 	// Phase 6: bounded decision log shared with HTTP / CLI consumers.
 	decMu        sync.Mutex
@@ -106,6 +107,13 @@ type realtimeController struct {
 	logFileCloser io.Closer
 	tickCount     int64
 	tickDecisions []snap.DecisionRecord // decisions made in the current tick
+
+	// Phase 8: observeCount is the total number of observe() calls
+	// (always incremented, unlike tickCount which requires the log file).
+	// lastSnapshot holds the most recently computed RTControllerSnapshot
+	// so HTTP handlers can read it without acquiring any lock.
+	observeCount int64
+	lastSnapshot atomic.Pointer[snap.RTControllerSnapshot]
 }
 
 const (
@@ -295,6 +303,7 @@ func (c *realtimeController) observe() {
 	// Reset the per-tick decision buffer so writeLogEntry only reports
 	// decisions made during this tick.
 	c.tickDecisions = c.tickDecisions[:0]
+	c.observeCount++
 
 	shot := c.registry.Snapshot()
 
@@ -355,6 +364,8 @@ func (c *realtimeController) observe() {
 
 	// Write one JSONL record to the debug log (no-op when log is disabled).
 	c.writeLogEntry(shot)
+	// Build and store a snapshot for HTTP consumers (Phase 8).
+	c.storeSnapshot(shot)
 }
 
 // decide applies the decision tree for one node that is behind target.
@@ -595,4 +606,119 @@ func isThreadLimited(p snap.NodePerfSnapshot) bool {
 	}
 	// Busy ≥ 80% of configured = saturated.
 	return float64(p.ThreadsBusy) >= float64(p.ThreadsConfigured)*0.8
+}
+
+// storeSnapshot builds a RTControllerSnapshot from the current tick's
+// MetricsSnapshot and controller internal state, then stores it atomically
+// so HTTP handlers can read it concurrently without holding any lock.
+// Must be called from the observe() goroutine (single writer).
+func (c *realtimeController) storeSnapshot(shot snap.MetricsSnapshot) {
+	fpsTarget, fpsActual, satisfied := graphFPS(shot, c.dag)
+
+	nodes := make([]snap.ControllerNodeSnapshot, 0, len(shot.Perf))
+	maxCooldown := 0
+	for _, p := range shot.Perf {
+		if !c.isVideoNode(p.NodeID) {
+			continue
+		}
+		wsp := c.windowsSincePreset[p.NodeID]
+		cd := rtPresetCooldownWins - wsp
+		if cd < 0 {
+			cd = 0
+		}
+		if cd > maxCooldown {
+			maxCooldown = cd
+		}
+		nodes = append(nodes, snap.ControllerNodeSnapshot{
+			NodeID:               p.NodeID,
+			FPS:                  p.FPS,
+			FPSTarget:            p.FPSTarget,
+			FPSDeficit:           p.FPSDeficit,
+			ActiveFrac:           p.ActiveFrac,
+			StalledFrac:          p.StalledFrac,
+			IdleFrac:             p.IdleFrac,
+			ThreadsConfigured:    p.ThreadsConfigured,
+			ThreadsBusy:          p.ThreadsBusy,
+			InputBufferFillFrac:  p.InputQueueFillFrac,
+			OutputBufferFillFrac: p.QueueFillFrac,
+			FrameLatencyMean:     p.FrameLatencyMean,
+			CurrentPreset:        p.CurrentPreset,
+			PresetIndex:          p.PresetIndex,
+			PresetLadder:         append([]string(nil), p.PresetLadder...),
+			PresetLocked:         p.PresetLocked,
+			PresetSwitches:       p.PresetSwitches,
+			WindowsSincePreset:   wsp,
+			CooldownRemaining:    cd,
+			OvershootWindows:     c.overshootWindows[p.NodeID],
+			ThreadRestarts:       p.ThreadRestarts,
+		})
+	}
+
+	var sinks []snap.SinkNodeSnapshot
+	if c.runner != nil {
+		for _, s := range c.runner.sinks {
+			if s.preroll != nil {
+				fillFrac := 0.0
+				target := s.preroll.TargetDur()
+				if target > 0 {
+					fillFrac = float64(s.preroll.BufferedDuration()) / float64(target)
+					if fillFrac > 1 {
+						fillFrac = 1
+					}
+				}
+				sinks = append(sinks, snap.SinkNodeSnapshot{
+					NodeID:               s.preroll.NodeID(),
+					OutputBufferFillFrac: fillFrac,
+				})
+			}
+		}
+	}
+
+	// Derive status string.
+	status := "observing"
+	switch {
+	case satisfied:
+		status = "satisfied"
+	case maxCooldown > 0:
+		status = "cooldown"
+	default:
+		// Check whether any node is currently dropping frames.
+		if c.runner != nil {
+			for _, tr := range c.runner.trackers {
+				if tr != nil && tr.dropPeriod.Load() > 0 {
+					status = "dropping"
+					break
+				}
+			}
+		}
+	}
+
+	cs := snap.RTControllerSnapshot{
+		Enabled:              true,
+		Status:               status,
+		Tick:                 c.observeCount,
+		Elapsed:              shot.Elapsed,
+		FPSTarget:            fpsTarget,
+		FPSActual:            fpsActual,
+		Satisfied:            satisfied,
+		HighestQualityPreset: c.highestQualityPreset,
+		GroupStep:            c.groupStep,
+		CooldownWindows:      maxCooldown,
+		TickIntervalMs:       c.interval.Milliseconds(),
+		Nodes:                nodes,
+		Sinks:                sinks,
+		RecentDecisions:      c.snapshotDecisions(),
+	}
+	c.lastSnapshot.Store(&cs)
+}
+
+// ControllerSnapshot returns the most recently stored RTControllerSnapshot.
+// Returns a snapshot with Enabled=true and Status="observing" if no tick
+// has completed yet.
+func (c *realtimeController) ControllerSnapshot() snap.RTControllerSnapshot {
+	p := c.lastSnapshot.Load()
+	if p == nil {
+		return snap.RTControllerSnapshot{Enabled: true, Status: "observing"}
+	}
+	return *p
 }

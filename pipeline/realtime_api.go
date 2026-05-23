@@ -148,3 +148,18 @@ func graphFPS(shot snap.MetricsSnapshot, dag *graph.Graph) (target, actual float
 	_ = time.Now // keep time import if needed elsewhere
 	return
 }
+
+// RealtimeControllerSnapshot returns the most recently computed full controller
+// snapshot. Returns a disabled (zero-value) snapshot when realtime mode is off.
+func (p *Pipeline) RealtimeControllerSnapshot() snap.RTControllerSnapshot {
+	if p == nil {
+		return snap.RTControllerSnapshot{}
+	}
+	p.mu.Lock()
+	ctrl := p.realtimeCtrl
+	p.mu.Unlock()
+	if ctrl == nil {
+		return snap.RTControllerSnapshot{}
+	}
+	return ctrl.ControllerSnapshot()
+}

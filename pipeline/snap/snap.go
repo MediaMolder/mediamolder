@@ -126,6 +126,10 @@ type NodePerfSnapshot struct {
 	StallCount       int64
 	MaxStallDuration time.Duration
 
+	// EWMA of input channel fill fraction at receive time (0.0–1.0).
+	// A sustained value near 0.0 indicates this node is starved by upstream.
+	InputQueueFillFrac float64
+
 	// EWMA of output channel fill fraction at send time (0.0–1.0).
 	// A sustained value near 1.0 indicates this node produces faster than
 	// its downstream can consume.
@@ -163,4 +167,62 @@ type NodePerfSnapshot struct {
 	PresetIndex    int      `json:",omitempty"`
 	PresetSwitches int64    `json:",omitempty"`
 	PresetLocked   bool     `json:",omitempty"`
+}
+
+// ControllerNodeSnapshot is the controller's per-tick view of one video
+// encoder node: both the observed performance metrics and the controller's
+// applied state.
+type ControllerNodeSnapshot struct {
+	NodeID string
+
+	// Observed metrics read by the controller each tick.
+	FPS                  float64
+	FPSTarget            float64
+	FPSDeficit           float64
+	ActiveFrac           float64
+	StalledFrac          float64
+	IdleFrac             float64
+	ThreadsConfigured    int
+	ThreadsBusy          int // -1 = unavailable
+	InputBufferFillFrac  float64
+	OutputBufferFillFrac float64
+	FrameLatencyMean     time.Duration
+
+	// Controller-applied state.
+	CurrentPreset      string
+	PresetIndex        int
+	PresetLadder       []string
+	PresetLocked       bool
+	PresetSwitches     int64
+	WindowsSincePreset int
+	CooldownRemaining  int // max(0, rtPresetCooldownWins - WindowsSincePreset)
+	OvershootWindows   int
+	ThreadRestarts     int64
+}
+
+// SinkNodeSnapshot captures the output-buffer state of a muxer/sink node.
+type SinkNodeSnapshot struct {
+	NodeID               string
+	OutputBufferFillFrac float64
+}
+
+// RTControllerSnapshot is the full per-tick state of the realtime controller.
+// Exposed via GET /realtime/snapshot and the /realtime/snapshot/stream SSE feed.
+type RTControllerSnapshot struct {
+	Enabled bool
+	// Status is one of: "disabled", "observing", "cooldown", "dropping", "satisfied".
+	Status               string
+	Tick                 int64 // monotonically increasing observe() call count; JSON-only (not shown in CLI table)
+	Elapsed              time.Duration
+	FPSTarget            float64
+	FPSActual            float64
+	Satisfied            bool
+	HighestQualityPreset string
+	GroupStep            bool
+	// CooldownWindows is max(node.CooldownRemaining) across all controlled nodes.
+	CooldownWindows int
+	TickIntervalMs  int64
+	Nodes           []ControllerNodeSnapshot
+	Sinks           []SinkNodeSnapshot
+	RecentDecisions []DecisionRecord
 }

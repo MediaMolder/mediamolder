@@ -1305,7 +1305,7 @@ In the GUI, check the **Real-time** checkbox in the toolbar before pressing **Ru
 
 **`fps_target` per node:** set in the Inspector for source and encoder nodes (`fps_target` field). Nodes without a target are excluded from real-time control.
 
-**Observability:** real-time violations are emitted as `RealTimeViolation` events on the event bus and as Prometheus metrics (`mediamolder_node_fps_deficit`, `mediamolder_pipeline_realtime_satisfied`). Use `mediamolder perf` to watch the control loop in action.
+**Observability:** real-time violations are emitted as `RealTimeViolation` events on the event bus and as Prometheus metrics (`mediamolder_node_fps_deficit`, `mediamolder_pipeline_realtime_satisfied`). Use `mediamolder perf` to watch per-node state or `mediamolder watch` to tail the real-time controller's decision loop.
 
 ---
 
@@ -1504,7 +1504,7 @@ Each active node displays a three-segment activity bar and live metrics that upd
 | **Deficit badge** (amber/red) | `fps_target − fps_actual`; appears when the node is behind its target |
 | **Thread badge** | Configured thread count and live busy count (where available) |
 
-The performance data is streamed from the `/perf/stream` SSE endpoint. Use the `mediamolder perf` CLI for a terminal table showing the same data.
+The performance data is streamed from the `/perf/stream` SSE endpoint. Use the `mediamolder perf` CLI for a terminal table showing the same data. When real-time mode is enabled, `mediamolder watch` shows the adaptive controller's per-encoder view — preset position, buffer fill bars, and the recent decision log.
 
 **Other node status indicators:**
 - A red border indicates an error on that node
