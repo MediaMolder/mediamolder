@@ -282,12 +282,6 @@ func (s *encoderSession) run(ctx context.Context, in <-chan any) error {
 	return s.drain(ctx)
 }
 
-// restartWithThreadCount is a thin compatibility wrapper around
-// restartWithParams that preserves the existing preset.
-func (s *encoderSession) restartWithThreadCount(ctx context.Context, threads int) error {
-	return s.restartWithParams(ctx, threads, "")
-}
-
 // restartWithParams performs a graceful codec restart: it flushes the
 // current encoder, drains remaining packets downstream, closes the encoder,
 // and reopens it with the requested thread count and (optionally) a new
