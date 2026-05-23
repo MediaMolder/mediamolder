@@ -18,18 +18,28 @@ import (
 	"github.com/MediaMolder/MediaMolder/pipeline/snap"
 )
 
+// rtPrerollStatus is the per-output preroll buffer state logged each tick.
+type rtPrerollStatus struct {
+	NodeID      string `json:"node_id"`
+	State       string `json:"state"`
+	BufferedNs  int64  `json:"buffered_ns"`
+	TargetNs    int64  `json:"target_ns"`
+	Evictions   int64  `json:"evictions"`
+}
+
 // rtLogEntry is one line of the realtime controller debug log.
 // Written as JSONL (one JSON object per line) when RealtimeLogPath is set.
 type rtLogEntry struct {
-	T                    string         `json:"t"`                               // RFC3339Nano wall time
-	ElapsedNs            int64          `json:"elapsed_ns"`                     // pipeline elapsed time
-	Tick                 int64          `json:"tick"`                            // monotonic tick counter
-	FPSTarget            float64        `json:"fps_target"`                     // graph-level target
-	FPSActual            float64        `json:"fps_actual"`                     // graph-level actual
-	Satisfied            bool           `json:"satisfied"`
-	HighestQualityPreset string         `json:"highest_quality_preset,omitempty"`
-	GroupStep            bool           `json:"group_step"`
-	Nodes                []rtLogNode    `json:"nodes"`
+	T                    string            `json:"t"`                               // RFC3339Nano wall time
+	ElapsedNs            int64             `json:"elapsed_ns"`                      // pipeline elapsed time
+	Tick                 int64             `json:"tick"`                            // monotonic tick counter
+	FPSTarget            float64           `json:"fps_target"`                      // graph-level target
+	FPSActual            float64           `json:"fps_actual"`                      // graph-level actual
+	Satisfied            bool              `json:"satisfied"`
+	HighestQualityPreset string            `json:"highest_quality_preset,omitempty"`
+	GroupStep            bool              `json:"group_step"`
+	Nodes                []rtLogNode       `json:"nodes"`
+	Prerolls             []rtPrerollStatus `json:"prerolls,omitempty"`
 	Decisions            []snap.DecisionRecord `json:"decisions,omitempty"` // decisions made THIS tick only
 }
 
@@ -113,6 +123,13 @@ const (
 	rtOvershootWindows   = 6    // consecutive windows of headroom required
 	rtPresetGroupQuorum  = 0.5  // fraction of behind video encoders required for group step
 	rtDecisionLogCap     = 256  // bounded ring capacity for /realtime/decisions
+
+	// rtGroupStepActiveThreshold is the minimum ActiveFrac an encoder must
+	// exhibit before it is counted as "behind due to compute" for the group
+	// step quorum. Encoders below this threshold are source-starved (pacer
+	// sleep, audio back-pressure, …) rather than CPU-bound; a preset step
+	// cannot help them and would sacrifice quality for no benefit.
+	rtGroupStepActiveThreshold = 0.5
 )
 
 func newRealtimeController(
@@ -233,7 +250,7 @@ func (c *realtimeController) writeLogEntry(shot snap.MetricsSnapshot) {
 		return
 	}
 	c.tickCount++
-	fpsTarget, fpsActual, satisfied := graphFPS(shot)
+	fpsTarget, fpsActual, satisfied := graphFPS(shot, c.dag)
 	nodes := make([]rtLogNode, 0, len(shot.Perf))
 	for _, p := range shot.Perf {
 		nodes = append(nodes, rtLogNode{
@@ -242,6 +259,20 @@ func (c *realtimeController) writeLogEntry(shot snap.MetricsSnapshot) {
 			WindowsSincePreset: c.windowsSincePreset[p.NodeID],
 			OvershootWindows:   c.overshootWindows[p.NodeID],
 		})
+	}
+	var prerolls []rtPrerollStatus
+	if c.runner != nil {
+		for _, s := range c.runner.sinks {
+			if s.preroll != nil {
+				prerolls = append(prerolls, rtPrerollStatus{
+					NodeID:     s.preroll.NodeID(),
+					State:      s.preroll.State().String(),
+					BufferedNs: int64(s.preroll.BufferedDuration()),
+					TargetNs:   int64(s.preroll.TargetDur()),
+					Evictions:  s.preroll.Evictions(),
+				})
+			}
+		}
 	}
 	entry := rtLogEntry{
 		T:                    time.Now().Format(time.RFC3339Nano),
@@ -253,6 +284,7 @@ func (c *realtimeController) writeLogEntry(shot snap.MetricsSnapshot) {
 		HighestQualityPreset: c.highestQualityPreset,
 		GroupStep:            c.groupStep,
 		Nodes:                nodes,
+		Prerolls:             prerolls,
 		Decisions:            c.tickDecisions,
 	}
 	_ = c.writeJSON(entry)
@@ -274,6 +306,14 @@ func (c *realtimeController) observe() {
 
 	for _, p := range shot.Perf {
 		if p.FPSTarget <= 0 {
+			continue
+		}
+		// Focus exclusively on video nodes. Audio / subtitle / data
+		// processing is background noise for the realtime controller:
+		// their throughput is governed by codec-independent factors
+		// (sample-rate, mux pacing) and cannot be improved by adjusting
+		// video encoder presets.
+		if !c.isVideoNode(p.NodeID) {
 			continue
 		}
 
@@ -468,8 +508,18 @@ func (c *realtimeController) maybeGroupStep(shot snap.MetricsSnapshot) {
 		if len(p.PresetLadder) == 0 || p.PresetLocked || p.FPSTarget <= 0 {
 			continue
 		}
+		// Only video encoders participate in the group step. Audio and
+		// other media types have no preset ladder in practice, but this
+		// guard is explicit for correctness.
+		if !c.isVideoNode(p.NodeID) {
+			continue
+		}
 		eligible = append(eligible, p)
-		if p.FPSDeficit > rtPresetDeficit {
+		// Count a node as "behind due to compute" only when it is
+		// actually CPU-bound. A source-side pause (pacer sleep, audio
+		// back-pressure) causes fps deficit at low ActiveFrac — stepping
+		// the preset faster cannot fix that and wastes quality.
+		if p.FPSDeficit > rtPresetDeficit && p.ActiveFrac >= rtGroupStepActiveThreshold {
 			behind = append(behind, p)
 		}
 	}
@@ -509,6 +559,30 @@ func (c *realtimeController) snapshotDecisions() []snap.DecisionRecord {
 	out := make([]snap.DecisionRecord, len(c.decisions))
 	copy(out, c.decisions)
 	return out
+}
+
+// isVideoNode reports whether nodeID is a video-processing node in the
+// compiled graph. It returns true when at least one of the node's inbound
+// or outbound edges carries graph.PortVideo. Source nodes are excluded:
+// their throughput is controlled by the demuxer/pacer, not by codec
+// presets, so the realtime controller cannot improve them by adjusting
+// encoder settings.
+func (c *realtimeController) isVideoNode(nodeID string) bool {
+	n := c.dag.NodeByID(nodeID)
+	if n == nil || n.Kind == graph.KindSource {
+		return false
+	}
+	for _, e := range n.Outbound {
+		if e.Type == graph.PortVideo {
+			return true
+		}
+	}
+	for _, e := range n.Inbound {
+		if e.Type == graph.PortVideo {
+			return true
+		}
+	}
+	return false
 }
 
 // isThreadLimited returns true when the snapshot suggests the codec is

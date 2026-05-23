@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/MediaMolder/MediaMolder/graph"
 	"github.com/MediaMolder/MediaMolder/pipeline/snap"
 )
 
@@ -80,7 +81,7 @@ func (p *Pipeline) RealtimeStatus() snap.RealtimeSnapshot {
 	}
 	shot := p.metrics.Snapshot()
 	rt := snap.RealtimeSnapshot{Enabled: true, Decisions: ctrl.snapshotDecisions()}
-	rt.FPSTarget, rt.FPSActual, rt.Satisfied = graphFPS(shot)
+	rt.FPSTarget, rt.FPSActual, rt.Satisfied = graphFPS(shot, ctrl.dag)
 	return rt
 }
 
@@ -95,13 +96,40 @@ func (p *Pipeline) trackerFor(nodeID string) *NodePerfTracker {
 	return runner.trackers[nodeID]
 }
 
-// graphFPS computes the max-target / min-actual fps across video encoders.
-func graphFPS(shot snap.MetricsSnapshot) (target, actual float64, satisfied bool) {
+// graphFPS computes the max-target / min-actual fps across video-only nodes.
+// When dag is non-nil only nodes whose graph edges carry graph.PortVideo are
+// considered; pass nil to include all nodes with a fps target (legacy behaviour,
+// used when no graph is available).
+func graphFPS(shot snap.MetricsSnapshot, dag *graph.Graph) (target, actual float64, satisfied bool) {
 	satisfied = true
 	first := true
 	for _, p := range shot.Perf {
 		if p.FPSTarget <= 0 {
 			continue
+		}
+		if dag != nil {
+			n := dag.NodeByID(p.NodeID)
+			if n == nil || n.Kind == graph.KindSource {
+				continue
+			}
+			var hasVideo bool
+			for _, e := range n.Outbound {
+				if e.Type == graph.PortVideo {
+					hasVideo = true
+					break
+				}
+			}
+			if !hasVideo {
+				for _, e := range n.Inbound {
+					if e.Type == graph.PortVideo {
+						hasVideo = true
+						break
+					}
+				}
+			}
+			if !hasVideo {
+				continue
+			}
 		}
 		if p.FPSTarget > target {
 			target = p.FPSTarget
