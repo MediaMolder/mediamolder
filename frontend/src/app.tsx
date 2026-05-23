@@ -52,8 +52,11 @@ import { fetchCatalog, indexStreams } from './lib/nodeCatalog';
 import { fetchEncoderInfo } from './lib/encoderSchema';
 import type { Fix, HWAccelProbe, JobConfig, ProbeResponse, StreamType, ValidationIssue, ValidationReport } from './lib/jobTypes';
 import { postValidate } from './lib/validate';
+import { RTControllerNode } from './components/RTControllerNode';
+import { RTControllerInspector } from './components/RTControllerInspector';
+import { useRTSnapshot } from './lib/rtSnapshot';
 
-const NODE_TYPES = { mmNode: MMNode };
+const NODE_TYPES = { mmNode: MMNode, rtController: RTControllerNode };
 const EDGE_TYPES = { mmEdge: MMEdge };
 
 interface ExampleEntry {
@@ -394,7 +397,9 @@ function Editor() {
   const onSelectionChange = useCallback((params: OnSelectionChangeParams) => {
     setSelectedId(params.nodes[0]?.id ?? null);
     setSelectedEdgeIds(params.edges.map((e) => e.id));
-  }, []);
+    // Auto-open the inspector when the RT Controller canvas node is clicked.
+    if (params.nodes[0]?.id === '__rtc__') setShowInspector(true);
+  }, [setShowInspector]);
 
   /* ---------- Open Inspector from node button ----------
    * MMNode dispatches mm.inspector.open with the node id when the user
@@ -823,6 +828,7 @@ function Editor() {
   const run = useJobRun(() => buildJobRef.current?.() ?? null);
   const [showRunPanel, setShowRunPanel] = useState(false);
   const isRunning = run.status === 'running' || run.status === 'starting';
+  const rtSnapshot = useRTSnapshot(isRunning && !!(job.global_options?.realtime));
 
   const onRun = useCallback(() => {
     setShowRunPanel(true);
@@ -980,6 +986,39 @@ function Editor() {
       fetchEncoderInfo(codec).then(() => setSchemaVersion((v) => v + 1));
     }
   }, [nodes]);
+
+  /* Inject the synthetic Real-Time Controller node when a live snapshot is
+     available. The node is positioned above the bounding box of the encoder
+     nodes it controls and is not draggable, deletable, or connectable. */
+  const decoratedNodesWithRTC = useMemo<FlowNode[]>(() => {
+    if (!rtSnapshot || rtSnapshot.Nodes.length === 0) return decoratedNodes;
+    const controlledIds = new Set(rtSnapshot.Nodes.map((n) => n.NodeID));
+    const controlled = decoratedNodes.filter((n) => controlledIds.has(n.id));
+    if (controlled.length === 0) return decoratedNodes;
+    const FALLBACK_W = 200;
+    const RTC_H = 56;
+    const RTC_GAP = 24;
+    const minX = Math.min(...controlled.map((n) => n.position.x));
+    const maxX = Math.max(...controlled.map((n) => n.position.x + ((n.measured?.width as number | undefined) ?? FALLBACK_W)));
+    const minY = Math.min(...controlled.map((n) => n.position.y));
+    const w = Math.max(200, maxX - minX + 20);
+    const rtcNode: FlowNode = {
+      id: '__rtc__',
+      type: 'rtController',
+      position: { x: minX - 10, y: minY - RTC_H - RTC_GAP },
+      data: {
+        kind: 'rtController',
+        label: 'Real-Time Controller',
+        ref: undefined as unknown as FlowNode['data']['ref'],
+        snapshot: rtSnapshot,
+      },
+      draggable: false,
+      deletable: false,
+      selectable: true,
+      style: { minWidth: w, width: w },
+    };
+    return [rtcNode, ...decoratedNodes];
+  }, [decoratedNodes, rtSnapshot]);
 
   /* Compute inferred technical attributes for each edge so MMEdge can render
      a chip showing pix_fmt / size / sample_rate / etc. Recomputes whenever
@@ -1157,6 +1196,11 @@ function Editor() {
           />
           Real-time
         </label>
+        {isRunning && rtSnapshot && (
+          <span className={`rtc-status-pill rtc-status-pill--${rtSnapshot.Status}`} title="Real-Time Controller status">
+            {rtSnapshot.Status}&ensp;{rtSnapshot.FPSActual.toFixed(1)}&thinsp;/&thinsp;{rtSnapshot.FPSTarget.toFixed(1)}&thinsp;fps
+          </span>
+        )}
         {isRunning ? (
           <button className="danger" onClick={onStop}>Stop</button>
         ) : (
@@ -1186,7 +1230,7 @@ function Editor() {
         onDrop={onDrop}
       >
         <ReactFlow
-          nodes={decoratedNodes}
+          nodes={decoratedNodesWithRTC}
           edges={decoratedEdges}
           nodeTypes={NODE_TYPES}
           edgeTypes={EDGE_TYPES}
@@ -1248,7 +1292,9 @@ function Editor() {
       </div>
 
       {showInspector && (
-      <Inspector node={selectedNode} nodes={nodes} edges={edges} onChange={onNodeUpdate} onDelete={onNodeDelete} onSelectNode={setSelectedId} onProbedData={onProbedData} hwDevices={job.hardware_devices ?? []} availableHWAccels={availableHWAccels} />
+        selectedId === '__rtc__'
+          ? <RTControllerInspector snapshot={rtSnapshot} />
+          : <Inspector node={selectedNode} nodes={nodes} edges={edges} onChange={onNodeUpdate} onDelete={onNodeDelete} onSelectNode={setSelectedId} onProbedData={onProbedData} hwDevices={job.hardware_devices ?? []} availableHWAccels={availableHWAccels} />
       )}
       <RunDock visible={showRunPanel}>
         <RunPanel run={run} nodeKinds={nodeKinds} onClose={() => setShowRunPanel(false)} />
