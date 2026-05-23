@@ -4,7 +4,7 @@ This guide covers building the `mediamolder.exe` binary (CLI + library) and
 the embedded GUI on Windows via MSYS2, plus the day-to-day rebuild loops
 after editing code.
 
-See also: [Cross-platform overview](../build_and_packaging.md) ·
+See also: [Cross-platform overview](../build-and-packaging.md) ·
 [macOS](macos.md) · [Linux](linux.md).
 
 ## 1. One-time setup

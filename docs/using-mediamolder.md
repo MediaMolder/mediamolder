@@ -1,12 +1,12 @@
 # Using MediaMolder
 
-This guide covers every feature available in MediaMolder, from installing the binary and running jobs at the command line to building and running complex graphs visually in the browser-based GUI editor.
+This guide covers every feature available in MediaMolder, from installing the binary and running jobs at the command line. For instructions on using the Graphical User Interface, see [Using the GUI](using_the_gui.md).
 
 ---
 
 ## Contents
 
-1. [Installation](#1-installation)
+1. [Building MediaMolder](#1-building-mediamolder)
 2. [Core concepts](#2-core-concepts)
 3. [Command-line interface](#3-command-line-interface)
    - [run](#31-run)
@@ -41,25 +41,13 @@ This guide covers every feature available in MediaMolder, from installing the bi
    - [Scene detection in a pipeline](#511-scene-detection-in-a-pipeline)
 6. [Validation](#6-validation)
 7. [Graphical user interface](#7-graphical-user-interface)
-   - [Launching the GUI](#71-launching-the-gui)
-   - [Canvas](#72-canvas)
-   - [Palette (left sidebar)](#73-palette-left-sidebar)
-   - [Inspector (right sidebar)](#74-inspector-right-sidebar)
-   - [Toolbar reference](#75-toolbar-reference)
-   - [Run panel](#76-run-panel)
-   - [Validate panel](#77-validate-panel)
-   - [File browser](#78-file-browser)
-   - [Asset manager](#79-asset-manager)
-   - [Hardware dialog](#710-hardware-dialog)
-   - [Import / Export FFmpeg commands](#711-import--export-ffmpeg-commands)
-   - [Keyboard shortcuts](#712-keyboard-shortcuts)
 8. [Tips and troubleshooting](#8-tips-and-troubleshooting)
 
 ---
 
-## 1. Installation
+## 1. Building MediaMolder
 
-See [installation guide](build/macos.md).
+See [build-and-packaging.md](build-and-packaging.md).
 
 ---
 
@@ -1365,258 +1353,9 @@ mediamolder validate --json job.json | jq '.issues[] | select(.severity == "ERRO
 
 ## 7. Graphical user interface
 
-The GUI is a browser-based visual editor for building, validating, and running MediaMolder JSON pipelines. Start it with `mediamolder gui` (see [§3.8](#38-gui)). For the full GUI reference — canvas, palette, inspector, hardware capabilities, scene detection nodes, FFmpeg import/export, and troubleshooting — see **[gui.md](gui.md)**.
+The GUI is a browser-based visual editor for building, validating, and running MediaMolder JSON pipelines. Start it with `mediamolder gui` (see [§3.8](#38-gui)).
 
-### 7.1 Launching the GUI
-
-```sh
-mediamolder gui
-# → opens http://localhost:8080 in the default browser
-```
-
-To use a different port (e.g. if 8080 is taken):
-
-```sh
-mediamolder gui --port 9000
-```
-
-If the browser does not open automatically, navigate manually to the printed URL. A browser that supports ES Modules and CSS Variables is required (any current Chrome, Firefox, Safari, or Edge).
-
----
-
-### 7.2 Canvas
-
-The central canvas is a panning/zooming graph editor. The current graph name (or filename) is shown in the toolbar.
-
-**Navigation:**
-- **Pan** — click and drag on empty canvas space, or use the scroll wheel to zoom and hold the middle mouse button to pan
-- **Zoom** — scroll wheel, or the zoom controls on the minimap (bottom-right when enabled)
-- **Fit to screen** — double-click on empty canvas
-
-**Selecting:**
-- Click a node to select it and open its properties in the Inspector
-- Click an edge (connection) to select it; a popover appears showing stream attributes
-- Drag on empty canvas to box-select multiple nodes
-
-**Moving:**
-- Drag selected nodes; multi-select with click-and-drag or Shift-click, then drag
-
-**Stream attribute popover:**
-Hover over any edge to see the full set of technical attributes inferred for that stream — resolution, pixel format, frame rate, color space, sample rate, channel layout, codec, profile, bit rate, and more. The values are traced upstream through the graph: the closest node that constrains an attribute wins. Click an edge to pin the popover open.
-
-**Canvas stats** (bottom-centre): shows `N nodes · M edges` for the current graph.
-
----
-
-### 7.3 Palette (left sidebar)
-
-The palette lists all nodes available to drag onto the canvas. Toggle it with the **Palette** button in the View section of the toolbar.
-
-**Categories:**
-- **Sources** — Input (file/URL/device)
-- **Sinks** — Output (file/URL)
-- **Filters** — All libavfilter filters (Video, Audio, Subtitles, Image2, Null, etc.), grouped into subcategories
-- **Encoders** — All libavcodec encoders, grouped by codec family
-- **Processors** — Registered Go processor nodes
-
-**Using the palette:**
-1. Type in the **search box** at the top to filter by name or description
-2. Expand / collapse category headers by clicking them
-3. The palette defaults to **Common** entries (marked as frequent-use); switch to **All** in the subcategory headers to see every node
-4. **Drag** any entry from the palette onto the canvas to create a node
-5. Hardware encoder entries are highlighted when the corresponding GPU backend is detected; click the hardware chip icon to open the **Hardware dialog**
-
----
-
-### 7.4 Inspector (right sidebar)
-
-Selecting a node opens its configuration in the Inspector. Toggle the panel with the **Inspector** button in the View section of the toolbar.
-
-**Input node Inspector:**
-- **URL** — file path or media URL; use **Browse…** to open the file browser
-- **Stream selection** — which streams (video, audio, subtitle) to import
-- **Probe** — click **Get properties** to run `avformat_find_stream_info` and populate stream metadata for the edge attribute popover
-- **Hardware decoding** — choose a HW acceleration backend and optional device override
-- **Timing** — `duration_us`, `ts_offset_us`, `loop`
-- **Capture options** — device-specific AVOptions (frame rate, video size, pixel format, sample rate) shown when the format is a capture device
-- **Subtitle charset** — set `subtitle_charenc` for non-UTF-8 text subtitles
-- **Network options** — RTSP transport, reconnect settings shown for network URLs
-
-**Filter node Inspector:**
-- **Filter type** — select from the full filter list; loaded from the live libavfilter registry
-- Typed controls for common parameters; an **Advanced** section with all remaining AVOptions grouped and filterable by name
-
-**Encoder node Inspector:**
-- **Codec** — select an encoder; the form updates to show codec-specific controls:
-  - Preset dropdown
-  - Rate control mode (CRF/CQ/Q/bitrate/ABR)
-  - Quality value (CRF range, bitrate, etc.) with codec-native min/max
-  - Keyframe interval (GOP)
-  - **Raw options** — `x264-params`, `x265-params`, `svtav1-params`, etc. for verbatim parameter blobs
-  - **Advanced** — full option schema grouped by Threading, Quality, Color, Motion, Profile/Level, GOP & frames, Other; searchable
-- All values come from the live libavcodec option schema; leaving a field empty uses the library default
-
-**Output node Inspector:**
-- **URL** — output file path; use **Browse…** to pick a save location
-- **Format** — force muxer (optional; auto-detected from extension)
-- **Codecs** — `codec_video`, `codec_audio`, `codec_subtitle`
-- **Codec tags** — `codec_tag_video`, `codec_tag_audio`
-- **Bitstream filters** — video, audio, subtitle
-- **Metadata** — key-value pairs embedded in the container
-- **Chapters** — chapter table with start/end times (seconds) and title
-- **Per-stream overrides** — disposition flags (forced, hearing-impaired), per-stream metadata, encoder override
-- **HLS / DASH / Tee sections** — typed forms for streaming output options (segment duration, playlist type, variant stream maps, etc.)
-- **Timing options** — start/end time, output duration limit
-- **Muxer options** — raw AVOptions for the muxer
-
----
-
-### 7.5 Toolbar reference
-
-| Button / Control | Action |
-|---|---|
-| **New** | Clear the canvas (prompts if there are unsaved changes) |
-| **Open…** | Open a job JSON file from disk (File System Access API on supported browsers, otherwise the server file browser) |
-| **FFmpeg →** | Open the Import FFmpeg dialog — paste an FFmpeg command and convert it to a graph |
-| **Graph: \<dropdown\>** | Switch between built-in example graphs; discards unsaved changes after confirmation |
-| **Save** | Write the current graph back to the same file (disabled for examples and when there are no unsaved changes) |
-| **Save As…** | Write the current graph to a new file |
-| **→ FFmpeg** | Open the Export FFmpeg dialog — shows the current graph rendered as an equivalent FFmpeg command line |
-| *(spacer)* | |
-| **Auto layout** | Rearrange nodes left-to-right using a dagre layout algorithm |
-| **View: Palette** | Toggle the palette sidebar |
-| **View: Inspector** | Toggle the inspector sidebar |
-| **View: Minimap** | Toggle the minimap (bottom-right corner of canvas) |
-| **Labels: Verbose / Compact** | Switch node label density; Verbose shows all fields, Compact shows a concise summary |
-| **Real-time** *(checkbox)* | Enable adaptive real-time mode for the next run — see [§5.12](#512-real-time-mode). Toggling updates `global_options.realtime` in the graph (persisted on Save) |
-| **Run** | Send the current graph to the backend and start encoding |
-| **Stop** | Cancel the running job cleanly |
-| **Show log / Hide log** | Toggle the Run panel at the bottom of the screen (enabled only while a job is running or has finished) |
-| **Validate** | Probe inputs and run full Phase A + Phase B validation; opens the Validate panel with results. The button turns red and shows a badge count when errors or warnings are present |
-| **Help** | Open the Help dialog (or press **?**) |
-| **Assets** | Open the Asset Manager; badge shows the number of registered assets |
-
----
-
-### 7.6 Run panel
-
-The Run panel appears at the bottom of the screen when **Show log** is toggled on during or after a run.
-
-**Contents:**
-- **Per-node metrics** — live packet counts, FPS, and frame lag for each active node
-- **Errors** — nodes that encountered errors get a red border in the canvas; the Run panel lists the error message and location
-- **Log entries** — warning and info messages from the backend
-- **Progress** — elapsed time and estimated completion based on input duration
-
-The **Stop** button in the toolbar cancels the running job; MediaMolder flushes in-progress frames before closing all outputs.
-
-**Per-node performance overlay (while running):**
-
-Each active node displays a three-segment activity bar and live metrics that update at ~2 Hz:
-
-| Indicator | Meaning |
-|---|---|
-| Green segment | Active fraction — codec or I/O work underway |
-| Yellow segment | Idle fraction — waiting for the next frame to arrive |
-| Red segment | Stalled fraction — output channel full, blocked on a slow downstream node |
-| **FPS badge** | Actual frames/sec over a sliding window |
-| **Deficit badge** (amber/red) | `fps_target − fps_actual`; appears when the node is behind its target |
-| **Thread badge** | Configured thread count and live busy count (where available) |
-
-The performance data is streamed from the `/perf/stream` SSE endpoint. Use the `mediamolder perf` CLI for a terminal table showing the same data. When real-time mode is enabled, `mediamolder watch` shows the adaptive controller's per-encoder view — preset position, buffer fill bars, and the recent decision log.
-
-**Other node status indicators:**
-- A red border indicates an error on that node
-- Validation issue badges (e.g. `2E 1W`) appear on nodes with validation errors/warnings — click to open the Validate panel
-
----
-
-### 7.7 Validate panel
-
-Click **Validate** in the toolbar to open the Validate panel. The panel shows all issues found for the current graph, sorted by severity (ERRORs first, then WARNINGs, then INFOs).
-
-Each issue displays:
-- **Severity badge** — `ERROR` (red), `WARNING` (amber), `INFO` (blue)
-- **Code** — machine-readable issue identifier (e.g. `VIDEO_INTERLACED_NO_DEINTERLACE`)
-- **Location** — the node or edge where the problem was detected
-- **Message** — plain-English description of the problem
-- **Suggestion** — how to fix it
-- **Apply Fix button** (when available) — one-click repair:
-  - `InsertFilterFix` — creates a new filter node (e.g. `yadif`, `zscale`, `fps`, `aformat`) and re-wires the relevant edges automatically
-  - `SetOutputFieldFix` — updates a field on the output node (e.g. sets `codec_tag_video` to `"hvc1"`)
-
-Inline node badges (e.g. `2E 1W`) appear on each canvas node that has validation issues. Hover a badge to see the issue list.
-
-Auto-validation runs in the background on every graph change (Phase A static checks, debounced 300 ms) so the error count on the Validate button stays current as you edit.
-
----
-
-### 7.8 File browser
-
-When the browser does not support the File System Access API (or when saving to server-side paths), the GUI opens a built-in file browser backed by the Go server's local filesystem.
-
-- **Navigate** using the directory listing; click folders to enter them
-- **New folder** button creates a directory
-- **Select** a file by clicking its name; the path is written back into the Inspector URL field
-
----
-
-### 7.9 Asset manager
-
-The Asset Manager registers named assets — fonts, ML models, LUTs, and other supplementary files — that filter nodes can reference by key instead of by absolute path. Click **Assets** in the toolbar to open it.
-
-Assets are stored in the JSON under `job.assets` as a `Record<name, AssetRef>`. Each asset has:
-- **Name** — the key referenced in filter params
-- **Path** — absolute file path
-- **Kind** — `font`, `model`, `lut`, or `other`
-- **Description** — optional human-readable note
-
-The Assets badge in the toolbar shows how many assets are registered.
-
----
-
-### 7.10 Hardware dialog
-
-Click the chip icon in the Palette (next to any hardware encoder entry) or go through the **Hardware** section to open the Hardware dialog. It shows the detected capabilities of each GPU backend:
-
-- Available NVENC / NVDEC codecs with max resolution, B-frame support, lookahead, 10-bit, YUV 4:4:4, lossless
-- VAAPI / QSV encoder and decoder profiles
-- AMF codec capabilities
-- Static capability summary (maximum sessions, max bitrate per codec)
-- CUDA architecture string and compute SM version (NVIDIA)
-
-Use this to confirm that your GPU supports the encoder settings you've chosen before running.
-
----
-
-### 7.11 Import / Export FFmpeg commands
-
-**Import FFmpeg → graph (FFmpeg → button):**
-1. Click **FFmpeg →** in the toolbar
-2. Paste any FFmpeg command line (with or without the leading `ffmpeg` word)
-3. Click **Convert** — the current graph is replaced with the imported graph
-
-**Export graph → FFmpeg (→ FFmpeg button):**
-1. Click **→ FFmpeg** in the toolbar
-2. The dialog shows the closest equivalent FFmpeg command line for the current graph
-3. Click **Copy** to copy it to the clipboard
-
-Not every MediaMolder feature has a direct FFmpeg CLI equivalent (e.g. per-node error policies, named assets). The export is best-effort; the canonical representation is always the JSON file.
-
----
-
-### 7.12 Keyboard shortcuts
-
-| Key | Action |
-|---|---|
-| `?` or `Shift+/` | Open / close the Help dialog |
-| `Esc` | Close the currently open dialog |
-| `Backspace` / `Delete` | Delete the selected node or edge (not active when focus is in an input field) |
-
-React Flow canvas shortcuts (built-in):
-- **Ctrl/Cmd + A** — select all nodes
-- **Ctrl/Cmd + scroll** — zoom
-- **Space + drag** — pan
+For the complete GUI reference — quick start, canvas, palette, inspector, toolbar, validate panel, run panel, performance overlay, hardware capabilities, scene detection nodes, file browser, asset manager, FFmpeg import/export, keyboard shortcuts, and troubleshooting — see **[gui.md](gui.md)**.
 
 ---
 
@@ -1676,5 +1415,5 @@ mediamolder version
 | [architecture/error-handling.md](architecture/error-handling.md) | Error policy, retry, fallback |
 | [architecture/observability.md](architecture/observability.md) | Event bus, metrics, SSE API |
 | [architecture/graph-state-machine.md](architecture/graph-state-machine.md) | Graph lifecycle, pause/resume, seek |
-| [build_and_packaging.md](build_and_packaging.md) | Static linking, cross-compilation, packaging |
+| [build-and-packaging.md](build-and-packaging.md) | Static linking, cross-compilation, packaging |
 | [architecture/graph_validation_design.md](architecture/graph_validation_design.md) | Validation architecture and issue code catalogue |
