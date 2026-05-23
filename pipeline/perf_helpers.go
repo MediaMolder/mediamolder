@@ -14,6 +14,11 @@ import "context"
 // Hot-path cost: when ch has data immediately, only a single non-blocking
 // select is executed — no call to time.Now().
 func perfReceive(ctx context.Context, ch <-chan any, t *NodePerfTracker) (any, bool) {
+	// Sample input queue fill fraction before the receive attempt.
+	if cap(ch) > 0 {
+		t.RecordInputQueueFill(float64(len(ch)) / float64(cap(ch)))
+	}
+
 	// Optimistic non-blocking check — avoids time.Now() on the fast path.
 	select {
 	case v, ok := <-ch:

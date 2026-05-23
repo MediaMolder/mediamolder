@@ -671,7 +671,12 @@ See `testdata/examples/40_metadata_routing.json` for the explicit graph-node for
 | `threads` | int | Maximum worker threads (0 = auto) |
 | `hw_accel` | string | Hardware acceleration backend: `"cuda"`, `"vaapi"`, `"qsv"`, `"videotoolbox"` |
 | `hw_device` | string | Device selector: GPU index (`"0"`), `/dev/dri/renderD128` for VAAPI, etc. |
-| `realtime` | bool | Enable adaptive real-time mode: the control loop dynamically increases encoder thread counts and (as a last resort) drops frames to keep every node at or above its `fps_target`. Set via `--realtime` CLI flag or the **Real-time** checkbox in the GUI toolbar — see [§5.12](#512-real-time-mode) |
+| `realtime` | bool | Enable adaptive real-time mode: the control loop dynamically steps encoder presets, increases thread counts, and (as a last resort) drops frames to keep every node at or above its `fps_target`. Set via `--realtime` CLI flag or the **Real-time** checkbox in the GUI toolbar — see [§5.12](#512-real-time-mode) |
+| `highest_quality_preset` | string | The slowest (highest quality) preset the adaptive controller is allowed to use. The controller may step freely to any faster preset to maintain real-time throughput. Only meaningful when `realtime: true`. Example: `"medium"` permits stepping from `medium` all the way to `ultrafast`. Omit to allow the full ladder. |
+| `preset_group_step` | bool | When `true` (default), step every eligible video encoder together once a quorum is simultaneously behind. |
+| `target_fps` | number | Graph-level real-time fps target. `0` = derive from the source frame rate. |
+| `encoder_input_buffer_frames` | int | Per-encoder input channel capacity in frames when `realtime: true`. `0` = pipeline default. `96` (~4 s at 24 fps) is recommended to absorb the close+reopen window during a preset switch. |
+| `realtime_log_path` | string | When non-empty and `realtime: true`, enables a per-tick debug log from the adaptive controller. Each line is a JSON object containing the full per-node performance snapshot, controller cool-down counters, and any decisions made that tick. The file is created (or truncated) at pipeline start. Example: `"/tmp/rt_debug.jsonl"`. Use `jq` to query the log after the run. |
 
 ---
 
@@ -1270,6 +1275,8 @@ For full parameter references and algorithm descriptions see
 
 Real-time mode activates an adaptive control loop that runs every 500 ms while the pipeline is playing. It observes per-node performance and attempts to keep every node at or above its configured `fps_target`.
 
+For a complete guide — control loop mechanics, three-tier intervention (thread scaling → preset stepping → frame-drop), output buffer configuration, GUI inspector, `mediamolder watch`, and HTTP API — see **[docs/realtime-controller.md](realtime-controller.md)**.
+
 **Enabling real-time mode:**
 
 ```sh
@@ -1291,15 +1298,16 @@ In the GUI, check the **Real-time** checkbox in the toolbar before pressing **Ru
 | Condition | Action |
 |---|---|
 | Node behind `fps_target` + `ActiveFrac > 90%` + threads fully occupied | Increase codec thread count by 2 (graceful restart) |
-| Thread budget exhausted + `FPSDeficit > 1 fps` | Enable frame-drop mode on the upstream source (1 in 4 frames skipped); emit `RealTimeViolation` event |
-| Node behind target + `ActiveFrac > 90%` + threads underutilised | Sequential bottleneck — emit advisory violation; recommend a faster codec preset |
+| Node behind `fps_target` + threads fully occupied + codec is sequential bottleneck | Step every video encoder one preset faster (GOP-boundary close+reopen for x264/x265; hot reconfig for SVT-AV1). Respects `highest_quality_preset` as the slowest allowed preset |
+| Thread budget exhausted + preset already at fastest + `FPSDeficit > 1 fps` | Enable frame-drop mode on the upstream source (1 in 4 frames skipped); emit `RealTimeViolation` event |
+| Node over-headroom after a preset step for ≥ 3 s | Step one preset slower (back toward higher quality) |
 | Node behind target + `StalledFrac > 50%` | Downstream bottleneck — do not act on this node; the control loop addresses the actual bottleneck downstream |
 
 **Thread budget:** the total CPU threads available across all encoder nodes defaults to `runtime.NumCPU()` minus 2 reserved for the Go runtime. Hardware-accelerated nodes (NVENC, VideoToolbox, etc.) are exempt and do not consume the CPU budget.
 
 **`fps_target` per node:** set in the Inspector for source and encoder nodes (`fps_target` field). Nodes without a target are excluded from real-time control.
 
-**Observability:** real-time violations are emitted as `RealTimeViolation` events on the event bus and as Prometheus metrics (`mediamolder_node_fps_deficit`, `mediamolder_pipeline_realtime_satisfied`). Use `mediamolder perf` to watch the control loop in action.
+**Observability:** real-time violations are emitted as `RealTimeViolation` events on the event bus and as Prometheus metrics (`mediamolder_node_fps_deficit`, `mediamolder_pipeline_realtime_satisfied`). Use `mediamolder perf` to watch per-node state or `mediamolder watch` to tail the real-time controller's decision loop.
 
 ---
 
@@ -1498,7 +1506,7 @@ Each active node displays a three-segment activity bar and live metrics that upd
 | **Deficit badge** (amber/red) | `fps_target − fps_actual`; appears when the node is behind its target |
 | **Thread badge** | Configured thread count and live busy count (where available) |
 
-The performance data is streamed from the `/perf/stream` SSE endpoint. Use the `mediamolder perf` CLI for a terminal table showing the same data.
+The performance data is streamed from the `/perf/stream` SSE endpoint. Use the `mediamolder perf` CLI for a terminal table showing the same data. When real-time mode is enabled, `mediamolder watch` shows the adaptive controller's per-encoder view — preset position, buffer fill bars, and the recent decision log.
 
 **Other node status indicators:**
 - A red border indicates an error on that node

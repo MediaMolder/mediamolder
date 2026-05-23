@@ -591,3 +591,48 @@ func TestParamToInt(t *testing.T) {
 		}
 	}
 }
+
+// TestValidate_HighestQualityPreset verifies that highest_quality_preset is
+// validated against known codec ladders when realtime mode is on.
+func TestValidate_HighestQualityPreset(t *testing.T) {
+	base := minCfg(
+		[]Input{defaultInput()},
+		[]NodeDef{{ID: "enc", Type: "encoder", Params: map[string]any{"codec": "libx264"}}},
+		[]EdgeDef{{From: "in0", To: "enc", Type: "video"}},
+		[]Output{defaultOutput()},
+	)
+	base.GlobalOptions.Realtime = true
+
+	t.Run("known_preset_ok", func(t *testing.T) {
+		cfg := *base
+		cfg.GlobalOptions.HighestQualityPreset = "medium"
+		if err := validate(&cfg); err != nil {
+			t.Fatalf("unexpected error for known preset: %v", err)
+		}
+	})
+
+	t.Run("unknown_preset_rejected", func(t *testing.T) {
+		cfg := *base
+		cfg.GlobalOptions.HighestQualityPreset = "bogus_preset"
+		if err := validate(&cfg); err == nil {
+			t.Fatal("expected error for unknown preset, got nil")
+		}
+	})
+
+	t.Run("empty_is_ok", func(t *testing.T) {
+		cfg := *base
+		cfg.GlobalOptions.HighestQualityPreset = ""
+		if err := validate(&cfg); err != nil {
+			t.Fatalf("unexpected error for empty preset: %v", err)
+		}
+	})
+
+	t.Run("not_validated_when_realtime_off", func(t *testing.T) {
+		cfg := *base
+		cfg.GlobalOptions.Realtime = false
+		cfg.GlobalOptions.HighestQualityPreset = "bogus_preset"
+		if err := validate(&cfg); err != nil {
+			t.Fatalf("unexpected error when realtime is off: %v", err)
+		}
+	})
+}

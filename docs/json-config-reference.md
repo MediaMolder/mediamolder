@@ -308,6 +308,14 @@ model-bearing suffix heuristic.
 | `hw_accel`    | string | no       | Hardware acceleration backend                                               |
 | `hw_device`   | string | no       | Hardware device name/path                                                   |
 | `realtime`    | bool   | no       | Pace output to wall-clock time                                              |
+| `highest_quality_preset` | string | no | The slowest (highest quality) preset the adaptive controller is allowed to use. The controller may step freely to any faster preset to maintain real-time throughput. Only meaningful when `realtime: true`. Example: `"medium"` means the controller will never use a preset slower than `medium` (e.g. `slow`, `slower`). |
+| `preset_group_step` | bool | no | When `true` (default), step every eligible video encoder together once a quorum is simultaneously behind. |
+| `target_fps`  | number | no      | Graph-level real-time fps target. `0` = derive from the source frame rate.  |
+| `encoder_input_buffer_frames` | int | no | Per-encoder input channel capacity in frames when `realtime: true`. `0` = pipeline default. `96` (~4 s at 24 fps) is recommended to absorb the close+reopen window during a preset switch without stalling upstream filters. |
+| `read_rate`   | number | no      | Global default demuxer read-rate for all inputs whose own `read_rate` is unset. `1.0` mirrors FFmpeg `-re`; `0` disables pacing. |
+| `read_rate_initial_burst` | number | no | Global default for per-input `read_rate_initial_burst`. |
+| `read_rate_catchup` | number | no | Global default for per-input `read_rate_catchup`. |
+| `realtime_log_path` | string | no | When non-empty and `realtime: true`, the adaptive controller writes one JSONL record per observation tick (every 500 ms) to this file. Each record contains the full per-node `NodePerfSnapshot`, the controller's internal cool-down counters (`windows_since_adj`, `windows_since_preset`, `overshoot_windows`), and any decisions made that tick. The first line is a header record (`"type":"header"`) with all tunable constants. Use for post-hoc diagnosis of real-time performance anomalies. The file is created (or truncated) at pipeline start. Example: `"/tmp/rt_debug.jsonl"`. |
 
 Per-node `params.threads` and `params.thread_type` override the global values for individual codecs. See [Threading Architecture](architecture/threading-architecture.md).
 

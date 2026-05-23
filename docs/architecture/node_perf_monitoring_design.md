@@ -757,6 +757,14 @@ If a node is already at the thread budget ceiling and still has `FPSDeficit > 1.
 
 ### Using real-time mode
 
+For a complete guide to real-time mode — enabling it, the three-tier control
+loop (thread scaling → preset stepping → frame-drop), output buffer
+configuration, the GUI inspector, `mediamolder watch`, and the HTTP API —
+see **[docs/realtime-controller.md](../realtime-controller.md)**.
+
+The sections below summarise what this design document contributes to
+real-time mode: the metrics it measures and the control-loop logic it drives.
+
 Real-time mode activates the adaptive control loop. The loop runs every 500 ms, observes per-node performance snapshots, and responds to thread-limited bottlenecks by:
 - **Increasing encoder thread count** (graceful restart; x264/x265/aom, etc.) up to the global thread budget.
 - **Enabling frame-drop** (1 in 4 frames skipped) once the thread budget is exhausted.
@@ -782,6 +790,1139 @@ mediamolder run --realtime pipeline.json
 
 
 ---
+
+## 6a. Phase 6 — Adaptive Encoder Preset Stepping
+
+### Motivation
+
+Phase 5 handles thread-limited bottlenecks (add threads) and frame-rate failure
+(drop frames). It does **not** handle the case where every encoder is already at
+its CPU budget and the codec is *sequentially* the limit — entropy coding,
+rate-distortion search, lookahead. The current loop only emits a
+`RealTimeViolation` with the advisory text "consider a faster preset" and
+otherwise leaves the operator to fix it manually.
+
+For `ABR_BBB_AVI.json` (four `libx264` encoders + AAC) the typical failure mode
+is: every x264 instance is configured `preset=slower`, threads are at the budget
+ceiling, `ActiveFrac ≈ 0.97` on every encoder, `FPSDeficit > 1 fps` everywhere.
+The right intervention is to drop every video encoder **one preset step faster**
+(`slower → slow`) at the next GOP boundary and re-observe. If still behind:
+`slow → medium`, and so on, down to `superfast`. If a faster preset overshoots
+(deficit goes strongly negative) the loop may step back up.
+
+This phase adds **adaptive preset stepping** as a third intervention, sitting
+between "add threads" and "drop frames" in the decision tree.
+
+### Why GOP-boundary switching
+
+Switching preset mid-GOP would force a codec reconfig with no IDR, which is not
+supported by libx264, libx265, or SVT-AV1 without a full close+reopen and would
+break stream continuity (different reference pictures, different SPS/PPS in some
+cases). Switching **at the next I-frame / IDR** lets each rendition start a new
+closed GOP under the new preset and remain decodable from that point forward.
+
+The switch is therefore inherently asynchronous: the control loop *requests* a
+preset change; the encoder applies it the next time it forces an IDR (which it
+does on every multiple of `g` frames, or when the rate-control / scene-cut logic
+requests one).
+
+### Per-encoder preset ladders
+
+The ladder is fixed per codec and ordered from highest quality (slowest) to
+lowest:
+
+| Codec        | Ladder (slowest → fastest)                                                            | Source of truth |
+|--------------|----------------------------------------------------------------------------------------|---|
+| `libx264`    | `placebo, veryslow, slower, slow, medium, fast, faster, veryfast, superfast, ultrafast` | `x264.c` `x264_preset_names[]` |
+| `libx265`    | `placebo, veryslow, slower, slow, medium, fast, faster, veryfast, superfast, ultrafast` | `x265cli.h` `x265_preset_names[]` |
+| `libsvtav1`  | `0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13` (numeric, `0` = slowest)                  | SVT-AV1 `EbSvtAv1Enc.h` `preset` field |
+
+For SVT-AV1 the "preset" is an integer (0–13); for x264/x265 it is a named
+token. Internally we normalise both to a `presetIndex` (0 = slowest) so the
+control loop is codec-agnostic.
+
+```go
+// pipeline/preset_ladder.go
+type PresetLadder struct {
+    Codec   string   // "libx264", "libx265", "libsvtav1"
+    Names   []string // ordered slow → fast; len(Names) == ladder depth
+}
+
+// Step returns the name N positions faster (or slower if N < 0).
+// Clamps at the ends of the ladder.
+func (l PresetLadder) Step(current string, n int) (next string, clamped bool)
+```
+
+### What can be adjusted at runtime (extension of §5b table)
+
+Adding a preset row:
+
+| Setting | Changeable after open? | Mechanism |
+|---|---|---|
+| x264 preset | **No (mid-GOP)** / **Effectively yes at IDR** | `x264_encoder_reconfig` + force IDR, OR close+reopen at next GOP |
+| x265 preset | **No (mid-GOP)** / **Effectively yes at IDR** | `x265_encoder_reconfig` + force IDR, OR close+reopen at next GOP |
+| SVT-AV1 preset | **Yes** | `svt_av1_enc_set_parameter` with `EbSvtAv1EncConfiguration.enc_mode`, takes effect on next IDR; no encoder restart required |
+
+The mechanism diverges by codec; the pipeline-level API stays uniform.
+
+#### x264
+
+`x264_encoder_reconfig(h, x264_param_t*)` accepts a new param struct. Calling
+`x264_param_default_preset(&p, "slow", nil)` against the live params and
+re-applying is documented as safe **only for a subset of fields**. Preset
+changes touch many internal tables (analysis depth, ME range, subpel refine,
+trellis, CABAC tables stay the same). The safest portable path is:
+
+1. At the next forced IDR (`pic_in.i_type = X264_TYPE_IDR`), flush the encoder
+   (`x264_encoder_close`).
+2. Build new params with `x264_param_default_preset(&p, newPreset, tune)`,
+   keeping bitrate / VBV / GOP / threads identical.
+3. Open a new encoder (`x264_encoder_open`).
+4. Feed the next decoded frame as the first IDR of the new GOP.
+
+This is the same drain → close → reopen path already implemented in
+`encoderSession.restartWithThreadCount`; we generalise it to
+`restartWithParams(threads, preset)`.
+
+> **No upstream x264 modifications required.** Everything needed is in the
+> existing public API.
+
+#### x265
+
+`x265_encoder_reconfig(api, x265_param*)` is the documented runtime-reconfig
+path. The x265 docs list which fields are reconfigurable (bitrate, VBV, QP,
+keyint, bframes) — **preset is not in that list**. Like x264 we therefore use
+the close+reopen path at the next GOP boundary.
+
+> **No upstream x265 modifications required.**
+
+#### SVT-AV1
+
+SVT-AV1 explicitly supports runtime preset changes through
+`svt_av1_enc_set_parameter` with the `enc_mode` field. The change is consumed at
+the next IDR. We add an `av.EncoderContext.SetPresetIndex(int) error` that
+shells out to this call for SVT-AV1 and falls through to the close+reopen path
+for x264/x265.
+
+> **No upstream SVT-AV1 modifications required.**
+
+### Encoder modifications (MediaMolder side)
+
+#### `av/` layer
+
+Add to `av/encode.go`:
+
+```go
+// PresetCapability describes how this codec accepts runtime preset changes.
+type PresetCapability int
+const (
+    PresetCapNone        PresetCapability = iota // not supported (raw, mjpeg, ...)
+    PresetCapRestartIDR                          // close+reopen at next IDR (x264, x265)
+    PresetCapHotReconfig                         // svt_av1_enc_set_parameter (SVT-AV1)
+)
+
+func (e *EncoderContext) PresetCapability() PresetCapability
+func (e *EncoderContext) CurrentPreset() string       // returns "slower", "5", etc.
+func (e *EncoderContext) Ladder() PresetLadder        // ordered name list for this codec
+func (e *EncoderContext) RequestPresetChange(name string) error // queues for next IDR
+```
+
+For `PresetCapHotReconfig` codecs `RequestPresetChange` calls the codec API and
+returns nil immediately. For `PresetCapRestartIDR` codecs it records the
+pending preset in a `pendingPreset string` field on the context; the pipeline
+layer notices the pending value at its next IDR-aligned drain point and
+performs the close+reopen.
+
+#### `pipeline/handlers_encoder.go`
+
+Extend the per-frame loop's existing restart hook:
+
+```go
+// Pseudocode for the post-send check, generalised from the existing
+// thread-count restart path:
+if newCount, ok := s.perf.PopRestartRequest(); ok {
+    if err := s.restartWithThreadCount(ctx, newCount); err != nil { return err }
+}
+if newPreset, ok := s.perf.PopPresetRequest(); ok {
+    if err := s.applyPresetAtNextIDR(ctx, newPreset); err != nil { return err }
+}
+```
+
+`applyPresetAtNextIDR` behaviour:
+
+- For `PresetCapHotReconfig`: call `enc.RequestPresetChange(newPreset)` and
+  return.
+- For `PresetCapRestartIDR`: force the next outgoing frame to be IDR
+  (`pic_in.i_type = X264_TYPE_IDR` / x265 equivalent), drain packets through
+  that IDR, close, reopen with the new preset, increment
+  `s.perf.IncrementPresetSwitches()`.
+
+For ABR jobs the loop should aim to switch **all** renditions at the same input
+PTS so the output GOPs stay aligned. The control loop therefore issues a single
+"step every video encoder" command, not per-node commands. See §6a.5 below.
+
+### Memory-buffer implications
+
+The close+reopen path holds the encoder offline for one GOP worth of frames
+(typically `g=48` at 24 fps = 2 s, but for the ABR job with `g=48` at 24 fps
+this is ~2 s; for live 30 fps `g=60` it is 2 s). During this window:
+
+1. The decoder and filter graph keep producing frames.
+2. The encoder's *input* channel accumulates frames.
+3. The encoder's *output* (packet) side is paused.
+
+The current per-edge channel capacity (default 8 frames in `pipeline/engine.go`)
+is far too small for a 2-second pause. Phase 6 therefore requires:
+
+- **Configurable per-edge buffer size**, settable per node or globally. A new
+  field `Pipeline.EncoderInputBufferFrames` (default 96 = 4 s @ 24 fps) sizes
+  the channel feeding each encoder when `realtime: true`.
+- **Backpressure-aware drain**: while the encoder is offline, `perfSend` from
+  upstream must **not** block the source indefinitely; if the buffer fills,
+  drop the *oldest* frame in the buffer (lossy ring) rather than blocking, and
+  bump a `mediamolder_node_preset_switch_frames_dropped_total` counter. (This
+  is symmetric with the existing frame-drop mode but applied at the input side
+  during a switch.)
+- **Pre-switch latency reporting**: before issuing the switch, the controller
+  estimates the close+reopen wall-clock cost from `FrameLatencyP99 ×
+  packets_pending_in_codec` and posts a `PresetSwitchPlanned` event so the GUI
+  can render a "switching preset" indicator on each affected node.
+
+For SVT-AV1 (`PresetCapHotReconfig`) none of this applies — no buffer growth is
+needed because the encoder never stops.
+
+### Adaptive control loop changes
+
+Extend the §5b decision tree. The thread-step case is unchanged; the
+"sequential bottleneck" case (which currently only emits an advisory) becomes
+the trigger for a preset step.
+
+```
+3. Decide (revised):
+   a. Find nodes where FPSDeficit > rtPresetDeficit (default 0.5 fps) for
+      ≥ rtMinCooldownWindows consecutive snapshots.
+   b. For each:
+      if ActiveFrac > 0.9 AND ThreadsBusy ≈ ThreadsConfigured:
+         → thread-limited; try ThreadBudget.Allocate(node, +rtThreadStep)
+         → if budget exhausted, fall through to (c)
+      elif ActiveFrac > 0.9 AND ThreadsBusy < 0.5 * ThreadsConfigured:
+         → sequential bottleneck — go to (c) directly
+      elif StalledFrac > 0.5:
+         → downstream; skip.
+
+   c. Preset-step phase (NEW):
+      Aggregate: among all video encoder nodes, count how many are behind.
+      If ≥ N/2 are behind (default: more than half), issue a single
+      "step every video encoder one preset faster" command.
+      Otherwise step only the individual encoder.
+      Apply preset step on each affected node:
+          newPreset, clamped = ladder.Step(currentPreset, +1)
+          if clamped:
+              emit RealTimeViolation{Reason: "highest quality preset reached"}
+              fall through to frame-drop mode
+          else:
+              tracker.RequestPresetChange(newPreset)
+              record event in PresetSwitchLog
+
+   d. Overshoot detection (NEW):
+      Track ema_deficit per node. If after a preset step the EMA stays at
+      ≤ -rtPresetOvershoot (default -3 fps) for ≥ rtOvershootWindows
+      (default 6 = ~3 s) consecutive snapshots, the previous preset was
+      probably fine: step back one slower. This prevents the loop from
+      collapsing to the fastest preset permanently when load was transient.
+
+   e. Frame-drop only after both (a) and (c) cannot help.
+```
+
+New tunables (all expressed at the package level with sensible defaults):
+
+```go
+const (
+    rtPresetDeficit       = 0.5  // fps; sustained deficit before stepping faster
+    rtPresetCooldownWins  = 6    // ~3 s at 500 ms cadence between successive steps
+    rtPresetOvershoot     = -3.0 // fps; sustained surplus before stepping slower
+    rtOvershootWindows    = 6
+    rtPresetGroupQuorum   = 0.5  // fraction of video encoders behind → group-step
+)
+```
+
+The cool-down is critical: after a preset switch the next 1–2 windows have
+artificially distorted latency (close+reopen overhead, codec re-priming),
+so the EMA must not act on them.
+
+### Observability — what the controller is doing and why
+
+This phase introduces a first-class **decision log** rather than relying on
+ad-hoc events.
+
+#### `RealtimeDecisionLog`
+
+A bounded ring (default 256 entries) of `RealtimeDecision` records, maintained
+inside `realtimeController`:
+
+```go
+type RealtimeDecision struct {
+    Time       time.Time
+    Action     string          // "add_threads" | "step_faster" | "step_slower" | "drop_frames" | "noop_cooldown" | "noop_downstream"
+    Nodes      []string        // affected node IDs
+    Inputs     DecisionInputs  // snapshot fields used
+    Outcome    string          // "applied" | "deferred" | "clamped" | "budget_exhausted"
+    From, To   string          // "slower" → "slow" (preset transitions only)
+    GraphFPS   float64         // current pipeline output frame rate
+    GraphFPSTarget float64     // target
+}
+
+type DecisionInputs struct {
+    FPSDeficit       float64
+    ActiveFrac       float64
+    StalledFrac      float64
+    ThreadsBusy, ThreadsConfigured int
+    FramesInFlight   int
+}
+```
+
+The log is exposed through three surfaces:
+
+1. **`MetricsSnapshot.RealtimeDecisions []RealtimeDecision`** — included in the
+   `/perf` JSON. The GUI's per-node performance overlay grows a small "ƒ"
+   badge that opens a decision panel when clicked.
+2. **`mediamolder perf --decisions`** CLI flag — tails the log to stdout, one
+   line per decision, columns: `time | node | action | from→to | deficit | reason`.
+3. **Prometheus counters** — one counter per action type:
+   `mediamolder_realtime_decisions_total{action="step_faster"}`, etc.
+
+#### Graph-level FPS gauges
+
+The current metrics expose per-node FPS only. Phase 6 adds two graph-level
+gauges so the operator sees the *whole-pipeline* picture without picking a
+single node:
+
+| Metric | Type | Description |
+|---|---|---|
+| `mediamolder_pipeline_fps_target` | Gauge | The graph's wall-clock fps target (input source frame rate, or `--target-fps` override) |
+| `mediamolder_pipeline_fps_actual` | Gauge | Min of every output sink's measured FPS over the last 1 s window |
+| `mediamolder_pipeline_realtime_satisfied` | Gauge | (already exists in §5b) updated to consider `highest_quality_preset` and overshoot |
+| `mediamolder_node_preset_switches_total` | Counter | Per-node preset change count, labelled by `from` / `to` |
+| `mediamolder_node_preset_current` | Gauge (string-encoded) | Current preset as a numeric index 0=slowest |
+
+In the GUI:
+
+- The toolbar gains a small "Real-time" status pill showing
+  `<actual> / <target> fps`, green if `realtime_satisfied = 1`, amber if
+  `highest_quality_preset` is reached but no drops yet, red if drops are active.
+- Hovering each encoder node in the canvas shows a tooltip with the live
+  preset, last switch time, switch count, and "next switch eligible at" time
+  (current time + cooldown remaining).
+- A toggleable bottom panel ("Real-time Activity") tails the decision log.
+
+### CLI / Core API / GUI control surface
+
+#### CLI
+
+```
+mediamolder run --realtime \
+  --highest-quality-preset=medium   # slowest (highest quality) preset the controller may use
+  --preset-group=true               # step all video encoders together (default)
+  --target-fps=24                   # explicit graph fps target; overrides source rate
+  pipeline.json
+```
+
+Sub-commands:
+
+```
+mediamolder perf --decisions   # tail decision log
+mediamolder preset get <node>  # print current preset
+mediamolder preset set <node> <name>   # one-shot override (control-loop pauses
+                                       #   stepping for that node until cleared)
+mediamolder preset clear <node>        # release the override
+```
+
+The `preset set/clear` commands talk to the running pipeline through the
+existing metrics HTTP server (the only operator-control channel today; we add
+`POST /realtime/preset` and `POST /realtime/preset/clear`).
+
+#### Core API (Go)
+
+```go
+// pipeline package additions
+type RealtimeOptions struct {
+    Enabled              bool
+    TargetFPS            float64       // 0 = derive from source
+    HighestQualityPreset string        // codec-relative; "" = no quality bound (step all the way to placebo)
+    Group                bool          // group-step all video encoders
+}
+
+// On a live Pipeline:
+func (p *Pipeline) SetPresetOverride(nodeID, preset string) error
+func (p *Pipeline) ClearPresetOverride(nodeID string) error
+func (p *Pipeline) RealtimeDecisions(n int) []RealtimeDecision // most recent n
+func (p *Pipeline) RealtimeStatus() RealtimeStatus              // graph fps, satisfied flag, per-node preset table
+```
+
+`PipelineOpts.Realtime` becomes `PipelineOpts.RealtimeOptions` (back-compat: a
+bare `true` value is unmarshalled to `{Enabled: true}` so existing JSON files
+keep working).
+
+#### Schema
+
+`schema/v1.2.json` and `schema/v1.3.json` (new): `global_options.realtime` is
+either a bool (legacy) or an object matching `RealtimeOptions`. The migration
+in `pipeline.Config.Normalize` converts the bool form.
+
+#### GUI
+
+Inspector panel for the graph (the empty-canvas selection) gains a **Real-time**
+section:
+
+- **Enable real-time** — same checkbox that already exists in the toolbar.
+- **Target FPS** — number input; blank = derive from source.
+- **Highest quality preset** — dropdown populated from the codec ladder; limits
+  how far toward the slow end the controller may step back under light load.
+- **Group video encoders** — checkbox; default checked.
+
+Each encoder node's Inspector gains:
+
+- **Current preset** (read-only when real-time is enabled and the node is
+  under control).
+- **Manual override** — text input + Apply/Clear buttons that call
+  `SetPresetOverride` / `ClearPresetOverride`.
+
+### Phase 6 deliverables
+
+1. `pipeline/preset_ladder.go` — ladder definitions, `Step`, normalisation.
+2. `av/encode.go` extensions — `PresetCapability`, `CurrentPreset`,
+   `RequestPresetChange`, SVT-AV1 hot-reconfig wrapper.
+3. `pipeline/handlers_encoder.go` — `applyPresetAtNextIDR`, generalised restart
+   path, force-IDR plumbing for x264/x265.
+4. `pipeline/realtime_ctrl.go` — preset-step decision branch, overshoot
+   detection, decision-log ring, group-step coordinator.
+5. `pipeline/engine.go` — configurable encoder-input channel capacity,
+   oldest-drop ring on overflow during a switch.
+6. `observability/metrics.go` — new gauges, counters, and Prometheus
+   registration.
+7. `cmd/mediamolder/cmd_perf.go` — `--decisions` tail mode.
+8. `cmd/mediamolder/cmd_preset.go` — `preset get/set/clear`.
+9. HTTP endpoints on the existing `MetricsServer` — `/realtime/preset[/clear]`,
+   `/realtime/decisions`.
+10. Schema updates: `schema/v1.2.json`, `schema/v1.3.json`, `Normalize` migration.
+11. Frontend: toolbar status pill, decision panel, per-node tooltip,
+    Inspector real-time section.
+12. Tests: ladder boundary clamping, group-step quorum, overshoot back-off,
+    preset switch during ABR job (4× x264) keeps GOPs aligned, oldest-drop
+    behaviour during a 2-s offline window, schema migration.
+
+### Open questions specific to Phase 6
+
+1. **Audio encoders and real-time control.** AAC at 128 kb/s is not CPU-bound.
+   Phase 6 only acts on video encoder nodes; audio is filtered out of the
+   decision tree by `node.Kind == graph.KindEncoder && streamType == video`.
+   Answer - this is acceptable. The same is true for all other node types in a 
+   graph running in real-time mode. The video encoder is by far the most CPU
+   intensive node type in a graph, and therefore we can focus our attention only
+   on the video encoder nodes.
+2. **B-frame look-ahead and "next IDR".** With x264 `bframes=3 b_pyramid=normal`
+   the look-ahead can hold 16+ frames. Forcing IDR at the next *input* PTS
+   means the look-ahead must flush first; the actual switch lands ~16 frames
+   later. The decision log records the input PTS at which the switch was
+   requested *and* the PTS of the first frame under the new preset.
+   Answer - While resetting encoders causes the lookahead to reset, a future 
+   improvement, modifying the encoders, will enable the work already done to
+   be saved and reused by the reset encoder instance.
+3. **Mismatched ladders across renditions.** ABR jobs may mix codecs (libx264
+   + libsvtav1). Group-step is then defined by ladder-relative index, not
+   ladder name. The coordinator computes a *minimum step size* in normalised
+   units (1 step = 1 ladder position) so each codec moves one position even
+   though the absolute names differ.
+   Answer - mixed codecs are not supported by realtime mode
+4. **Two-pass encodes.** Two-pass jobs cannot change preset mid-pass without
+   invalidating the stats file. Real-time mode is implicitly single-pass; the
+   schema validator should warn when `realtime: true` is combined with
+   `pass: 2`.
+   Answer - 2 pass mode is not supported in realtime mode 
+5. **Quality regression visibility.** Stepping faster sacrifices bitrate
+   efficiency. The decision log records BD-rate estimates (lookup table, not
+   live PSNR) at switch time so the operator can audit quality cost.
+   Answer - this is a known, well-understood and acceptable tradeoff.
+
+---
+
+## 6b. Phase 7 — Real-Time Output Buffering & Readiness Signal
+
+> **Status: implemented** ([pipeline/output_buffer.go](../../pipeline/output_buffer.go),
+> [docs/realtime-controller.md](../realtime-controller.md)).
+
+### Motivation
+
+Real-time delivery has two distinct goals:
+
+1. **Steady-state**: each output frame is produced no slower than `1/fps`
+   seconds. Phase 5 and Phase 6 address this.
+2. **Jitter tolerance at the downstream consumer**: a downstream player or
+   muxer that pulls from a MediaMolder output (file growth, named pipe, TCP/UDP
+   listener, RTMP push) cannot tolerate even one missed deadline at the start
+   of playback. A short pre-roll buffer between the encoder output and the
+   consumer absorbs transient slowdowns without underrunning.
+
+Phase 7 adds an explicit **output pre-roll buffer** to every output sink in
+real-time mode and a **readiness signal** that the downstream system uses to
+know when it is safe to start consuming.
+
+### Design
+
+#### Per-output pre-roll buffer
+
+For every sink node, the pipeline interposes a ring of `AVPacket`-equivalents
+between the encoder's drain and the sink's writer goroutine.
+
+```go
+// pipeline/output_buffer.go
+type OutputPreroll struct {
+    nodeID       string
+    targetDur    time.Duration   // default 4 s
+    targetBytes  int             // optional cap; default 0 = unlimited
+    ring         *packetRing     // PTS-ordered ring; drops oldest on overflow
+    fillLevel    atomic.Int64    // current buffered duration in ns
+    ready        atomic.Bool     // true once fill ≥ targetDur (or stream end)
+    onReady      func()          // closure that triggers the readiness signal
+}
+```
+
+Two parameters drive the buffer, configurable per output or globally:
+
+- `prebuffer_duration_seconds` (default `4.0`) — fill target before signalling
+  ready.
+- `prebuffer_max_seconds` (default `2 × prebuffer_duration_seconds`) — hard
+  cap; older packets are evicted past this point to bound memory.
+
+The duration is computed from packet PTS using the output stream's time base,
+not wall-clock. This keeps the semantics correct for variable-bitrate or
+variable-framerate streams.
+
+#### State machine
+
+```
+[FILLING] ──(fill ≥ target)──> [READY] ──(downstream open)──> [STREAMING]
+   │                              │                                │
+   │                              └──(reset / EOF)──> [DRAINING] ──┘
+   └──(EOF before target)──> [READY_PARTIAL] ──> [STREAMING]
+```
+
+Transitions:
+
+- `FILLING → READY` when the buffered duration first reaches `targetDur`.
+- `READY → STREAMING` when the downstream consumer attaches (a pull happens, a
+  TCP client connects, etc.). Outputs without a back-channel transition
+  automatically `~50 ms` after `READY`.
+- `* → READY_PARTIAL` if input EOF arrives before the target — the buffer
+  flushes whatever it has and signals ready immediately.
+
+The pipeline-level real-time-ready signal is the conjunction:
+
+```
+graph.ready = all output sinks ∈ {READY, READY_PARTIAL, STREAMING}
+```
+
+#### Interaction with file outputs
+
+For a file output the writer goroutine simply waits to write any data until
+`graph.ready`; this guarantees the file starts to grow only when there is
+≥ `prebuffer_duration_seconds` worth of encoded data already in hand. A
+muxing format that writes a header before the first frame (MP4 `moov`,
+Matroska header) still emits the header at writer start; only frame writes are
+gated. The buffer therefore exists primarily for streaming sinks (RTMP, named
+pipe, TCP/UDP, stdout); for file outputs it serves as a producer-side smoothing
+queue.
+
+#### Interaction with the AAC fan-out
+
+ABR_BBB_AVI.json has a single AAC encoder fanned out to four MP4 muxers. The
+pre-roll is per-**output**, not per-encoder: the same audio packet enters four
+separate output rings (cheap; packets are reference-counted). Each output's
+readiness gates only its own writer. `graph.ready` is `AND` across all four.
+
+### Memory implications
+
+At 4 s pre-roll and reference-counted AVPackets the memory cost is dominated by
+video. For ABR_BBB_AVI.json @ 24 fps:
+
+| Rendition | Bitrate | 4 s pre-roll |
+|---|---|---|
+| 1080p / 7 Mb/s | 0.875 MB/s | 3.5 MB |
+| 720p / 4 Mb/s | 0.5 MB/s | 2.0 MB |
+| 540p / 2 Mb/s | 0.25 MB/s | 1.0 MB |
+| 360p / 1 Mb/s | 0.125 MB/s | 0.5 MB |
+| AAC × 4 outputs | 4 × 16 kB/s ≈ 64 kB/s | 0.25 MB |
+| **Total** |  | **~7.3 MB** |
+
+This is negligible relative to the existing decoded-frame pool. The cap is
+nevertheless enforced because pathological inputs (very high bitrate, very long
+preset-switch outage) can balloon the ring; oldest-drop is the failure mode and
+is reported through a counter.
+
+> **No upstream encoder modifications required.** The buffer lives between
+> encoder packet output and sink, on the MediaMolder side.
+
+### Interaction with preset switching (Phase 6)
+
+The pre-roll buffer is *exactly* the buffer that absorbs a Phase 6 preset
+switch. When an encoder goes offline for a close+reopen, the pre-roll on the
+*downstream* side keeps feeding the consumer; the *upstream* side (between
+filter and encoder, see Phase 6 memory section) absorbs incoming frames. The
+two buffers together set the maximum tolerable switch outage:
+
+```
+max_switch_outage ≈ encoder_input_buffer_duration + output_preroll_drain_margin
+```
+
+With defaults (4 s input, 4 s output) up to ~8 s of encoder offline time is
+absorbed without a consumer stall — large enough for any reasonable preset
+switch on contemporary hardware.
+
+### Readiness signal surfaces
+
+The graph-level readiness is exposed identically on every surface:
+
+| Surface | Mechanism |
+|---|---|
+| Core API | `Pipeline.Ready() <-chan struct{}` — closes when the graph first becomes ready. `Pipeline.ReadyState() ReadyState` for sampled access. |
+| Event bus | `RealTimeReady{When time.Time, PerOutput map[string]ReadyState}` event posted once on each transition into `READY`. |
+| CLI | `mediamolder run --realtime` blocks stdin until ready (prints `ready` on its own line on stdout). `--ready-fd=<n>` writes a single byte to the given fd when ready, for shell pipelines. |
+| HTTP | `GET /realtime/ready` on the metrics server: returns `200 {ready: true, since: ts, outputs: [...]}` when ready, `425 Too Early` otherwise. `GET /realtime/ready/stream` is an SSE that fires once per state change. |
+| Prometheus | `mediamolder_pipeline_ready{}` gauge (0/1), `mediamolder_output_ready{node="..."}` per-sink. |
+| GUI | Toolbar status pill (Phase 6) gains a fourth state: blue "buffering 1.8 / 4.0 s" during `FILLING`. When all outputs are ready it goes green and the existing "Ready" indicator on each output node lights up. |
+
+### Configuration
+
+#### JSON
+
+```json
+{
+  "schema_version": "1.3",
+  "global_options": {
+    "realtime": {
+      "enabled": true,
+      "prebuffer_duration_seconds": 4.0,
+      "prebuffer_max_seconds": 8.0
+    }
+  },
+  "outputs": [
+    {
+      "id": "out_1080",
+      "url": "/Volumes/SSD/out/1080p.mp4",
+      "realtime": {
+        "prebuffer_duration_seconds": 6.0
+      }
+    }
+  ]
+}
+```
+
+Per-output `realtime.prebuffer_*` overrides the global default.
+
+#### CLI
+
+```
+mediamolder run --realtime \
+  --prebuffer=4s            # global default
+  --prebuffer-max=8s        # global cap
+  --ready-fd=3              # write byte to fd 3 on ready
+  pipeline.json
+```
+
+#### Core API
+
+```go
+type RealtimeOutputOptions struct {
+    PrebufferDuration time.Duration
+    PrebufferMax      time.Duration
+}
+
+// pipeline.Output gains:
+type Output struct {
+    ...
+    Realtime *RealtimeOutputOptions
+}
+
+func (p *Pipeline) Ready() <-chan struct{}
+func (p *Pipeline) ReadyState() ReadyState
+type ReadyState struct {
+    Ready    bool
+    Since    time.Time
+    Outputs  map[string]OutputReadyState
+}
+type OutputReadyState struct {
+    State        string        // FILLING | READY | READY_PARTIAL | STREAMING | DRAINING
+    BufferedDur  time.Duration
+    TargetDur    time.Duration
+    DroppedCount int64         // packets evicted from this output's ring
+}
+```
+
+#### GUI
+
+- Toolbar pill (see above).
+- Per-output node Inspector adds **Prebuffer (seconds)** and **Max (seconds)**
+  inputs, default placeholders showing the inherited global value.
+- A small horizontal fill bar inside each output node on the canvas shows
+  current `BufferedDur / TargetDur`. The bar disappears once the pipeline is
+  `STREAMING` and reappears after a reset.
+
+### Observability for Phase 7
+
+| Metric | Type | Labels | Description |
+|---|---|---|---|
+| `mediamolder_output_buffer_duration_seconds` | Gauge | `node` | Currently buffered duration per output |
+| `mediamolder_output_buffer_target_seconds` | Gauge | `node` | Configured target |
+| `mediamolder_output_buffer_state` | Gauge | `node`, `state` | 1 for the active state, 0 otherwise |
+| `mediamolder_output_buffer_evictions_total` | Counter | `node`, `reason` | Packets dropped from the ring; `reason ∈ {cap, reset}` |
+| `mediamolder_pipeline_ready_seconds` | Histogram | — | Wall-clock seconds between pipeline start and first `READY` |
+| `mediamolder_pipeline_ready` | Gauge | — | 0/1; AND of all output readiness |
+
+### Phase 7 deliverables
+
+1. `pipeline/output_buffer.go` — `OutputPreroll`, ring of refcounted
+   `AVPacket`-equivalents, PTS-based duration accounting.
+2. `pipeline/handlers_sink.go` — sink writer gated on `OutputPreroll.Ready()`;
+   per-sink state machine; integration with mux header emission.
+3. `pipeline/engine.go` — `Pipeline.Ready()`, `ReadyState()`,
+   `RealTimeReady` event, AND-aggregation across outputs.
+4. `pipeline.Config` / `pipeline.Output` schema additions; schema v1.3 JSON
+   and `Normalize` migration.
+5. `cmd/mediamolder/main.go` — `--prebuffer`, `--prebuffer-max`, `--ready-fd`
+   flags; stdout `ready\n` line on run.
+6. `observability/metrics.go` + `MetricsEmitter` wiring for the new gauges.
+7. HTTP: `/realtime/ready` and `/realtime/ready/stream` on `MetricsServer`.
+8. Frontend: toolbar pill state, per-output fill bar, Inspector controls,
+   ready event surfaced in event log panel.
+9. Tests:
+   - Buffer fills to target then transitions to `READY` exactly once.
+   - EOF before target → `READY_PARTIAL` and full drain.
+   - Oldest-drop on max-cap overflow; eviction counter increments.
+   - Preset switch (Phase 6 integration): downstream sees no underrun for a
+     simulated 3 s encoder outage with 4 s pre-roll.
+   - `--ready-fd=3` writes exactly one byte on ready.
+10. Documentation: `docs/realtime-controller.md` describing the readiness contract
+    for downstream consumers; reference from `README.md`. Update 
+	`docs/using-mediamolder.md` and `docs/gui.md`, explaining the
+	usage of the real-time mode, including new `--prebuffer` flag, 
+	Inspector controls, and the new toolbar pill.
+
+### Open questions specific to Phase 7
+
+1. **Live mux containers (HLS, DASH, fMP4 chunked).** These muxers segment on
+   the *output* side; the pre-roll naturally produces complete segments
+   before the first chunk is written. The fMP4 init segment (`ftyp`+`moov`)
+   should still be emitted at writer start so downstream readers can probe
+   the stream without waiting; gate only `moof` writes on readiness.
+2. **UDP / RTP outputs.** UDP has no flow control. The `STREAMING` transition
+   for UDP is synthetic (50 ms timer after `READY`), and the pre-roll exists
+   purely to smooth producer jitter. RTP sender-side jitter compensation is
+   out of scope.
+3. **Audio-only outputs.** A 4 s pre-roll of 128 kb/s AAC is 64 kB — fine —
+   but `prebuffer_duration_seconds` may be too long for low-latency voice
+   use cases. The default for audio-only outputs is 1 s (overridable).
+4. **Reset semantics on seek.** If a future "live seek" capability lands, the
+   buffer must transition `STREAMING → DRAINING → FILLING` and re-issue a
+   single `RealTimeReady` event on completion. This is currently
+   forward-looking; for Phase 7 a seek aborts and restarts the pipeline.
+5. **Coordinated multi-output readiness.** All four MP4 outputs of an ABR job
+   should become ready simultaneously, not staggered. Because the encoder
+   topologies differ (different bitrates → different packet rates), one
+   output may fill its ring before another. The aggregator therefore reports
+   `graph.ready` only when *all* outputs are ready; the slowest output
+   defines the start time. A `--ready-mode=any` CLI flag is reserved for
+   future use but not implemented in Phase 7.
+
+---
+
+## 6c. Phase 8 — Real-Time Controller Observability
+
+> **Status: backend implemented** (`pipeline/snap/snap.go`,
+> `pipeline/realtime_ctrl.go`, `pipeline/realtime_api.go`,
+> `observability/realtime_http.go`, `cmd/mediamolder/perf.go`).
+> GUI canvas and Inspector deferred to Phase 8b.
+
+### Motivation
+
+Phases 5–7 build a sophisticated adaptive control loop. Once a job starts,
+however, the operator sees only a toolbar FPS pill and decision badges on
+individual encoder nodes. The controller's *reasoning* is invisible:
+
+- Which inputs triggered a decision? (Was the encoder truly CPU-bound, or
+  source-starved at 4% ActiveFrac?)
+- How far along the preset ladder has each encoder moved?
+- How long until the cooldown expires and the next step is eligible?
+- Which nodes are contributing to the FPS deficit vs. which are healthy?
+- What is the current fill level of each encoder's input buffer?
+
+This phase introduces a **first-class RT Controller Node** in the GUI — a
+dedicated canvas element that consolidates all controller inputs and outputs
+in one inspectable view — along with a CLI live-watch mode and a typed HTTP
+snapshot endpoint that backs both surfaces.
+
+### Data model
+
+Three types are added to `pipeline/snap/snap.go`; `NodePerfSnapshot` gains a new field:
+
+```go
+// ControllerNodeSnapshot combines observation inputs and controller outputs
+// for one controlled (video encoder) node. It is the unit rendered per-row
+// in the RT Controller Node inspector.
+type ControllerNodeSnapshot struct {
+    NodeID string
+
+    // ── Inputs: what the controller observes each tick ────────────────────
+    FPS               float64       // measured output FPS over last window
+    FPSTarget         float64       // configured target
+    FPSDeficit        float64       // FPSTarget − FPS; positive = behind
+    ActiveFrac        float64       // fraction of time in PROCESSING
+    StalledFrac       float64       // fraction of time blocked on output (downstream pressure)
+    IdleFrac          float64       // fraction of time waiting for input (source-starved)
+    ThreadsConfigured int           // codec thread count
+    ThreadsBusy       int           // in-flight codec tasks; −1 = unavailable
+    InputBufferFillFrac  float64       // encoder frame-input queue fill level [0, 1]
+    OutputBufferFillFrac float64       // encoder packet-output queue fill level [0, 1]
+    FrameLatencyMean     time.Duration // EWMA frame-processing latency
+
+    // ── Outputs / controller state for this node ──────────────────────────
+    CurrentPreset     string   // active encoder preset name ("slow", "medium", …)
+    PresetIndex       int      // position in PresetLadder; 0 = slowest
+    PresetLadder      []string // full ordered ladder slowest → fastest
+    PresetLocked      bool     // manual override is active
+    PresetSwitches    int64    // total completed preset transitions
+    WindowsSincePreset int     // controller ticks elapsed since last preset change
+    CooldownRemaining  int     // max(0, rtPresetCooldownWins − WindowsSincePreset)
+    OvershootWindows   int     // consecutive ticks of positive headroom (step-back candidate)
+    ThreadRestarts     int64   // total graceful codec restarts (Phase 5)
+}
+
+// SinkNodeSnapshot captures the output buffer state of a muxer/sink node.
+// Sink output buffer fullness is the primary upstream backpressure signal.
+type SinkNodeSnapshot struct {
+    NodeID               string
+    OutputBufferFillFrac float64 // muxer write-queue fill level [0, 1]
+}
+
+// RTControllerSnapshot is the full per-tick state of the real-time
+// controller. Returned by GET /realtime/snapshot and pushed via SSE.
+type RTControllerSnapshot struct {
+    // ── Controller-global state ───────────────────────────────────────────
+    Enabled   bool
+    Status    string        // "disabled" | "observing" | "cooldown" | "satisfied" | "dropping"
+    Tick      int64         // monotonic tick counter (in JSON; not shown in --watch display)
+    Elapsed   time.Duration // wall-clock time since pipeline start
+    FPSTarget float64       // graph-level target (max of per-node targets)
+    FPSActual float64       // graph-level actual (min of video-only node FPS)
+    Satisfied bool
+
+    // ── Configuration (read-only at runtime) ─────────────────────────────
+    HighestQualityPreset string // preset ceiling; "" = unconstrained
+    GroupStep            bool   // all video encoders step together
+    CooldownWindows      int    // max(node.CooldownRemaining) across all controlled nodes
+    TickIntervalMs       int64  // controller polling interval (default 500)
+
+    // ── Per-node data for every controlled video encoder ─────────────────
+    Nodes []ControllerNodeSnapshot
+
+    // ── Output-buffer state of all sink (muxer) nodes ─────────────────────
+    Sinks []SinkNodeSnapshot
+
+    // ── Recent decisions for the live feed ──────────────────────────────
+    RecentDecisions []DecisionRecord
+}
+```
+
+`Status` is derived each tick from the aggregate node state:
+
+| Condition | Status |
+|---|---|
+| `!Enabled` | `"disabled"` |
+| Any node has `CooldownRemaining > 0` | `"cooldown"` |
+| Any node is actively dropping frames | `"dropping"` |
+| `Satisfied` | `"satisfied"` |
+| otherwise | `"observing"` |
+
+A new zero-argument method `realtimeController.ControllerSnapshot() snap.RTControllerSnapshot`
+returns the most recently stored snapshot. Each call to `observe()` ends by calling
+`storeSnapshot()`, which builds the full `RTControllerSnapshot` from the
+`MetricsSnapshot` returned by `registry.Snapshot()` and the controller's internal
+counters (`windowsSincePreset`, `overshootWindows`), then stores it atomically via
+`atomic.Pointer[snap.RTControllerSnapshot]`. This allows any goroutine (including HTTP
+handlers) to read a consistent snapshot without holding any lock.
+`observeCount` — incremented unconditionally at the start of every `observe()` call —
+becomes the `Tick` field in the snapshot.
+
+### HTTP endpoints
+
+Two endpoints are added to the existing `MetricsServer`:
+
+**`GET /realtime/snapshot`**
+Returns a single `RTControllerSnapshot` as JSON, reflecting the last
+completed controller tick. Suitable for one-shot polling (e.g. a script
+that checks the preset state once).
+
+Response codes: `200` when realtime is enabled; `404` when the pipeline
+has no realtime controller.
+
+**`GET /realtime/snapshot/stream`**
+Server-Sent Events stream. One `data:` event per controller tick (~500 ms),
+each carrying a JSON-encoded `RTControllerSnapshot`. The client subscribes
+once and receives live updates without polling.
+
+```
+GET /realtime/snapshot/stream HTTP/1.1
+Accept: text/event-stream
+
+data: {"enabled":true,"status":"observing","tick":42,...}
+
+data: {"enabled":true,"status":"cooldown","tick":43,...}
+```
+
+The existing `/realtime/ready/stream` SSE endpoint (Phase 7) is unchanged.
+The two streams are independent and may be consumed simultaneously.
+
+### CLI watch mode
+
+`mediamolder watch [--url URL]` renders a live-updating terminal table that
+mirrors the `RTControllerSnapshot`, refreshing on each SSE event from
+`/realtime/snapshot/stream`. This is a top-level subcommand, not a flag of
+`mediamolder perf`. The default URL is `http://127.0.0.1:9090`. The display
+is structured in two sections:
+
+```
+┌─ RT Controller ─────────────────────────────────────────── elapsed=21.0s ─┐
+│  Status: observing   FPS: 23.9 / 24.0   HighestQuality: slow               │
+│  ← controller observes each row ───────────────────────────┬── → applies ─ │
+├──────────┬────────────────── PERFORMANCE ──────────────────┴── APPLIED ─── ┤
+│ Node     │ fps   deficit  active  stalled  in buf   out buf  │ preset  cd   │
+├──────────┼───────────────────────────────────────────────────┼─────────────┤
+│ enc_1080 │ 23.9  +0.1    96%     0%       ███░ 58%  ████░ 78%│ slow    0   │
+│ enc_720  │ 24.0  -0.0    94%     1%       ██░░ 40%  ███░░ 62%│ slow    0   │
+│ enc_540  │ 24.0  -0.1    88%     2%       █░░░ 22%  ██░░░ 44%│ slow    3   │
+│ enc_360  │ 24.0  -0.2    72%     3%       ░░░░ 12%  █░░░░ 28%│ slow    3   │
+├──────────┴──────────────────────────────────── SINKS ──────────────────────┤
+│ sink_1   out buf  ████░ 82%                                                 │
+│ sink_2   out buf  ███░░ 60%                                                 │
+└─────────────────────────────────────────────────────────────────────────────┘
+[21.0s] enc_1080 noop/cooldown — deficit=0.1 active=0.96 cd=3
+[20.5s] enc_540  step_faster  slow→medium — deficit=1.2 active=0.91
+```
+
+`PERFORMANCE` columns contain what the controller reads from each encoder node
+each tick; `APPLIED` columns contain the settings the controller has written.
+These are the controller's perspective, not data flowing into or out of the
+encoder itself. The `SINKS` section shows the muxer write-queue fill level
+for each sink; this is the most important backpressure indicator.
+
+Columns:
+- **fps**: `FPS` (measured)
+- **deficit**: `FPSDeficit`; `+` = behind, `−` = headroom
+- **active**: `ActiveFrac` as a percentage
+- **stalled**: `StalledFrac` as a percentage (downstream backpressure)
+- **in buf**: four-block bar of `InputBufferFillFrac`; fill level of the encoder's
+  frame-input queue; full bar = upstream frames accumulating faster than encoding
+- **out buf**: four-block bar of `OutputBufferFillFrac`; fill level of the encoder's
+  packet-output queue; full bar = downstream muxer or sink is the bottleneck
+- **preset**: `CurrentPreset`
+- **cd**: `CooldownRemaining`; `0` = eligible for next step
+
+Sink rows show only `out buf` (`OutputBufferFillFrac`), the muxer write-queue
+fill level.
+
+Color coding (ANSI 256-color or true-color terminal):
+- `deficit` column: red when `> rtPresetDeficit (0.5)`, green when negative.
+- `active` column: red when `> 90%` (compute pressure), cyan when `< 20%`
+  (source-starved, no action can help).
+- `in buf` bar: yellow when `> 75%` (encoder accumulating a frame backlog), red
+  when `> 90%` (overflow imminent; oldest-drop logic may activate).
+- `out buf` bar: yellow when `> 75%`, red when `> 90%` (sink is the bottleneck;
+  applies to both encoder output and sink write queues).
+- `preset` column: green at the ceiling (highest quality), amber mid-ladder,
+  red at `ultrafast`.
+- Status line: coloured header matching the `Status` field.
+
+The decision feed at the bottom is a scrolling ring of the last 5 decisions,
+each printed on one line. No external dependencies (no `termbox`, no `tview`);
+output is plain ANSI escape codes for broad terminal compatibility.
+
+### GUI — RT Controller Node
+
+#### Node appearance
+
+When `realtime: true` is active the canvas renders a dedicated **RT Controller
+Node** anchored above the encoder row. It is not a media node and carries no
+AV data edges; it is rendered in the same SVG/canvas layer as media nodes but
+with a visually distinct style:
+
+- **Shape**: full-width rounded rectangle spanning from the leftmost to the
+  rightmost controlled encoder node, positioned one node-height above them.
+- **Border**: dashed (`stroke-dasharray: 6 3`), 1.5 px, using the editor's
+  accent colour (indigo-500 in light mode, indigo-400 in dark mode).
+- **Fill**: translucent accent tint (5% opacity), so the nodes behind remain
+  legible if the RT node is wide.
+- **Header strip**: a narrow solid-fill strip across the top of the rectangle
+  containing a `⚙` icon, the label "Real-Time Controller", and the status
+  badge (see below).
+- **Status badge**: pill-shaped label in the header strip.
+  - Grey "disabled" — realtime mode off.
+  - Blue "observing" — measuring, FPS target met.
+  - Amber "cooldown (Ns)" — in post-step cooldown; shows cooldown windows remaining.
+  - Green "satisfied" — target met at the highest-quality preset ceiling.
+  - Red "dropping" — frame-drop mode active.
+- **FPS readout**: `23.9 / 24.0 fps` displayed in the header strip to the
+  right of the status badge.
+- **Per-node mini-indicators**: one small dot per controlled encoder, arranged
+  horizontally below the header strip, each centred above its encoder node.
+  Dot colour: green (on target), amber (in cooldown), red (behind / stepping).
+  Hovering a dot shows a tooltip with `preset: slow | deficit: +0.1 | cd: 0`.
+
+#### Control edges
+
+A dashed downward arrow connects the RT Controller Node to each encoder node
+it controls. These are rendered as purely cosmetic edges (not in the data-flow
+graph) to make the control relationship explicit. The arrow style:
+`stroke-dasharray: 4 4`, 1 px, semi-transparent accent colour.
+
+When hovering a control edge a tooltip shows the last decision for that node
+and the time it was made.
+
+#### Inspector (on click)
+
+Clicking the RT Controller Node opens the standard right-hand Inspector panel.
+The inspector has two tabs:
+
+---
+
+**Tab 1 — Observed** (what the controller reads from each node)
+
+A table with one row per controlled node, updating live at tick rate:
+
+| Node | FPS | Deficit | Active | Stalled | Idle | In Buf | Out Buf | Latency | Threads |
+|------|-----|---------|--------|---------|------|--------|---------|---------|---------|
+| enc_1080 | 23.9 | +0.1 | 96% | 0% | 4% | ███░ 58% | ████░ 78% | 8.2 ms | 10/10 |
+
+Row colouring follows the same rules as the CLI watch mode. Horizontal fill
+bars in the **In Buf** and **Out Buf** cells are more legible than percentages
+alone and visually communicate proximity to overflow. Threads is rendered as
+`busy / configured`; when `ThreadsBusy = −1` (codec-internal pool, e.g.
+libx264) the cell shows `— / 10`.
+
+---
+
+**Tab 2 — Applied** (what the controller has written to each node)
+
+Three sub-sections:
+
+*Current state* — a table mirroring the APPLIED columns of the CLI:
+
+| Node | Preset | Position | Switches | Cooldown | Overshoot wins | Locked |
+|------|--------|----------|----------|----------|----------------|--------|
+| enc_1080 | slow | 3 / 10 | 2 | 0 | 1 | — |
+
+**Position** is rendered as a mini ladder bar: filled blocks = steps taken from
+the best quality end; empty blocks = remaining headroom before ultrafast.
+Example for `slow` on the 10-step x264 ladder: `███░░░░░░░`.
+
+*Configuration* — a read-only summary of the controller parameters currently
+in effect: `HighestQualityPreset`, `GroupStep`, `CooldownWindows`,
+`TickIntervalMs`.
+
+*Decision log* — a scrolling feed of the last 20 `DecisionRecord` entries,
+newest at the top, rendered as a monospaced list:
+
+```
+21.0s  enc_1080  noop/cooldown   deficit=+0.1  active=96%  cd=3
+20.5s  enc_540   step_faster     slow → medium  deficit=+1.2  active=91%
+19.9s  enc_1080  step_faster     slower → slow  deficit=+2.3  active=97%
+```
+
+A **"Tail"** toggle auto-scrolls to the newest entry; when toggled off the
+user can scroll freely. A **"Clear"** button resets the visible feed (does not
+affect the in-process ring buffer).
+
+---
+
+#### Manual override controls
+
+At the bottom of Tab 2, below the decision log, each controlled node has an
+inline row:
+
+```
+enc_1080   [medium ▾] [Override]  [Clear]
+```
+
+The dropdown is populated from `PresetLadder`. **Override** calls
+`POST /realtime/preset` (existing Phase 6 endpoint). **Clear** calls
+`POST /realtime/preset/clear`. While a node is locked its dot indicator in
+the node header carries a small padlock icon.
+
+#### Placement in the canvas
+
+The RT Controller Node is inserted at the top of the graph layout during
+the compile phase when `realtime: true` is detected. The graph layout engine
+reserves vertical space for it so media nodes do not overlap. When realtime
+is disabled at runtime the node collapses to zero height and the control edges
+disappear; the canvas reflows to fill the freed space.
+
+### Phase 8 deliverables
+
+**Backend (implemented):**
+
+1. ✅ `pipeline/snap/snap.go` — `ControllerNodeSnapshot`, `SinkNodeSnapshot`,
+   and `RTControllerSnapshot` types; `InputQueueFillFrac` added to
+   `NodePerfSnapshot`.
+2. ✅ `pipeline/node_perf.go` — `inputQueueFillEWMA` field and
+   `RecordInputQueueFill()` method; `InputQueueFillFrac` populated in `Snapshot()`.
+3. ✅ `pipeline/perf_helpers.go` — `perfReceive` samples `len(ch)/cap(ch)` via
+   `RecordInputQueueFill` before each receive to track encoder input-queue fill.
+4. ✅ `pipeline/realtime_ctrl.go` — `observeCount int64` +
+   `lastSnapshot atomic.Pointer[snap.RTControllerSnapshot]`;
+   `storeSnapshot()` builds and stores the snapshot each tick;
+   `ControllerSnapshot()` reads it lock-free.
+5. ✅ `pipeline/realtime_api.go` — `Pipeline.RealtimeControllerSnapshot()`
+   delegating to `ctrl.ControllerSnapshot()`; `RealtimeController` interface
+   extended with `RealtimeControllerSnapshot() snap.RTControllerSnapshot`.
+6. ✅ `observability/realtime_http.go` — `GET /realtime/snapshot` (one-shot JSON;
+   `404` when disabled) and `GET /realtime/snapshot/stream` (SSE at ~500 ms).
+7. ✅ `cmd/mediamolder/perf.go` + `cmd/mediamolder/main.go` — `mediamolder watch
+   [--url URL]` subcommand: SSE consumer with ANSI in-place rendering,
+   PERFORMANCE / APPLIED sections, `in buf` / `out buf` four-block bars,
+   SINKS section, last-5-decisions feed.
+8. ✅ Tests (`pipeline/realtime_ctrl_snapshot_test.go`): initial value,
+   status derivation, `CooldownRemaining` math, `observeCount` monotonicity,
+   goroutine-shutdown, block-bar algorithm.
+
+**GUI (deferred — Phase 8b):**
+
+9. ⏳ Frontend `frontend/src/lib/` — `RTControllerNode` canvas component (shape,
+   header strip, status badge, FPS readout, per-node dots, control edges,
+   hover tooltips).
+10. ⏳ Frontend `frontend/src/lib/` — `RTControllerInspector` panel with two
+    tabs, live subscription to `/realtime/snapshot/stream`, colour-coded rows,
+    ladder-position bar, decision log feed, manual override controls.
+11. ⏳ Frontend canvas layout — reserve space for the RT Controller Node when
+    `global_options.realtime` is true; collapse when disabled.
+
+### Open questions specific to Phase 8
+
+1. **Canvas layout with many encoders.** An ABR job with 6–8 encoders makes
+   the RT Controller Node very wide. Consider showing only a summary count
+   ("4 / 6 on target") at narrow widths, expanding per-node dots only when
+   the canvas is wide enough.
+2. **Multiple source nodes.** When a pipeline has two independent source→encoder
+   chains, there is logically one RT Controller overseeing both. The canvas
+   node spans both encoder groups with a gap between them matching the media
+   graph layout.
+3. **SSE back-pressure.** Resolved in the Phase 8 implementation: the SSE handler
+   uses a 500 ms `time.Ticker` and writes JSON synchronously. A slow client
+   causes the write to block; the ticker fires at the next opportunity so at
+   most one tick is lost per slow write. Non-blocking fan-out can be added later
+   without changing the endpoint contract.
+4. **`mediamolder watch` on a remote pipeline.** The `--url` flag already accepts
+   any base URL, so `mediamolder watch --url http://192.0.2.1:9090` works today.
+   A `--host` / `--port` shorthand is a convenience addition.
+
+
 
 ## 7. Worked Example: Identifying a Bottleneck
 

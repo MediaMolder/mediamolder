@@ -177,9 +177,19 @@ func (s *encoderSession) run(ctx context.Context, in <-chan any) error {
 		// The restart drains and flushes the current encoder, closes it, and
 		// reopens with the requested thread count before processing this frame.
 		if newCount, ok := s.perf.PopRestartRequest(); ok {
-			if err := s.restartWithThreadCount(ctx, newCount); err != nil {
+			if err := s.restartWithParams(ctx, newCount, ""); err != nil {
 				f.Close()
 				return fmt.Errorf("encoder %q: thread restart: %w", s.nodeID, err)
+			}
+		}
+
+		// Phase 6: check for a pending real-time preset adjustment.
+		// SVT-AV1 supports hot reconfig; x264/x265 require a close+reopen
+		// at the next IDR (we force the next frame to be an I-frame).
+		if newPreset, ok := s.perf.PopPresetRequest(); ok {
+			if err := s.applyPresetAtNextIDR(ctx, newPreset, f); err != nil {
+				f.Close()
+				return fmt.Errorf("encoder %q: preset switch to %q: %w", s.nodeID, newPreset, err)
 			}
 		}
 
@@ -272,14 +282,19 @@ func (s *encoderSession) run(ctx context.Context, in <-chan any) error {
 	return s.drain(ctx)
 }
 
-// restartWithThreadCount performs a graceful codec restart: it flushes the
+// restartWithParams performs a graceful codec restart: it flushes the
 // current encoder, drains remaining packets downstream, closes the encoder,
-// and reopens it with threads as the new thread count. The in-flight frame
-// (if any) is processed by the new encoder after this returns.
+// and reopens it with the requested thread count and (optionally) a new
+// preset. The in-flight frame (if any) is processed by the new encoder
+// after this returns.
+//
+// presetOverride == "" leaves ExtraOpts["preset"] unchanged. When non-empty
+// it replaces the preset entry in ExtraOpts before reopen and records the
+// switch on the perf tracker.
 //
 // This method must only be called from the handler goroutine between frames.
 // It updates s.enc, s.runner.encoders[s.nodeID], and the NodePerfTracker.
-func (s *encoderSession) restartWithThreadCount(ctx context.Context, threads int) error {
+func (s *encoderSession) restartWithParams(ctx context.Context, threads int, presetOverride string) error {
 	// Flush the encoder and drain any packets buffered in the codec.
 	if err := s.enc.Flush(); err != nil && !av.IsEOF(err) && !av.IsEAgain(err) {
 		return fmt.Errorf("flush before restart: %w", err)
@@ -291,9 +306,22 @@ func (s *encoderSession) restartWithThreadCount(ctx context.Context, threads int
 	// Close the old encoder.
 	s.enc.Close()
 
-	// Reopen with the updated thread count.
+	// Reopen with the updated thread count and optional preset override.
 	opts := s.encOpts
 	opts.ThreadCount = threads
+	if presetOverride != "" {
+		if opts.ExtraOpts == nil {
+			opts.ExtraOpts = map[string]string{}
+		} else {
+			// Copy on write so other references (if any) aren't mutated.
+			cp := make(map[string]string, len(opts.ExtraOpts))
+			for k, v := range opts.ExtraOpts {
+				cp[k] = v
+			}
+			opts.ExtraOpts = cp
+		}
+		opts.ExtraOpts["preset"] = presetOverride
+	}
 	newEnc, err := av.OpenEncoder(opts)
 	if err != nil {
 		return fmt.Errorf("reopen with %d threads: %w", threads, err)
@@ -302,8 +330,12 @@ func (s *encoderSession) restartWithThreadCount(ctx context.Context, threads int
 	// Update session and graphRunner state.
 	s.enc = newEnc
 	s.encOpts.ThreadCount = threads
+	if presetOverride != "" {
+		s.encOpts.ExtraOpts = opts.ExtraOpts
+	}
 	if s.runner != nil {
 		s.runner.encoders[s.nodeID] = newEnc
+		s.runner.encoderOpts[s.nodeID] = s.encOpts
 	}
 
 	// Update the perf tracker so subsequent snapshots reflect the new
@@ -312,13 +344,67 @@ func (s *encoderSession) restartWithThreadCount(ctx context.Context, threads int
 	s.perf.SetThreadBusyFn(newEnc.ThreadsBusy)
 	s.perf.IncrementRestarts()
 
+	if presetOverride != "" {
+		s.perf.RecordPresetSwitch(presetOverride)
+	}
+
 	// Increment the Prometheus NodeThreadRestarts counter directly so
 	// it advances even before the next MetricsEmitter tick.
 	if p := s.pipe.prom; p != nil {
 		p.NodeThreadRestarts.WithLabelValues(s.nodeID).Add(1)
+		if presetOverride != "" && p.NodePresetSwitches != nil {
+			p.NodePresetSwitches.WithLabelValues(s.nodeID).Add(1)
+		}
 	}
 
 	return nil
+}
+
+// applyPresetAtNextIDR switches the encoder to the requested preset.
+//
+//   - For codecs supporting hot reconfig (SVT-AV1), it calls
+//     enc.RequestPresetChange directly — no close/reopen, no IDR needed.
+//   - For codecs that require an IDR boundary (x264, x265), it forces the
+//     in-flight frame f to be an I-frame and performs a close+reopen via
+//     restartWithParams. The forced I-frame becomes the first frame of the
+//     newly opened codec's first GOP.
+//   - For codecs without preset support, it returns nil (silently no-op).
+func (s *encoderSession) applyPresetAtNextIDR(ctx context.Context, newPreset string, f *av.Frame) error {
+	if newPreset == "" {
+		return nil
+	}
+	switch s.enc.PresetCapability() {
+	case av.PresetCapHotReconfig:
+		if err := s.enc.RequestPresetChange(newPreset); err != nil {
+			return err
+		}
+		// Mirror ExtraOpts so a subsequent thread-restart preserves it.
+		if s.encOpts.ExtraOpts == nil {
+			s.encOpts.ExtraOpts = map[string]string{}
+		}
+		s.encOpts.ExtraOpts["preset"] = newPreset
+		if s.runner != nil {
+			s.runner.encoderOpts[s.nodeID] = s.encOpts
+		}
+		s.perf.RecordPresetSwitch(newPreset)
+		if p := s.pipe.prom; p != nil && p.NodePresetSwitches != nil {
+			p.NodePresetSwitches.WithLabelValues(s.nodeID).Add(1)
+		}
+		return nil
+
+	case av.PresetCapRestartIDR:
+		// Force the next encoded frame to be an IDR so the reopened
+		// encoder picks up clean. This must happen before restart.
+		if f != nil && s.enc.MediaType() == av.MediaTypeVideo {
+			f.SetPictType(av.PictureTypeI)
+		}
+		return s.restartWithParams(ctx, s.encOpts.ThreadCount, newPreset)
+
+	default:
+		// PresetCapNone — silently accept; this node is not eligible
+		// for adaptive preset stepping.
+		return nil
+	}
 }
 
 func (r *graphRunner) handleEncoder(ctx context.Context, node *graph.Node, ins []<-chan any, outs []chan<- any) error {

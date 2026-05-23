@@ -200,6 +200,7 @@ For detailed instructions see [MacOS](docs/build/macos.md), [Windows](docs/build
 - [Go Processor Nodes](docs/go-processor-nodes.md)
 - [Scene Detection (go-scene-detect)](docs/scene-detection.md)
 - [Yolov8 object detection/classification](docs/yolov8-guide.md)
+- [Real-Time Controller](docs/realtime-controller.md) — adaptive control loop, encoder preset stepping, output buffers, `mediamolder watch`, HTTP API
 
 ### Code
 
