@@ -1921,3 +1921,261 @@ button.danger:hover { background: rgba(185, 74, 74, 0.15); }
   word-break: break-all;
   min-width: 0;
 }
+
+/* ─── Real-Time Controller canvas node ─────────────────────────────────── */
+
+.rtc-node {
+  background: rgba(79, 140, 255, 0.05);
+  border: 1.5px dashed var(--accent);
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 11px;
+  color: var(--text);
+  pointer-events: all;
+  min-width: 200px;
+}
+
+.rtc-node.selected {
+  border-color: #a5c8ff;
+  box-shadow: 0 0 0 2px rgba(79, 140, 255, 0.25);
+}
+
+.rtc-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.rtc-icon { font-size: 13px; flex-shrink: 0; }
+.rtc-title { font-weight: 600; font-size: 11px; flex-shrink: 0; }
+
+.rtc-fps {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+/* Status badge pill */
+.rtc-badge {
+  border-radius: 10px;
+  padding: 1px 7px;
+  font-size: 10px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.rtc-badge--disabled  { background: rgba(138,147,163,0.2); color: var(--text-dim); }
+.rtc-badge--observing { background: rgba(79,140,255,0.2);  color: #a5c8ff; }
+.rtc-badge--cooldown  { background: rgba(234,179,8,0.2);   color: #fcd34d; }
+.rtc-badge--satisfied { background: rgba(34,197,94,0.2);   color: #86efac; }
+.rtc-badge--dropping  { background: rgba(239,68,68,0.2);   color: #fca5a5; }
+
+/* Per-node dots row */
+.rtc-dots {
+  display: flex;
+  gap: 5px;
+  margin-top: 6px;
+  flex-wrap: wrap;
+}
+
+.rtc-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.rtc-dot--ok       { background: #22c55e; }
+.rtc-dot--mild     { background: #eab308; }
+.rtc-dot--cooldown { background: #60a5fa; }
+.rtc-dot--behind   { background: #ef4444; }
+
+/* ─── Real-Time Controller inspector panel ──────────────────────────────── */
+
+/* Inline status pill used in toolbar and inspector header */
+.rtc-status-pill {
+  border-radius: 10px;
+  padding: 2px 8px;
+  font-size: 10px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.rtc-status-pill--disabled  { background: rgba(138,147,163,0.2); color: var(--text-dim); }
+.rtc-status-pill--observing { background: rgba(79,140,255,0.2);  color: #a5c8ff; }
+.rtc-status-pill--cooldown  { background: rgba(234,179,8,0.2);   color: #fcd34d; }
+.rtc-status-pill--satisfied { background: rgba(34,197,94,0.2);   color: #86efac; }
+.rtc-status-pill--dropping  { background: rgba(239,68,68,0.2);   color: #fca5a5; }
+
+.rtc-fps-summary {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
+  margin: 4px 0 0;
+}
+
+.rtc-section-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-dim);
+  margin-top: 8px;
+  margin-bottom: 4px;
+}
+
+/* Scrollable table wrapper */
+.rtc-table-wrap {
+  overflow-x: auto;
+}
+
+.rtc-table {
+  border-collapse: collapse;
+  font-size: 11px;
+  width: 100%;
+  white-space: nowrap;
+}
+
+.rtc-table th {
+  font-weight: 600;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  color: var(--text-dim);
+  padding: 3px 6px 3px 0;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+}
+
+.rtc-table td {
+  padding: 3px 6px 3px 0;
+  vertical-align: middle;
+}
+
+.rtc-table tr:hover td { background: rgba(255,255,255,0.03); }
+
+.rtc-cell-id {
+  font-variant-numeric: tabular-nums;
+  max-width: 90px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Buffer occupancy fill bar */
+.rtc-fill-bar {
+  width: 52px;
+  height: 6px;
+  background: var(--border);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.rtc-fill-bar-inner {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.3s ease;
+}
+
+/* Preset ladder bar */
+.rtc-ladder-bar {
+  display: flex;
+  gap: 2px;
+  align-items: center;
+  height: 10px;
+}
+
+.rtc-ladder-seg {
+  flex: 1 1 0;
+  height: 8px;
+  background: var(--border);
+  border-radius: 2px;
+  min-width: 4px;
+  max-width: 12px;
+}
+
+.rtc-ladder-seg--active {
+  background: var(--accent);
+}
+
+/* Applied tab layout */
+.rtc-applied-tab {
+  display: flex;
+  flex-direction: column;
+}
+
+.rtc-config-grid {
+  display: grid;
+  grid-template-columns: auto auto;
+  gap: 2px 12px;
+  font-size: 11px;
+}
+
+.rtc-config-grid span:nth-child(odd) { color: var(--text-dim); }
+
+/* Preset override controls */
+.rtc-preset-select {
+  font-size: 11px;
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 4px;
+  max-width: 110px;
+}
+
+.rtc-btn-override,
+.rtc-btn-clear {
+  font-size: 10px;
+  padding: 2px 7px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+/* Decision log */
+.rtc-decision-log {
+  max-height: 180px;
+  overflow-y: auto;
+  font-size: 11px;
+  font-family: ui-monospace, monospace;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 6px;
+  margin-top: 2px;
+}
+
+.rtc-decision-row {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+  flex-wrap: wrap;
+  padding: 1px 0;
+  border-bottom: 1px solid rgba(42, 48, 58, 0.5);
+}
+
+.rtc-decision-row:last-child { border-bottom: none; }
+
+.rtc-decision-time  { color: var(--text-dim); flex-shrink: 0; }
+.rtc-decision-node  { color: var(--accent); font-weight: 600; }
+.rtc-decision-action { font-weight: 600; }
+.rtc-action--step_faster   { color: #22c55e; }
+.rtc-action--step_slower   { color: #eab308; }
+.rtc-action--restart_threads { color: #60a5fa; }
+.rtc-action--drop_frames   { color: #ef4444; }
+.rtc-action--lock          { color: #a78bfa; }
+.rtc-decision-change { color: var(--text-dim); }
+.rtc-decision-deficit { font-variant-numeric: tabular-nums; }
+.rtc-decision-reason { color: var(--text-dim); font-style: italic; }
+
+.rtc-tail-label {
+  font-size: 10px;
+  color: var(--text-dim);
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  cursor: pointer;
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: normal;
+  margin: 0;
+}
