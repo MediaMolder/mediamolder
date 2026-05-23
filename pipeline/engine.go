@@ -184,7 +184,7 @@ func (p *Pipeline) GetMetrics() MetricsSnapshot {
 	p.mu.Unlock()
 	if ctrl != nil {
 		rt := snap.RealtimeSnapshot{Enabled: true, Decisions: ctrl.snapshotDecisions()}
-		rt.FPSTarget, rt.FPSActual, rt.Satisfied = graphFPS(shot)
+		rt.FPSTarget, rt.FPSActual, rt.Satisfied = graphFPS(shot, ctrl.dag)
 		// Phase 7: per-output preroll readiness.
 		p.mu.Lock()
 		ready := p.ready
