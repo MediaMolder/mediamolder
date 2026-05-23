@@ -8,10 +8,12 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"sync"
 	"time"
 
 	"github.com/MediaMolder/MediaMolder/pipeline"
+	"github.com/MediaMolder/MediaMolder/pipeline/snap"
 )
 
 // jobStatus is the lifecycle status of a managed pipeline job.
@@ -104,6 +106,80 @@ func (m *jobManager) cancel(id string) error {
 	}
 	j.cancel()
 	return nil
+}
+
+// latestPipeline returns the pipeline of the most recently started running job,
+// or nil when no job is currently active.
+func (m *jobManager) latestPipeline() *pipeline.Pipeline {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var latest *runningJob
+	for _, j := range m.jobs {
+		j.mu.Lock()
+		running := j.status == statusRunning
+		j.mu.Unlock()
+		if running && (latest == nil || j.start.After(latest.start)) {
+			latest = j
+		}
+	}
+	if latest == nil {
+		return nil
+	}
+	return latest.pipe
+}
+
+// latestMetrics returns a MetricsSnapshot from the most recently started
+// running job, or a zero snapshot when no job is active.
+func (m *jobManager) latestMetrics() pipeline.MetricsSnapshot {
+	p := m.latestPipeline()
+	if p == nil {
+		return pipeline.MetricsSnapshot{}
+	}
+	return p.GetMetrics()
+}
+
+// jobManagerRealtimeCtrl implements observability.RealtimeController by
+// delegating to the most recently started running job's pipeline.
+type jobManagerRealtimeCtrl struct{ m *jobManager }
+
+func (a *jobManagerRealtimeCtrl) SetPresetOverride(nodeID, preset string) error {
+	p := a.m.latestPipeline()
+	if p == nil {
+		return fmt.Errorf("no active job")
+	}
+	return p.SetPresetOverride(nodeID, preset)
+}
+
+func (a *jobManagerRealtimeCtrl) ClearPresetOverride(nodeID string) error {
+	p := a.m.latestPipeline()
+	if p == nil {
+		return fmt.Errorf("no active job")
+	}
+	return p.ClearPresetOverride(nodeID)
+}
+
+func (a *jobManagerRealtimeCtrl) RealtimeDecisions() []snap.DecisionRecord {
+	p := a.m.latestPipeline()
+	if p == nil {
+		return nil
+	}
+	return p.RealtimeDecisions()
+}
+
+func (a *jobManagerRealtimeCtrl) RealtimeStatus() snap.RealtimeSnapshot {
+	p := a.m.latestPipeline()
+	if p == nil {
+		return snap.RealtimeSnapshot{}
+	}
+	return p.RealtimeStatus()
+}
+
+func (a *jobManagerRealtimeCtrl) RealtimeControllerSnapshot() snap.RTControllerSnapshot {
+	p := a.m.latestPipeline()
+	if p == nil {
+		return snap.RTControllerSnapshot{}
+	}
+	return p.RealtimeControllerSnapshot()
 }
 
 // gcLocked drops finished jobs beyond a small retention window.
