@@ -757,6 +757,14 @@ If a node is already at the thread budget ceiling and still has `FPSDeficit > 1.
 
 ### Using real-time mode
 
+For a complete guide to real-time mode — enabling it, the three-tier control
+loop (thread scaling → preset stepping → frame-drop), output buffer
+configuration, the GUI inspector, `mediamolder watch`, and the HTTP API —
+see **[docs/realtime-controller.md](../realtime-controller.md)**.
+
+The sections below summarise what this design document contributes to
+real-time mode: the metrics it measures and the control-loop logic it drives.
+
 Real-time mode activates the adaptive control loop. The loop runs every 500 ms, observes per-node performance snapshots, and responds to thread-limited bottlenecks by:
 - **Increasing encoder thread count** (graceful restart; x264/x265/aom, etc.) up to the global thread budget.
 - **Enabling frame-drop** (1 in 4 frames skipped) once the thread budget is exhausted.
@@ -1241,7 +1249,7 @@ Each encoder node's Inspector gains:
 ## 6b. Phase 7 — Real-Time Output Buffering & Readiness Signal
 
 > **Status: implemented** ([pipeline/output_buffer.go](../../pipeline/output_buffer.go),
-> [docs/realtime-output.md](../realtime-output.md)).
+> [docs/realtime-controller.md](../realtime-controller.md)).
 
 ### Motivation
 
@@ -1493,7 +1501,7 @@ type OutputReadyState struct {
    - Preset switch (Phase 6 integration): downstream sees no underrun for a
      simulated 3 s encoder outage with 4 s pre-roll.
    - `--ready-fd=3` writes exactly one byte on ready.
-10. Documentation: `docs/realtime-output.md` describing the readiness contract
+10. Documentation: `docs/realtime-controller.md` describing the readiness contract
     for downstream consumers; reference from `README.md`. Update 
 	`docs/using-mediamolder.md` and `docs/gui.md`, explaining the
 	usage of the real-time mode, including new `--prebuffer` flag, 

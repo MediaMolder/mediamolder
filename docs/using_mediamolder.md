@@ -1275,6 +1275,8 @@ For full parameter references and algorithm descriptions see
 
 Real-time mode activates an adaptive control loop that runs every 500 ms while the pipeline is playing. It observes per-node performance and attempts to keep every node at or above its configured `fps_target`.
 
+For a complete guide — control loop mechanics, three-tier intervention (thread scaling → preset stepping → frame-drop), output buffer configuration, GUI inspector, `mediamolder watch`, and HTTP API — see **[docs/realtime-controller.md](realtime-controller.md)**.
+
 **Enabling real-time mode:**
 
 ```sh

@@ -358,11 +358,17 @@ The display has three sections:
   with columns: `fps`, `deficit`, `active%`, `stalled%`, `in buf`
   (four-block encoder frame-input queue bar), `out buf` (encoder
   packet-output queue bar), `preset`, `cd` (cooldown remaining).
-- **SINKS** — one row per muxer/sink node with an `out buf` fill bar.
+- **SINKS** — one row per muxer/sink node with an `out buf` fill bar and
+  an `ahead` column showing how far the buffer's leading PTS edge leads
+  real-time (positive = encoder ahead; negative = encoder behind).
 - **RECENT DECISIONS** — last 5 entries from the controller decision log.
 
 No external dependencies; output is plain ANSI escape codes for broad
 terminal compatibility.  Press Ctrl-C to exit.
+
+For the complete real-time controller reference — control loop mechanics,
+output buffer state machine, configuration, GUI inspector, HTTP API, and
+tuning guidance — see **[docs/realtime-controller.md](../realtime-controller.md)**.
 
 ## Sample Grafana Dashboard
 
