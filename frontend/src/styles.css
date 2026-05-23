@@ -1935,6 +1935,10 @@ button.danger:hover { background: rgba(185, 74, 74, 0.15); }
   min-width: 200px;
 }
 
+.rtc-node--idle {
+  opacity: 0.5;
+}
+
 .rtc-node.selected {
   border-color: #a5c8ff;
   box-shadow: 0 0 0 2px rgba(79, 140, 255, 0.25);

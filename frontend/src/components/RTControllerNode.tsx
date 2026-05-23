@@ -33,8 +33,19 @@ function dotClass(n: ControllerNodeSnapshot): string {
 export const RTControllerNode = memo(function RTControllerNode({
   data,
 }: NodeProps & { data: FlowNodeData }) {
-  const snap = data.snapshot as RTControllerSnapshot
-  if (!snap) return null
+  const snap = data.snapshot as RTControllerSnapshot | null | undefined
+
+  if (!snap || !snap.Enabled) {
+    return (
+      <div className="rtc-node rtc-node--idle">
+        <div className="rtc-header">
+          <span className="rtc-icon" aria-hidden>⚙</span>
+          <span className="rtc-title">Real-Time Controller</span>
+          <span className="rtc-badge rtc-badge--disabled">idle</span>
+        </div>
+      </div>
+    )
+  }
 
   const fpsLabel = `${snap.FPSActual.toFixed(1)}\u202f/\u202f${snap.FPSTarget.toFixed(1)} fps`
   const cooldownLabel = snap.CooldownWindows > 0 ? ` (cd\u00a0${snap.CooldownWindows})` : ''

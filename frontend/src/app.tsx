@@ -987,13 +987,24 @@ function Editor() {
     }
   }, [nodes]);
 
-  /* Inject the synthetic Real-Time Controller node when a live snapshot is
-     available. The node is positioned above the bounding box of the encoder
-     nodes it controls and is not draggable, deletable, or connectable. */
+  /* Inject the synthetic Real-Time Controller node whenever realtime mode is
+     enabled in the job config — even before the job starts.  When a live
+     snapshot is available the node is positioned over the controlled-encoder
+     bounding box; otherwise it floats above all non-I/O nodes. */
   const decoratedNodesWithRTC = useMemo<FlowNode[]>(() => {
-    if (!rtSnapshot || rtSnapshot.Nodes.length === 0) return decoratedNodes;
-    const controlledIds = new Set(rtSnapshot.Nodes.map((n) => n.NodeID));
-    const controlled = decoratedNodes.filter((n) => controlledIds.has(n.id));
+    if (!job.global_options?.realtime) return decoratedNodes;
+
+    // Prefer snapshot-driven controlled-node IDs; fall back to any non-I/O
+    // canvas node so the box is always well-positioned.
+    let controlled: FlowNode[];
+    if (rtSnapshot && rtSnapshot.Nodes.length > 0) {
+      const controlledIds = new Set(rtSnapshot.Nodes.map((n) => n.NodeID));
+      controlled = decoratedNodes.filter((n) => controlledIds.has(n.id));
+    } else {
+      controlled = decoratedNodes.filter(
+        (n) => !n.id.startsWith('__in__') && !n.id.startsWith('__out__'),
+      );
+    }
     if (controlled.length === 0) return decoratedNodes;
     const FALLBACK_W = 200;
     const RTC_H = 56;
@@ -1018,7 +1029,7 @@ function Editor() {
       style: { minWidth: w, width: w },
     };
     return [rtcNode, ...decoratedNodes];
-  }, [decoratedNodes, rtSnapshot]);
+  }, [decoratedNodes, rtSnapshot, job.global_options?.realtime]);
 
   /* Compute inferred technical attributes for each edge so MMEdge can render
      a chip showing pix_fmt / size / sample_rate / etc. Recomputes whenever
