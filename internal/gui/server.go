@@ -56,6 +56,7 @@ func NewServer(opts Options) (*http.Server, error) {
 	mux.HandleFunc("POST /api/run", makeRunHandler(jobs))
 	mux.HandleFunc("POST /api/cancel/{jobId}", makeCancelHandler(jobs))
 	mux.HandleFunc("GET /api/events/{jobId}", makeEventsHandler(jobs))
+	registerRealtimeRoutes(mux, jobs)
 
 	if opts.ExamplesDir != "" {
 		mux.Handle("GET /examples/",
@@ -83,8 +84,11 @@ func NewServer(opts Options) (*http.Server, error) {
 		Handler:           logRequests(mux),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
-		WriteTimeout:      60 * time.Second,
-		IdleTimeout:       120 * time.Second,
+		// WriteTimeout is intentionally zero: SSE connections (/api/events,
+		// /realtime/snapshot/stream) are long-lived and must not be killed
+		// by a fixed write deadline.
+		WriteTimeout: 0,
+		IdleTimeout:  120 * time.Second,
 	}, nil
 }
 
