@@ -79,6 +79,10 @@ export function useRTSnapshot(enabled: boolean): RTControllerSnapshot | null {
     source.onmessage = (event: MessageEvent<string>) => {
       try {
         const snap = JSON.parse(event.data) as RTControllerSnapshot
+        // Go marshals nil slices as JSON null; normalise to empty arrays.
+        snap.Nodes ??= []
+        snap.Sinks ??= []
+        snap.RecentDecisions ??= []
         setSnapshot(snap.Enabled ? snap : null)
       } catch {
         // ignore malformed events
