@@ -4,7 +4,7 @@ This guide covers building the `mediamolder` binary (CLI + library) and the
 embedded GUI on Debian/Ubuntu and Fedora/RHEL, plus the day-to-day rebuild
 loops after editing code.
 
-See also: [Cross-platform overview](../build_and_packaging.md) ·
+See also: [Cross-platform overview](../build-and-packaging.md) ·
 [macOS](macos.md) · [Windows](windows.md).
 
 ## 1. Prerequisites

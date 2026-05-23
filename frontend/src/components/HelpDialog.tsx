@@ -183,7 +183,7 @@ export function HelpDialog({ open, onClose }: Props) {
 
           <p className="hint">
             For the full user guide, CLI reference, and JSON config reference, see{' '}
-            <code>docs/using_mediamolder.md</code>.
+            <code>docs/using-mediamolder.md</code>.
           </p>
         </div>
 

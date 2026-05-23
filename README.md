@@ -1,55 +1,86 @@
-# FFmpeg
-
-FFmpeg is an incredible open source project. It is used to process audio, video and images at a global scale, and it's known for its reliability and performance.
-
-FFmpeg has two distinct layers: 
-- an **interface / orchestration layer** that provides a Command Line Interface (CLI), parses command strings, builds a media processing graph, and runs the graph, and
-- a collection of **media processing libraries** (libavcodec, libavformat, libavfilter, etc.) that do the actual media processing (container file parsing, analysis, demuxing, decoding, filtering, encoding, and muxing).
-
 # MediaMolder
 
-**MediaMolder** is a modern, open-source media processing engine, written in Go. 
-It is a ground-up redesign of the interface and orchestration layers of FFmpeg. The 
-goal is to match FFmpeg's functional requirements, while delivering significant 
-improvements in non-functional requirements such as usability, observability, 
-maintainability, extensibility, portability and security. While you might initially 
-think of MediaMolder as "FFmpeg for Dummies"... its advanced capabilities make it 
-more like "FFmpeg for Smarties".
+**The modern media processing engine that gives you 100% of FFmpeg's power and performance — with a visual editor, bulletproof validation, live observability, pure-Go extensibility, and an intelligent real-time adaptive controller.**
 
-MediaMolder is built on the same proven libav\* libraries (libavcodec, libavformat,
-libavfilter, x264, x265, etc.) that power FFmpeg. It is **not** a wrapper around the 
-`ffmpeg` binary. The entire orchestration layer — graph construction, scheduling, 
-error handling, hardware wiring, metadata propagation — is rewritten from scratch in 
-Go, with direct zero-copy bindings to the same libav\* libraries that FFmpeg uses.
+[![Go](https://img.shields.io/badge/Go-1.25+-00ADD8.svg)](https://go.dev)
+[![License](https://img.shields.io/badge/License-LGPL--2.1-blue.svg)](LICENSE)
+[![FFmpeg Powered](https://img.shields.io/badge/Powered_by-libav*-black.svg)](https://ffmpeg.org)
+
+**MediaMolder is a ground-up redesign of FFmpeg’s interface and orchestration layers.** It uses the same battle-tested `libav*` libraries (libavcodec, libavformat, libavfilter, x264, x265, etc.) but replaces complex, fragile command-line strings with graphs defined in JSON files.
 
 ---
 
-## Why use MediaMolder?
+### Why MediaMolder beats every existing framework
 
-### Visual editor
+| Feature                          | **MediaMolder**                                      | FFmpeg                      | GStreamer                  |
+|----------------------------------|------------------------------------------------------|-----------------------------|----------------------------|
+| **Graph visualization**         | **Drag-and-drop browser GUI**                        | None                       | Manual Graphviz            |
+| **Pre-run validation**          | **Static + probe-assisted, one-click auto-fix**      | None           | Limited                    |
+| **Live observability**          | **Per-node metrics, Prometheus, OTEL, live terminal** | None                       | Basic                      |
+| **Real-time adaptive controller** | **Full adaptive loop (threads + presets + frame drop + jitter buffers)** | None | Limited |
+| **Extensibility**               | **Pure Go `Processor` interface**                    | C filters (rebuild required) | C plugins                |
+| **Hardware acceleration**       | **Probed, auto-mapped, safe across platforms**       | Opaque & error-prone       | Complex                    |
+| **Declarative config**          | **Versioned JSON + GUI round-trip**                  | Command strings            | Pipeline code              |
+| **FFmpeg command migration**    | **One-command `convert-cmd` with round-trip**        | N/A                        | Manual                     |
+| **Production readiness**        | **Pause/resume, real-time controller, embeddable**   | Good for scripts           | Good for pipelines         |
+
+**Result:** Every codec, filter, container, and hardware backend FFmpeg offers — plus dramatically better usability, safety, observability, and *real-time reliability*.
+
+### Real Time Encoding with Proper Metrics
+
+![MediaMolder GUI — Adaptive Bitrate x264 encode with real-time controller active]![Video Encoding Real Time Controller](image.png)
+
+- Import any `ffmpeg` command line instantly
+- Drag filters, encoders, sources, and sinks onto a canvas
+- Set parameter values in an inspector panel with extended help for each parameter
+- Validate your job to catch problems before you run it
+	- MediaMolder can suggest and implement fixes to common problems
+- Hover edges for full stream metadata
+- Live performance metrics while running
+- In real-time mode, the **Real-time controller panel** shows detailed statistics  (threads, presets, frame drops)
+- Export back to the equivalent FFmpeg command line 
+
+## Real-Time Adaptive Controller
+
+Activate with `--realtime` (CLI) or `global_options.realtime: true` (JSON) and MediaMolder turns on a **dynamically adaptive live video encoding platform**.
+
+- **Adaptive control loop** (500 ms ticks) continuously monitors the performance of every encoder
+- **Three-tier adaptation**:
+  1. Scale encoder threads (graceful restart, within CPU budget)
+  2. Increments presets faster/slower (GOP-boundary switching, quality recovery when load drops) to optimize speed vs. quality
+  3. Graceful frame drop (last resort)
+- **Configurable encoder input buffer** (~4 s) + **rolling output buffer** (~4 s) absorbs upstream and downstream jitter (TCP stalls, HLS segment hiccups, SRT bursts, etc.)
+- **Live status badges** in GUI + `mediamolder watch` + HTTP/SSE API
+- Perfect for live streaming, HLS/DASH playout, broadcast, and any long-running job that must stay on pace
+
+
+### Graphical User Interface / Visual editor
 
 FFmpeg runs media processing graphs, but until now you were forced to visualize 
 those graphs in your head. MediaMolder can import your FFmpeg command-line, 
 enabling you to view, edit, validate, and run your graph with detailed performance 
 metrics. The MediaMolder Graphical User Interface (GUI) is a fluid, 
 drag-and-drop graph editor that runs in your web browser. The GUI is launched
-from the mediamolder binary by the `gui` subcommand (run `./mediamolder gui`). 
-![MediaMolder User Interface](docs/images/ABR_x264.png)
+from the mediamolder binary by the `gui` subcommand. For details, see [gui.md](docs/gui.md)
 
 - Build encode graphs by dragging filters, encoders, sources, and sinks onto
   a canvas and wiring them by stream type. Mismatched types (video → audio
   input) are rejected at the handle level.
-- The Inspector surfaces typed forms for every node: encoder rate-control
+
+- The Inspector displays typed forms for every node: encoder rate-control
   modes, HLS/DASH delivery wizards, bitstream-filter chains, chapter and
   container metadata editors, per-stream disposition and language overrides,
   audio channel routing.
-- Hover any edge to see every technical property MediaMolder can infer for
+- When you select an input file, it is probed to determine its technical parameters.
+- Hover any edge (wire) to see every technical property MediaMolder can infer for
   that stream (resolution, pixel format, frame rate, colour space, codec,
   bitrate, sample rate, channel layout) — seeded from a probe of the source
   file and propagated forward through the graph.
 - **FFmpeg ->** parses any `ffmpeg` command line and drops the equivalent
-  graph onto the canvas. **-> FFmpeg** shows you the FFmpeg command-line for
-  any MediaMolder graph.
+  graph onto the canvas. 
+- **-> FFmpeg** shows you the equivalent FFmpeg command-line for
+  your MediaMolder graph (warning if your graph contains MediaMolder-exclusive 
+  capabilities, like custom Go Processor Nodes).
 - The **Run panel** shows live per-node metrics — packets, rate, error count,
   mean frame latency, and *unblocked performance* (the rate each node achieves
   while actively processing, idle and stall time excluded).
@@ -60,8 +91,8 @@ from the mediamolder binary by the `gui` subcommand (run `./mediamolder gui`).
   defined in the job.
 - The properties panel includes extended help for most parameters, explaining
   the effect of each option, the default value, and the valid range. Parameters
-  that accept a list of values (e.g. `hwaccel`) show a dropdown menu of valid
-  options.  
+  that accept an enumerated list of values (e.g. `hwaccel`) are controlled by 
+  a dropdown menu that lets you select a valid value.  
 
 
 ### Safe by default
@@ -114,13 +145,14 @@ subtitle generation, business-specific metadata — slots into any graph as a
 first-class node, written as an ordinary Go struct that implements the
 `processors.Processor` interface. No C, no rebuilds, no filtergraph string
 hacks. The engine schedules, monitors, and error-handles custom nodes
-identically to built-in nodes. For example, you can add a custom Yolo-v8
-object-detection node to a graph and it will run directly inside your media
-graph. See [Yolo-V8 Guide](docs/yolov8-guide.md)
+identically to built-in nodes. For more details, see [go-processor-nodes.md](docs/go-processor-nodes.md). 
+
+You can add a custom Yolo-v8 object-detection node to a graph and it will 
+run directly inside your media graph. See [Yolo-V8 Guide](docs/yolov8-guide.md)
 
 ### Hardware acceleration — any platform, properly
 
- MediaMolder makes hardware acceleration *safe and understandable*.
+ MediaMolder makes hardware acceleration *safe and understandable*. See [hardware-acceleration.md](docs/hardware-acceleration.md)
 
 - A **Hardware Capabilities dialog** probes all available backends at startup
   and displays each GPU's marketing name, supported encode/decode codecs
@@ -182,7 +214,7 @@ and tells you exactly what went wrong when it doesn't.
 
 ## Build / Install
 
-See [Build & Packaging](docs/build_and_packaging.md)
+See [Build & Packaging](docs/build-and-packaging.md)
 
 For detailed instructions see [MacOS](docs/build/macos.md), [Windows](docs/build/windows.md) and [Linux](docs/build/linux.md)
 
@@ -190,13 +222,13 @@ For detailed instructions see [MacOS](docs/build/macos.md), [Windows](docs/build
 
 ### Usage
 
-- [Using MediaMolder (CLI & GUI guide)](docs/using_mediamolder.md)
-- [Concepts — Graph Model, Nodes, Edges, Lifecycle](docs/concepts-and-graph-basics.md)
-- [FFmpeg Migration Guide](docs/ffmpeg-migration-guide.md)
-- [Validation](docs/architecture/graph_validation_design.md)
-- [JSON Config Reference](docs/json-config-reference.md)
-- [Export to FFmpeg CLI](docs/architecture/export.md)
+- [Using MediaMolder (CLI)](docs/using-mediamolder.md)
 - [Visual Editor (GUI)](docs/gui.md)
+- [Concepts — Graph Model, Nodes, Edges, Lifecycle](docs/concepts-and-graph-basics.md)
+- [JSON Config Reference](docs/json-config-reference.md)
+- [FFmpeg Migration Guide](docs/ffmpeg-migration-guide.md)
+- [Export to FFmpeg CLI](docs/architecture/export.md)
+- [Validation](docs/architecture/graph_validation_design.md)
 - [Go Processor Nodes](docs/go-processor-nodes.md)
 - [Scene Detection (go-scene-detect)](docs/scene-detection.md)
 - [Yolov8 object detection/classification](docs/yolov8-guide.md)
@@ -205,8 +237,8 @@ For detailed instructions see [MacOS](docs/build/macos.md), [Windows](docs/build
 ### Code
 
 - [Architecture](docs/architecture/architecture.md)
-- [graph State Machine](docs/architecture/graph-state-machine.md)
-- [graph Instrumentation Roadmap](docs/roadmap/pipeline-instrumentation-roadmap.md)
+- [Graph State Machine](docs/architecture/graph-state-machine.md)
+- [Graph Instrumentation Roadmap](docs/roadmap/pipeline-instrumentation-roadmap.md)
 - [Clock & Sync](docs/architecture/clock-and-sync.md)
 - [Event Bus](docs/architecture/event-bus.md)
 - [Error Handling](docs/architecture/error-handling.md)

@@ -444,7 +444,7 @@ The `mediamolder gui` HTTP server (§18) is intended for **localhost use only** 
 - Real-time progress and JSON status output.
 
 ### Related Documents
-- [Build & Packaging](../build_and_packaging.md)
+- [Build & Packaging](../build-and-packaging.md)
 - [Development Roadmap](../roadmap/roadmap.md)
 - [Contribution & Governance](../../contribution_and_governance.md)
 - Possible Future Improvements
