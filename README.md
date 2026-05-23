@@ -6,11 +6,11 @@
 [![License](https://img.shields.io/badge/License-LGPL--2.1-blue.svg)](LICENSE)
 [![FFmpeg Powered](https://img.shields.io/badge/Powered_by-libav*-black.svg)](https://ffmpeg.org)
 
-**MediaMolder is a ground-up redesign of FFmpeg’s interface and orchestration layers.** It uses the same battle-tested `libav*` libraries (libavcodec, libavformat, libavfilter, x264, x265, etc.) but replaces complex, fragile command-line strings with graphs defined in JSON files.
+**MediaMolder is a ground-up redesign of FFmpeg’s interface and orchestration layers.** It uses the same battle-tested `libav*` libraries (libavcodec, libavformat, libavfilter, x264, x265, etc.) but replaces complex, error-prone command-line strings with graphs defined in JSON files.
 
 ---
 
-### Why MediaMolder beats every existing framework
+### MediaMolder Advantages
 
 | Feature                          | **MediaMolder**                                      | FFmpeg                      | GStreamer                  |
 |----------------------------------|------------------------------------------------------|-----------------------------|----------------------------|
@@ -24,11 +24,11 @@
 | **FFmpeg command migration**    | **One-command `convert-cmd` with round-trip**        | N/A                        | Manual                     |
 | **Production readiness**        | **Pause/resume, real-time controller, embeddable**   | Good for scripts           | Good for pipelines         |
 
-**Result:** Every codec, filter, container, and hardware backend FFmpeg offers — plus dramatically better usability, safety, observability, and *real-time reliability*.
+Every codec, filter, container, and hardware backend FFmpeg offers, with significantly better usability, safety, observability, and *real-time reliability*.
 
 ### Real Time Encoding with Proper Metrics
 
-![MediaMolder GUI — Adaptive Bitrate x264 encode with real-time controller active]![Video Encoding Real Time Controller](/docs/images/real-time-controller.png)
+MediaMolder GUI — Adaptive Bitrate x264 encode with real-time controller active![Video Encoding Real Time Controller](/docs/images/real-time-controller.png)
 
 - Import any `ffmpeg` command line instantly
 - Drag filters, encoders, sources, and sinks onto a canvas
@@ -40,15 +40,15 @@
 - In real-time mode, the **Real-time controller panel** shows detailed statistics  (threads, presets, frame drops)
 - Export back to the equivalent FFmpeg command line 
 
-## Real-Time Adaptive Controller
+## Real-Time Controller
 
-Activate with `--realtime` (CLI) or `global_options.realtime: true` (JSON) and MediaMolder turns on a **dynamically adaptive live video encoding platform**.
+Activate with `--realtime` (CLI) or `global_options.realtime: true` (JSON) and MediaMolder turns on an **adaptive closed-loop control system** that enables reliable live video encoding**.
 
 - **Adaptive control loop** (500 ms ticks) continuously monitors the performance of every encoder
 - **Three-tier adaptation**:
   1. Scale encoder threads (graceful restart, within CPU budget)
   2. Increments presets faster/slower (GOP-boundary switching, quality recovery when load drops) to optimize speed vs. quality
-  3. Graceful frame drop (last resort)
+  3. Graceful frame drop (as a last resort)
 - **Configurable encoder input buffer** (~4 s) + **rolling output buffer** (~4 s) absorbs upstream and downstream jitter (TCP stalls, HLS segment hiccups, SRT bursts, etc.)
 - **Live status badges** in GUI + `mediamolder watch` + HTTP/SSE API
 - Perfect for live streaming, HLS/DASH playout, broadcast, and any long-running job that must stay on pace
@@ -56,9 +56,9 @@ Activate with `--realtime` (CLI) or `global_options.realtime: true` (JSON) and M
 
 ### Graphical User Interface / Visual editor
 
-FFmpeg runs media processing graphs, but until now you were forced to visualize 
-those graphs in your head. MediaMolder can import your FFmpeg command-line, 
-enabling you to view, edit, validate, and run your graph with detailed performance 
+FFmpeg runs media processing graphs, but until now you would have to visualize 
+those graphs in your head. MediaMolder can import your FFmpeg command-line, and the GUI 
+enables you to view, edit, validate, and run your graph with detailed performance 
 metrics. The MediaMolder Graphical User Interface (GUI) is a fluid, 
 drag-and-drop graph editor that runs in your web browser. The GUI is launched
 from the mediamolder binary by the `gui` subcommand. For details, see [gui.md](docs/gui.md)
