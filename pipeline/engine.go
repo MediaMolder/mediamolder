@@ -964,6 +964,16 @@ func (p *Pipeline) runGraph(ctx context.Context) (runErr error) {
 		})
 	}
 
+	// Apply EncoderInputBufferFrames override: the default from graph.Compile
+	// is 16; override to the configured value for all encoder-input edges.
+	if encBuf := cfg.GlobalOptions.EncoderInputBufferFrames; encBuf > 0 {
+		for e := range plan.EdgeBufSizes {
+			if e.To.Kind == graph.KindEncoder {
+				plan.EdgeBufSizes[e] = encBuf
+			}
+		}
+	}
+
 	// 3. Pre-open all AV resources in topological order.
 	runner := newGraphRunner(cfg, p)
 	defer func() {
