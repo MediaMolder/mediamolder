@@ -348,7 +348,7 @@ func (r *graphRunner) handleSource(ctx context.Context, node *graph.Node, outs [
 		if src.pacer != nil {
 			if pts := pkt.PTS(); pts != math.MinInt64 && si.TimeBase[1] > 0 {
 				ptsUS := pts * 1_000_000 * int64(si.TimeBase[0]) / int64(si.TimeBase[1])
-				src.pacer.maybeSleep(ctx, ptsUS)
+				src.pacer.maybeSleep(ctx, ptsUS, pkt.StreamIndex())
 			}
 		}
 

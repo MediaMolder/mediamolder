@@ -191,8 +191,13 @@ As…** buttons use the browser-native File System Access API where
 available, falling back to a `<input type=file>` / anchor download in
 Firefox and Safari.)
 
-* The left sidebar lists shortcuts for your home directory, the directory
-  the binary was launched from, and the filesystem root.
+* The left sidebar has two sections:
+  * **Shortcuts** — your home directory, the directory the binary was
+    launched from, and the filesystem root.
+  * **Recent** — the last 10 directories you navigated to, most recent
+    first.  The list is persisted in `localStorage` (key
+    `mm-file-browser-recent`) so it survives page reloads and is shared
+    across all open/save dialogs.
 * The pathbar at the top lets you type a path directly and press
   <kbd>Enter</kbd> or click **Go**, or use the **↑** button to ascend.
 * In **Open** mode, double-click a file to select it. The dialog filters by
@@ -1226,6 +1231,8 @@ While a job is running the canvas updates each node at ~2 Hz with a live perform
 - A node that is mostly **yellow** (idle) is waiting for input; its upstream node is the bottleneck.
 
 The same data is available in the terminal via `mediamolder perf --url http://localhost:9090/perf`.
+When `global_options.realtime` is enabled, `mediamolder watch [--url URL]` provides a
+live controller view — preset positions, buffer fill bars, and a rolling decision feed.
 
 All endpoints are unauthenticated and intended for `localhost` use. Bind
 explicitly to `127.0.0.1` (the default) if untrusted users share the host.
@@ -1242,8 +1249,16 @@ explicitly to `127.0.0.1` (the default) if untrusted users share the host.
 | `POST` | `/api/run`                    | Start a run; returns `{job_id}`.                      |
 | `POST` | `/api/cancel/{jobId}`         | Cancel an in-flight run.                              |
 | `GET`  | `/api/events/{jobId}`         | Server-Sent Events stream for the run.                |
-| `GET`  | `/perf`                       | Full `MetricsSnapshot` JSON for the currently-running pipeline, including `[]NodePerfSnapshot` (per-node `ActiveFrac`, `IdleFrac`, `StalledFrac`, `FPS`, `FPSDeficit`, `ThreadsConfigured`, `ThreadsBusy`). Used by `mediamolder perf`. |
+| `GET`  | `/perf`                       | Full `MetricsSnapshot` JSON for the currently-running pipeline, including `[]NodePerfSnapshot` (per-node `ActiveFrac`, `IdleFrac`, `StalledFrac`, `FPS`, `FPSDeficit`, `ThreadsConfigured`, `ThreadsBusy`, `QueueFillFrac`, `InputQueueFillFrac`). Used by `mediamolder perf`. |
 | `GET`  | `/perf/stream`                | SSE endpoint pushing `[]NodePerfSnapshot` at 2 Hz. Consumed by the canvas performance overlay. Sends an empty array when the pipeline is idle. |
+| `POST` | `/realtime/preset`            | Set a manual encoder-preset override. Body `{node_id, preset}`. Loopback-only. |
+| `POST` | `/realtime/preset/clear`      | Clear a manual preset override and return the node to controller-managed stepping. Body `{node_id}`. Loopback-only. |
+| `GET`  | `/realtime/decisions`         | Recent `RealtimeDecisionLog` entries as JSON. |
+| `GET`  | `/realtime/status`            | `{FPSTarget, FPSActual, Satisfied}` graph-level FPS summary. |
+| `GET`  | `/realtime/ready`             | `{state, outputs:[…]}` readiness snapshot (pre-roll buffer). Returns HTTP 425 *Too Early* until all outputs are ≥ READY. |
+| `GET`  | `/realtime/ready/stream`      | SSE stream of per-output readiness state changes. One event per transition. |
+| `GET`  | `/realtime/snapshot`          | One-shot `RTControllerSnapshot` JSON: per-tick controller state including per-encoder preset position, buffer fill, cooldown, and recent decisions. Returns `404` when `global_options.realtime` is off. |
+| `GET`  | `/realtime/snapshot/stream`   | SSE stream pushing one `RTControllerSnapshot` event per ~500 ms controller tick. Connection closes with `event: error` if realtime mode is disabled at runtime. Used by `mediamolder watch`. |
 | `GET`  | `/api/files`                  | List a directory (`?path=&filter=ext1,ext2&dirs_only=`). |
 | `POST` | `/api/probe`                  | Probe an input URL with libavformat. Body `{url, options?}`; response `{url, streams: [{index, type, codec, codec_tag, profile, level, bit_rate, bit_depth, bits_per_coded_sample, bits_per_raw_sample, width, height, pix_fmt, frame_rate, r_frame_rate, sar, field_order, color_space, color_range, color_primaries, color_transfer, sample_rate, sample_fmt, channels, channel_layout, duration_sec, start_sec, time_base_num, time_base_den}]}`. Used by the Inspector's **Get properties** button. |
 | `GET`  | `/api/encoders/{name}/options` | Enumerate every AVOption available on the named encoder (both generic AVCodecContext options and the codec's private options). Response: `{name, long_name, media_type, options: [{name, help, type, unit, min, max, default, constants?, is_private}]}`. `type` is one of `int`/`int64`/`uint64`/`bool`/`float`/`double`/`string`/`flags`/`rational`/`pix_fmt`/`sample_fmt`/`channel_layout`/`duration`/`color`/`binary`/`dict`. `constants` is populated for enum-like options (every `AV_OPT_TYPE_CONST` whose `unit` matches). Cached in-memory after the first call. |

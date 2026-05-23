@@ -52,8 +52,11 @@ import { fetchCatalog, indexStreams } from './lib/nodeCatalog';
 import { fetchEncoderInfo } from './lib/encoderSchema';
 import type { Fix, HWAccelProbe, JobConfig, ProbeResponse, StreamType, ValidationIssue, ValidationReport } from './lib/jobTypes';
 import { postValidate } from './lib/validate';
+import { RTControllerNode } from './components/RTControllerNode';
+import { RTControllerInspector } from './components/RTControllerInspector';
+import { useRTSnapshot } from './lib/rtSnapshot';
 
-const NODE_TYPES = { mmNode: MMNode };
+const NODE_TYPES = { mmNode: MMNode, rtController: RTControllerNode };
 const EDGE_TYPES = { mmEdge: MMEdge };
 
 interface ExampleEntry {
@@ -324,8 +327,16 @@ function Editor() {
    * mark dirty for any change other than pure selection. */
   const onNodesChange = useCallback(
     (changes: NodeChange[]) => {
-      setNodes((ns) => applyNodeChanges(changes, ns) as FlowNode[]);
-      if (changes.some((c) => c.type !== 'select' && c.type !== 'dimensions')) markDirty();
+      // Changes targeting the synthetic __rtc__ node must not reach
+      // applyNodeChanges: __rtc__ lives only in the derived
+      // decoratedNodesWithRTC array, so applyNodeChanges always returns a
+      // new array for __rtc__ changes (the node isn't found), which
+      // triggers setNodes → re-render → new decoratedNodesWithRTC → new
+      // ReactFlow prop → another dimensions change — an infinite loop.
+      const filtered = changes.filter((c) => (c as { id?: string }).id !== '__rtc__');
+      if (filtered.length === 0) return;
+      setNodes((ns) => applyNodeChanges(filtered, ns) as FlowNode[]);
+      if (filtered.some((c) => c.type !== 'select' && c.type !== 'dimensions')) markDirty();
     },
     [markDirty],
   );
@@ -394,7 +405,9 @@ function Editor() {
   const onSelectionChange = useCallback((params: OnSelectionChangeParams) => {
     setSelectedId(params.nodes[0]?.id ?? null);
     setSelectedEdgeIds(params.edges.map((e) => e.id));
-  }, []);
+    // Auto-open the inspector when the RT Controller canvas node is clicked.
+    if (params.nodes[0]?.id === '__rtc__') setShowInspector(true);
+  }, [setShowInspector]);
 
   /* ---------- Open Inspector from node button ----------
    * MMNode dispatches mm.inspector.open with the node id when the user
@@ -823,6 +836,7 @@ function Editor() {
   const run = useJobRun(() => buildJobRef.current?.() ?? null);
   const [showRunPanel, setShowRunPanel] = useState(false);
   const isRunning = run.status === 'running' || run.status === 'starting';
+  const rtSnapshot = useRTSnapshot(isRunning && !!(job.global_options?.realtime));
 
   const onRun = useCallback(() => {
     setShowRunPanel(true);
@@ -981,6 +995,45 @@ function Editor() {
     }
   }, [nodes]);
 
+  /* Inject the synthetic Real-Time Controller node whenever realtime mode is
+     enabled in the job config — even before the job starts.  When a live
+     snapshot is available the node is positioned over the controlled-encoder
+     bounding box; otherwise it floats above all non-I/O nodes. */
+  const decoratedNodesWithRTC = useMemo<FlowNode[]>(() => {
+    if (!job.global_options?.realtime) return decoratedNodes;
+
+    // Always use all non-I/O nodes for positioning so the box doesn't jump
+    // when the snapshot first arrives (snapshot-controlled IDs can differ).
+    const controlled = decoratedNodes.filter(
+      (n) => !n.id.startsWith('__in__') && !n.id.startsWith('__out__'),
+    );
+    if (controlled.length === 0) return decoratedNodes;
+    const FALLBACK_W = 200;
+    const RTC_H = 56;
+    const RTC_GAP = 24;
+    const minX = Math.min(...controlled.map((n) => n.position.x));
+    const maxX = Math.max(...controlled.map((n) => n.position.x + ((n.measured?.width as number | undefined) ?? FALLBACK_W)));
+    const minY = Math.min(...controlled.map((n) => n.position.y));
+    const w = Math.max(200, maxX - minX + 20);
+    const rtcNode: FlowNode = {
+      id: '__rtc__',
+      type: 'rtController',
+      position: { x: minX - 10, y: minY - RTC_H - RTC_GAP },
+      selected: selectedId === '__rtc__',
+      data: {
+        kind: 'rtController',
+        label: 'Real-Time Controller',
+        ref: undefined as unknown as FlowNode['data']['ref'],
+        snapshot: rtSnapshot,
+      },
+      draggable: false,
+      deletable: false,
+      selectable: true,
+      style: { minWidth: w, width: w },
+    };
+    return [rtcNode, ...decoratedNodes];
+  }, [decoratedNodes, rtSnapshot, job.global_options?.realtime, selectedId]);
+
   /* Compute inferred technical attributes for each edge so MMEdge can render
      a chip showing pix_fmt / size / sample_rate / etc. Recomputes whenever
      the graph topology or any node params change. */
@@ -1003,6 +1056,7 @@ function Editor() {
       className="app-shell"
       data-palette={showPalette ? 'shown' : 'hidden'}
       data-inspector={showInspector ? 'shown' : 'hidden'}
+      data-rtc-inspector={showInspector && selectedId === '__rtc__' ? 'shown' : undefined}
     >
       <div className="toolbar">
         <span className="title">MediaMolder</span>
@@ -1157,6 +1211,11 @@ function Editor() {
           />
           Real-time
         </label>
+        {isRunning && rtSnapshot && (
+          <span className={`rtc-status-pill rtc-status-pill--${rtSnapshot.Status}`} title="Real-Time Controller status">
+            {rtSnapshot.Status}&ensp;{rtSnapshot.FPSActual.toFixed(1)}&thinsp;/&thinsp;{rtSnapshot.FPSTarget.toFixed(1)}&thinsp;fps
+          </span>
+        )}
         {isRunning ? (
           <button className="danger" onClick={onStop}>Stop</button>
         ) : (
@@ -1186,7 +1245,7 @@ function Editor() {
         onDrop={onDrop}
       >
         <ReactFlow
-          nodes={decoratedNodes}
+          nodes={decoratedNodesWithRTC}
           edges={decoratedEdges}
           nodeTypes={NODE_TYPES}
           edgeTypes={EDGE_TYPES}
@@ -1195,6 +1254,12 @@ function Editor() {
           onConnect={onConnect}
           isValidConnection={isValidConnection}
           onSelectionChange={onSelectionChange}
+          onNodeClick={(_, node) => {
+            if (node.id === '__rtc__') {
+              setSelectedId('__rtc__');
+              setShowInspector(true);
+            }
+          }}
           deleteKeyCode={null /* handled manually so inputs aren't hijacked */}
           edgesReconnectable={false}
           fitView
@@ -1248,7 +1313,16 @@ function Editor() {
       </div>
 
       {showInspector && (
-      <Inspector node={selectedNode} nodes={nodes} edges={edges} onChange={onNodeUpdate} onDelete={onNodeDelete} onSelectNode={setSelectedId} onProbedData={onProbedData} hwDevices={job.hardware_devices ?? []} availableHWAccels={availableHWAccels} />
+        selectedId === '__rtc__'
+          ? <RTControllerInspector
+              snapshot={rtSnapshot}
+              globalOptions={job.global_options}
+              onGlobalOptionsChange={(update) => {
+                setJob((j) => ({ ...j, global_options: { ...(j.global_options ?? {}), ...update } }));
+                markDirty();
+              }}
+            />
+          : <Inspector node={selectedNode} nodes={nodes} edges={edges} onChange={onNodeUpdate} onDelete={onNodeDelete} onSelectNode={setSelectedId} onProbedData={onProbedData} hwDevices={job.hardware_devices ?? []} availableHWAccels={availableHWAccels} />
       )}
       <RunDock visible={showRunPanel}>
         <RunPanel run={run} nodeKinds={nodeKinds} onClose={() => setShowRunPanel(false)} />

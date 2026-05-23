@@ -6,6 +6,107 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 ## [Unreleased]
 
 ### Added
+- **Phase 8 — real-time controller observability (backend).**
+  A new `RTControllerSnapshot` struct (plus `ControllerNodeSnapshot` and
+  `SinkNodeSnapshot`) captures the full per-tick state of the adaptive
+  controller: status, FPS target/actual, per-encoder observation inputs
+  (FPS deficit, active/stalled/idle fractions, input- and output-buffer fill),
+  applied outputs (current preset, cooldown remaining, overshoot windows), and
+  recent decisions. `NodePerfSnapshot` gains `InputQueueFillFrac` (EWMA of
+  encoder frame-input queue fill, sampled by `perfReceive`). The snapshot is
+  built inside `storeSnapshot()` at the end of every `observe()` tick and
+  stored atomically via `atomic.Pointer[T]` so HTTP handlers read it without
+  holding any lock. Two new HTTP endpoints are registered by
+  `RegisterRealtimeHandlers`: `GET /realtime/snapshot` (one-shot JSON; `404`
+  when realtime is off) and `GET /realtime/snapshot/stream` (SSE stream at
+  ~500 ms cadence). A new top-level CLI subcommand `mediamolder watch
+  [--url URL]` connects to the SSE stream and renders a live ANSI table with
+  PERFORMANCE / APPLIED column groups, four-block fill bars for encoder input
+  and output buffers, a SINKS section, and a rolling last-5-decisions feed.
+  Six new unit tests cover snapshot correctness, status derivation,
+  `CooldownRemaining` clamping, `observeCount` monotonicity, goroutine-shutdown,
+  and the block-bar rendering helper. GUI inspector and canvas node are deferred
+  to Phase 8b. See
+  [docs/architecture/node_perf_monitoring_design.md](docs/architecture/node_perf_monitoring_design.md)
+  (Phase 8 section).
+
+- **Phase 7 — real-time output buffering & readiness signal.**
+  Each output sink now fronts the muxer with a PTS-based pre-roll buffer
+  (default 4 s for video outputs, 1 s when audio-only; configurable per
+  job via `global_options.prebuffer_duration_seconds` /
+  `prebuffer_max_seconds` and per output via
+  `outputs[].realtime.{prebuffer_duration_seconds,prebuffer_max_seconds}`).
+  Each output advances through `FILLING → READY → STREAMING` (or
+  `READY_PARTIAL` on early EOS / `DRAINING` on close). A graph-level
+  aggregator AND-combines per-output readiness, drives the new
+  `Pipeline.Ready()` / `Pipeline.ReadyState()` API, fires a
+  `RealTimeReady` event, surfaces a `mediamolder_pipeline_ready` gauge
+  plus per-output `mediamolder_output_buffer_{duration,target}_seconds`,
+  `mediamolder_output_buffer_state`, and
+  `mediamolder_output_buffer_evictions_total` metrics, exposes
+  `GET /realtime/ready` (HTTP 425 until ready) and
+  `GET /realtime/ready/stream` (SSE state changes), and prints `ready\n`
+  to stdout (plus optional `--ready-fd=<n>` byte write) for systemd-style
+  process supervisors. New CLI flags: `--prebuffer=4s`,
+  `--prebuffer-max=8s`, `--ready-fd=<n>`. Combined with Phase 6's
+  encoder-input buffer this absorbs ~8 s of downstream jitter or an
+  encoder preset close+reopen without a muxer underrun. Phase 7
+  internals live in [pipeline/output_buffer.go](pipeline/output_buffer.go);
+  see [docs/realtime-controller.md](docs/realtime-controller.md) for the design
+  and tuning guidance.
+- **Phase 6 — adaptive encoder preset stepping (backend foundation).**
+  When real-time mode is on and the thread-budget heuristic has nothing left
+  to allocate (or an encoder is consistently behind/ahead of its FPS target),
+  the realtime controller now steps encoder presets along a per-codec
+  ladder. Per-codec ladders are defined for `libx264` and `libx265`
+  (`placebo`..`ultrafast`) and `libsvtav1` (`0`..`13`). Two encoder
+  mechanisms are wired through `av.EncoderContext`:
+  `PresetCapRestartIDR` (close+reopen on the next IDR, used by libx264 /
+  libx265) and `PresetCapHotReconfig` (`av_opt_set("preset", …, CHILDREN)`
+  used by libsvtav1). The controller honours an optional `highest_quality_preset`
+  clamp (the slowest/highest-quality preset the controller may use; it may step
+  freely to any faster preset to maintain real time), a per-node cool-down window, group-step quorum
+  across video encoders, and an overshoot back-off so heavily over-budget
+  jobs roll their presets back toward higher quality. A bounded
+  `RealtimeDecisionLog` and graph-level `RealtimeStatus` snapshot
+  (`FPSTarget` / `FPSActual` / `Satisfied`) ride on every
+  `MetricsSnapshot`. New `pipeline.Pipeline` methods
+  (`SetPresetOverride`, `ClearPresetOverride`, `RealtimeDecisions`,
+  `RealtimeStatus`) expose the surface for CLI / HTTP / GUI consumers.
+  Five new Prometheus metrics are registered:
+  `mediamolder_node_preset_current`,
+  `mediamolder_node_preset_switches_total`,
+  `mediamolder_pipeline_fps_target`,
+  `mediamolder_pipeline_fps_actual`, and
+  `mediamolder_realtime_decisions_total`. Two new pipeline events
+  (`PresetSwitchPlanned` / `PresetSwitchCompleted`) surface state
+  transitions to the event bus. Five new `global_options` fields are
+  added to schema v1.0 and v1.1 (`highest_quality_preset`,
+  `preset_group_step`, `target_fps`, `encoder_input_buffer_frames`).
+  An `observability.MetricsServer.RegisterRealtimeHandlers` helper
+  exposes loopback-gated `/realtime/preset`,
+  `/realtime/preset/clear`, `/realtime/decisions`, and
+  `/realtime/status` endpoints. CLI surface (`mediamolder preset
+  get/set/clear`, `mediamolder perf --decisions`,
+  `--highest-quality-preset` / `--target-fps`) and GUI
+  controls remain TODO and will be added in a follow-up commit.
+
+- **Design: adaptive encoder preset stepping & real-time output buffering
+  (Phases 6 and 7).** `docs/architecture/node_perf_monitoring_design.md` gains
+  two new design phases. Phase 6 specifies GOP-boundary preset stepping for
+  `libx264`, `libx265`, and `libsvtav1` (close+reopen at next IDR for x264/x265,
+  hot `svt_av1_enc_set_parameter` for SVT-AV1), an extended real-time control
+  decision tree with overshoot detection, group-step coordination across ABR
+  renditions, a bounded `RealtimeDecisionLog` exposed via API/CLI/GUI/
+  Prometheus, graph-level FPS gauges, configurable encoder-input buffer
+  sizing, and CLI/Core API/GUI control surfaces (`--highest-quality-preset`,
+  `mediamolder preset get/set/clear`, Inspector preset
+  override). Phase 7 specifies per-output pre-roll buffering (default 4 s,
+  PTS-based duration accounting, oldest-drop on overflow), a graph-level
+  `Pipeline.Ready()` signal, and readiness surfaces on stdout/`--ready-fd`,
+  HTTP `/realtime/ready[/stream]`, Prometheus, event bus, and GUI toolbar
+  pill. No code changes yet — design only.
+
 - **Advisory `ffmpeg_cmd` field in pipeline.Config.**
   A new top-level `ffmpeg_cmd` string field (omitempty) stores the equivalent
   FFmpeg command line for a job. Three rules govern its use:

@@ -656,6 +656,11 @@ type Output struct {
 	DisableAudio    bool `json:"an,omitempty"`
 	DisableSubtitle bool `json:"sn,omitempty"`
 	DisableData     bool `json:"dn,omitempty"`
+	// Realtime, when non-nil, overrides the global Phase 7 pre-roll
+	// settings for this output only (e.g. an audio-only HLS variant
+	// can set PrebufferDurationSeconds: 1.0 while video variants keep
+	// the global 4.0 s default).
+	Realtime *RealtimeOutputOptions `json:"realtime,omitempty"`
 	// Metadata is the container-level metadata table written into the
 	// output (`-metadata key=value` in FFmpeg). When non-nil it
 	// completely replaces any metadata mapped from inputs via
@@ -1263,6 +1268,67 @@ type Options struct {
 	HardwareAccel  string `json:"hw_accel,omitempty"`
 	HardwareDevice string `json:"hw_device,omitempty"`
 	Realtime       bool   `json:"realtime,omitempty"`
+
+	// Phase 6 — adaptive encoder preset stepping.
+	//
+	// HighestQualityPreset: the slowest (highest quality) preset the
+	//   controller is allowed to use. The controller may step freely to
+	//   any faster preset when needed to keep up with real time. If
+	//   unset, the encoder's initial preset is used as the quality bound.
+	// PresetGroupStep: when non-nil, overrides the default true setting
+	//   for the group-quorum step rule (steps every eligible video encoder
+	//   together when enough are simultaneously behind).
+	// TargetFPS: graph-level real-time fps target; 0 = derive from
+	//   per-node fps_target params.
+	// EncoderInputBufferFrames: per-encoder input channel capacity in
+	//   frames; 0 = pipeline default (~8). The recommended realtime
+	//   value is 96 (~4 s @ 24 fps) so a preset close+reopen does not
+	//   stall upstream filters during the transition.
+	HighestQualityPreset     string  `json:"highest_quality_preset,omitempty"`
+	PresetGroupStep          *bool   `json:"preset_group_step,omitempty"`
+	TargetFPS                float64 `json:"target_fps,omitempty"`
+	EncoderInputBufferFrames int     `json:"encoder_input_buffer_frames,omitempty"`
+
+	// Phase 7 — real-time output buffering & readiness signal.
+	//
+	// PrebufferDurationSeconds: target per-output preroll fill (seconds)
+	//   before the muxer is allowed to write. Default 4.0 s for video
+	//   outputs (1.0 s for audio-only outputs). 0 disables prerolling.
+	// PrebufferMaxSeconds: hard cap on the preroll buffer; once exceeded
+	//   the oldest packet is dropped (oldest-drop ring). Defaults to
+	//   2 × PrebufferDurationSeconds.
+	// Per-output overrides live on Output.Realtime.
+	PrebufferDurationSeconds float64 `json:"prebuffer_duration_seconds,omitempty"`
+	PrebufferMaxSeconds      float64 `json:"prebuffer_max_seconds,omitempty"`
+
+	// ReadRate is a global default applied to every input whose own
+	// read_rate field is zero. Paces demuxer reads to
+	// (ReadRate × realtime); 0 = unpaced; 1.0 mirrors ffmpeg -re.
+	// Set to 1.0 together with realtime:true for live-restream jobs so
+	// the demuxer doesn't race ahead of the pipeline clock.
+	ReadRate float64 `json:"read_rate,omitempty"`
+	// ReadRateInitialBurst is the global default for the per-input
+	// read_rate_initial_burst field; see Input.ReadRateInitialBurst.
+	ReadRateInitialBurst float64 `json:"read_rate_initial_burst,omitempty"`
+	// ReadRateCatchup is the global default for the per-input
+	// read_rate_catchup field; see Input.ReadRateCatchup.
+	ReadRateCatchup float64 `json:"read_rate_catchup,omitempty"`
+
+	// RealtimeLogPath, when non-empty, enables a per-tick debug log written
+	// by the real-time adaptive controller. Each line is a JSON object
+	// containing the full NodePerfSnapshot for every node, the controller's
+	// internal cool-down counters, and any decisions made that tick.
+	// Useful for post-hoc diagnosis of performance anomalies.
+	// The file is created (or truncated) when the pipeline starts.
+	// Only active when realtime:true. Example: "/tmp/rt_debug.jsonl".
+	RealtimeLogPath string `json:"realtime_log_path,omitempty"`
+}
+
+// RealtimeOutputOptions holds per-output Phase 7 pre-roll overrides.
+// When a field is zero the corresponding global default applies.
+type RealtimeOutputOptions struct {
+	PrebufferDurationSeconds float64 `json:"prebuffer_duration_seconds,omitempty"`
+	PrebufferMaxSeconds      float64 `json:"prebuffer_max_seconds,omitempty"`
 }
 
 // ErrorPolicy defines how a node handles errors.
@@ -1378,6 +1444,22 @@ func validate(cfg *Config) error {
 	}
 	// All input IDs must be unique.
 	seen := map[string]bool{}
+	// Propagate global_options read_rate defaults to any input that has
+	// no per-input override set. This lets `global_options.read_rate: 1.0`
+	// pace every input without repeating the field on each input block.
+	if cfg.GlobalOptions.ReadRate != 0 {
+		for i := range cfg.Inputs {
+			if cfg.Inputs[i].ReadRate == 0 {
+				cfg.Inputs[i].ReadRate = cfg.GlobalOptions.ReadRate
+			}
+			if cfg.Inputs[i].ReadRateInitialBurst == 0 && cfg.GlobalOptions.ReadRateInitialBurst != 0 {
+				cfg.Inputs[i].ReadRateInitialBurst = cfg.GlobalOptions.ReadRateInitialBurst
+			}
+			if cfg.Inputs[i].ReadRateCatchup == 0 && cfg.GlobalOptions.ReadRateCatchup != 0 {
+				cfg.Inputs[i].ReadRateCatchup = cfg.GlobalOptions.ReadRateCatchup
+			}
+		}
+	}
 	for i, inp := range cfg.Inputs {
 		if inp.ID == "" {
 			return fmt.Errorf("input[%d] missing id", i)
@@ -1741,6 +1823,29 @@ func validate(cfg *Config) error {
 			}
 		}
 	}
+
+	// Validate highest_quality_preset when realtime mode is on.
+	// It must name a preset that exists on at least one known codec ladder.
+	if cfg.GlobalOptions.Realtime && cfg.GlobalOptions.HighestQualityPreset != "" {
+		found := false
+		for _, codecName := range []string{"libx264", "libx265", "libsvtav1"} {
+			ladder, ok := LadderFor(codecName)
+			if !ok {
+				continue
+			}
+			if ladder.IndexOf(cfg.GlobalOptions.HighestQualityPreset) >= 0 {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return fmt.Errorf(
+				"global_options: highest_quality_preset %q is not a recognised preset on any known codec ladder",
+				cfg.GlobalOptions.HighestQualityPreset,
+			)
+		}
+	}
+
 	return nil
 }
 

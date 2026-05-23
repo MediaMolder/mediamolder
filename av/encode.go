@@ -5,6 +5,7 @@ package av
 
 // #include <string.h>
 // #include "libavcodec/avcodec.h"
+// #include "libavutil/cpu.h"
 // #include "libavutil/mem.h"
 // #include "libavutil/opt.h"
 // #include "libavutil/pixdesc.h"
@@ -126,8 +127,9 @@ type EncoderOptions struct {
 // EncoderContext wraps an AVCodecContext configured for encoding.
 // It must be closed via Close().
 type EncoderContext struct {
-	p    *C.AVCodecContext
-	tctx *C.mm_codec_tctx_t // nil when execute2 not available
+	p         *C.AVCodecContext
+	tctx      *C.mm_codec_tctx_t // nil when execute2 not available
+	codecName string             // remembered for capability reporting
 }
 
 // OpenEncoder creates and opens an encoder from the given options.
@@ -254,7 +256,7 @@ func OpenEncoder(opts EncoderOptions) (*EncoderContext, error) {
 
 	tctx := C.mm_install_codec_tracker(ctx)
 	leakTrack(unsafe.Pointer(ctx), "AVCodecContext(encoder:"+opts.CodecName+")")
-	return &EncoderContext{p: ctx, tctx: tctx}, nil
+	return &EncoderContext{p: ctx, tctx: tctx, codecName: opts.CodecName}, nil
 }
 
 // Close frees the encoder context.
@@ -291,9 +293,17 @@ func (e *EncoderContext) Flush() error {
 	return e.SendFrame(nil)
 }
 
-// ThreadCount returns the number of threads the encoder is using.
+// ThreadCount returns the number of threads the encoder is configured to use.
+// When AVCodecContext.thread_count is 0 the codec carries
+// FF_CODEC_CAP_AUTO_THREADS and manages its own thread pool (e.g. libx264);
+// in that case we return av_cpu_count() — the same value the codec's
+// auto-detection uses — so callers always receive a meaningful non-zero count.
 func (e *EncoderContext) ThreadCount() int {
-	return int(e.p.thread_count)
+	n := int(e.p.thread_count)
+	if n == 0 {
+		return int(C.av_cpu_count())
+	}
+	return n
 }
 
 // ActiveThreadType returns the threading method actually in use

@@ -27,6 +27,10 @@ func main() {
 		runPerf(os.Args[2:])
 		return
 	}
+	if len(os.Args) >= 2 && os.Args[1] == "watch" {
+		runWatch(os.Args[2:])
+		return
+	}
 	if err := run(os.Args[1:]); err != nil {
 		fmt.Fprintf(os.Stderr, "mediamolder: %v\n", err)
 		os.Exit(1)
@@ -96,6 +100,9 @@ func cmdRun(args []string) error {
 	jsonOut := fs.Bool("json", false, "output progress as JSON")
 	metadataOut := fs.String("metadata-out", "", "write processor metadata events as JSON Lines to this file (- for stdout)")
 	realtimeFlag := fs.Bool("realtime", false, "enable adaptive real-time mode: dynamically allocates encoder threads and drops frames to meet fps_target")
+	prebufferFlag := fs.Duration("prebuffer", 0, "Phase 7: per-output pre-roll fill target before muxer writes start (e.g. 4s). 0 = use job/default.")
+	prebufferMaxFlag := fs.Duration("prebuffer-max", 0, "Phase 7: hard cap on the pre-roll buffer; oldest packet dropped when exceeded. 0 = 2x prebuffer.")
+	readyFDFlag := fs.Int("ready-fd", -1, "Phase 7: when realtime is on, write a single 0x01 byte to this fd once the graph is READY (and close it). Useful for systemd READY=1 wrappers.")
 	var sets setVars
 	fs.Var(&sets, "set", "set a template variable in the job JSON: KEY=VALUE replaces every {{KEY}} occurrence (may be repeated)")
 	if err := fs.Parse(args); err != nil {
@@ -123,6 +130,12 @@ func cmdRun(args []string) error {
 	if *realtimeFlag {
 		cfg.GlobalOptions.Realtime = true
 	}
+	if *prebufferFlag > 0 {
+		cfg.GlobalOptions.PrebufferDurationSeconds = prebufferFlag.Seconds()
+	}
+	if *prebufferMaxFlag > 0 {
+		cfg.GlobalOptions.PrebufferMaxSeconds = prebufferMaxFlag.Seconds()
+	}
 	eng, err := pipeline.NewPipeline(cfg)
 	if err != nil {
 		return err
@@ -130,6 +143,28 @@ func cmdRun(args []string) error {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
+	// Phase 7: ready signalling. On realtime mode, print "ready\n" to
+	// stdout once Pipeline.Ready() fires (or immediately if no preroll
+	// is configured), and optionally write 0x01 to --ready-fd.
+	if cfg.GlobalOptions.Realtime {
+		readyFD := *readyFDFlag
+		go func() {
+			select {
+			case <-eng.Ready():
+			case <-ctx.Done():
+				return
+			}
+			fmt.Fprintln(os.Stdout, "ready")
+			if readyFD >= 0 {
+				f := os.NewFile(uintptr(readyFD), "ready-fd")
+				if f != nil {
+					_, _ = f.Write([]byte{1})
+					_ = f.Close()
+				}
+			}
+		}()
+	}
 
 	// Metadata file writer (JSON Lines).
 	var metaFile *os.File

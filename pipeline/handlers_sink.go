@@ -269,52 +269,15 @@ func (r *graphRunner) handleSink(ctx context.Context, node *graph.Node, ins []<-
 		pipe:    r.pipe,
 	}
 
-	if len(ins) == 1 {
-		var rs *sinkRescale
-		if len(sink.streamRescale) > 0 {
-			rs = sink.streamRescale[0]
-		}
-		// Use rs.dstTB (pre-WriteHeader for BSF streams, post-header otherwise)
-		// so PTS comparisons stay in the same units packets arrive in after rescale.
-		dstTB := sink.muxer.StreamTimeBase(0)
-		if rs != nil {
-			dstTB = rs.dstTB
-		}
-		st := &chanState{}
-		t := perfTrackerFrom(ctx)
-		for {
-			v, cancelled := perfReceive(ctx, ins[0], t)
-			if cancelled {
-				break
-			}
-			pkt := v.(*av.Packet)
-			if sink.stopAll.Load() {
-				pkt.Close()
-				continue
-			}
-			_, stopAll, err := w.processOne(0, pkt, dstTB, rs, st)
-			if stopAll {
-				sink.stopAll.Store(true)
-			}
-			pkt.Close()
-			if err != nil {
-				return err
-			}
-		}
-		w.recordShortest(st.lastPTSus, st.lastPTSok)
-		if err := w.flushBSF(0, dstTB, st); err != nil {
-			return err
-		}
-		return sink.muxer.WriteTrailer()
+	// Pre-build per-channel rescale + chanState bookkeeping.
+	type chanCtx struct {
+		idx   int
+		dstTB [2]int
+		rs    *sinkRescale
+		st    *chanState
 	}
-
-	// Multiple input streams: interleave with per-stream goroutines.
-	eg, _ := errgroup.WithContext(ctx)
-	var mu sync.Mutex
-	w.mu = &mu
-
-	for i, in := range ins {
-		i, in := i, in
+	ctxs := make([]*chanCtx, len(ins))
+	for i := range ins {
 		var rs *sinkRescale
 		if i < len(sink.streamRescale) {
 			rs = sink.streamRescale[i]
@@ -323,25 +286,179 @@ func (r *graphRunner) handleSink(ctx context.Context, node *graph.Node, ins []<-
 		if rs != nil {
 			dstTB = rs.dstTB
 		}
-		st := &chanState{}
+		ctxs[i] = &chanCtx{idx: i, dstTB: dstTB, rs: rs, st: &chanState{}}
+	}
+
+	// Multi-channel paths share the muxer; serialise writes via mu.
+	if len(ins) > 1 {
+		w.mu = &sync.Mutex{}
+	}
+
+	processOne := func(c *chanCtx, pkt *av.Packet) error {
+		if sink.stopAll.Load() {
+			_ = pkt.Close()
+			return nil
+		}
+		_, stopAll, err := w.processOne(c.idx, pkt, c.dstTB, c.rs, c.st)
+		if stopAll {
+			sink.stopAll.Store(true)
+		}
+		_ = pkt.Close()
+		return err
+	}
+
+	// Phase A — real-time preroll fill (Phase 7). When sink.preroll is
+	// non-nil the writer must not push to the muxer until both this
+	// output's buffer is full AND every other output is also ready.
+	// We spawn one pull-goroutine per input channel that enqueues
+	// packets via AddOrPass until the preroll transitions to STREAMING
+	// (Drain has been called) or the input closes.
+	if sink.preroll != nil {
+		eosAll := make(chan struct{})
+		var eosWG sync.WaitGroup
+		eosWG.Add(len(ins))
+		go func() { eosWG.Wait(); close(eosAll) }()
+
+		// Per-channel "leftover": a packet that AddOrPass returned
+		// pass=true for (preroll already in STREAMING). Phase D
+		// must process it before resuming normal channel pulls.
+		leftover := make([]*av.Packet, len(ins))
+
+		fillCtx, fillCancel := context.WithCancel(ctx)
+		defer fillCancel()
+
+		for i, in := range ins {
+			i, in := i, in
+			go func() {
+				defer eosWG.Done()
+				for {
+					select {
+					case <-fillCtx.Done():
+						return
+					case v, ok := <-in:
+						if !ok {
+							return
+						}
+						pkt := v.(*av.Packet)
+						pass, _ := sink.preroll.AddOrPass(i, pkt)
+						if pass {
+							leftover[i] = pkt
+							return
+						}
+					}
+				}
+			}()
+		}
+
+		// Wait for: this output is ready OR every channel EOS'd first.
+		select {
+		case <-sink.preroll.Ready():
+		case <-eosAll:
+			sink.preroll.MarkReadyPartial()
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+
+		// Wait for the graph-level AND across all outputs.
+		select {
+		case <-r.pipe.Ready():
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+
+		// Drain preroll in PTS-arrival order and feed the muxer.
+		buffered := sink.preroll.Drain()
+		for _, b := range buffered {
+			if err := processOne(ctxs[b.chanIdx], b.pkt); err != nil {
+				fillCancel()
+				return err
+			}
+		}
+
+		// Stop phase-A goroutines and wait for them to settle.
+		fillCancel()
+		eosWG.Wait()
+
+		// Process any packets parked in leftover[].
+		for i, pkt := range leftover {
+			if pkt == nil {
+				continue
+			}
+			if err := processOne(ctxs[i], pkt); err != nil {
+				return err
+			}
+		}
+	}
+
+	// Phase D — normal processing. When sink.preroll is non-nil (realtime
+	// mode) the OutputBuffer continues as a rolling jitter buffer: N
+	// producer goroutines push packets via Enqueue and the single consumer
+	// below paces delivery to the stream's PTS wall-clock rate.
+	if sink.preroll != nil {
+		sink.preroll.SetProducerCount(len(ins))
+		for i, in := range ins {
+			i, in := i, in
+			go func() {
+				defer sink.preroll.EnqueueEOS()
+				for v := range in {
+					sink.preroll.Enqueue(i, v.(*av.Packet))
+				}
+			}()
+		}
+		for {
+			item, ok := sink.preroll.TakePaced(ctx)
+			if !ok {
+				break
+			}
+			if err := processOne(ctxs[item.chanIdx], item.pkt); err != nil {
+				return err
+			}
+		}
+		for i, c := range ctxs {
+			w.recordShortest(c.st.lastPTSus, c.st.lastPTSok)
+			if err := w.flushBSF(i, c.dstTB, c.st); err != nil {
+				return err
+			}
+		}
+		return sink.muxer.WriteTrailer()
+	}
+
+	// Non-realtime Phase D — no output buffer; write at encode rate.
+	if len(ins) == 1 {
+		c := ctxs[0]
+		t := perfTrackerFrom(ctx)
+		for {
+			v, cancelled := perfReceive(ctx, ins[0], t)
+			if cancelled {
+				break
+			}
+			pkt := v.(*av.Packet)
+			if err := processOne(c, pkt); err != nil {
+				return err
+			}
+		}
+		w.recordShortest(c.st.lastPTSus, c.st.lastPTSok)
+		if err := w.flushBSF(0, c.dstTB, c.st); err != nil {
+			return err
+		}
+		return sink.muxer.WriteTrailer()
+	}
+
+	// Multiple input streams: interleave with per-stream goroutines.
+	eg, _ := errgroup.WithContext(ctx)
+
+	for _, c := range ctxs {
+		c := c
+		in := ins[c.idx]
 		eg.Go(func() error {
-			defer w.recordShortest(st.lastPTSus, st.lastPTSok)
+			defer w.recordShortest(c.st.lastPTSus, c.st.lastPTSok)
 			for v := range in {
 				pkt := v.(*av.Packet)
-				if sink.stopAll.Load() {
-					pkt.Close()
-					continue
-				}
-				_, stopAll, err := w.processOne(i, pkt, dstTB, rs, st)
-				if stopAll {
-					sink.stopAll.Store(true)
-				}
-				pkt.Close()
-				if err != nil {
+				if err := processOne(c, pkt); err != nil {
 					return err
 				}
 			}
-			return w.flushBSF(i, dstTB, st)
+			return w.flushBSF(c.idx, c.dstTB, c.st)
 		})
 	}
 
@@ -790,6 +907,7 @@ func (r *graphRunner) openSink(_ *graph.Graph, node *graph.Node) (*sinkResources
 		maxFileSize:   out.MaxFileSize,
 		shortest:      out.Shortest,
 		shortestPTSus: noLimitUS,
+		preroll:       r.buildPreroll(out, rescales),
 	}, nil
 }
 
@@ -797,3 +915,73 @@ func (r *graphRunner) openSink(_ *graph.Graph, node *graph.Node) (*sinkResources
 // from, returning the InputFormatContext, the demuxer stream index, and
 // the input stream's time_base. The copy node is required to have
 // exactly one inbound edge from a KindSource.
+
+// buildPreroll constructs the Phase 7 OutputPreroll for `out` when
+// real-time mode is enabled. Returns nil when prerolling is disabled
+// (realtime off or prebuffer_duration_seconds <= 0). Per-output
+// overrides on `out.Realtime` take precedence over the global defaults.
+// Default fill target is 4 s (1 s for audio-only outputs); hard cap
+// defaults to 2 × target.
+//
+// rescales carries the per-channel time-base info for the packets that
+// will arrive at the preroll during Phase A. Phase A packets are
+// unrescaled encoder output, so we must use rescales[i].srcTB (the
+// encoder's output time_base) rather than the post-WriteHeader mux
+// stream time_base. Using the mux TB on encoder-TB PTS would produce
+// a span calculation that is off by a factor of ~(muxTB.den / encTB.den)
+// — typically hundreds of times too small — causing the preroll to
+// never reach its fill target.
+func (r *graphRunner) buildPreroll(out *Output, rescales []*sinkRescale) *OutputBuffer {
+	if r.cfg == nil || !r.cfg.GlobalOptions.Realtime {
+		return nil
+	}
+	target := r.cfg.GlobalOptions.PrebufferDurationSeconds
+	maxDur := r.cfg.GlobalOptions.PrebufferMaxSeconds
+	if out.Realtime != nil {
+		if out.Realtime.PrebufferDurationSeconds > 0 {
+			target = out.Realtime.PrebufferDurationSeconds
+		}
+		if out.Realtime.PrebufferMaxSeconds > 0 {
+			maxDur = out.Realtime.PrebufferMaxSeconds
+		}
+	}
+	if target == 0 {
+		if out.DisableVideo && !out.DisableAudio {
+			target = 1.0
+		} else {
+			target = 4.0
+		}
+	}
+	if target <= 0 {
+		return nil
+	}
+	if maxDur <= 0 {
+		maxDur = 2 * target
+	}
+	// Use the encoder output (source) time bases, not the post-WriteHeader
+	// mux stream time bases. Packets in Phase A are unrescaled.
+	const avTimeBase = 1_000_000 // AV_TIME_BASE fallback
+	tbs := make([][2]int, len(rescales))
+	for i, rs := range rescales {
+		if rs != nil && rs.srcTB[0] > 0 && rs.srcTB[1] > 0 {
+			tbs[i] = rs.srcTB
+		} else {
+			tbs[i] = [2]int{1, avTimeBase}
+		}
+	}
+	log.Printf("preroll %q: target=%.1fs max=%.1fs tbs=%v", out.ID, target, maxDur, tbs)
+	pre := NewOutputBuffer(out.ID,
+		time.Duration(target*float64(time.Second)),
+		time.Duration(maxDur*float64(time.Second)),
+		tbs,
+	)
+	if r.pipe != nil {
+		r.pipe.mu.Lock()
+		ready := r.pipe.ready
+		r.pipe.mu.Unlock()
+		if ready != nil {
+			ready.Add(pre)
+		}
+	}
+	return pre
+}

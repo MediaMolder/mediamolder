@@ -52,6 +52,55 @@ type MetricsSnapshot struct {
 	// Perf holds per-node performance timing snapshots collected by the
 	// NodePerfTracker instances registered via RegisterPerfTracker.
 	Perf []NodePerfSnapshot
+
+	// Realtime is the Phase 6 graph-level summary populated when adaptive
+	// real-time mode is enabled. Zero value is reported when realtime is
+	// off so existing JSON consumers see no new fields.
+	Realtime RealtimeSnapshot `json:",omitempty"`
+}
+
+// RealtimeSnapshot is the graph-level adaptive real-time summary attached to
+// MetricsSnapshot.Realtime when --realtime is enabled. All fields are
+// optional; consumers should treat zero values as "not applicable".
+type RealtimeSnapshot struct {
+	Enabled   bool             `json:",omitempty"`
+	FPSTarget float64          `json:",omitempty"` // max of per-node targets
+	FPSActual float64          `json:",omitempty"` // min of per-video-node fps
+	Satisfied bool             `json:",omitempty"`
+	Decisions []DecisionRecord `json:",omitempty"`
+	// Outputs holds the Phase 7 per-output preroll readiness. Empty
+	// when realtime mode is off or no outputs are configured.
+	Outputs []OutputBufferSnapshot `json:",omitempty"`
+	// Ready is true once every entry of Outputs is in
+	// {READY, READY_PARTIAL, STREAMING}.
+	Ready bool `json:",omitempty"`
+	// ReadyAt is the wall-clock time at which Ready first became true;
+	// zero when still filling.
+	ReadyAt time.Time `json:",omitempty"`
+}
+
+// OutputBufferSnapshot is the per-output Phase 7 preroll state attached
+// to MetricsSnapshot for the GUI toolbar pill, /realtime/ready, and the
+// pipeline_output_buffer_* Prometheus metrics.
+type OutputBufferSnapshot struct {
+	NodeID      string        `json:"node_id"`
+	State       string        `json:"state"`
+	BufferedDur time.Duration `json:"buffered_ns"`
+	TargetDur   time.Duration `json:"target_ns"`
+	Evictions   int64         `json:"evictions"`
+}
+
+// DecisionRecord captures one autonomous step taken by the real-time
+// controller. Exposed via /realtime/decisions, `mediamolder perf
+// --decisions`, and pipeline.RealtimeDecisions().
+type DecisionRecord struct {
+	Time    time.Time `json:"time"`
+	NodeID  string    `json:"node"`
+	Action  string    `json:"action"` // "step_faster", "step_slower", "restart_threads", "drop_frames", "lock"
+	From    string    `json:"from,omitempty"`
+	To      string    `json:"to,omitempty"`
+	Deficit float64   `json:"deficit,omitempty"`
+	Reason  string    `json:"reason,omitempty"`
 }
 
 // NodePerfSnapshot is a point-in-time read of all performance data for one node.
@@ -77,6 +126,10 @@ type NodePerfSnapshot struct {
 	StallCount       int64
 	MaxStallDuration time.Duration
 
+	// EWMA of input channel fill fraction at receive time (0.0–1.0).
+	// A sustained value near 0.0 indicates this node is starved by upstream.
+	InputQueueFillFrac float64
+
 	// EWMA of output channel fill fraction at send time (0.0–1.0).
 	// A sustained value near 1.0 indicates this node produces faster than
 	// its downstream can consume.
@@ -100,4 +153,84 @@ type NodePerfSnapshot struct {
 	// triggered by the real-time adaptive control loop (Phase 5).
 	// Monotonically non-decreasing. 0 when real-time mode is disabled.
 	ThreadRestarts int64
+
+	// Phase 6: adaptive preset stepping. CodecName is the encoder codec
+	// (libx264/libx265/libsvtav1); empty for non-encoder nodes. CurrentPreset
+	// is the live preset name; PresetLadder is the ordered slowest→fastest
+	// list of presets the controller may select; PresetIndex is the
+	// position of CurrentPreset within PresetLadder (-1 when not on the
+	// ladder). PresetSwitches counts completed transitions; PresetLocked
+	// reports whether automatic stepping is disabled for this node.
+	CodecName      string   `json:",omitempty"`
+	CurrentPreset  string   `json:",omitempty"`
+	PresetLadder   []string `json:",omitempty"`
+	PresetIndex    int      `json:",omitempty"`
+	PresetSwitches int64    `json:",omitempty"`
+	PresetLocked   bool     `json:",omitempty"`
+}
+
+// ControllerNodeSnapshot is the controller's per-tick view of one video
+// encoder node: both the observed performance metrics and the controller's
+// applied state.
+type ControllerNodeSnapshot struct {
+	NodeID string
+
+	// Observed metrics read by the controller each tick.
+	FPS                  float64
+	FPSTarget            float64
+	FPSDeficit           float64
+	ActiveFrac           float64
+	StalledFrac          float64
+	IdleFrac             float64
+	ThreadsConfigured    int
+	ThreadsBusy          int // -1 = unavailable
+	InputBufferFillFrac  float64
+	OutputBufferFillFrac float64
+	FrameLatencyMean     time.Duration
+
+	// Controller-applied state.
+	CurrentPreset      string
+	PresetIndex        int
+	PresetLadder       []string
+	PresetLocked       bool
+	PresetSwitches     int64
+	WindowsSincePreset int
+	CooldownRemaining  int // max(0, rtPresetCooldownWins - WindowsSincePreset)
+	OvershootWindows   int
+	ThreadRestarts     int64
+}
+
+// SinkNodeSnapshot captures the output-buffer state of a muxer/sink node.
+type SinkNodeSnapshot struct {
+	NodeID               string
+	OutputBufferFillFrac float64
+	// BufferedNs is the currently buffered PTS span in nanoseconds.
+	// TargetNs is the configured target fill duration in nanoseconds.
+	BufferedNs int64
+	TargetNs   int64
+	// AheadNs is how far the buffer's leading PTS edge is ahead of the
+	// real-time playback position (positive = encoder leading, 0 = in sync,
+	// negative = encoder behind). Only meaningful during STREAMING phase.
+	AheadNs int64
+}
+
+// RTControllerSnapshot is the full per-tick state of the realtime controller.
+// Exposed via GET /realtime/snapshot and the /realtime/snapshot/stream SSE feed.
+type RTControllerSnapshot struct {
+	Enabled bool
+	// Status is one of: "disabled", "observing", "cooldown", "dropping", "satisfied".
+	Status               string
+	Tick                 int64 // monotonically increasing observe() call count; JSON-only (not shown in CLI table)
+	Elapsed              time.Duration
+	FPSTarget            float64
+	FPSActual            float64
+	Satisfied            bool
+	HighestQualityPreset string
+	GroupStep            bool
+	// CooldownWindows is max(node.CooldownRemaining) across all controlled nodes.
+	CooldownWindows int
+	TickIntervalMs  int64
+	Nodes           []ControllerNodeSnapshot
+	Sinks           []SinkNodeSnapshot
+	RecentDecisions []DecisionRecord
 }

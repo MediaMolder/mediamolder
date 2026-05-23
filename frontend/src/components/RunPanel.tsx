@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
-import type { MetricsSnapshot, RunState } from '../lib/useJobRun';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import type { MetricsSnapshot, NodePerfSnapshot, RunState } from '../lib/useJobRun';
 
 export type NodeKind = '' | 'video' | 'audio' | 'subtitle' | 'data';
 
@@ -138,6 +138,21 @@ export function RunPanel({ run, nodeKinds, onClose }: Props) {
     return fallback;
   };
 
+  /** Derive a stable array of decision log entries from the latest Realtime
+   *  snapshot. Formatted once per metrics tick; grows monotonically. */
+  const decisionLogs = useMemo(() => {
+    const decisions = run.metrics?.Realtime?.Decisions;
+    if (!decisions || decisions.length === 0) return [];
+    const elapsed = run.metrics?.Elapsed ?? 0;
+    return decisions.map((d) => {
+      const tLabel = elapsed > 0 ? `${(elapsed / 1e9).toFixed(1)}s` : '—';
+      const arrow = d.from && d.to ? ` ${d.from}→${d.to}` : '';
+      const deficit = d.deficit != null && d.deficit !== 0 ? ` (deficit ${d.deficit.toFixed(1)} fps)` : '';
+      const reason = d.reason ? ` — ${d.reason}` : '';
+      return { t: tLabel, message: `RT ${d.node}: ${d.action}${arrow}${deficit}${reason}` };
+    });
+  }, [run.metrics?.Realtime?.Decisions, run.metrics?.Elapsed]);
+
   return (
     <div className="run-panel">
       <div className="run-panel-header">
@@ -173,44 +188,57 @@ export function RunPanel({ run, nodeKinds, onClose }: Props) {
 
       <div className="run-panel-body">
         <div className="run-metrics">
-          {run.metrics && run.metrics.Nodes.length > 0 ? (
-            <table>
-              <thead>
-                <tr>
-                  <th>Node</th>
-                  <th>Packets</th>
-                  <th>Rate</th>
-                  <th>Errors</th>
-                  <th>Avg latency</th>
-                  <th>Unblocked Performance</th>
-                </tr>
-              </thead>
-              <tbody>
-                {run.metrics.Nodes.map((n) => {
-                  const kind = nodeKinds.get(n.NodeID) ?? '';
-                  const rate = rateFor(n.NodeID, n.FPS);
-                  const unit = kind === 'video' ? 'fps' : 'pkt/s';
-                  const unblockedFPS = n.AvgLatency > 0 ? 1e9 / n.AvgLatency : null;
-                  return (
-                    <tr key={n.NodeID}>
-                      <td>{n.NodeID}</td>
-                      <td>{n.Frames}</td>
-                      <td>{rate.toFixed(1)} {unit}</td>
-                      <td className={n.Errors > 0 ? 'cell-error' : ''}>{n.Errors}</td>
-                      <td>{(n.AvgLatency / 1e6).toFixed(2)} ms</td>
-                      <td>{unblockedFPS !== null ? `${unblockedFPS.toFixed(1)} ${unit}` : '—'}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          ) : (
+          {run.metrics && run.metrics.Nodes.length > 0 ? (() => {
+            // Index NodePerfSnapshot by NodeID for O(1) lookup.
+            const perfMap = new Map<string, NodePerfSnapshot>(
+              (run.metrics.Perf ?? []).map((p) => [p.NodeID, p])
+            );
+            return (
+              <table>
+                <thead>
+                  <tr>
+                    <th>Node</th>
+                    <th>Packets</th>
+                    <th>Rate</th>
+                    <th>Errors</th>
+                    <th>Avg latency</th>
+                    <th title="Fraction of time this node is blocked waiting for a downstream consumer to drain its output channel. High values indicate this node is a pipeline bottleneck.">Stalled %</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {run.metrics.Nodes.map((n) => {
+                    const kind = nodeKinds.get(n.NodeID) ?? '';
+                    const rate = rateFor(n.NodeID, n.FPS);
+                    const unit = kind === 'video' ? 'fps' : 'pkt/s';
+                    const perf = perfMap.get(n.NodeID);
+                    const stalledPct = perf != null ? (perf.StalledFrac * 100).toFixed(0) + '%' : '—';
+                    const preset = perf?.CurrentPreset ? ` [${perf.CurrentPreset}]` : '';
+                    return (
+                      <tr key={n.NodeID}>
+                        <td>{n.NodeID}{preset}</td>
+                        <td>{n.Frames}</td>
+                        <td>{rate.toFixed(1)} {unit}</td>
+                        <td className={n.Errors > 0 ? 'cell-error' : ''}>{n.Errors}</td>
+                        <td>{(n.AvgLatency / 1e6).toFixed(2)} ms</td>
+                        <td>{stalledPct}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            );
+          })() : (
             <div className="empty" style={{ fontSize: 11 }}>No metrics yet.</div>
           )}
         </div>
 
         <div className="run-logs">
-          {run.logs.length === 0 && <div className="empty">No logs yet.</div>}
+          {decisionLogs.length === 0 && run.logs.length === 0 && <div className="empty">No logs yet.</div>}
+          {decisionLogs.map((d, i) => (
+            <div key={`d-${i}`} className="run-log run-log-info run-log-decision">
+              <span className="log-time">{d.t}</span> {d.message}
+            </div>
+          ))}
           {run.logs.map((l, i) => (
             <div key={i} className={`run-log run-log-${l.level ?? 'info'}`}>
               <span className="log-time">{(l.time_ms / 1000).toFixed(1)}s</span> {l.message}

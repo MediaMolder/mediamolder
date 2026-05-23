@@ -220,6 +220,7 @@
         "an": { "type": "boolean", "description": "Drop every audio stream from this output's muxer. Mirrors ffmpeg -an (fftools/ffmpeg_opt.c L2078)." },
         "sn": { "type": "boolean", "description": "Drop every subtitle stream from this output's muxer. Mirrors ffmpeg -sn (fftools/ffmpeg_opt.c L2115)." },
         "dn": { "type": "boolean", "description": "Drop every data stream from this output's muxer. Mirrors ffmpeg -dn (fftools/ffmpeg_opt.c L2187)." },
+        "realtime": { "type": "object", "additionalProperties": false, "description": "Per-output Phase 7 pre-roll overrides. Unset fields fall back to global_options.prebuffer_*.", "properties": { "prebuffer_duration_seconds": { "type": "number", "minimum": 0 }, "prebuffer_max_seconds": { "type": "number", "minimum": 0 } } },
         "metadata": { "type": "object", "additionalProperties": { "type": "string" }, "description": "Container-level key/value metadata written into the output (`-metadata key=value`). Replaces any metadata mapped from inputs via `input.map_metadata`." },
         "streams": { "type": "array", "items": { "$ref": "#/$defs/stream_spec" }, "description": "Per-stream metadata + disposition overrides. Mirrors ffmpeg `-metadata:s:<type>:<idx> key=value` and `-disposition:s:<type>:<idx> flags`. Each entry addresses one output stream by media type and 0-based index within that type, counting in the order streams were added to the muxer (same convention as `check_stream_specifier` for `s:<type>:<idx>`). Per-stream codec/bitrate is intentionally not exposed here — model it with explicit encoder graph nodes (see testdata/examples/35_abr_ladder.json)." },
         "chapters": { "type": "array", "items": { "$ref": "#/$defs/chapter" }, "description": "Explicit chapter table. Replaces any chapters mapped from inputs via `input.map_chapters`. Container must support chapters (matroska, mp4, ogg, ffmetadata, ...)." },
@@ -312,10 +313,18 @@
         "thread_type": { "type": "string", "enum": ["frame", "slice", "frame+slice"], "description": "Default codec threading model. Can be overridden per node via params.thread_type." },
         "hw_accel": { "type": "string" },
         "hw_device": { "type": "string" },
-        "realtime": { "type": "boolean" }
+        "realtime": { "type": "boolean" },
+        "highest_quality_preset": { "type": "string", "description": "Phase 6 adaptive stepping: the slowest (highest quality) preset the controller is allowed to use. The controller may step freely to any faster preset to maintain real-time throughput. Omit to allow stepping all the way to the initial encoder preset." },
+        "preset_group_step": { "type": "boolean", "description": "When true (default), step every eligible video encoder together once a quorum is simultaneously behind." },
+        "target_fps": { "type": "number", "minimum": 0, "description": "Graph-level real-time fps target; 0 = derive from per-node fps_target." },
+        "encoder_input_buffer_frames": { "type": "integer", "minimum": 0, "description": "Per-encoder input channel capacity in frames; 0 = pipeline default. 96 (~4 s @ 24 fps) is recommended in realtime mode to absorb a preset close+reopen without stalling upstream filters." },
+        "prebuffer_duration_seconds": { "type": "number", "minimum": 0, "description": "Phase 7 per-output preroll fill target (seconds) before the muxer is allowed to write. Default 4.0 s (1.0 s for audio-only outputs). 0 disables prerolling." },
+        "prebuffer_max_seconds": { "type": "number", "minimum": 0, "description": "Phase 7 hard cap on the preroll buffer; once exceeded the oldest packet is dropped. Defaults to 2 × prebuffer_duration_seconds." },
+        "read_rate": { "type": "number", "minimum": 0, "description": "Global default demuxer read-rate applied to every input whose own read_rate is unset. Paces packet reads to (read_rate × realtime); 0 = unpaced; 1.0 mirrors ffmpeg -re. Set to 1.0 with realtime:true for live-restream jobs." },
+        "read_rate_initial_burst": { "type": "number", "minimum": 0, "description": "Global default for per-input read_rate_initial_burst. Seconds of unpaced burst allowed before the read-rate pacer engages. Defaults to 0.5 (FFmpeg default) when read_rate is non-zero and this field is unset." },
+        "read_rate_catchup": { "type": "number", "minimum": 0, "description": "Global default for per-input read_rate_catchup. Multiplier used when the demuxer falls behind real-time; must be >= read_rate. Defaults to read_rate × 1.05 when unset." },
+        "realtime_log_path": { "type": "string", "description": "When non-empty and realtime:true, the adaptive controller writes one JSONL record per observation tick (every 500 ms) to this file. Each record contains the full per-node performance snapshot, controller cool-down counters, and any decisions made that tick. Use for post-hoc diagnosis of realtime performance anomalies. The file is created (or truncated) when the pipeline starts. Example: \"/tmp/rt_debug.jsonl\"." }
       }
-    },
-    "error_policy": {
       "type": "object",
       "required": ["policy"],
       "additionalProperties": false,
