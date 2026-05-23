@@ -31,6 +31,7 @@ export interface SinkNodeSnapshot {
   OutputBufferFillFrac: number
   BufferedNs: number   // buffered PTS span in nanoseconds
   TargetNs: number     // target fill duration in nanoseconds
+  AheadNs: number      // encoder lead over real-time playback position (ns)
 }
 
 // Mirrors pipeline/snap.DecisionRecord (has explicit json tags in Go).
@@ -86,6 +87,7 @@ export function useRTSnapshot(enabled: boolean): RTControllerSnapshot | null {
         snap.Sinks ??= []
         snap.RecentDecisions ??= []
         for (const n of snap.Nodes) n.PresetLadder ??= []
+        for (const s of snap.Sinks) { s.AheadNs ??= 0; s.BufferedNs ??= 0; s.TargetNs ??= 0 }
         setSnapshot(snap.Enabled ? snap : null)
       } catch {
         // ignore malformed events

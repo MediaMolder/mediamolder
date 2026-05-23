@@ -143,27 +143,33 @@ function ObservedTab({ nodes, sinks, fpsTarget, inputBufCap }: ObservedTabProps)
 
       {sortedSinks.length > 0 && (
         <>
-          <p style={{ fontSize: 11, color: 'var(--text-dim)', margin: '10px 0 4px' }}>Output preroll buffers</p>
+          <p style={{ fontSize: 11, color: 'var(--text-dim)', margin: '10px 0 4px' }}>Output buffers</p>
           <table className="rtc-table">
             <thead>
               <tr>
                 <th>Sink</th>
-                <th>Buffered</th>
+                <th>Ahead</th>
                 <th>Target</th>
                 <th>Fill</th>
               </tr>
             </thead>
             <tbody>
               {sortedSinks.map((s) => {
-                const bufferedSecs = s.BufferedNs / 1e9
                 const targetSecs = s.TargetNs / 1e9
-                const bufferedFrames = fpsTarget > 0 ? Math.round(bufferedSecs * fpsTarget) : 0
                 const targetFrames = fpsTarget > 0 ? Math.round(targetSecs * fpsTarget) : 0
+                // In STREAMING phase AheadNs is the relevant metric.
+                // Fall back to buffered/target fill during initial fill phase.
+                const streaming = s.AheadNs !== 0 || s.BufferedNs >= s.TargetNs
+                const aheadSecs = s.AheadNs / 1e9
+                const aheadFrames = fpsTarget > 0 ? Math.round(aheadSecs * fpsTarget) : 0
+                const aheadColor = s.AheadNs < 0 ? '#ef4444' : s.AheadNs < 500_000_000 ? '#eab308' : '#22c55e'
                 return (
                   <tr key={s.NodeID}>
                     <td className="rtc-cell-id" title={s.NodeID}>{s.NodeID}</td>
-                    <td style={{ fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
-                      {bufferedSecs.toFixed(2)}s&thinsp;/&thinsp;{bufferedFrames}f
+                    <td style={{ fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap', color: streaming ? aheadColor : undefined }}>
+                      {streaming
+                        ? `${aheadSecs.toFixed(2)}s\u202f/\u202f${aheadFrames}f`
+                        : `${(s.BufferedNs / 1e9).toFixed(2)}s\u202f/\u202f${fpsTarget > 0 ? Math.round(s.BufferedNs / 1e9 * fpsTarget) : 0}f`}
                     </td>
                     <td style={{ fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap', color: 'var(--text-dim)' }}>
                       {targetSecs.toFixed(2)}s&thinsp;/&thinsp;{targetFrames}f

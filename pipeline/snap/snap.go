@@ -208,6 +208,10 @@ type SinkNodeSnapshot struct {
 	// TargetNs is the configured target fill duration in nanoseconds.
 	BufferedNs int64
 	TargetNs   int64
+	// AheadNs is how far the buffer's leading PTS edge is ahead of the
+	// real-time playback position (positive = encoder leading, 0 = in sync,
+	// negative = encoder behind). Only meaningful during STREAMING phase.
+	AheadNs int64
 }
 
 // RTControllerSnapshot is the full per-tick state of the realtime controller.
