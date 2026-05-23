@@ -29,6 +29,8 @@ export interface ControllerNodeSnapshot {
 export interface SinkNodeSnapshot {
   NodeID: string
   OutputBufferFillFrac: number
+  BufferedNs: number   // buffered PTS span in nanoseconds
+  TargetNs: number     // target fill duration in nanoseconds
 }
 
 // Mirrors pipeline/snap.DecisionRecord (has explicit json tags in Go).

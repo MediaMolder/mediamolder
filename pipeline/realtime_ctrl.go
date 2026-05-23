@@ -669,6 +669,8 @@ func (c *realtimeController) storeSnapshot(shot snap.MetricsSnapshot) {
 				sinks = append(sinks, snap.SinkNodeSnapshot{
 					NodeID:               s.preroll.NodeID(),
 					OutputBufferFillFrac: fillFrac,
+					BufferedNs:           int64(s.preroll.BufferedDuration()),
+					TargetNs:             int64(target),
 				})
 			}
 		}

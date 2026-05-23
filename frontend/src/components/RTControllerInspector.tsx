@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
-import type { RTControllerSnapshot, ControllerNodeSnapshot } from '../lib/rtSnapshot'
+import type { RTControllerSnapshot, ControllerNodeSnapshot, SinkNodeSnapshot } from '../lib/rtSnapshot'
 import type { Options } from '../lib/jobTypes'
 
 interface Props {
@@ -56,11 +56,27 @@ function LadderBar({ ladder, index }: { ladder: string[]; index: number }) {
 }
 
 // ObservedTab renders live per-encoder performance metrics.
-function ObservedTab({ nodes }: { nodes: ControllerNodeSnapshot[] }) {
+// ENCODER_OUT_BUF_CAP mirrors the hardcoded encPktCh capacity in pipeline/engine.go.
+const ENCODER_OUT_BUF_CAP = 8
+
+interface ObservedTabProps {
+  nodes: ControllerNodeSnapshot[]
+  sinks: SinkNodeSnapshot[]
+  fpsTarget: number
+  inputBufCap: number
+}
+
+function fmtDepth(frames: number, fps: number): string {
+  const secs = fps > 0 ? (frames / fps).toFixed(2) : '?'
+  return `${frames}f ${secs}s`
+}
+
+function ObservedTab({ nodes, sinks, fpsTarget, inputBufCap }: ObservedTabProps) {
   if (!nodes.length) {
     return <p style={{ color: 'var(--text-dim)', fontSize: 12, marginTop: 8 }}>No encoder nodes observed.</p>
   }
   const sorted = [...nodes].sort((a, b) => a.NodeID.localeCompare(b.NodeID))
+  const sortedSinks = [...sinks].sort((a, b) => a.NodeID.localeCompare(b.NodeID))
   return (
     <div className="rtc-table-wrap">
       <table className="rtc-table">
@@ -78,38 +94,88 @@ function ObservedTab({ nodes }: { nodes: ControllerNodeSnapshot[] }) {
           </tr>
         </thead>
         <tbody>
-          {sorted.map((n) => (
-            <tr
-              key={n.NodeID}
-              style={{
-                background: n.FPSDeficit > 1.0
-                  ? 'rgba(239,68,68,0.08)'
-                  : n.FPSDeficit > 0.2
-                    ? 'rgba(234,179,8,0.06)'
-                    : undefined,
-              }}
-            >
-              <td className="rtc-cell-id" title={n.NodeID}>{n.NodeID}</td>
-              <td style={{ tabularNums: true } as React.CSSProperties}>
-                {n.FPS.toFixed(1)}&thinsp;/&thinsp;{n.FPSTarget.toFixed(1)}
-              </td>
-              <td style={{ color: deficitColor(n.FPSDeficit), fontVariantNumeric: 'tabular-nums' }}>
-                {n.FPSDeficit > 0 ? '+' : ''}{n.FPSDeficit.toFixed(2)}
-              </td>
-              <td style={{ color: '#22c55e' }}>{fmtPct(n.ActiveFrac)}</td>
-              <td style={{ color: n.StalledFrac > 0.1 ? '#ef4444' : undefined }}>{fmtPct(n.StalledFrac)}</td>
-              <td><FillBar value={n.InputBufferFillFrac} /></td>
-              <td><FillBar value={n.OutputBufferFillFrac} /></td>
-              <td style={{ fontVariantNumeric: 'tabular-nums' }}>{fmtNs(n.FrameLatencyMean)}</td>
-              <td>
-                {n.ThreadsBusy >= 0
-                  ? `${n.ThreadsBusy}/${n.ThreadsConfigured}`
-                  : String(n.ThreadsConfigured)}
-              </td>
-            </tr>
-          ))}
+          {sorted.map((n) => {
+            const inFrames = Math.round(n.InputBufferFillFrac * inputBufCap)
+            const outFrames = Math.round(n.OutputBufferFillFrac * ENCODER_OUT_BUF_CAP)
+            return (
+              <tr
+                key={n.NodeID}
+                style={{
+                  background: n.FPSDeficit > 1.0
+                    ? 'rgba(239,68,68,0.08)'
+                    : n.FPSDeficit > 0.2
+                      ? 'rgba(234,179,8,0.06)'
+                      : undefined,
+                }}
+              >
+                <td className="rtc-cell-id" title={n.NodeID}>{n.NodeID}</td>
+                <td style={{ tabularNums: true } as React.CSSProperties}>
+                  {n.FPS.toFixed(1)}&thinsp;/&thinsp;{n.FPSTarget.toFixed(1)}
+                </td>
+                <td style={{ color: deficitColor(n.FPSDeficit), fontVariantNumeric: 'tabular-nums' }}>
+                  {n.FPSDeficit > 0 ? '+' : ''}{n.FPSDeficit.toFixed(2)}
+                </td>
+                <td style={{ color: '#22c55e' }}>{fmtPct(n.ActiveFrac)}</td>
+                <td style={{ color: n.StalledFrac > 0.1 ? '#ef4444' : undefined }}>{fmtPct(n.StalledFrac)}</td>
+                <td
+                  style={{ fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}
+                  title={`fill: ${fmtPct(n.InputBufferFillFrac)} of ${inputBufCap} frames`}
+                >
+                  {fmtDepth(inFrames, fpsTarget)}
+                </td>
+                <td
+                  style={{ fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}
+                  title={`fill: ${fmtPct(n.OutputBufferFillFrac)} of ${ENCODER_OUT_BUF_CAP} pkts`}
+                >
+                  {fmtDepth(outFrames, fpsTarget)}
+                </td>
+                <td style={{ fontVariantNumeric: 'tabular-nums' }}>{fmtNs(n.FrameLatencyMean)}</td>
+                <td>
+                  {n.ThreadsBusy >= 0
+                    ? `${n.ThreadsBusy}/${n.ThreadsConfigured}`
+                    : String(n.ThreadsConfigured)}
+                </td>
+              </tr>
+            )
+          })}
         </tbody>
       </table>
+
+      {sortedSinks.length > 0 && (
+        <>
+          <p style={{ fontSize: 11, color: 'var(--text-dim)', margin: '10px 0 4px' }}>Output preroll buffers</p>
+          <table className="rtc-table">
+            <thead>
+              <tr>
+                <th>Sink</th>
+                <th>Buffered</th>
+                <th>Target</th>
+                <th>Fill</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sortedSinks.map((s) => {
+                const bufferedSecs = s.BufferedNs / 1e9
+                const targetSecs = s.TargetNs / 1e9
+                const bufferedFrames = fpsTarget > 0 ? Math.round(bufferedSecs * fpsTarget) : 0
+                const targetFrames = fpsTarget > 0 ? Math.round(targetSecs * fpsTarget) : 0
+                return (
+                  <tr key={s.NodeID}>
+                    <td className="rtc-cell-id" title={s.NodeID}>{s.NodeID}</td>
+                    <td style={{ fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
+                      {bufferedSecs.toFixed(2)}s&thinsp;/&thinsp;{bufferedFrames}f
+                    </td>
+                    <td style={{ fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap', color: 'var(--text-dim)' }}>
+                      {targetSecs.toFixed(2)}s&thinsp;/&thinsp;{targetFrames}f
+                    </td>
+                    <td><FillBar value={s.OutputBufferFillFrac} /></td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </>
+      )}
     </div>
   )
 }
@@ -429,7 +495,12 @@ export function RTControllerInspector({ snapshot, globalOptions, onGlobalOptions
         <SettingsTab opts={globalOptions} onChange={onGlobalOptionsChange} />
       )}
       {snapshot && tab === 'observed' && (
-        <ObservedTab nodes={snapshot.Nodes} />
+        <ObservedTab
+          nodes={snapshot.Nodes}
+          sinks={snapshot.Sinks}
+          fpsTarget={snapshot.FPSTarget}
+          inputBufCap={globalOptions?.encoder_input_buffer_frames ?? 16}
+        />
       )}
       {snapshot && tab === 'applied' && (
         <AppliedTab snap={snapshot} />
