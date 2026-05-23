@@ -204,6 +204,10 @@ type ControllerNodeSnapshot struct {
 type SinkNodeSnapshot struct {
 	NodeID               string
 	OutputBufferFillFrac float64
+	// BufferedNs is the currently buffered PTS span in nanoseconds.
+	// TargetNs is the configured target fill duration in nanoseconds.
+	BufferedNs int64
+	TargetNs   int64
 }
 
 // RTControllerSnapshot is the full per-tick state of the realtime controller.
