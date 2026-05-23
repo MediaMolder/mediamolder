@@ -327,8 +327,16 @@ function Editor() {
    * mark dirty for any change other than pure selection. */
   const onNodesChange = useCallback(
     (changes: NodeChange[]) => {
-      setNodes((ns) => applyNodeChanges(changes, ns) as FlowNode[]);
-      if (changes.some((c) => c.type !== 'select' && c.type !== 'dimensions')) markDirty();
+      // Changes targeting the synthetic __rtc__ node must not reach
+      // applyNodeChanges: __rtc__ lives only in the derived
+      // decoratedNodesWithRTC array, so applyNodeChanges always returns a
+      // new array for __rtc__ changes (the node isn't found), which
+      // triggers setNodes → re-render → new decoratedNodesWithRTC → new
+      // ReactFlow prop → another dimensions change — an infinite loop.
+      const filtered = changes.filter((c) => (c as { id?: string }).id !== '__rtc__');
+      if (filtered.length === 0) return;
+      setNodes((ns) => applyNodeChanges(filtered, ns) as FlowNode[]);
+      if (filtered.some((c) => c.type !== 'select' && c.type !== 'dimensions')) markDirty();
     },
     [markDirty],
   );
@@ -1017,6 +1025,7 @@ function Editor() {
       id: '__rtc__',
       type: 'rtController',
       position: { x: minX - 10, y: minY - RTC_H - RTC_GAP },
+      selected: selectedId === '__rtc__',
       data: {
         kind: 'rtController',
         label: 'Real-Time Controller',
@@ -1029,7 +1038,7 @@ function Editor() {
       style: { minWidth: w, width: w },
     };
     return [rtcNode, ...decoratedNodes];
-  }, [decoratedNodes, rtSnapshot, job.global_options?.realtime]);
+  }, [decoratedNodes, rtSnapshot, job.global_options?.realtime, selectedId]);
 
   /* Compute inferred technical attributes for each edge so MMEdge can render
      a chip showing pix_fmt / size / sample_rate / etc. Recomputes whenever
