@@ -703,7 +703,7 @@ When `global_options.realtime` is `true` (or `--realtime` is passed to `mediamol
 
 Hardware-accelerated encoder nodes are exempt from the CPU thread budget.
 
-See [docs/using_mediamolder.md §5.11](using_mediamolder.md#511-real-time-mode) for full usage details.
+See [docs/using-mediamolder.md §5.11](using-mediamolder.md#511-real-time-mode) for full usage details.
 
 ---
 
@@ -930,7 +930,7 @@ pixel format not in encoder accept list"*, or similar:
 
 ## 14. Cross-references
 
-- [using_mediamolder.md](using_mediamolder.md) — full CLI and GUI user guide
+- [using-mediamolder.md](using-mediamolder.md) — full CLI and GUI user guide
 - [json-config-reference.md](json-config-reference.md) — complete JSON schema reference
 - [graph-validation-design.md](architecture/graph_validation_design.md) — validation issue taxonomy
 - [graph-compilation.md](architecture/graph-compilation.md) — build / compile / execute internals

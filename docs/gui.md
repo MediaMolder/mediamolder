@@ -6,7 +6,7 @@ into the same single binary as the CLI — no separate install or web server is
 required.
 
 For the complete CLI reference, JSON graph format, and command-line workflows,
-see [using_mediamolder.md](using_mediamolder.md).
+see [using-mediamolder.md](using-mediamolder.md).
 
 ![MediaMolder GUI](images/ABR_x264.png)
 
@@ -19,6 +19,9 @@ see [using_mediamolder.md](using_mediamolder.md).
   - [Canvas](#canvas)
   - [Edge attributes](#edge-attributes)
   - [Inspector](#inspector)
+  - [Toolbar reference](#toolbar-reference)
+  - [Validate panel](#validate-panel)
+  - [Keyboard shortcuts](#keyboard-shortcuts)
   - [Filter nodes — expression editor](#filter-nodes--expression-editor)
   - [Filter nodes — audio channel-routing matrix](#filter-nodes--audio-channel-routing-matrix)
   - [Asset registry](#asset-registry)
@@ -55,6 +58,7 @@ Useful flags:
 | `--no-open`  | `false`     | Do not auto-open a browser tab. |
 | `--examples` | `testdata/examples` | Directory whose `*.json` files are listed in the **Graph:** dropdown. Set to `""` to disable. |
 | `--dev`      | `false`     | Skip the embedded frontend; expects you to run `npm run dev` separately. |
+| `--metrics-addr` | `""` | Start a metrics/perf HTTP server on this address (e.g. `:9090`). Exposes `/perf`, `/perf/stream`, `/metrics` (Prometheus), `/health`, and (when `global_options.realtime` is set) `/realtime/*`. Used by `mediamolder perf` and `mediamolder watch`. |
 
 ## Your first pipeline (5-minute walkthrough)
 
@@ -268,6 +272,61 @@ The **Palette** and **Inspector** columns can each be hidden via the
 toolbar's **View:** segmented control — the canvas expands to fill the
 freed space. The node/edge tally is rendered as a small overlay in the
 bottom-right of the canvas itself (not in the toolbar).
+
+### Toolbar reference
+
+| Button / Control | Action |
+|---|---|
+| **New** | Clear the canvas (prompts if there are unsaved changes) |
+| **Open…** | Open a job JSON file from disk (File System Access API on supported browsers, otherwise the server file browser) |
+| **Import FFmpeg…** | Open the Import FFmpeg dialog — paste an FFmpeg command and convert it to a graph |
+| **Graph: \<dropdown\>** | Switch between built-in example graphs; discards unsaved changes after confirmation |
+| **Save** | Write the current graph back to the same file (disabled for examples and when there are no unsaved changes) |
+| **Save As…** | Write the current graph to a new file |
+| **Show CLI** | Open the Export FFmpeg dialog — shows the current graph rendered as an equivalent FFmpeg command line |
+| **Auto layout** | Rearrange nodes left-to-right using a dagre layout algorithm |
+| **View: Palette** | Toggle the palette sidebar |
+| **View: Inspector** | Toggle the inspector sidebar |
+| **View: Minimap** | Toggle the minimap (bottom-right corner of canvas) |
+| **Labels: Verbose / Compact** | Switch node label density; Verbose shows all fields, Compact shows a concise summary |
+| **Real-time** *(checkbox)* | Enable adaptive real-time mode for the next run — sets `global_options.realtime` in the graph (persisted on Save). See [using-mediamolder.md §5.12](using-mediamolder.md#512-real-time-mode). |
+| **Run** | Send the current graph to the backend and start encoding |
+| **Stop** | Cancel the running job cleanly |
+| **Show log / Hide log** | Toggle the Run panel at the bottom of the screen (enabled only while a job is running or has finished) |
+| **Validate** | Probe inputs and run full Phase A + Phase B validation; opens the Validate panel with results. The button turns red and shows a badge count when errors or warnings are present |
+| **Help** | Open the in-app Help dialog (or press **?**) |
+| **Assets** | Open the Asset Manager; badge shows the number of registered assets |
+
+### Validate panel
+
+Click **Validate** in the toolbar to open the Validate panel. The panel shows all issues found for the current graph, sorted by severity (ERRORs first, then WARNINGs, then INFOs).
+
+Each issue displays:
+- **Severity badge** — `ERROR` (red), `WARNING` (amber), `INFO` (blue)
+- **Code** — machine-readable issue identifier (e.g. `VIDEO_INTERLACED_NO_DEINTERLACE`)
+- **Location** — the node or edge where the problem was detected
+- **Message** — plain-English description of the problem
+- **Suggestion** — how to fix it
+- **Apply Fix button** (when available) — one-click repair:
+  - `InsertFilterFix` — creates a new filter node (e.g. `yadif`, `zscale`, `fps`, `aformat`) and re-wires the relevant edges automatically
+  - `SetOutputFieldFix` — updates a field on the output node (e.g. sets `codec_tag_video` to `"hvc1"`)
+
+Inline node badges (e.g. `2E 1W`) appear on each canvas node that has validation issues. Hover a badge to see the issue list.
+
+Auto-validation runs in the background on every graph change (Phase A static checks, debounced 300 ms) so the error count on the Validate button stays current as you edit.
+
+### Keyboard shortcuts
+
+| Key | Action |
+|---|---|
+| `?` or `Shift+/` | Open / close the in-app Help dialog |
+| `Esc` | Close the currently open dialog |
+| `Backspace` / `Delete` | Delete the selected node or edge (ignored while focus is in an input field) |
+
+React Flow canvas shortcuts (built-in):
+- **Ctrl/Cmd + A** — select all nodes
+- **Ctrl/Cmd + scroll** — zoom
+- **Space + drag** — pan
 
 ### Palette
 
@@ -1402,11 +1461,11 @@ without the GUI never need to include it.
 
 | Document | Contents |
 |---|---|
-| [using_mediamolder.md](using_mediamolder.md) | Complete CLI and JSON graph reference |
+| [using-mediamolder.md](using-mediamolder.md) | Complete CLI and JSON graph reference |
 | [concepts-and-graph-basics.md](concepts-and-graph-basics.md) | Core concepts, node types, edge rules |
 | [json-config-reference.md](json-config-reference.md) | Complete field-by-field JSON schema |
 | [scene-detection.md](scene-detection.md) | Scene detector algorithms, CLI usage, pipeline JSON, events |
 | [go-processor-nodes.md](go-processor-nodes.md) | Go processor API and built-in processors |
 | [hardware-acceleration.md](hardware-acceleration.md) | Hardware setup, zero-copy paths, GPU encoder options |
 | [ffmpeg-migration-guide.md](ffmpeg-migration-guide.md) | FFmpeg CLI → JSON mapping |
-| [build_and_packaging.md](build_and_packaging.md) | Building the frontend, static linking, packaging |
+| [build-and-packaging.md](build-and-packaging.md) | Building the frontend, static linking, packaging |

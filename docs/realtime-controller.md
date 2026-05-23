@@ -1,10 +1,10 @@
 # Real-Time Controller
 
-Real-time mode is MediaMolder's system for keeping a media processing pipeline
+Real-time mode is MediaMolder's closed loop control system for keeping a media processing graph
 at or above a target frame rate throughout an entire job — whether that job runs
 for seconds or days. It is activated with `--realtime` (CLI) or
 `global_options.realtime: true` (JSON) and adds three layers of adaptive
-control on top of the normal pipeline execution model.
+control on top of the normal graph execution model.
 
 ---
 
@@ -29,7 +29,7 @@ control on top of the normal pipeline execution model.
 
 ## 1. Why real-time mode exists
 
-A pipeline running without real-time mode encodes as fast as the CPU allows.
+A graph running without real-time mode encodes as fast as the CPU allows.
 For file-to-file jobs that is fine. For anything where output must pace to a
 wall clock — live restreaming, HLS/DASH ingest, broadcast playout — two failure
 modes arise:
@@ -59,7 +59,7 @@ Real-time mode addresses both with:
 
 ```sh
 # CLI — override any JSON without editing the file
-mediamolder run --realtime pipeline.json
+mediamolder run --realtime graph.json
 
 # Or set it in the JSON
 # global_options.realtime: true
@@ -70,7 +70,7 @@ mediamolder watch
 
 In the GUI, check the **Real-time** checkbox in the toolbar before pressing
 **Run**. The **Inspector → Real-Time Controller** tab opens automatically when
-the pipeline starts.
+the graph starts.
 
 ---
 
@@ -216,7 +216,7 @@ must reach this threshold before any muxer is allowed to write its first
 byte. This ensures every output starts cleanly from the same reference point
 and absorbs the initial encoder warm-up transient.
 
-**Rolling phase (streaming)** — once the pipeline is fully running, the
+**Rolling phase (streaming)** — once the graph is fully running, the
 buffer continues as a rolling jitter absorber. N encoder goroutines push
 packets in via `Enqueue`; a single consumer calls `TakePaced`, which paces
 delivery to the stream's PTS wall-clock rate. `TakePaced` sleeps until each
@@ -267,8 +267,8 @@ absorption before backpressure propagates upstream.
 | `prebuffer_max_seconds` | float | `2 × prebuffer_duration_seconds` | Hard cap on how much PTS-time may be held. Oldest packets are evicted if this is exceeded. |
 | `highest_quality_preset` | string | *(job preset)* | Slowest preset the controller is allowed to use. E.g. `"medium"` allows stepping down to `ultrafast` but no slower than `medium`. |
 | `target_fps` | float | `0` (derive from source) | Graph-level FPS target. `0` = auto-derive from the source stream's frame rate. |
-| `encoder_input_buffer_frames` | int | `0` (pipeline default) | Per-encoder input channel capacity in frames. `96` (~4 s @ 24 fps) is recommended when using preset stepping to absorb the close+reopen window. |
-| `realtime_log_path` | string | *(disabled)* | Path to a per-tick JSONL debug log. Each line is a JSON object with the full `RTControllerSnapshot`, cool-down counters, and any decisions. The file is truncated at pipeline start. Use `jq` to query after the run. |
+| `encoder_input_buffer_frames` | int | `0` (graph default) | Per-encoder input channel capacity in frames. `96` (~4 s @ 24 fps) is recommended when using preset stepping to absorb the close+reopen window. |
+| `realtime_log_path` | string | *(disabled)* | Path to a per-tick JSONL debug log. Each line is a JSON object with the full `RTControllerSnapshot`, cool-down counters, and any decisions. The file is truncated at graph start. Use `jq` to query after the run. |
 
 ### Per-output override
 
@@ -319,7 +319,7 @@ live in [schema/v1.0.json](../schema/v1.0.json) and
 
 ## 9. GUI: Real-Time Controller inspector
 
-When a pipeline is running in real-time mode the Inspector panel shows a
+When a graph is running in real-time mode the Inspector panel shows a
 **Real-Time Controller** tab with three sub-tabs.
 
 ### Observed tab
@@ -359,7 +359,7 @@ showing node ID, action taken, old and new values, and reason.
 ### Applied tab
 
 Shows the current per-encoder preset and thread-count overrides that have
-been applied since the pipeline started, with a manual override control for
+been applied since the graph started, with a manual override control for
 each node (useful for testing).
 
 ### Settings tab
@@ -371,7 +371,7 @@ in-flight update controls.
 
 ## 10. `mediamolder watch` CLI
 
-Connects to a running pipeline's SSE stream and renders a live ANSI
+Connects to a running graph's SSE stream and renders a live ANSI
 table in-place.
 
 ```sh
@@ -380,7 +380,7 @@ mediamolder watch [--url http://host:port]
 
 | Flag | Default | Description |
 |---|---|---|
-| `--url` | `http://127.0.0.1:9090` | Base URL of the running pipeline's metrics server |
+| `--url` | `http://127.0.0.1:9090` | Base URL of the running graph's metrics server |
 
 The display mirrors the **Observed** tab of the GUI inspector. Press Ctrl-C
 to exit.
@@ -405,10 +405,10 @@ All endpoints are on the metrics server (default `:9090`). They return
 |---|---|---|
 | `Enabled` | bool | `false` when real-time mode is off |
 | `Status` | string | Controller status badge (`observing`, `satisfied`, `cooldown`, `dropping`) |
-| `FPS` | float64 | Pipeline-level aggregate FPS |
+| `FPS` | float64 | graph-level aggregate FPS |
 | `FPSTarget` | float64 | Configured target |
-| `Tick` | int | Monotonic tick counter since pipeline start |
-| `ElapsedNs` | int64 | Nanoseconds since pipeline start |
+| `Tick` | int | Monotonic tick counter since graph start |
+| `ElapsedNs` | int64 | Nanoseconds since graph start |
 | `Nodes` | `[]ControllerNodeSnapshot` | Per-encoder node snapshots (see observability doc) |
 | `Sinks` | `[]SinkNodeSnapshot` | Per-sink output-buffer snapshots |
 | `RecentDecisions` | `[]Decision` | Last 5 controller decisions |
@@ -507,7 +507,7 @@ jq 'select(.nodes) | .nodes[] | select(.NodeID == "enc_1080") | {tick: .tick, fp
 - [docs/architecture/observability.md](architecture/observability.md)
   — Prometheus metrics reference, OpenTelemetry tracing, `mediamolder perf`
   CLI, and the full `mediamolder watch` display reference
-- [docs/using_mediamolder.md §5.12](using_mediamolder.md#512-real-time-mode)
+- [docs/using-mediamolder.md §5.12](using-mediamolder.md#512-real-time-mode)
   — quick reference for real-time mode in the main usage guide
 - [pipeline/realtime_ctrl.go](../pipeline/realtime_ctrl.go) — control loop implementation
 - [pipeline/output_buffer.go](../pipeline/output_buffer.go) — output buffer implementation
