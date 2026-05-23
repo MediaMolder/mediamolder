@@ -10,6 +10,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -190,7 +192,12 @@ func (c *realtimeController) run(ctx context.Context) {
 // openLogFile creates (or truncates) the debug log file and writes a
 // header line describing the controller configuration.
 func (c *realtimeController) openLogFile() error {
-	f, err := os.OpenFile(c.logPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+	// Sanitise the caller-supplied path to prevent path traversal (CWE-22).
+	clean := filepath.Clean(c.logPath)
+	if strings.Contains(clean, "..") {
+		return fmt.Errorf("realtime log path must not traverse parent directories: %q", c.logPath)
+	}
+	f, err := os.OpenFile(clean, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
 	if err != nil {
 		return err
 	}
