@@ -559,6 +559,15 @@ export interface Options {
   hw_accel?: string;
   hw_device?: string;
   realtime?: boolean;
+  // Realtime controller settings (mirrors pipeline.Options Phase 6-8 fields).
+  highest_quality_preset?: string;
+  preset_group_step?: boolean;
+  target_fps?: number;
+  encoder_input_buffer_frames?: number;
+  prebuffer_duration_seconds?: number;
+  prebuffer_max_seconds?: number;
+  read_rate?: number;
+  realtime_log_path?: string;
 }
 
 /** A named hardware-acceleration device context. Each entry is opened via

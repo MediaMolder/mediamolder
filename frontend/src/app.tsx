@@ -1002,17 +1002,11 @@ function Editor() {
   const decoratedNodesWithRTC = useMemo<FlowNode[]>(() => {
     if (!job.global_options?.realtime) return decoratedNodes;
 
-    // Prefer snapshot-driven controlled-node IDs; fall back to any non-I/O
-    // canvas node so the box is always well-positioned.
-    let controlled: FlowNode[];
-    if (rtSnapshot && rtSnapshot.Nodes.length > 0) {
-      const controlledIds = new Set(rtSnapshot.Nodes.map((n) => n.NodeID));
-      controlled = decoratedNodes.filter((n) => controlledIds.has(n.id));
-    } else {
-      controlled = decoratedNodes.filter(
-        (n) => !n.id.startsWith('__in__') && !n.id.startsWith('__out__'),
-      );
-    }
+    // Always use all non-I/O nodes for positioning so the box doesn't jump
+    // when the snapshot first arrives (snapshot-controlled IDs can differ).
+    const controlled = decoratedNodes.filter(
+      (n) => !n.id.startsWith('__in__') && !n.id.startsWith('__out__'),
+    );
     if (controlled.length === 0) return decoratedNodes;
     const FALLBACK_W = 200;
     const RTC_H = 56;
@@ -1259,6 +1253,12 @@ function Editor() {
           onConnect={onConnect}
           isValidConnection={isValidConnection}
           onSelectionChange={onSelectionChange}
+          onNodeClick={(_, node) => {
+            if (node.id === '__rtc__') {
+              setSelectedId('__rtc__');
+              setShowInspector(true);
+            }
+          }}
           deleteKeyCode={null /* handled manually so inputs aren't hijacked */}
           edgesReconnectable={false}
           fitView
@@ -1313,7 +1313,14 @@ function Editor() {
 
       {showInspector && (
         selectedId === '__rtc__'
-          ? <RTControllerInspector snapshot={rtSnapshot} />
+          ? <RTControllerInspector
+              snapshot={rtSnapshot}
+              globalOptions={job.global_options}
+              onGlobalOptionsChange={(update) => {
+                setJob((j) => ({ ...j, global_options: { ...(j.global_options ?? {}), ...update } }));
+                markDirty();
+              }}
+            />
           : <Inspector node={selectedNode} nodes={nodes} edges={edges} onChange={onNodeUpdate} onDelete={onNodeDelete} onSelectNode={setSelectedId} onProbedData={onProbedData} hwDevices={job.hardware_devices ?? []} availableHWAccels={availableHWAccels} />
       )}
       <RunDock visible={showRunPanel}>
