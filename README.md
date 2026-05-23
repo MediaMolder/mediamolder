@@ -28,7 +28,7 @@
 
 ### Real Time Encoding with Proper Metrics
 
-![MediaMolder GUI — Adaptive Bitrate x264 encode with real-time controller active]![Video Encoding Real Time Controller](image.png)
+![MediaMolder GUI — Adaptive Bitrate x264 encode with real-time controller active]![Video Encoding Real Time Controller](/docs/images/real-time-controller.png)
 
 - Import any `ffmpeg` command line instantly
 - Drag filters, encoders, sources, and sinks onto a canvas
