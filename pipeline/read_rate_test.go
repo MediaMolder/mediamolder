@@ -22,7 +22,7 @@ func TestReadRatePacer_BurstThenPaces(t *testing.T) {
 
 	// First packet initialises the pacer: must not sleep.
 	start := time.Now()
-	p.maybeSleep(context.Background(), 0)
+	p.maybeSleep(context.Background(), 0, 0)
 	if elapsed := time.Since(start); elapsed > 5*time.Millisecond {
 		t.Errorf("first packet slept %v (want ~0)", elapsed)
 	}
@@ -30,7 +30,7 @@ func TestReadRatePacer_BurstThenPaces(t *testing.T) {
 	// Packet inside the burst window (0.4 s of media time) should
 	// not sleep regardless of wallclock time elapsed.
 	start = time.Now()
-	p.maybeSleep(context.Background(), 400_000)
+	p.maybeSleep(context.Background(), 400_000, 0)
 	if elapsed := time.Since(start); elapsed > 5*time.Millisecond {
 		t.Errorf("burst-window packet slept %v (want ~0)", elapsed)
 	}
@@ -42,7 +42,7 @@ func TestReadRatePacer_BurstThenPaces(t *testing.T) {
 	// (rate=1, burst=0.5 s, so 1.5 - 0.5 = 1.0 s of pacing minus
 	// however long the test took to get here).
 	start = time.Now()
-	p.maybeSleep(context.Background(), 1_500_000)
+	p.maybeSleep(context.Background(), 1_500_000, 0)
 	elapsed := time.Since(start)
 	if elapsed < 800*time.Millisecond {
 		t.Errorf("paced packet slept only %v (want >= ~900 ms)", elapsed)
@@ -57,7 +57,7 @@ func TestReadRatePacer_BurstThenPaces(t *testing.T) {
 // pipeline shutdown is not held hostage by the pacer.
 func TestReadRatePacer_ContextCancelAborts(t *testing.T) {
 	p := newReadRatePacer(1.0, 0.0 /*no burst*/, 1.05)
-	p.maybeSleep(context.Background(), 0) // initialise
+	p.maybeSleep(context.Background(), 0, 0) // initialise
 
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
@@ -67,7 +67,7 @@ func TestReadRatePacer_ContextCancelAborts(t *testing.T) {
 
 	start := time.Now()
 	// Ask the pacer for a 10 s sleep; should abort within ~50 ms.
-	p.maybeSleep(ctx, 10_000_000)
+	p.maybeSleep(ctx, 10_000_000, 0)
 	if elapsed := time.Since(start); elapsed > 500*time.Millisecond {
 		t.Errorf("paced sleep ignored cancel: slept %v", elapsed)
 	}
@@ -80,7 +80,7 @@ func TestReadRatePacer_ContextCancelAborts(t *testing.T) {
 func TestReadRatePacer_NilNoOp(t *testing.T) {
 	var p *readRatePacer
 	start := time.Now()
-	p.maybeSleep(context.Background(), 5_000_000)
+	p.maybeSleep(context.Background(), 5_000_000, 0)
 	if elapsed := time.Since(start); elapsed > 5*time.Millisecond {
 		t.Errorf("nil pacer slept %v (want 0)", elapsed)
 	}
