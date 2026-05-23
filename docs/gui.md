@@ -1308,6 +1308,7 @@ explicitly to `127.0.0.1` (the default) if untrusted users share the host.
 | `POST` | `/api/run`                    | Start a run; returns `{job_id}`.                      |
 | `POST` | `/api/cancel/{jobId}`         | Cancel an in-flight run.                              |
 | `GET`  | `/api/events/{jobId}`         | Server-Sent Events stream for the run.                |
+| `GET`  | `/` _(metrics server)_        | HTML index page listing every registered metrics endpoint; only available when `--metrics-addr` is set. |
 | `GET`  | `/perf`                       | Full `MetricsSnapshot` JSON for the currently-running pipeline, including `[]NodePerfSnapshot` (per-node `ActiveFrac`, `IdleFrac`, `StalledFrac`, `FPS`, `FPSDeficit`, `ThreadsConfigured`, `ThreadsBusy`, `QueueFillFrac`, `InputQueueFillFrac`). Used by `mediamolder perf`. |
 | `GET`  | `/perf/stream`                | SSE endpoint pushing `[]NodePerfSnapshot` at 2 Hz. Consumed by the canvas performance overlay. Sends an empty array when the pipeline is idle. |
 | `POST` | `/realtime/preset`            | Set a manual encoder-preset override. Body `{node_id, preset}`. Loopback-only. |

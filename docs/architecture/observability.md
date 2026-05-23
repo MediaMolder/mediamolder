@@ -273,6 +273,7 @@ defer server.Shutdown(ctx)
 
 | Endpoint | Description |
 |----------|-------------|
+| `/` | HTML index page listing all registered endpoints; navigating here in a browser is the quickest way to discover what is available |
 | `/metrics` | Prometheus scrape endpoint |
 | `/health` | Liveness probe (returns 200 `ok`) |
 | `/perf` | Full `MetricsSnapshot` JSON (includes `Nodes` + `Perf` slices) |
