@@ -236,11 +236,31 @@ These metrics all carry a `node_id` label.
 | `mediamolder_node_fps_target`             | Gauge     | Expected output rate (0 if no target is known) |
 | `mediamolder_node_fps_deficit`            | Gauge     | `fps_target − fps`; positive means falling behind |
 | `mediamolder_node_queue_fill`             | Gauge     | EWMA of output channel fill ratio \[0, 1\] at each send |
-| `mediamolder_node_threads_configured`     | Gauge     | libavcodec decode threads configured (label `mode`: `frame`/`slice`/`auto`) |
+| `mediamolder_node_threads_configured`     | Gauge     | libavcodec decode threads configured (label `thread_mode`: `frame`/`slice`/`auto`) |
 | `mediamolder_node_threads_busy`           | Gauge     | Live threads currently in-flight (−1 for HW decoders) |
 | `mediamolder_node_cpu_cores_estimated`    | Gauge     | Estimated CPU cores consumed (`threads_busy × active_fraction`) |
 | `mediamolder_node_thread_restarts_total`  | Counter   | Cumulative libavcodec thread restart events |
 | `mediamolder_node_frame_latency_seconds`  | Histogram | Per-frame processing latency (receive→send) |
+
+#### Adaptive preset metrics (real-time mode)
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `mediamolder_node_preset_current`        | Gauge   | node, codec | Current encoder preset as ladder index (0 = slowest/highest-quality) |
+| `mediamolder_node_preset_switches_total` | Counter | node        | Cumulative adaptive preset transitions |
+| `mediamolder_pipeline_fps_target`        | Gauge   | —           | Graph-level real-time FPS target (max of per-node targets) |
+| `mediamolder_pipeline_fps_actual`        | Gauge   | —           | Graph-level achieved FPS (min of per-video-node FPS) |
+| `mediamolder_realtime_decisions_total`   | Counter | action      | Real-time controller decisions, labelled by action |
+
+#### Output buffer metrics (real-time mode)
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `mediamolder_output_buffer_duration_seconds` | Gauge   | node        | Currently buffered PTS span per output, in seconds |
+| `mediamolder_output_buffer_target_seconds`   | Gauge   | node        | Per-output preroll fill target, in seconds |
+| `mediamolder_output_buffer_state`            | Gauge   | node, state | 1 for the active preroll state (`FILLING`/`READY`/`READY_PARTIAL`/`STREAMING`/`DRAINING`) |
+| `mediamolder_output_buffer_evictions_total`  | Counter | node, reason | Packets evicted due to `prebuffer_max_seconds` overflow |
+| `mediamolder_pipeline_ready`                 | Gauge   | —           | 1 once every output sink has reached ≥ READY |
 
 ### HTTP Endpoints
 
@@ -254,26 +274,29 @@ defer server.Shutdown(ctx)
 | Endpoint | Description |
 |----------|-------------|
 | `/metrics` | Prometheus scrape endpoint |
-| `/health` | Health check (returns 200 OK) |
-| `/perf` | JSON snapshot of `[]NodePerfSnapshot` on demand |
-| `/perf/stream` | Server-Sent Events stream of `[]NodePerfSnapshot` at 2 Hz |
+| `/health` | Liveness probe (returns 200 `ok`) |
+| `/perf` | Full `MetricsSnapshot` JSON (includes `Nodes` + `Perf` slices) |
+| `/perf/stream` | SSE stream pushing `[]NodePerfSnapshot` (`.Perf` slice) at 2 Hz |
+| `/realtime/*` | Adaptive controller endpoints; registered via `RegisterRealtimeHandlers` — see [realtime-controller.md](../realtime-controller.md) |
 
-The `/perf` and `/perf/stream` endpoints become active once a snapshot
-callback is registered on the emitter:
+All endpoints set permissive CORS headers (`Access-Control-Allow-Origin: *`)
+because the server is intended for localhost use only.
+
+The `/perf` and `/perf/stream` endpoints become active once their snapshot
+functions are registered on the **`MetricsServer`**:
 
 ```go
-// Wired by the pipeline engine after building the graph.
-emitter.RegisterPerfHandler(func() snap.MetricsSnapshot {
-    return engine.GetMetrics()
-})
-emitter.RegisterPerfStreamHandler(func() snap.MetricsSnapshot {
-    return engine.GetMetrics()
-})
+// Called before ms.Start().
+ms.RegisterPerfHandler(engine.GetMetrics)
+ms.RegisterPerfStreamHandler(engine.GetMetrics)
+// Optional: wire adaptive-controller endpoints (requires --realtime).
+ms.RegisterRealtimeHandlers(engine)
 ```
 
-The SSE event name on `/perf/stream` is `perf`; each event carries the full
-`[]NodePerfSnapshot` JSON array.  Clients that miss events can reconnect; the
-server resends the latest snapshot immediately on reconnect.
+The `/perf/stream` SSE events are unnamed (no `event:` line); clients should
+listen on the default `message` event type. Each event body is a JSON array of
+`NodePerfSnapshot` objects. There is no reconnect replay — clients receive the
+next tick after reconnecting.
 
 ### Periodic Metrics Snapshots
 
@@ -287,27 +310,24 @@ emitter := pipeline.NewMetricsEmitter(
     pipeline.Metrics(),
     pipeline.Events(),
     pipeline.State,
-    pipeline.WithPrometheus(promMetrics),   // optional: populate Prometheus collectors
+    pipeline.WithPrometheus(promMetrics),   // optional: populate basic Prometheus collectors
     pipeline.WithEdgeStats(edgeStatsReg),   // optional: bridge backpressure to Prometheus
 )
 emitter.Start()
 defer emitter.Stop()
 
-// Register callbacks so the MetricsServer can serve /perf and /perf/stream.
-emitter.RegisterPerfHandler(func() snap.MetricsSnapshot {
-    return engine.GetMetrics()
-})
-emitter.RegisterPerfStreamHandler(func() snap.MetricsSnapshot {
-    return engine.GetMetrics()
-})
+// To populate the full Phase 3+ per-node perf metrics (state fractions,
+// stall histograms, thread counts, preset stepping, output buffers),
+// wire obsMetrics.Update as the snapshot callback:
+emitter.SetSnapshotCallback(obsMetrics.Update)
 ```
 
-When Prometheus is enabled, the emitter updates all collectors on each tick
-using delta tracking for counters (Prometheus counters are monotonic). When
-edge stats are provided, the `mediamolder_node_buffer_fill` gauge is populated
-with the current fill ratio for each edge's downstream node.  Per-node
-performance metrics are populated from `NodePerfSnapshot` fields whenever a
-snapshot callback is registered.
+`WithPrometheus` / `updatePrometheus` only bridges the basic metrics: `fps`,
+`frames_total`, `errors_total`, `bytes_total`, `node_latency_seconds`, and
+(via `WithEdgeStats`) `node_buffer_fill`. The full Phase 3/6/7 Prometheus
+collectors are populated by `observability.Metrics.Update`, which must be
+registered via `SetSnapshotCallback`. The real-time controller also calls
+`RealtimeDecisions.Inc` directly when it records a decision.
 
 ## `mediamolder perf` CLI
 
