@@ -27,6 +27,7 @@ func cmdGUI(args []string) error {
 	dev := fs.Bool("dev", false, "dev mode: do not serve embedded frontend (use Vite on :5173)")
 	examples := fs.String("examples", "testdata/examples",
 		"directory of example job JSONs to expose at /examples/ and /api/examples (empty to disable)")
+	metricsAddr := fs.String("metrics-addr", "", "start a metrics/perf server on this address (e.g. :9090); exposes /perf, /perf/stream, /metrics (Prometheus), /health and (for realtime jobs) /realtime/* endpoints")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -47,6 +48,7 @@ func cmdGUI(args []string) error {
 		Addr:        addr,
 		Dev:         *dev,
 		ExamplesDir: examplesDir,
+		MetricsAddr: *metricsAddr,
 	})
 	if err != nil {
 		return err
