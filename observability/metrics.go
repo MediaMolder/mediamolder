@@ -500,6 +500,25 @@ func NewMetricsServer(addr string, registry *prometheus.Registry) *MetricsServer
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok\n"))
 	})
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write([]byte(`<!doctype html><html><head><title>MediaMolder metrics</title></head><body>
+<h1>MediaMolder metrics server</h1>
+<ul>
+<li><a href="/metrics">/metrics</a> — Prometheus scrape endpoint</li>
+<li><a href="/health">/health</a> — Liveness probe</li>
+<li><a href="/perf">/perf</a> — Pipeline metrics snapshot (JSON)</li>
+<li><a href="/perf/stream">/perf/stream</a> — Live metrics stream (SSE)</li>
+<li><a href="/realtime/status">/realtime/status</a> — Real-time controller status</li>
+<li><a href="/realtime/snapshot">/realtime/snapshot</a> — Real-time controller snapshot</li>
+</ul>
+</body></html>
+`))
+	})
 
 	return &MetricsServer{
 		mux: mux,

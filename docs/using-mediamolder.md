@@ -326,6 +326,10 @@ mediamolder perf
 mediamolder gui --metrics-addr :9090
 ```
 
+Opening the server root in a browser (e.g. `http://localhost:9090/`) shows
+an HTML index page that links to every registered endpoint — a handy
+starting point when debugging.
+
 The metrics server also exposes `/metrics` (Prometheus), `/health`, and
 — when `--realtime` is active — the `/realtime/*` control endpoints used
 by `mediamolder watch`.  When embedding MediaMolder as a Go library, create
