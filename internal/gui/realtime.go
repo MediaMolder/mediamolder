@@ -62,10 +62,10 @@ func (m *jobManager) activeClearPreset(nodeID string) error {
 // registerRealtimeRoutes adds the realtime snapshot and override endpoints to
 // mux so the embedded GUI frontend can reach them without a separate port.
 //
-//   GET  /realtime/snapshot        → one-shot RTControllerSnapshot JSON; 404 when disabled
-//   GET  /realtime/snapshot/stream → SSE stream; ~500ms tick
-//   POST /realtime/preset          → body {"node_id":"…","preset":"…"}
-//   POST /realtime/preset/clear    → body {"node_id":"…"}
+//	GET  /realtime/snapshot        → one-shot RTControllerSnapshot JSON; 404 when disabled
+//	GET  /realtime/snapshot/stream → SSE stream; ~500ms tick
+//	POST /realtime/preset          → body {"node_id":"…","preset":"…"}
+//	POST /realtime/preset/clear    → body {"node_id":"…"}
 func registerRealtimeRoutes(mux *http.ServeMux, jobs *jobManager) {
 	mux.HandleFunc("GET /realtime/snapshot", func(w http.ResponseWriter, r *http.Request) {
 		cs := jobs.activeRT()

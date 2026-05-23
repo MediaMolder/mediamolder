@@ -52,7 +52,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   encoder-input buffer this absorbs ~8 s of downstream jitter or an
   encoder preset close+reopen without a muxer underrun. Phase 7
   internals live in [pipeline/output_buffer.go](pipeline/output_buffer.go);
-  see [docs/realtime-output.md](docs/realtime-output.md) for the design
+  see [docs/realtime-controller.md](docs/realtime-controller.md) for the design
   and tuning guidance.
 - **Phase 6 — adaptive encoder preset stepping (backend foundation).**
   When real-time mode is on and the thread-budget heuristic has nothing left

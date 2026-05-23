@@ -30,9 +30,9 @@ function deficitColor(d: number): string {
 // FillBar renders a horizontal fill bar for buffer occupancy.
 function FillBar({ value }: { value: number }) {
   const pct = Math.min(1, Math.max(0, value)) * 100
-  let color = '#22c55e'
-  if (value > 0.85) color = '#ef4444'
-  else if (value > 0.6) color = '#eab308'
+  let color = '#ef4444'
+  if (value > 0.6) color = '#22c55e'
+  else if (value > 0.3) color = '#eab308'
   return (
     <div className="rtc-fill-bar" title={`${pct.toFixed(0)}%`}>
       <div className="rtc-fill-bar-inner" style={{ width: `${pct}%`, background: color }} />
