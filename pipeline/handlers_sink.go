@@ -936,6 +936,7 @@ func (r *graphRunner) buildPreroll(out *Output, rescales []*sinkRescale) *Output
 			tbs[i] = [2]int{1, avTimeBase}
 		}
 	}
+	log.Printf("preroll %q: target=%.1fs max=%.1fs tbs=%v", out.ID, target, maxDur, tbs)
 	pre := NewOutputPreroll(out.ID,
 		time.Duration(target*float64(time.Second)),
 		time.Duration(maxDur*float64(time.Second)),

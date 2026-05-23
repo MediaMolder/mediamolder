@@ -5,6 +5,7 @@ package pipeline
 
 import (
 	"context"
+	"log"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -83,9 +84,10 @@ type OutputPreroll struct {
 	state     atomic.Int32
 	evictions atomic.Int64
 
-	readyCh   chan struct{}
-	readyOnce sync.Once
-	readyAt   atomic.Int64 // unix nano when ready first fired
+	readyCh    chan struct{}
+	readyOnce  sync.Once
+	readyAt    atomic.Int64 // unix nano when ready first fired
+	debugCount atomic.Int64 // first N packets logged for diagnosis
 }
 
 // NewOutputPreroll constructs a preroll for nodeID with the configured
@@ -176,6 +178,12 @@ func (p *OutputPreroll) AddOrPass(chanIdx int, pkt *av.Packet) (pass, full bool)
 	p.buf = append(p.buf, bufferedPacket{chanIdx: chanIdx, pkt: pkt})
 
 	ptsUS := ptsToUS(pkt, p.tbFor(chanIdx))
+	if cnt := p.debugCount.Add(1); cnt <= 8 {
+		span := p.maxPTSus - p.minPTSus
+		log.Printf("preroll %q: chan=%d tb=%v pts=%d ptsUS=%d span_us=%d target_us=%d havePTS=%v",
+			p.nodeID, chanIdx, p.tbFor(chanIdx), pkt.PTS(), ptsUS,
+			span, int64(p.targetDur/time.Microsecond), p.havePTS)
+	}
 	if ptsUS != notSetUS {
 		if !p.havePTS || ptsUS < p.minPTSus {
 			p.minPTSus = ptsUS
