@@ -83,6 +83,7 @@ export function useRTSnapshot(enabled: boolean): RTControllerSnapshot | null {
         snap.Nodes ??= []
         snap.Sinks ??= []
         snap.RecentDecisions ??= []
+        for (const n of snap.Nodes) n.PresetLadder ??= []
         setSnapshot(snap.Enabled ? snap : null)
       } catch {
         // ignore malformed events

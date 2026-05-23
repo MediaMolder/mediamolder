@@ -1,8 +1,11 @@
 import { useState, useRef, useEffect } from 'react'
 import type { RTControllerSnapshot, ControllerNodeSnapshot } from '../lib/rtSnapshot'
+import type { Options } from '../lib/jobTypes'
 
 interface Props {
   snapshot: RTControllerSnapshot | null
+  globalOptions?: Options
+  onGlobalOptionsChange?: (update: Partial<Options>) => void
 }
 
 // fmtNs converts a nanosecond duration to a human-readable string.
@@ -57,6 +60,7 @@ function ObservedTab({ nodes }: { nodes: ControllerNodeSnapshot[] }) {
   if (!nodes.length) {
     return <p style={{ color: 'var(--text-dim)', fontSize: 12, marginTop: 8 }}>No encoder nodes observed.</p>
   }
+  const sorted = [...nodes].sort((a, b) => a.NodeID.localeCompare(b.NodeID))
   return (
     <div className="rtc-table-wrap">
       <table className="rtc-table">
@@ -74,7 +78,7 @@ function ObservedTab({ nodes }: { nodes: ControllerNodeSnapshot[] }) {
           </tr>
         </thead>
         <tbody>
-          {nodes.map((n) => (
+          {sorted.map((n) => (
             <tr
               key={n.NodeID}
               style={{
@@ -229,7 +233,7 @@ function AppliedTab({ snap }: { snap: RTControllerSnapshot }) {
             </tr>
           </thead>
           <tbody>
-            {snap.Nodes.map((n) => (
+            {[...snap.Nodes].sort((a, b) => a.NodeID.localeCompare(b.NodeID)).map((n) => (
               <tr key={n.NodeID}>
                 <td className="rtc-cell-id" title={n.NodeID}>{n.NodeID}</td>
                 <td style={{ fontVariantNumeric: 'tabular-nums' }}>{n.CurrentPreset || '—'}</td>
@@ -269,7 +273,7 @@ function AppliedTab({ snap }: { snap: RTControllerSnapshot }) {
                 </tr>
               </thead>
               <tbody>
-                {snap.Nodes.filter((n) => n.PresetLadder.length > 0).map((n) => (
+                {[...snap.Nodes].sort((a, b) => a.NodeID.localeCompare(b.NodeID)).filter((n) => n.PresetLadder.length > 0).map((n) => (
                   <OverrideRow key={n.NodeID} node={n} />
                 ))}
               </tbody>
@@ -320,17 +324,81 @@ function AppliedTab({ snap }: { snap: RTControllerSnapshot }) {
   )
 }
 
+// X264_PRESETS enumerates the standard quality presets in slowest→fastest order.
+const X264_PRESETS = ['veryslow','slower','slow','medium','fast','faster','veryfast','superfast','ultrafast']
+
+// SettingsTab renders editable global_options for the realtime controller.
+function SettingsTab({ opts, onChange }: {
+  opts: Options | undefined
+  onChange?: (update: Partial<Options>) => void
+}) {
+  const o = opts ?? {}
+  const set = <K extends keyof Options>(key: K, val: Options[K]) => onChange?.({ [key]: val } as Partial<Options>)
+  const row = (label: string, control: React.ReactNode) => (
+    <div key={label} style={{ display: 'contents' }}>
+      <span style={{ color: 'var(--text-dim)', fontSize: 12 }}>{label}</span>
+      {control}
+    </div>
+  )
+  return (
+    <div style={{ marginTop: 8, display: 'grid', gridTemplateColumns: '1fr auto', gap: '6px 12px', alignItems: 'center' }}>
+      {row('Target FPS',
+        <input type="number" className="rtc-setting-input" min={0} step={0.001}
+          value={o.target_fps ?? ''}
+          onChange={e => set('target_fps', e.target.value ? Number(e.target.value) : undefined)}
+          placeholder="auto" />)}
+      {row('Highest quality preset',
+        <select className="rtc-preset-select" value={o.highest_quality_preset ?? ''}
+          onChange={e => set('highest_quality_preset', e.target.value || undefined)}>
+          <option value="">auto (initial)</option>
+          {X264_PRESETS.map(p => <option key={p} value={p}>{p}</option>)}
+        </select>)}
+      {row('Preset group step',
+        <input type="checkbox" checked={o.preset_group_step ?? true}
+          onChange={e => set('preset_group_step', e.target.checked)} />)}
+      {row('Encoder input buffer (frames)',
+        <input type="number" className="rtc-setting-input" min={0} step={1}
+          value={o.encoder_input_buffer_frames ?? ''}
+          onChange={e => set('encoder_input_buffer_frames', e.target.value ? Number(e.target.value) : undefined)}
+          placeholder="default" />)}
+      {row('Prebuffer target (s)',
+        <input type="number" className="rtc-setting-input" min={0} step={0.5}
+          value={o.prebuffer_duration_seconds ?? ''}
+          onChange={e => set('prebuffer_duration_seconds', e.target.value ? Number(e.target.value) : undefined)}
+          placeholder="4.0" />)}
+      {row('Prebuffer max (s)',
+        <input type="number" className="rtc-setting-input" min={0} step={0.5}
+          value={o.prebuffer_max_seconds ?? ''}
+          onChange={e => set('prebuffer_max_seconds', e.target.value ? Number(e.target.value) : undefined)}
+          placeholder="2× target" />)}
+      {row('Read rate',
+        <input type="number" className="rtc-setting-input" min={0} step={0.1}
+          value={o.read_rate ?? ''}
+          onChange={e => set('read_rate', e.target.value ? Number(e.target.value) : undefined)}
+          placeholder="0 = unpaced" />)}
+      {row('Debug log path',
+        <input type="text" className="rtc-setting-input rtc-setting-input--wide"
+          value={o.realtime_log_path ?? ''}
+          onChange={e => set('realtime_log_path', e.target.value || undefined)}
+          placeholder="(disabled)" />)}
+    </div>
+  )
+}
+
 /**
  * RTControllerInspector renders the Inspector panel content for the synthetic
- * __rtc__ Real-Time Controller node.  It shows two tabs:
- *   - Observed: live per-encoder performance metrics
- *   - Applied:  preset state, decisions, and manual override controls
- *
- * The snapshot prop is provided by app.tsx from the useRTSnapshot hook, so
- * it already updates live — no additional SSE subscription is needed here.
+ * __rtc__ Real-Time Controller node.  It shows three tabs:
+ *   - Settings: editable global_options for the realtime controller (pre-run)
+ *   - Observed: live per-encoder performance metrics (while running)
+ *   - Applied:  preset state, decisions, and manual override controls (while running)
  */
-export function RTControllerInspector({ snapshot }: Props) {
-  const [tab, setTab] = useState<'observed' | 'applied'>('observed')
+export function RTControllerInspector({ snapshot, globalOptions, onGlobalOptionsChange }: Props) {
+  const [tab, setTab] = useState<'observed' | 'applied' | 'settings'>(() => snapshot ? 'observed' : 'settings')
+
+  // Auto-switch to Observed when the job starts.
+  useEffect(() => {
+    if (snapshot && tab === 'settings') setTab('observed')
+  }, [snapshot, tab])
 
   return (
     <div className="inspector">
@@ -350,26 +418,16 @@ export function RTControllerInspector({ snapshot }: Props) {
         </div>
       )}
       <div className="inspector-tabs" style={{ marginTop: 8 }}>
-        <button
-          className={`inspector-tab${tab === 'observed' ? ' active' : ''}`}
-          onClick={() => setTab('observed')}
-        >
-          Observed
-        </button>
-        <button
-          className={`inspector-tab${tab === 'applied' ? ' active' : ''}`}
-          onClick={() => setTab('applied')}
-        >
-          Applied
-        </button>
+        {snapshot && <>
+          <button className={`inspector-tab${tab === 'observed' ? ' active' : ''}`} onClick={() => setTab('observed')}>Observed</button>
+          <button className={`inspector-tab${tab === 'applied' ? ' active' : ''}`} onClick={() => setTab('applied')}>Applied</button>
+        </>}
+        <button className={`inspector-tab${tab === 'settings' ? ' active' : ''}`} onClick={() => setTab('settings')}>Settings</button>
       </div>
 
-      {!snapshot && (
-        <p style={{ color: 'var(--text-dim)', fontStyle: 'italic', fontSize: 12 }}>
-          Waiting for real-time controller snapshot…
-        </p>
+      {tab === 'settings' && (
+        <SettingsTab opts={globalOptions} onChange={onGlobalOptionsChange} />
       )}
-
       {snapshot && tab === 'observed' && (
         <ObservedTab nodes={snapshot.Nodes} />
       )}

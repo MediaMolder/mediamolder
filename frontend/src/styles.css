@@ -1939,6 +1939,26 @@ button.danger:hover { background: rgba(185, 74, 74, 0.15); }
   opacity: 0.5;
 }
 
+/* Settings tab inputs */
+.rtc-setting-input {
+  background: var(--bg-input, #1e2430);
+  border: 1px solid var(--border, #3a4455);
+  border-radius: 3px;
+  color: var(--text, #cdd6f4);
+  font-size: 12px;
+  padding: 2px 6px;
+  width: 80px;
+  text-align: right;
+}
+.rtc-setting-input--wide {
+  width: 100%;
+  text-align: left;
+}
+.rtc-setting-input:focus {
+  outline: none;
+  border-color: #4f8cff;
+}
+
 .rtc-node.selected {
   border-color: #a5c8ff;
   box-shadow: 0 0 0 2px rgba(79, 140, 255, 0.25);
