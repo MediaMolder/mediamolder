@@ -390,7 +390,40 @@ func (r *graphRunner) handleSink(ctx context.Context, node *graph.Node, ins []<-
 		}
 	}
 
-	// Phase D — normal processing (preroll, if present, is now STREAMING).
+	// Phase D — normal processing. When sink.preroll is non-nil (realtime
+	// mode) the OutputBuffer continues as a rolling jitter buffer: N
+	// producer goroutines push packets via Enqueue and the single consumer
+	// below paces delivery to the stream's PTS wall-clock rate.
+	if sink.preroll != nil {
+		sink.preroll.SetProducerCount(len(ins))
+		for i, in := range ins {
+			i, in := i, in
+			go func() {
+				defer sink.preroll.EnqueueEOS()
+				for v := range in {
+					sink.preroll.Enqueue(i, v.(*av.Packet))
+				}
+			}()
+		}
+		for {
+			item, ok := sink.preroll.TakePaced(ctx)
+			if !ok {
+				break
+			}
+			if err := processOne(ctxs[item.chanIdx], item.pkt); err != nil {
+				return err
+			}
+		}
+		for i, c := range ctxs {
+			w.recordShortest(c.st.lastPTSus, c.st.lastPTSok)
+			if err := w.flushBSF(i, c.dstTB, c.st); err != nil {
+				return err
+			}
+		}
+		return sink.muxer.WriteTrailer()
+	}
+
+	// Non-realtime Phase D — no output buffer; write at encode rate.
 	if len(ins) == 1 {
 		c := ctxs[0]
 		t := perfTrackerFrom(ctx)
@@ -898,7 +931,7 @@ func (r *graphRunner) openSink(_ *graph.Graph, node *graph.Node) (*sinkResources
 // a span calculation that is off by a factor of ~(muxTB.den / encTB.den)
 // — typically hundreds of times too small — causing the preroll to
 // never reach its fill target.
-func (r *graphRunner) buildPreroll(out *Output, rescales []*sinkRescale) *OutputPreroll {
+func (r *graphRunner) buildPreroll(out *Output, rescales []*sinkRescale) *OutputBuffer {
 	if r.cfg == nil || !r.cfg.GlobalOptions.Realtime {
 		return nil
 	}
@@ -937,7 +970,7 @@ func (r *graphRunner) buildPreroll(out *Output, rescales []*sinkRescale) *Output
 		}
 	}
 	log.Printf("preroll %q: target=%.1fs max=%.1fs tbs=%v", out.ID, target, maxDur, tbs)
-	pre := NewOutputPreroll(out.ID,
+	pre := NewOutputBuffer(out.ID,
 		time.Duration(target*float64(time.Second)),
 		time.Duration(maxDur*float64(time.Second)),
 		tbs,

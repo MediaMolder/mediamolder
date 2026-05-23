@@ -173,7 +173,7 @@ type sinkResources struct {
 	// pipeline is in real-time mode and prebuffer_duration_seconds > 0.
 	// nil when prerolling is disabled; the sink handler then writes
 	// straight through to the muxer as before.
-	preroll *OutputPreroll
+	preroll *OutputBuffer
 }
 
 type sinkRescale struct {

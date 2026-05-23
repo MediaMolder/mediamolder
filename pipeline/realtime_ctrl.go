@@ -671,6 +671,7 @@ func (c *realtimeController) storeSnapshot(shot snap.MetricsSnapshot) {
 					OutputBufferFillFrac: fillFrac,
 					BufferedNs:           int64(s.preroll.BufferedDuration()),
 					TargetNs:             int64(target),
+					AheadNs:              s.preroll.AheadNs(),
 				})
 			}
 		}

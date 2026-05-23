@@ -31,8 +31,8 @@ func newTestPkt(t *testing.T, ptsUS int64, streamIdx int) *av.Packet {
 var timeBaseUS = [][2]int{{1, 1_000_000}}
 
 func TestOutputPreroll_FillToReadyClosesChannel(t *testing.T) {
-	p := NewOutputPreroll("vout", 100*time.Millisecond, 0, timeBaseUS)
-	if got := p.State(); got != PrerollFilling {
+	p := NewOutputBuffer("vout", 100*time.Millisecond, 0, timeBaseUS)
+	if got := p.State(); got != BufferStateFilling {
 		t.Fatalf("initial state = %s, want FILLING", got)
 	}
 
@@ -60,14 +60,14 @@ func TestOutputPreroll_FillToReadyClosesChannel(t *testing.T) {
 }
 
 func TestOutputPreroll_EOSBeforeTargetMarksReadyPartial(t *testing.T) {
-	p := NewOutputPreroll("vout", 500*time.Millisecond, 0, timeBaseUS)
+	p := NewOutputBuffer("vout", 500*time.Millisecond, 0, timeBaseUS)
 	pass, full := p.AddOrPass(0, newTestPkt(t, 0, 0))
 	if pass || full {
 		t.Fatalf("AddOrPass: pass=%v full=%v, want false,false", pass, full)
 	}
 
 	p.MarkReadyPartial()
-	if got := p.State(); got != PrerollReadyPartial {
+	if got := p.State(); got != BufferStateReadyPartial {
 		t.Fatalf("state = %s, want READY_PARTIAL", got)
 	}
 	select {
@@ -79,7 +79,7 @@ func TestOutputPreroll_EOSBeforeTargetMarksReadyPartial(t *testing.T) {
 
 func TestOutputPreroll_EvictsOldestPastMaxDur(t *testing.T) {
 	// target 50 ms, max 100 ms.
-	p := NewOutputPreroll("vout", 50*time.Millisecond, 100*time.Millisecond, timeBaseUS)
+	p := NewOutputBuffer("vout", 50*time.Millisecond, 100*time.Millisecond, timeBaseUS)
 	for i := int64(0); i < 30; i++ {
 		_, _ = p.AddOrPass(0, newTestPkt(t, i*10_000, 0)) // 300 ms span unbounded
 	}
@@ -92,7 +92,7 @@ func TestOutputPreroll_EvictsOldestPastMaxDur(t *testing.T) {
 }
 
 func TestOutputPreroll_DrainTransitionsToStreaming(t *testing.T) {
-	p := NewOutputPreroll("vout", 30*time.Millisecond, 0, timeBaseUS)
+	p := NewOutputBuffer("vout", 30*time.Millisecond, 0, timeBaseUS)
 	for i := int64(0); i < 5; i++ {
 		_, _ = p.AddOrPass(0, newTestPkt(t, i*10_000, 0)) // 40 ms span
 	}
@@ -106,7 +106,7 @@ func TestOutputPreroll_DrainTransitionsToStreaming(t *testing.T) {
 	for _, bp := range drained {
 		_ = bp.pkt.Close()
 	}
-	if got := p.State(); got != PrerollStreaming {
+	if got := p.State(); got != BufferStateStreaming {
 		t.Fatalf("state after Drain = %s, want STREAMING", got)
 	}
 	pass, _ := p.AddOrPass(0, newTestPkt(t, 100_000, 0))
@@ -117,8 +117,8 @@ func TestOutputPreroll_DrainTransitionsToStreaming(t *testing.T) {
 
 func TestGraphReady_ANDCombinesOutputs(t *testing.T) {
 	g := newGraphReady()
-	a := NewOutputPreroll("a", 30*time.Millisecond, 0, timeBaseUS)
-	b := NewOutputPreroll("b", 30*time.Millisecond, 0, timeBaseUS)
+	a := NewOutputBuffer("a", 30*time.Millisecond, 0, timeBaseUS)
+	b := NewOutputBuffer("b", 30*time.Millisecond, 0, timeBaseUS)
 	g.Add(a)
 	g.Add(b)
 
