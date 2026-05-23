@@ -54,6 +54,9 @@ type NodePerfTracker struct {
 	stallCount int64
 	maxStallNs int64
 
+	// EWMA of input channel fill fraction at receive time (α = 0.1).
+	inputQueueFillEWMA float64
+
 	// EWMA of output queue fill fraction (α = 0.1).
 	queueFillEWMA float64
 
@@ -244,6 +247,18 @@ func (t *NodePerfTracker) RecordFrameLatency(d time.Duration) {
 	t.mu.Unlock()
 }
 
+// RecordInputQueueFill updates the EWMA of the input channel fill fraction.
+// qf should be len(ch)/cap(ch) sampled just before the receive attempt.
+func (t *NodePerfTracker) RecordInputQueueFill(qf float64) {
+	if t == nil {
+		return
+	}
+	const alpha = 0.1
+	t.mu.Lock()
+	t.inputQueueFillEWMA = alpha*qf + (1-alpha)*t.inputQueueFillEWMA
+	t.mu.Unlock()
+}
+
 // qf should be len(ch)/cap(ch) sampled just before the send attempt.
 func (t *NodePerfTracker) RecordQueueFill(qf float64) {
 	if t == nil {
@@ -314,26 +329,27 @@ func (t *NodePerfTracker) Snapshot() NodePerfSnapshot {
 	}
 
 	return NodePerfSnapshot{
-		NodeID:            t.nodeID,
-		FPS:               fps,
-		FPSTarget:         t.fpsTarget,
-		FPSDeficit:        deficit,
-		ActiveFrac:        activeFrac,
-		IdleFrac:          idleFrac,
-		StalledFrac:       stalledFrac,
-		TotalActive:       time.Duration(activeNs),
-		TotalIdle:         time.Duration(idleNs),
-		TotalStalled:      time.Duration(stalledNs),
-		StallCount:        t.stallCount,
-		MaxStallDuration:  time.Duration(t.maxStallNs),
-		QueueFillFrac:     t.queueFillEWMA,
-		Elapsed:           now.Sub(t.startTime),
-		ThreadsConfigured: t.threadsConfigured,
-		ThreadMode:        t.threadMode,
-		ThreadsBusy:       threadsBusy,
-		EstimatedCPUCores: float64(t.threadsConfigured) * activeFrac,
-		FrameLatencyMean:  time.Duration(t.frameLatEWMA),
-		ThreadRestarts:    t.restartCount.Load(),
+		NodeID:             t.nodeID,
+		FPS:                fps,
+		FPSTarget:          t.fpsTarget,
+		FPSDeficit:         deficit,
+		ActiveFrac:         activeFrac,
+		IdleFrac:           idleFrac,
+		StalledFrac:        stalledFrac,
+		TotalActive:        time.Duration(activeNs),
+		TotalIdle:          time.Duration(idleNs),
+		TotalStalled:       time.Duration(stalledNs),
+		StallCount:         t.stallCount,
+		MaxStallDuration:   time.Duration(t.maxStallNs),
+		InputQueueFillFrac: t.inputQueueFillEWMA,
+		QueueFillFrac:      t.queueFillEWMA,
+		Elapsed:            now.Sub(t.startTime),
+		ThreadsConfigured:  t.threadsConfigured,
+		ThreadMode:         t.threadMode,
+		ThreadsBusy:        threadsBusy,
+		EstimatedCPUCores:  float64(t.threadsConfigured) * activeFrac,
+		FrameLatencyMean:   time.Duration(t.frameLatEWMA),
+		ThreadRestarts:     t.restartCount.Load(),
 
 		// Phase 6: adaptive preset stepping (zero values when not an encoder
 		// or when the codec doesn't have a ladder).

@@ -328,6 +328,42 @@ Table columns: **NODE**, **FPS**, **TARGET**, **DEFICIT**, **ACTIVE%**,
 colour-coded: green when meeting the target, amber when deficit ≤ 1 fps,
 red when deficit > 1 fps.  Press Ctrl-C to exit.
 
+## `mediamolder watch` CLI (real-time controller)
+
+When a pipeline is running with `global_options.realtime` enabled, the
+controller's full per-tick state is available via two HTTP endpoints:
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/realtime/snapshot` | One-shot `RTControllerSnapshot` JSON; `404` when realtime is off |
+| `GET` | `/realtime/snapshot/stream` | SSE stream — one event per ~500 ms controller tick |
+
+The `mediamolder watch` subcommand connects to the SSE stream and renders a
+live ANSI table in-place:
+
+```
+mediamolder watch [--url http://host:port]
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--url` | `http://127.0.0.1:9090` | Base URL of the running pipeline's metrics server |
+
+The display has three sections:
+
+- **Header line** — tick count, elapsed time, `fps/target`, status badge
+  (grey *disabled* / blue *observing* / amber *cooldown(N)* / green
+  *satisfied* / red *dropping*).
+- **PERFORMANCE / APPLIED table** — one row per controlled video encoder
+  with columns: `fps`, `deficit`, `active%`, `stalled%`, `in buf`
+  (four-block encoder frame-input queue bar), `out buf` (encoder
+  packet-output queue bar), `preset`, `cd` (cooldown remaining).
+- **SINKS** — one row per muxer/sink node with an `out buf` fill bar.
+- **RECENT DECISIONS** — last 5 entries from the controller decision log.
+
+No external dependencies; output is plain ANSI escape codes for broad
+terminal compatibility.  Press Ctrl-C to exit.
+
 ## Sample Grafana Dashboard
 
 ```json

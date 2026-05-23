@@ -1,23 +1,23 @@
-# Real-time output buffering (§6b Phase 7)
+# Real-time output buffering
 
 When MediaMolder is run with `--realtime`, each output sink is fronted by
 a **pre-roll buffer** that holds encoded packets *before* the muxer is
 allowed to write its first byte. This page documents the state machine,
 configuration knobs, observability surfaces, and tuning guidance for the
-Phase 7 implementation that lives in
+implementation that lives in
 [pipeline/output_buffer.go](../pipeline/output_buffer.go).
 
 ## Why pre-roll the muxer?
 
 Downstream jitter — TCP receive-window stalls, HLS segment-publish
-hiccups, SRT recovery bursts, or a Phase 6 encoder preset close+reopen —
+hiccups, SRT recovery bursts, or an encoder preset close+reopen —
 can take several seconds to clear. Without a buffer those seconds turn
 into a muxer underrun: the writer blocks, upstream filters stall, and
 the live timeline drifts behind walltime.
 
 By holding ~4 s of packets in front of the muxer, MediaMolder can
 *continue* to write at native pace through a transient outage. Combined
-with Phase 6's encoder-input buffer (default 96 frames ≈ 4 s @ 24 fps),
+with the encoder-input buffer (default 96 frames ≈ 4 s @ 24 fps),
 the graph absorbs roughly **8 s** of total downstream jitter before
 upstream backpressure manifests.
 
@@ -84,7 +84,7 @@ mediamolder run --realtime \
 ```
 
 `--ready-fd=<n>` writes a single `0x01` byte to file descriptor `n` once
-the graph is ready (Phase-7-friendly equivalent of `systemd-notify --ready`).
+the graph is ready (equivalent of `systemd-notify --ready`).
 With `--realtime` the literal string `ready\n` is also printed to
 stdout on the same trigger.
 
@@ -124,9 +124,27 @@ stdout on the same trigger.
   producer is sustained-faster than the downstream consumer — diagnose
   the producer, don't just raise the cap.
 
+## Controller observability
+
+The adaptive controller's per-tick state is exposed separately from the
+pre-roll state described above. The `RTControllerSnapshot` (returned by
+`GET /realtime/snapshot` and streamed by `GET /realtime/snapshot/stream`)
+includes a `Sinks` array of `SinkNodeSnapshot` entries, one per muxer/sink
+node, each carrying `OutputBufferFillFrac` — the fill level of the
+pre-roll buffer at the time the snapshot was taken.
+
+This lets `mediamolder watch` show both sides of the pipeline's real-time
+health in a single view: the encoder's input-buffer pressure (`in buf`) and
+the downstream muxer's write-queue pressure (`out buf`), with the controller's
+current status and recent decisions alongside.
+
+See [docs/architecture/observability.md](architecture/observability.md) for
+the full `mediamolder watch` CLI reference and the `/realtime/snapshot*`
+endpoint descriptions.
+
 ## See also
 
 - [docs/architecture/node_perf_monitoring_design.md](architecture/node_perf_monitoring_design.md)
-  — §6b Phase 7 design anchors
+  — adaptive control loop design; complete `RTControllerSnapshot` type definition
 - [pipeline/output_buffer.go](../pipeline/output_buffer.go) — implementation
 - [pipeline/output_buffer_test.go](../pipeline/output_buffer_test.go) — regression tests

@@ -42,9 +42,8 @@ type readRatePacer struct {
 	burstUS int64   // burst window in us, precomputed from burst
 
 	mu        sync.Mutex
-	wallStart time.Time               // shared across all streams
+	wallStart time.Time // shared across all streams
 	streams   map[int]*pacerStreamState
-
 }
 
 func newReadRatePacer(rate, burst, catchup float64) *readRatePacer {

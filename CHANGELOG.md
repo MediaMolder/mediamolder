@@ -6,6 +6,30 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 ## [Unreleased]
 
 ### Added
+- **Phase 8 — real-time controller observability (backend).**
+  A new `RTControllerSnapshot` struct (plus `ControllerNodeSnapshot` and
+  `SinkNodeSnapshot`) captures the full per-tick state of the adaptive
+  controller: status, FPS target/actual, per-encoder observation inputs
+  (FPS deficit, active/stalled/idle fractions, input- and output-buffer fill),
+  applied outputs (current preset, cooldown remaining, overshoot windows), and
+  recent decisions. `NodePerfSnapshot` gains `InputQueueFillFrac` (EWMA of
+  encoder frame-input queue fill, sampled by `perfReceive`). The snapshot is
+  built inside `storeSnapshot()` at the end of every `observe()` tick and
+  stored atomically via `atomic.Pointer[T]` so HTTP handlers read it without
+  holding any lock. Two new HTTP endpoints are registered by
+  `RegisterRealtimeHandlers`: `GET /realtime/snapshot` (one-shot JSON; `404`
+  when realtime is off) and `GET /realtime/snapshot/stream` (SSE stream at
+  ~500 ms cadence). A new top-level CLI subcommand `mediamolder watch
+  [--url URL]` connects to the SSE stream and renders a live ANSI table with
+  PERFORMANCE / APPLIED column groups, four-block fill bars for encoder input
+  and output buffers, a SINKS section, and a rolling last-5-decisions feed.
+  Six new unit tests cover snapshot correctness, status derivation,
+  `CooldownRemaining` clamping, `observeCount` monotonicity, goroutine-shutdown,
+  and the block-bar rendering helper. GUI inspector and canvas node are deferred
+  to Phase 8b. See
+  [docs/architecture/node_perf_monitoring_design.md](docs/architecture/node_perf_monitoring_design.md)
+  (Phase 8 section).
+
 - **Phase 7 — real-time output buffering & readiness signal.**
   Each output sink now fronts the muxer with a PTS-based pre-roll buffer
   (default 4 s for video outputs, 1 s when audio-only; configurable per

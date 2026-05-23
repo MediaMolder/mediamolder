@@ -1529,6 +1529,11 @@ type OutputReadyState struct {
 
 ## 6c. Phase 8 — Real-Time Controller Observability
 
+> **Status: backend implemented** (`pipeline/snap/snap.go`,
+> `pipeline/realtime_ctrl.go`, `pipeline/realtime_api.go`,
+> `observability/realtime_http.go`, `cmd/mediamolder/perf.go`).
+> GUI canvas and Inspector deferred to Phase 8b.
+
 ### Motivation
 
 Phases 5–7 build a sophisticated adaptive control loop. Once a job starts,
@@ -1549,7 +1554,7 @@ snapshot endpoint that backs both surfaces.
 
 ### Data model
 
-Two new types are added to `pipeline/snap/snap.go`:
+Three types are added to `pipeline/snap/snap.go`; `NodePerfSnapshot` gains a new field:
 
 ```go
 // ControllerNodeSnapshot combines observation inputs and controller outputs
@@ -1605,18 +1610,16 @@ type RTControllerSnapshot struct {
     // ── Configuration (read-only at runtime) ─────────────────────────────
     HighestQualityPreset string // preset ceiling; "" = unconstrained
     GroupStep            bool   // all video encoders step together
-    CooldownWindows      int    // rtPresetCooldownWins constant in effect
+    CooldownWindows      int    // max(node.CooldownRemaining) across all controlled nodes
     TickIntervalMs       int64  // controller polling interval (default 500)
 
     // ── Per-node data for every controlled video encoder ─────────────────
     Nodes []ControllerNodeSnapshot
 
     // ── Output-buffer state of all sink (muxer) nodes ─────────────────────
-    // Sinks are not directly controlled but their buffer fullness is the
-    // primary backpressure indicator. Shown as a separate section in --watch.
     Sinks []SinkNodeSnapshot
 
-    // ── Recent decisions (last 10) for the live feed ──────────────────────
+    // ── Recent decisions for the live feed ──────────────────────────────
     RecentDecisions []DecisionRecord
 }
 ```
@@ -1631,7 +1634,15 @@ type RTControllerSnapshot struct {
 | `Satisfied` | `"satisfied"` |
 | otherwise | `"observing"` |
 
-A new method `realtimeController.ControllerSnapshot(shot snap.MetricsSnapshot) RTControllerSnapshot` constructs this value each tick from the live `MetricsSnapshot` and the controller's internal counters (`windowsSincePreset`, `overshootWindows`).
+A new zero-argument method `realtimeController.ControllerSnapshot() snap.RTControllerSnapshot`
+returns the most recently stored snapshot. Each call to `observe()` ends by calling
+`storeSnapshot()`, which builds the full `RTControllerSnapshot` from the
+`MetricsSnapshot` returned by `registry.Snapshot()` and the controller's internal
+counters (`windowsSincePreset`, `overshootWindows`), then stores it atomically via
+`atomic.Pointer[snap.RTControllerSnapshot]`. This allows any goroutine (including HTTP
+handlers) to read a consistent snapshot without holding any lock.
+`observeCount` — incremented unconditionally at the start of every `observe()` call —
+becomes the `Tick` field in the snapshot.
 
 ### HTTP endpoints
 
@@ -1664,9 +1675,11 @@ The two streams are independent and may be consumed simultaneously.
 
 ### CLI watch mode
 
-`mediamolder perf --watch` renders a live-updating terminal table that
+`mediamolder watch [--url URL]` renders a live-updating terminal table that
 mirrors the `RTControllerSnapshot`, refreshing on each SSE event from
-`/realtime/snapshot/stream`. The display is structured in two sections:
+`/realtime/snapshot/stream`. This is a top-level subcommand, not a flag of
+`mediamolder perf`. The default URL is `http://127.0.0.1:9090`. The display
+is structured in two sections:
 
 ```
 ┌─ RT Controller ─────────────────────────────────────────── elapsed=21.0s ─┐
@@ -1845,32 +1858,42 @@ disappear; the canvas reflows to fill the freed space.
 
 ### Phase 8 deliverables
 
-1. `pipeline/snap/snap.go` — `ControllerNodeSnapshot` and
-   `RTControllerSnapshot` types.
-2. `pipeline/realtime_ctrl.go` — `ControllerSnapshot()` method that constructs
-   an `RTControllerSnapshot` from the live `MetricsSnapshot` and internal
-   counters.
-3. `pipeline/realtime_api.go` — `RealtimeControllerSnapshot()` pipeline method;
-   `/realtime/snapshot` and `/realtime/snapshot/stream` HTTP handlers on
-   `MetricsServer`.
-4. `cmd/mediamolder/cmd_perf.go` — `--watch` flag; SSE consumer; ANSI
-   rendering loop with colour output.
-5. Frontend `frontend/src/lib/` — `RTControllerNode` canvas component (shape,
+**Backend (implemented):**
+
+1. ✅ `pipeline/snap/snap.go` — `ControllerNodeSnapshot`, `SinkNodeSnapshot`,
+   and `RTControllerSnapshot` types; `InputQueueFillFrac` added to
+   `NodePerfSnapshot`.
+2. ✅ `pipeline/node_perf.go` — `inputQueueFillEWMA` field and
+   `RecordInputQueueFill()` method; `InputQueueFillFrac` populated in `Snapshot()`.
+3. ✅ `pipeline/perf_helpers.go` — `perfReceive` samples `len(ch)/cap(ch)` via
+   `RecordInputQueueFill` before each receive to track encoder input-queue fill.
+4. ✅ `pipeline/realtime_ctrl.go` — `observeCount int64` +
+   `lastSnapshot atomic.Pointer[snap.RTControllerSnapshot]`;
+   `storeSnapshot()` builds and stores the snapshot each tick;
+   `ControllerSnapshot()` reads it lock-free.
+5. ✅ `pipeline/realtime_api.go` — `Pipeline.RealtimeControllerSnapshot()`
+   delegating to `ctrl.ControllerSnapshot()`; `RealtimeController` interface
+   extended with `RealtimeControllerSnapshot() snap.RTControllerSnapshot`.
+6. ✅ `observability/realtime_http.go` — `GET /realtime/snapshot` (one-shot JSON;
+   `404` when disabled) and `GET /realtime/snapshot/stream` (SSE at ~500 ms).
+7. ✅ `cmd/mediamolder/perf.go` + `cmd/mediamolder/main.go` — `mediamolder watch
+   [--url URL]` subcommand: SSE consumer with ANSI in-place rendering,
+   PERFORMANCE / APPLIED sections, `in buf` / `out buf` four-block bars,
+   SINKS section, last-5-decisions feed.
+8. ✅ Tests (`pipeline/realtime_ctrl_snapshot_test.go`): initial value,
+   status derivation, `CooldownRemaining` math, `observeCount` monotonicity,
+   goroutine-shutdown, block-bar algorithm.
+
+**GUI (deferred — Phase 8b):**
+
+9. ⏳ Frontend `frontend/src/lib/` — `RTControllerNode` canvas component (shape,
    header strip, status badge, FPS readout, per-node dots, control edges,
    hover tooltips).
-6. Frontend `frontend/src/lib/` — `RTControllerInspector` panel with two tabs,
-   live subscription to `/realtime/snapshot/stream`, colour-coded rows,
-   ladder-position bar, decision log feed, manual override controls.
-7. Frontend canvas layout — reserve space for the RT Controller Node when
-   `global_options.realtime.enabled` is true; collapse when disabled.
-8. Tests:
-   - `ControllerSnapshot()` returns correct `Status` for each controller state.
-   - `CooldownRemaining` is `max(0, rtPresetCooldownWins − windowsSincePreset)`.
-   - SSE stream fires exactly once per tick; connection close does not panic.
-   - `--watch` renders a table with the correct column values for a given
-     snapshot; ANSI colour codes appear for over-threshold deficit.
-   - GUI: `RTControllerNode` renders with correct style when realtime is
-     enabled and is absent from the canvas when disabled.
+10. ⏳ Frontend `frontend/src/lib/` — `RTControllerInspector` panel with two
+    tabs, live subscription to `/realtime/snapshot/stream`, colour-coded rows,
+    ladder-position bar, decision log feed, manual override controls.
+11. ⏳ Frontend canvas layout — reserve space for the RT Controller Node when
+    `global_options.realtime` is true; collapse when disabled.
 
 ### Open questions specific to Phase 8
 
@@ -1882,15 +1905,16 @@ disappear; the canvas reflows to fill the freed space.
    chains, there is logically one RT Controller overseeing both. The canvas
    node spans both encoder groups with a gap between them matching the media
    graph layout.
-3. **SSE back-pressure.** A slow client consuming `/realtime/snapshot/stream`
-   should not stall the controller. The SSE handler should drop events (not
-   block) when its write buffer is full, emitting an `error: buffer_full` SSE
-   event so the client knows it missed ticks.
-4. **`--watch` on a remote pipeline.** `mediamolder perf --watch` should
-   accept `--host` / `--port` flags to watch a running pipeline on a different
-   machine, consuming the same `/realtime/snapshot/stream` SSE endpoint.
+3. **SSE back-pressure.** Resolved in the Phase 8 implementation: the SSE handler
+   uses a 500 ms `time.Ticker` and writes JSON synchronously. A slow client
+   causes the write to block; the ticker fires at the next opportunity so at
+   most one tick is lost per slow write. Non-blocking fan-out can be added later
+   without changing the endpoint contract.
+4. **`mediamolder watch` on a remote pipeline.** The `--url` flag already accepts
+   any base URL, so `mediamolder watch --url http://192.0.2.1:9090` works today.
+   A `--host` / `--port` shorthand is a convenience addition.
 
----
+
 
 ## 7. Worked Example: Identifying a Bottleneck
 
