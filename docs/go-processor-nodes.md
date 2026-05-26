@@ -26,6 +26,7 @@ Everything runs in-process: no subprocesses, no network calls, no Python. Your p
 		- [`scene_change_histogram`](#scene_change_histogram)
 		- [`metadata_file_writer`](#metadata_file_writer)
 		- [`sei_hello`](#sei_hello)
+		- [`vidi_analyzer`](#vidi_analyzer)
 	- [Helper functions](#helper-functions)
 		- [Letterbox](#letterbox)
 		- [ImageToFloat32Tensor](#imagetofloat32tensor)
@@ -55,6 +56,7 @@ Everything runs in-process: no subprocesses, no network calls, no Python. Your p
 		- [JSON config](#json-config-1)
 		- [Parameters](#parameters)
 		- [What it does](#what-it-does)
+	- [Vidi 2.5 multimodal analysis](#vidi-25-multimodal-analysis)
 	- [Schema version](#schema-version)
 
 ---
@@ -485,6 +487,36 @@ Non-video frames are passed through untouched.
 > **Note:** `seiHelloUUID` is an ASCII placeholder, not an RFC 4122 UUID.
 > Production processors should use a proper UUID to avoid bitstream collisions
 > with other SEI producers.
+
+### `vidi_analyzer`
+
+Sends batches of decoded video frames to a running [Vidi 2.5](https://github.com/bytedance/vidi) Python inference service and publishes the structured results (captions, bounding boxes, timestamps, edit plans, QA answers) as `Metadata` on the event bus. No build tags required — all dependencies are standard library plus the `av` package.
+
+Requires a separate Python service. See the full [Vidi 2.5 Guide](vidi-guide.md) for service setup, task descriptions, and performance tips.
+
+| Param           | Type   | Default                | Description |
+|-----------------|--------|------------------------|-------------|
+| `service_url`   | string | **(required)**         | Base URL of the Vidi inference service |
+| `query`         | string | `"describe the scene"` | Natural-language prompt sent with every batch |
+| `task`          | string | `"captioning"`         | `captioning` \| `grounding` \| `qa` \| `editing` |
+| `buffer_frames` | int    | `8`                    | Frames to accumulate before each `/infer` call |
+| `process_every` | int    | `1`                    | Only process every Nth video frame |
+| `jpeg_quality`  | int    | `75`                   | JPEG quality for frame encoding (1–100) |
+| `timeout_s`     | float  | `30`                   | Per-request HTTP timeout in seconds |
+
+```json
+{
+  "id": "vidi",
+  "type": "go_processor",
+  "processor": "vidi_analyzer",
+  "params": {
+    "service_url":   "http://localhost:8000",
+    "query":         "identify and timestamp every scene change",
+    "task":          "grounding",
+    "buffer_frames": 8
+  }
+}
+```
 
 ---
 
@@ -951,6 +983,14 @@ processors.Register("yolo_v8_detector", func() processors.Processor {
 ```
 
 Inside `YOLODetector.Process()`, you'd use `FrameToFloat32Tensor` to prepare the frame, run your ONNX model, then return the detections as `*Metadata`.
+
+---
+
+## Vidi 2.5 multimodal analysis
+
+The `vidi_analyzer` processor integrates [Vidi 2.5](https://github.com/bytedance/vidi) — a 9B-parameter multimodal LMM — as a first-class pipeline node. It batches decoded video frames, encodes them as JPEG, and POSTs them to a FastAPI inference service. Results are published as structured `Metadata`.
+
+See the dedicated [Vidi 2.5 Guide](vidi-guide.md) for full setup instructions, Python service template, task reference, and performance tips.
 
 ---
 
