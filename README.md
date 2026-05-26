@@ -150,6 +150,8 @@ identically to built-in nodes. For more details, see [go-processor-nodes.md](doc
 You can add a custom Yolo-v8 object-detection node to a graph and it will 
 run directly inside your media graph. See [Yolo-V8 Guide](docs/yolov8-guide.md)
 
+For multimodal scene understanding — captions, temporal grounding, edit plans, QA — the built-in `vidi_analyzer` node connects any pipeline to a [Vidi 2.5](https://github.com/bytedance/vidi) inference service. See [Vidi 2.5 Guide](docs/vidi-guide.md)
+
 ### Hardware acceleration — any platform, properly
 
  MediaMolder makes hardware acceleration *safe and understandable*. See [hardware-acceleration.md](docs/hardware-acceleration.md)
@@ -232,6 +234,7 @@ For detailed instructions see [MacOS](docs/build/macos.md), [Windows](docs/build
 - [Go Processor Nodes](docs/go-processor-nodes.md)
 - [Scene Detection (go-scene-detect)](docs/scene-detection.md)
 - [Yolov8 object detection/classification](docs/yolov8-guide.md)
+- [Vidi 2.5 multimodal analysis](docs/vidi-guide.md)
 - [Real-Time Controller](docs/realtime-controller.md) — adaptive control loop, encoder preset stepping, output buffers, `mediamolder watch`, HTTP API
 
 ### Code
