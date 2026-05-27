@@ -52,8 +52,8 @@ type WaitOpts struct {
 
 // AnalyzeRequest drives a Pegasus analyze call.
 type AnalyzeRequest struct {
-	VideoID     string // for an already-indexed video
-	VideoURL    string // for a one-shot URL
+	VideoID     string  // for an already-indexed video
+	VideoURL    string  // for a one-shot URL
 	Prompt      string
 	Stream      bool
 	Temperature float32
