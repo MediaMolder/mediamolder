@@ -973,6 +973,13 @@ func (p *Pipeline) runGraph(ctx context.Context) (runErr error) {
 		return fmt.Errorf("compile graph: %w", err)
 	}
 	for _, w := range plan.Warnings {
+		// For go_processor-only pipelines, events edges are stripped from the
+		// AV graph before compilation, so dead_node and disconnected_source
+		// warnings are expected and should not be surfaced as errors.
+		if configHasOnlyGoProcessors(cfg) &&
+			(w.Code == graph.WarnDeadNode || w.Code == graph.WarnDisconnectedSource) {
+			continue
+		}
 		p.events.Post(ErrorEvent{
 			Err:  fmt.Errorf("graph compilation warning [%s]: %s", w.Code, w.Message),
 			Time: time.Now(),
