@@ -709,13 +709,22 @@ function layoutByColumn(nodes: FlowNode[], edges: FlowEdge[]): void {
   const COL_W = 220;
   const ROW_H = 90;
 
+  // Events edges (output → go_processor) represent completion callbacks, not
+  // AV stream flow. Exclude them from the topological column assignment so
+  // events-only processors are not incorrectly ranked after the output. They
+  // are placed in a dedicated pass below.
+  const isEventsEdge = (e: FlowEdge) =>
+    (e.data as { streamType?: string } | null)?.streamType === 'events';
+  const avEdges = edges.filter((e) => !isEventsEdge(e));
+  const evEdges = edges.filter(isEventsEdge);
+
   const adj = new Map<string, string[]>();
   const indeg = new Map<string, number>();
   nodes.forEach((n) => {
     adj.set(n.id, []);
     indeg.set(n.id, 0);
   });
-  edges.forEach((e) => {
+  avEdges.forEach((e) => {
     adj.get(e.source)?.push(e.target);
     indeg.set(e.target, (indeg.get(e.target) ?? 0) + 1);
   });
@@ -743,6 +752,16 @@ function layoutByColumn(nodes: FlowNode[], edges: FlowEdge[]): void {
   nodes.forEach((n) => {
     if (n.data.kind === 'input') col.set(n.id, 0);
     if (n.data.kind === 'output') col.set(n.id, maxCol + 1);
+  });
+  maxCol = Math.max(maxCol, ...Array.from(col.values()));
+
+  // Place events-consumer nodes one column to the right of their trigger
+  // output so they appear downstream in the left-to-right layout.
+  evEdges.forEach((e) => {
+    const srcCol = col.get(e.source) ?? 0;
+    if ((col.get(e.target) ?? 0) <= srcCol) {
+      col.set(e.target, srcCol + 1);
+    }
   });
   maxCol = Math.max(maxCol, ...Array.from(col.values()));
 
