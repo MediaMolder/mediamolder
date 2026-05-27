@@ -1171,8 +1171,10 @@ func (p *Pipeline) runGraph(ctx context.Context) (runErr error) {
 		}
 		if consumer, ok := proc.(processors.SegmentEventConsumer); ok {
 			runner.segmentConsumers[srcID] = append(runner.segmentConsumers[srcID], consumer)
+			runner.eventDrivenGoProcessors[tgtID] = struct{}{}
 		}
 		if async, ok := proc.(processors.AsyncMetadataProcessor); ok {
+			runner.eventDrivenGoProcessors[tgtID] = struct{}{}
 			nodeID := tgtID
 			pipeCtx := ctx // capture before inner variable shadowing
 			async.SetMetadataEmitter(func(md *processors.Metadata) {

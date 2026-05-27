@@ -25,6 +25,15 @@ func (r *graphRunner) handleGoProcessor(ctx context.Context, node *graph.Node, i
 		}
 		return fmt.Errorf("go_processor handler: no processor for node %q", node.ID)
 	}
+	// Event-driven go_processors (e.g. twelvelabs_indexer wired via an
+	// "events" edge from an input or sink) have no AV frame channel.
+	// Their work is dispatched via OnSegmentCompleted / metadata emitter
+	// rather than the scheduler, so the handler is a no-op.
+	if len(ins) == 0 {
+		if _, ok := r.eventDrivenGoProcessors[node.ID]; ok {
+			return nil
+		}
+	}
 	if len(ins) != 1 {
 		return fmt.Errorf("go_processor node %q: expected 1 input, got %d", node.ID, len(ins))
 	}
