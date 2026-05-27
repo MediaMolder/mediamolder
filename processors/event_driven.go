@@ -8,9 +8,10 @@ import "context"
 // SegmentEvent is the payload delivered to a SegmentEventConsumer when an
 // upstream segment_sink output finishes writing one segment file.
 type SegmentEvent struct {
-	OutputID     string // id of the segment_sink output that produced the file
-	FilePath     string // absolute or relative path to the completed file
-	SegmentIndex int    // zero-based index assigned by the sink
+	OutputID     string         // id of the segment_sink output that produced the file
+	FilePath     string         // absolute or relative path to the completed file
+	SegmentIndex int            // zero-based index assigned by the sink
+	Custom       map[string]any // Custom metadata from the upstream processor (e.g. video_id)
 }
 
 // SegmentEventConsumer is an optional Processor extension implemented by
