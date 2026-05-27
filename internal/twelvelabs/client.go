@@ -22,8 +22,8 @@ import (
 )
 
 const (
-	defaultBaseURL          = "https://api.twelvelabs.io/v1.3"
-	maxResponseBodyBytes    = 10 << 20 // 10 MiB — guards against runaway responses
+	defaultBaseURL       = "https://api.twelvelabs.io/v1.3"
+	maxResponseBodyBytes = 10 << 20 // 10 MiB — guards against runaway responses
 )
 
 // formField is a single multipart text field. Using a slice of formField

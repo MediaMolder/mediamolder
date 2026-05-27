@@ -61,14 +61,14 @@ func (r *graphRunner) handleGoProcessor(ctx context.Context, node *graph.Node, i
 			for _, s := range r.eventsSinks[node.ID] {
 				s.Write(pctx, md)
 			}
-                        // Signal segment_sink outputs watching any of the Custom keys.
-                        for key, val := range md.Custom {
-                                if val == true {
-                                        for _, flag := range r.segmentCuts[key] {
-                                                flag.Store(true)
-                                        }
-                                }
-                        }
+			// Signal segment_sink outputs watching any of the Custom keys.
+			for key, val := range md.Custom {
+				if val == true {
+					for _, flag := range r.segmentCuts[key] {
+						flag.Store(true)
+					}
+				}
+			}
 			f.Close()
 			f = out
 		}

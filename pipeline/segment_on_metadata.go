@@ -12,13 +12,13 @@ import (
 var printfIntVerb = regexp.MustCompile(`%[0-9]*d`)
 
 // validateSegmentOnMetadata checks that SegmentOnMetadata usage is coherent:
-// - URL must contain a printf integer verb (e.g. %05d) for segment numbering.
-// - Incompatible with kind=="tee" (tee muxer manages its own file lifecycle).
-// - Incompatible with realtime pre-roll (the preroll buffer does not support
-//   mid-stream muxer replacement).
-// - Incompatible with CoverArt (cover art is only written to the first segment
-//   and the remaining segments would be missing the cover; use a separate
-//   cover-art pass instead).
+//   - URL must contain a printf integer verb (e.g. %05d) for segment numbering.
+//   - Incompatible with kind=="tee" (tee muxer manages its own file lifecycle).
+//   - Incompatible with realtime pre-roll (the preroll buffer does not support
+//     mid-stream muxer replacement).
+//   - Incompatible with CoverArt (cover art is only written to the first segment
+//     and the remaining segments would be missing the cover; use a separate
+//     cover-art pass instead).
 func validateSegmentOnMetadata(out Output) error {
 	if out.SegmentOnMetadata == "" {
 		return nil
