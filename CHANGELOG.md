@@ -75,6 +75,20 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   happy path against an `httptest` mock, required-flag validation, the
   three-level auth precedence, and `splitCSV`.
 
+- **TwelveLabs integration phase 8 — `/api/twelvelabs/*` HTTP routes.**
+  The GUI HTTP server now exposes:
+  - `GET    /api/twelvelabs/ping` (calls `ListIndexes` to verify auth).
+  - `GET    /api/twelvelabs/indexes`.
+  - `POST   /api/twelvelabs/indexes` (create; defaults to `marengo3.0`).
+  - `DELETE /api/twelvelabs/indexes/{id}`.
+  - `POST   /api/twelvelabs/search` (proxy for GUI free-text search).
+
+  API-key resolution moved to a shared `internal/twelvelabs/auth.go`
+  (`ResolveAPIKey` + `DefaultConfigPath`) so the CLI and HTTP routes use
+  the same precedence chain. Handlers live in `internal/gui/twelvelabs.go`
+  and are covered by `httptest`-backed unit tests including happy paths,
+  missing-field validation, and the auth-error path.
+
 - **Phase 8 — real-time controller observability (backend).**
   A new `RTControllerSnapshot` struct (plus `ControllerNodeSnapshot` and
   `SinkNodeSnapshot`) captures the full per-tick state of the adaptive

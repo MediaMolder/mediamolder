@@ -10,16 +10,15 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/MediaMolder/MediaMolder/internal/twelvelabs"
 )
 
-// twelvelabsConfigFile is the path to the on-disk fallback secrets store.
-// Format: {"api_key": "..."}.
-var twelvelabsConfigFile = filepath.Join(os.Getenv("HOME"), ".config", "mediamolder", "twelvelabs.json")
+// twelvelabsConfigFile mirrors twelvelabs.DefaultConfigPath so existing
+// CLI tests that overrode the file path continue to work.
+var twelvelabsConfigFile = twelvelabs.DefaultConfigPath
 
 func cmdTwelveLabs(args []string) error {
 	if len(args) == 0 {
@@ -90,28 +89,13 @@ func (g *tlGlobalFlags) register(fs *flag.FlagSet) {
 	fs.StringVar(&g.format, "format", "json", "output format: json or text")
 }
 
-// resolveAPIKey applies the precedence: --api-key → env → config file.
+// resolveAPIKey delegates to the shared resolver while honoring any
+// test-time override of twelvelabsConfigFile.
 func resolveAPIKey(flagVal string) (string, error) {
-	if flagVal != "" {
-		return flagVal, nil
-	}
-	if env := os.Getenv("TWELVELABS_API_KEY"); env != "" {
-		return env, nil
-	}
-	data, err := os.ReadFile(twelvelabsConfigFile)
-	if err != nil {
-		return "", fmt.Errorf("no API key (--api-key not set, TWELVELABS_API_KEY env empty, %s missing)", twelvelabsConfigFile)
-	}
-	var cfg struct {
-		APIKey string `json:"api_key"`
-	}
-	if err := json.Unmarshal(data, &cfg); err != nil {
-		return "", fmt.Errorf("parse %s: %w", twelvelabsConfigFile, err)
-	}
-	if cfg.APIKey == "" {
-		return "", fmt.Errorf("api_key empty in %s", twelvelabsConfigFile)
-	}
-	return cfg.APIKey, nil
+	orig := twelvelabs.DefaultConfigPath
+	twelvelabs.DefaultConfigPath = twelvelabsConfigFile
+	defer func() { twelvelabs.DefaultConfigPath = orig }()
+	return twelvelabs.ResolveAPIKey(flagVal)
 }
 
 // buildClient constructs a Client from the global flags.
