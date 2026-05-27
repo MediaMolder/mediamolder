@@ -1185,7 +1185,9 @@ func (p *Pipeline) runGraph(ctx context.Context) (runErr error) {
 				// Progress events are SSE-only: skip file sinks and downstream
 				// consumer chaining so intermediate status updates (uploading,
 				// task_created, waiting) do not trigger downstream processors.
-				if md.Progress {
+				// Failed events are similarly SSE-only: downstream processors
+				// must not be triggered when an upstream step has errored.
+				if md.Progress || md.Failed {
 					return
 				}
 				pCtx := processors.ProcessorContext{StreamID: nodeID}
@@ -1195,8 +1197,10 @@ func (p *Pipeline) runGraph(ctx context.Context) (runErr error) {
 				// Chain downstream SegmentEventConsumers (processor→processor
 				// "events" edges). FilePath is propagated from the metadata so
 				// the downstream consumer receives the original source path.
+				// Custom is forwarded so downstream processors can use results
+				// from upstream (e.g. video_id from TwelveLabsIndexer).
 				if downstream := runner.segmentConsumers[nodeID]; len(downstream) > 0 {
-					ev := processors.SegmentEvent{OutputID: nodeID, FilePath: md.FilePath}
+					ev := processors.SegmentEvent{OutputID: nodeID, FilePath: md.FilePath, Custom: md.Custom}
 					for _, c := range downstream {
 						c.OnSegmentCompleted(pipeCtx, ev)
 					}

@@ -122,10 +122,21 @@ func (p *TwelveLabsAnalyzer) analyzeOne(parent context.Context, ev SegmentEvent)
 		defer cancel()
 	}
 
-	taskID, videoID, err := tlUploadAndWait(ctx, p.client, p.indexID, ev.FilePath, p.pollOpts)
-	if err != nil {
-		p.postError(ev, err)
-		return
+	var taskID, videoID string
+
+	// If the upstream indexer forwarded its result via SegmentEvent.Custom,
+	// use those IDs directly instead of re-uploading the file.
+	if tl, ok := ev.Custom["twelvelabs"].(map[string]any); ok {
+		videoID, _ = tl["video_id"].(string)
+		taskID, _ = tl["task_id"].(string)
+	}
+	if videoID == "" {
+		var err error
+		taskID, videoID, err = tlUploadAndWait(ctx, p.client, p.indexID, ev.FilePath, p.pollOpts)
+		if err != nil {
+			p.postError(ev, err)
+			return
+		}
 	}
 
 	result, err := p.client.Analyze(ctx, twelvelabs.AnalyzeRequest{

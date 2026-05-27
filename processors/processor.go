@@ -58,6 +58,11 @@ type Metadata struct {
 	// not chain it to downstream SegmentEventConsumer nodes or write it
 	// to EventSink file writers.
 	Progress bool `json:"progress,omitempty"`
+	// Failed, when true, marks this as a terminal error event.  The engine
+	// forwards it to SSE subscribers but does NOT chain it to downstream
+	// SegmentEventConsumer nodes, preventing downstream processors from
+	// acting on a failed upstream result.
+	Failed bool `json:"failed,omitempty"`
 }
 
 // Detection represents a single detected object in a video frame.
