@@ -15,6 +15,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/MediaMolder/MediaMolder/internal/twelvelabs"
 )
 
 // embedderMockServer simulates POST /embed/tasks (multipart) and
@@ -116,6 +118,10 @@ func newTestEmbedder(t *testing.T, m *embedderMockServer, extra map[string]any) 
 
 func TestTwelveLabsEmbedder_Init_MissingKey(t *testing.T) {
 	t.Setenv("TWELVELABS_API_KEY", "")
+	// Redirect config-file lookup away from any real ~/.config file.
+	orig := twelvelabs.DefaultConfigPath
+	twelvelabs.DefaultConfigPath = filepath.Join(t.TempDir(), "no_such.json")
+	t.Cleanup(func() { twelvelabs.DefaultConfigPath = orig })
 	p := &TwelveLabsEmbedder{}
 	if err := p.Init(map[string]any{}); err == nil {
 		t.Fatal("expected error for missing api key")

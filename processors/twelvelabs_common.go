@@ -31,6 +31,11 @@ func tlClientFromParams(params map[string]any) (*twelvelabs.Client, error) {
 		key = os.Getenv(envName)
 	}
 	if key == "" {
+		// Fall back to the shared config-file resolver
+		// (~/.config/mediamolder/twelvelabs.json).
+		key, _ = twelvelabs.ResolveAPIKey("")
+	}
+	if key == "" {
 		return nil, fmt.Errorf("twelvelabs: api key not set (env %q empty and no api_key param)", envName)
 	}
 	c := twelvelabs.New(key)

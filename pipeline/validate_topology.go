@@ -25,7 +25,7 @@ func validateTopology(cfg *Config, r *ValidationReport) *graph.Graph {
 		return nil
 	}
 
-	checkDanglingNodes(g, r)
+	checkDanglingNodes(cfg, g, r)
 	checkEdgeViolations(g, r)
 	checkMultiEdgeSamePort(g, r)
 	checkUnreachableNodes(g, r)
@@ -49,9 +49,28 @@ func classifyBuildError(err error) (code, msg string) {
 	}
 }
 
-func checkDanglingNodes(g *graph.Graph, r *ValidationReport) {
+// sourceIDsWithEventsEdges returns the set of node IDs that have at least one
+// outgoing events edge in cfg. Events edges are stripped from the AV graph but
+// are valid connections, so inputs that feed only a go_processor events chain
+// must not be flagged as dangling sources.
+func sourceIDsWithEventsEdges(cfg *Config) map[string]bool {
+	m := make(map[string]bool)
+	for _, e := range cfg.Graph.Edges {
+		if e.Type == "events" {
+			base := e.From
+			if i := strings.Index(base, ":"); i >= 0 {
+				base = base[:i]
+			}
+			m[base] = true
+		}
+	}
+	return m
+}
+
+func checkDanglingNodes(cfg *Config, g *graph.Graph, r *ValidationReport) {
+	evSources := sourceIDsWithEventsEdges(cfg)
 	for _, n := range g.Sources {
-		if len(n.Outbound) == 0 {
+		if len(n.Outbound) == 0 && !evSources[n.ID] {
 			r.add(ValidationIssue{
 				Severity:   SeverityError,
 				Code:       "TOPO_DANGLING_SOURCE",
