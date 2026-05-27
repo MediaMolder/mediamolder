@@ -41,7 +41,7 @@ func (c *Client) CreateIndexTask(ctx context.Context, indexID string, src TaskSo
 			filename = filepath.Base(src.File)
 		}
 
-		resp, err := c.uploadMultipart(ctx, "/tasks", fields, "file", filename, f)
+		resp, err := c.uploadMultipart(ctx, "/tasks", fields, "video_file", filename, f)
 		if err != nil {
 			return nil, err
 		}
