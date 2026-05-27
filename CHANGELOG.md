@@ -55,6 +55,26 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   own `httptest`-backed unit suite covering init validation, happy path,
   error path, and registry lookup.
 
+- **TwelveLabs integration phase 7 — `mediamolder twelvelabs` CLI
+  subcommand.** A new top-level subcommand wraps `internal/twelvelabs`
+  for ad-hoc operations against an existing file or video:
+  - `mediamolder twelvelabs index --index <id> <file>` (uploads + waits
+    for indexing).
+  - `mediamolder twelvelabs analyze --video-id <id> --prompt "…"`
+    (`--segments`, `--temperature`, `--video-url` for one-shot URLs).
+  - `mediamolder twelvelabs search --index <id> --query "…"`
+    (`--options`, `--threshold`, `--page-limit`).
+  - `mediamolder twelvelabs embed --video <file> [--out PATH]`
+    (`--model`, `--scopes`, `--window`, `--format-out=json|jsonl`).
+  - `mediamolder twelvelabs indexes list|create|delete …`.
+
+  Authentication precedence (matching the integration plan): `--api-key`
+  flag → `TWELVELABS_API_KEY` env → `~/.config/mediamolder/twelvelabs.json`
+  (`{"api_key": "…"}`). A `--base-url` override is provided for tests.
+  Output is JSON by default. New tests cover help/dispatch, every verb's
+  happy path against an `httptest` mock, required-flag validation, the
+  three-level auth precedence, and `splitCSV`.
+
 - **Phase 8 — real-time controller observability (backend).**
   A new `RTControllerSnapshot` struct (plus `ControllerNodeSnapshot` and
   `SinkNodeSnapshot`) captures the full per-tick state of the adaptive
