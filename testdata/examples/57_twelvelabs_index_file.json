@@ -1,0 +1,25 @@
+{
+  "schema_version": "1.1",
+  "description": "Upload a source file directly to TwelveLabs, have Pegasus summarise it, and write all metadata to JSONL files. No AV output is required.",
+  "ffmpeg_cmd": "not possible in ffmpeg",
+  "inputs": [{ "id": "in0", "url": "my-clip.mp4" }],
+  "graph": {
+    "nodes": [
+      { "id": "indexer",     "type": "go_processor", "processor": "twelvelabs_indexer",
+        "params": { "index_id": "${TL_INDEX}", "wait_for_ready": true } },
+      { "id": "index_log",   "type": "go_processor", "processor": "metadata_file_writer",
+        "params": { "output_file": "out/index_events.jsonl" } },
+      { "id": "summary",     "type": "go_processor", "processor": "twelvelabs_analyzer",
+        "params": { "index_id": "${TL_INDEX}", "prompt": "Summarise in one sentence." } },
+      { "id": "summary_log", "type": "go_processor", "processor": "metadata_file_writer",
+        "params": { "output_file": "out/summary.jsonl" } }
+    ],
+    "edges": [
+      { "from": "in0",     "to": "indexer",     "type": "events" },
+      { "from": "indexer", "to": "index_log",   "type": "events" },
+      { "from": "indexer", "to": "summary",     "type": "events" },
+      { "from": "summary", "to": "summary_log", "type": "events" }
+    ]
+  },
+  "outputs": []
+}
