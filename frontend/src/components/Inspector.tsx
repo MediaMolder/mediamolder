@@ -2198,6 +2198,8 @@ interface TLField {
   step?: number;
   required?: boolean;
   hint?: string;
+  /** When true, render a "…" button on text fields that opens a save-file browser. */
+  fileSave?: boolean;
   /** Only render when this predicate against the current params is true. */
   visibleWhen?: (params: Record<string, unknown>) => boolean;
 }
@@ -2223,6 +2225,7 @@ const TL_AUTH_FIELDS: TLField[] = [
     min: 1, step: 1, placeholder: '2', hint: 'Cap on in-flight TwelveLabs operations. Default 2.' },
   { key: 'log_file', label: 'API log file (JSONL)', type: 'text',
     placeholder: '/tmp/tl_api.jsonl',
+    fileSave: true,
     hint: 'Append each API request/response as a JSON line to this file. Leave blank to disable.' },
   { key: 'log_api_calls', label: 'Log API calls to stderr', type: 'checkbox',
     defaultValue: false,
@@ -2411,18 +2414,15 @@ function TwelveLabsParams({
         )
       ))}
 
-      <details style={{ marginTop: 10 }}>
-        <summary style={{ cursor: 'pointer', fontSize: 12, color: 'var(--text-dim)' }}>
-          Authentication &amp; polling
-        </summary>
-        <div style={{ marginTop: 6 }}>
-          {authFields.map((f) => (
-            <TLFieldRow key={f.key} field={f}
-              value={params[f.key]}
-              onChange={(v) => set(f.key, v)} />
-          ))}
-        </div>
-      </details>
+      <div style={{ marginTop: 12, borderTop: '1px solid var(--border)', paddingTop: 8 }}>
+        <div style={{ fontSize: 11, color: 'var(--text-dim)', textTransform: 'uppercase',
+          letterSpacing: '0.4px', marginBottom: 4 }}>Authentication &amp; polling</div>
+        {authFields.map((f) => (
+          <TLFieldRow key={f.key} field={f}
+            value={params[f.key]}
+            onChange={(v) => set(f.key, v)} />
+        ))}
+      </div>
 
       {Object.keys(overflow).length > 0 && (
         <>
@@ -2431,6 +2431,57 @@ function TwelveLabsParams({
         </>
       )}
     </>
+  );
+}
+
+/** Text field with a "…" button that opens the FileBrowser in save mode. */
+function TLFileSaveField({
+  field,
+  value,
+  onChange,
+}: {
+  field: TLField;
+  value: string;
+  onChange: (v: unknown) => void;
+}) {
+  const [browserOpen, setBrowserOpen] = useState(false);
+  const dir = value ? value.substring(0, Math.max(value.lastIndexOf('/'), value.lastIndexOf('\\'))) : '';
+  const file = value ? value.substring(Math.max(value.lastIndexOf('/'), value.lastIndexOf('\\')) + 1) : '';
+  const labelEl = (
+    <label style={{ marginTop: 8 }}>
+      {field.label}
+      {field.required ? <span style={{ color: 'var(--danger, #c33)' }}> *</span> : null}
+    </label>
+  );
+  return (
+    <Fragment>
+      {labelEl}
+      <div style={{ display: 'flex', gap: 4 }}>
+        <input type="text" value={value} placeholder={field.placeholder}
+          style={{ flex: 1, minWidth: 0 }}
+          onChange={(e) => onChange(e.target.value || undefined)} />
+        <button
+          type="button"
+          title="Browse for save location"
+          style={{ flexShrink: 0, padding: '0 8px' }}
+          onClick={() => setBrowserOpen(true)}
+        >…</button>
+      </div>
+      {field.hint && (
+        <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: -4, marginBottom: 4 }}>
+          {field.hint}
+        </div>
+      )}
+      <FileBrowser
+        open={browserOpen}
+        mode="save"
+        title={`Choose location for ${field.label}`}
+        initialPath={dir || undefined}
+        defaultFilename={file || undefined}
+        onClose={() => setBrowserOpen(false)}
+        onPick={(path) => { onChange(path); setBrowserOpen(false); }}
+      />
+    </Fragment>
   );
 }
 
@@ -2460,7 +2511,10 @@ function TLFieldRow({
       const checked = Boolean(value ?? field.defaultValue ?? false);
       return (
         <Fragment>
-          <label style={{ display: 'flex', alignItems: 'flex-start', gap: 6, marginTop: 8, cursor: 'pointer' }}>
+          <label style={{
+            display: 'flex', alignItems: 'flex-start', gap: 6, marginTop: 8, cursor: 'pointer',
+            textTransform: 'none', fontSize: 13, color: 'var(--text)', letterSpacing: 'normal',
+          }}>
             <input type="checkbox" checked={checked} style={{ marginTop: 2, flexShrink: 0 }}
               onChange={(e) => onChange(e.target.checked)} />
             <span>
@@ -2550,6 +2604,9 @@ function TLFieldRow({
     case 'text':
     default: {
       const v = value === undefined || value === null ? '' : String(value);
+      if (field.fileSave) {
+        return <TLFileSaveField field={field} value={v} onChange={onChange} />;
+      }
       return (
         <Fragment>
           {labelEl}
