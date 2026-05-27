@@ -1112,23 +1112,59 @@ func (p *Pipeline) runGraph(ctx context.Context) (runErr error) {
 		srcID := edgeNodeID(e.From)
 		tgtID := edgeNodeID(e.To)
 		tgt := nodesByID[tgtID]
-		if tgt == nil || tgt.Type != "go_processor" || tgt.Processor != "metadata_file_writer" {
+		if tgt == nil || tgt.Type != "go_processor" {
 			continue
 		}
-		if _, hasInner := tgt.Params["inner_processor"]; hasInner {
-			// Wrapper-mode node: events are written by the processor itself.
+
+		// metadata_file_writer in "events-wiring" mode: open a file sink
+		// and register it under the source node ID.
+		if tgt.Processor == "metadata_file_writer" {
+			if _, hasInner := tgt.Params["inner_processor"]; hasInner {
+				// Wrapper-mode node: events are written by the processor itself.
+				continue
+			}
+			outputFile, _ := tgt.Params["output_file"].(string)
+			if outputFile == "" {
+				return fmt.Errorf("metadata_file_writer %q: events edge requires output_file param", tgtID)
+			}
+			outputFormat, _ := tgt.Params["output_format"].(string)
+			sink, err := processors.NewEventSink(outputFile, outputFormat)
+			if err != nil {
+				return fmt.Errorf("metadata_file_writer %q: %w", tgtID, err)
+			}
+			runner.eventsSinks[srcID] = append(runner.eventsSinks[srcID], sink)
 			continue
 		}
-		outputFile, _ := tgt.Params["output_file"].(string)
-		if outputFile == "" {
-			return fmt.Errorf("metadata_file_writer %q: events edge requires output_file param", tgtID)
+
+		// Generic event-driven go_processor (e.g. twelvelabs_indexer).
+		// If it implements SegmentEventConsumer, register it under the
+		// source node ID so the sink dispatches SegmentCompleted events.
+		// If it implements AsyncMetadataProcessor, install a MetadataEmitter
+		// that forwards posts to the pipeline event bus and to any
+		// downstream events sinks rooted at the processor's own node ID.
+		proc := runner.goProcessors[tgtID]
+		if proc == nil {
+			continue
 		}
-		outputFormat, _ := tgt.Params["output_format"].(string)
-		sink, err := processors.NewEventSink(outputFile, outputFormat)
-		if err != nil {
-			return fmt.Errorf("metadata_file_writer %q: %w", tgtID, err)
+		if consumer, ok := proc.(processors.SegmentEventConsumer); ok {
+			runner.segmentConsumers[srcID] = append(runner.segmentConsumers[srcID], consumer)
 		}
-		runner.eventsSinks[srcID] = append(runner.eventsSinks[srcID], sink)
+		if async, ok := proc.(processors.AsyncMetadataProcessor); ok {
+			nodeID := tgtID
+			async.SetMetadataEmitter(func(md *processors.Metadata) {
+				if md == nil {
+					return
+				}
+				runner.pipe.events.Post(ProcessorMetadata{
+					NodeID:   nodeID,
+					Metadata: md,
+				})
+				ctx := processors.ProcessorContext{StreamID: nodeID}
+				for _, s := range runner.eventsSinks[nodeID] {
+					s.Write(ctx, md)
+				}
+			})
+		}
 	}
 
 	// Register reconfigurable filters for live parameter changes.

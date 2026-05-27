@@ -17,6 +17,7 @@ import (
 
 	"github.com/MediaMolder/MediaMolder/av"
 	"github.com/MediaMolder/MediaMolder/graph"
+	"github.com/MediaMolder/MediaMolder/processors"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -263,6 +264,25 @@ type chanCtx struct {
 	st    *chanState
 }
 
+// dispatchSegmentCompleted notifies any go_processors registered as
+// segment_sink event consumers for sinkNodeID. Each consumer's
+// OnSegmentCompleted is invoked in its own goroutine so the sink's
+// rotateSegment path is never blocked by a slow consumer.
+func (r *graphRunner) dispatchSegmentCompleted(ctx context.Context, sinkNodeID, outputID, filePath string, segmentIndex int) {
+	consumers := r.segmentConsumers[sinkNodeID]
+	if len(consumers) == 0 {
+		return
+	}
+	ev := processors.SegmentEvent{
+		OutputID:     outputID,
+		FilePath:     filePath,
+		SegmentIndex: segmentIndex,
+	}
+	for _, c := range consumers {
+		go c.OnSegmentCompleted(ctx, ev)
+	}
+}
+
 func (r *graphRunner) handleSink(ctx context.Context, node *graph.Node, ins []<-chan any) error {
 	sink := r.sinks[node.ID]
 	if sink == nil {
@@ -472,11 +492,13 @@ func (r *graphRunner) handleSink(ctx context.Context, node *graph.Node, ins []<-
 		}
 		// Emit SegmentCompleted for the last segment.
 		if w.pendingCut != nil {
+			filePath := fmt.Sprintf(sink.cfg.URL, w.segCounter)
 			r.pipe.events.Post(SegmentCompleted{
 				OutputID:     sink.cfg.ID,
-				FilePath:     fmt.Sprintf(sink.cfg.URL, w.segCounter),
+				FilePath:     filePath,
 				SegmentIndex: w.segCounter,
 			})
+			r.dispatchSegmentCompleted(ctx, w.node.ID, sink.cfg.ID, filePath, w.segCounter)
 		}
 		return nil
 	}
@@ -525,11 +547,13 @@ func (r *graphRunner) handleSink(ctx context.Context, node *graph.Node, ins []<-
 	}
 	// Emit SegmentCompleted for the last segment.
 	if w.pendingCut != nil {
+		filePath := fmt.Sprintf(sink.cfg.URL, w.segCounter)
 		r.pipe.events.Post(SegmentCompleted{
 			OutputID:     sink.cfg.ID,
-			FilePath:     fmt.Sprintf(sink.cfg.URL, w.segCounter),
+			FilePath:     filePath,
 			SegmentIndex: w.segCounter,
 		})
+		r.dispatchSegmentCompleted(ctx, w.node.ID, sink.cfg.ID, filePath, w.segCounter)
 	}
 	return nil
 }
@@ -556,6 +580,7 @@ func (r *graphRunner) rotateSegment(w *sinkWriter, out *Output, newURL string) e
 		FilePath:     prevURL,
 		SegmentIndex: w.segCounter,
 	})
+	r.dispatchSegmentCompleted(context.Background(), w.node.ID, out.ID, prevURL, w.segCounter)
 
 	// Close old BSF chains (no flush — discarding any buffered packets
 	// at the segment boundary is acceptable and avoids a deadlock when

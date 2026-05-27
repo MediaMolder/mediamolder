@@ -229,23 +229,29 @@ type graphRunner struct {
 	// the handler sets every matching flag. Each flag is owned by a sink
 	// goroutine (via handleSink) and read atomically.
 	segmentCuts map[string][]*atomic.Bool
+	// segmentConsumers maps a sink node ID (the SOURCE of an "events"
+	// edge) to the set of go_processors implementing
+	// processors.SegmentEventConsumer that should be notified when the
+	// sink finishes writing a segment file.
+	segmentConsumers map[string][]processors.SegmentEventConsumer
 }
 
 func newGraphRunner(cfg *Config, pipe *Pipeline) *graphRunner {
 	return &graphRunner{
-		cfg:          cfg,
-		pipe:         pipe,
-		sources:      make(map[string]*sourceResources),
-		filters:      make(map[string]*av.FilterGraph),
-		encoders:     make(map[string]*av.EncoderContext),
-		encoderOpts:  make(map[string]av.EncoderOptions),
-		sinks:        make(map[string]*sinkResources),
-		trackers:     make(map[string]*NodePerfTracker),
-		goProcessors: make(map[string]processors.Processor),
-		eventsSinks:  make(map[string][]*processors.EventSink),
-		passLogFiles:  make(map[string]*os.File),
-		hwDevices:     make(map[string]*av.HWDeviceContext),
-		segmentCuts:   make(map[string][]*atomic.Bool),
+		cfg:              cfg,
+		pipe:             pipe,
+		sources:          make(map[string]*sourceResources),
+		filters:          make(map[string]*av.FilterGraph),
+		encoders:         make(map[string]*av.EncoderContext),
+		encoderOpts:      make(map[string]av.EncoderOptions),
+		sinks:            make(map[string]*sinkResources),
+		trackers:         make(map[string]*NodePerfTracker),
+		goProcessors:     make(map[string]processors.Processor),
+		eventsSinks:      make(map[string][]*processors.EventSink),
+		passLogFiles:     make(map[string]*os.File),
+		hwDevices:        make(map[string]*av.HWDeviceContext),
+		segmentCuts:      make(map[string][]*atomic.Bool),
+		segmentConsumers: make(map[string][]processors.SegmentEventConsumer),
 	}
 }
 
