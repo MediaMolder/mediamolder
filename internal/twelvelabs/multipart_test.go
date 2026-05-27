@@ -12,6 +12,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 )
@@ -173,6 +174,41 @@ func TestUploadMultipart_APIError(t *testing.T) {
 	}
 	if apiErr.HTTPStatus != 400 {
 		t.Errorf("HTTPStatus: got %d, want 400", apiErr.HTTPStatus)
+	}
+}
+
+func TestCreateIndexTask_File(t *testing.T) {
+	var gotField string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseMultipartForm(1 << 20); err != nil {
+			http.Error(w, err.Error(), 400)
+			return
+		}
+		if _, _, err := r.FormFile("video_file"); err == nil {
+			gotField = "video_file"
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(Task{ID: "t2", Status: TaskStatusPending})
+	}))
+	defer srv.Close()
+
+	tmp, err := os.CreateTemp(t.TempDir(), "*.mp4")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmp.WriteString("fake")
+	tmp.Close()
+
+	c := newTestClient(srv)
+	task, err := c.CreateIndexTask(context.Background(), "idx1", TaskSource{File: tmp.Name()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if task.ID != "t2" {
+		t.Errorf("ID: got %q, want t2", task.ID)
+	}
+	if gotField != "video_file" {
+		t.Errorf("multipart field: got %q, want video_file", gotField)
 	}
 }
 
