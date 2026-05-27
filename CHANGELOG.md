@@ -6,6 +6,30 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 ## [Unreleased]
 
 ### Added
+- **TwelveLabs integration phase 5 — `twelvelabs_indexer` processor.**
+  A new event-driven `go_processor` (`processors.TwelveLabsIndexer`) that
+  uploads completed segment files to a TwelveLabs index and emits an
+  `indexed` (or `error`) record via `Metadata.Custom["twelvelabs"]`. The
+  processor is wired via an `events` edge from an upstream `segment_sink`
+  output (integration plan Flows B/C). Params: `api_key` /
+  `api_key_env`, `index_id`, `auto_create_index` + `index_name` + `models`,
+  `wait_for_ready`, `poll_interval_s` / `poll_max_interval_s`,
+  `max_concurrent`, and `base_url` (test override). Uploads are bounded by
+  a configurable semaphore and processed asynchronously without blocking
+  the segment writer.
+
+  Supporting pipeline changes: the engine's `events`-edge wiring loop in
+  `pipeline/engine.go` now also routes `SegmentCompleted` deliveries to
+  any `go_processor` that implements the new
+  `processors.SegmentEventConsumer` interface, and installs a
+  `MetadataEmitter` callback on processors that implement
+  `processors.AsyncMetadataProcessor` so they can post Metadata events
+  outside the per-frame `Process` call. `pipeline/handlers_sink.go`
+  dispatches each `SegmentCompleted` to registered consumers via a
+  non-blocking helper (`dispatchSegmentCompleted`), so a slow downstream
+  upload never stalls segment rotation. See
+  [docs/architecture/twelvelabs_integration.md](docs/architecture/twelvelabs_integration.md).
+
 - **Phase 8 — real-time controller observability (backend).**
   A new `RTControllerSnapshot` struct (plus `ControllerNodeSnapshot` and
   `SinkNodeSnapshot`) captures the full per-tick state of the adaptive
