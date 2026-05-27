@@ -84,6 +84,7 @@ func NewServer(opts Options) (*Server, error) {
 	mux.HandleFunc("POST /api/cancel/{jobId}", makeCancelHandler(jobs))
 	mux.HandleFunc("GET /api/events/{jobId}", makeEventsHandler(jobs))
 	registerRealtimeRoutes(mux, jobs)
+	registerTwelveLabsRoutes(mux)
 
 	if opts.ExamplesDir != "" {
 		mux.Handle("GET /examples/",

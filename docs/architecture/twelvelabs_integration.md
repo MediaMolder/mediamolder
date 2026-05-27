@@ -14,8 +14,10 @@ Implementation progress:
   `twelvelabs_embedder` processors (shared `processors/twelvelabs_common.go`).
 - ✅ Phase 7 — `mediamolder twelvelabs` CLI subcommand
   (`cmd/mediamolder/cmd_twelvelabs.go`).
-- ⏳ Phases 8–10 — `/api/twelvelabs/*` routes, GUI palette/Settings card,
-  end-to-end recipes + user guide, observability.
+- ✅ Phase 8 — `/api/twelvelabs/*` HTTP routes
+  (`internal/gui/twelvelabs.go`, shared `internal/twelvelabs/auth.go`).
+- ⏳ Phases 9–10 — GUI palette/Settings card, end-to-end recipes +
+  user guide, observability.
 
 ---
 
