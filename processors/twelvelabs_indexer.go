@@ -25,7 +25,6 @@ import (
 // real work happens in OnSegmentCompleted, dispatched by the engine when
 // the upstream sink finishes writing a segment.
 type TwelveLabsIndexer struct {
-	apiKey          string
 	indexID         string
 	autoCreateIndex bool
 	models          []string
@@ -68,22 +67,6 @@ type TwelveLabsIndexer struct {
 //   - base_url (string, optional): override TwelveLabs API base URL (for tests).
 func (p *TwelveLabsIndexer) Init(params map[string]any) error {
 	p.url, _ = params["url"].(string)
-	envName := "TWELVELABS_API_KEY"
-	if s, ok := params["api_key_env"].(string); ok && s != "" {
-		envName = s
-	}
-	if s, ok := params["api_key"].(string); ok && s != "" {
-		p.apiKey = s
-	} else {
-		p.apiKey = os.Getenv(envName)
-	}
-	if p.apiKey == "" {
-		// Fall back to ~/.config/mediamolder/twelvelabs.json.
-		p.apiKey, _ = twelvelabs.ResolveAPIKey("")
-	}
-	if p.apiKey == "" {
-		return fmt.Errorf("twelvelabs_indexer: api key not set (env %q empty and no api_key param)", envName)
-	}
 
 	p.indexID, _ = params["index_id"].(string)
 	if b, ok := params["auto_create_index"].(bool); ok {
@@ -134,10 +117,11 @@ func (p *TwelveLabsIndexer) Init(params map[string]any) error {
 	}
 	p.sem = make(chan struct{}, p.maxConcurrent)
 
-	p.client = twelvelabs.New(p.apiKey)
-	if base, ok := params["base_url"].(string); ok && base != "" {
-		p.client.BaseURL = base
+	c, err := tlClientFromParams(params)
+	if err != nil {
+		return fmt.Errorf("twelvelabs_indexer: %w", err)
 	}
+	p.client = c
 	return nil
 }
 
@@ -210,10 +194,33 @@ func (p *TwelveLabsIndexer) indexOne(ctx context.Context, ev SegmentEvent) {
 	if strings.HasPrefix(ev.FilePath, "http://") || strings.HasPrefix(ev.FilePath, "https://") {
 		src = twelvelabs.TaskSource{URL: ev.FilePath}
 	}
+
+	// Emit throttled upload-progress events (at most every 5 percentage points).
+	var lastUploadPct int64 = -1
+	src.ProgressFunc = func(sent, total int64) {
+		pct := int64(0)
+		if total > 0 {
+			pct = sent * 100 / total
+		}
+		if pct == lastUploadPct || (pct < 100 && pct-lastUploadPct < 5) {
+			return
+		}
+		lastUploadPct = pct
+		p.postProgress(ev, map[string]any{
+			"event":       "upload_progress",
+			"sent_bytes":  sent,
+			"total_bytes": total,
+			"pct":         pct,
+			"index_id":    p.indexID,
+		})
+	}
+
 	p.postProgress(ev, map[string]any{
-		"event":     "uploading",
-		"file_path": ev.FilePath,
-		"index_id":  p.indexID,
+		"event":       "uploading",
+		"file_path":   ev.FilePath,
+		"index_id":    p.indexID,
+		"sent_bytes":  int64(0),
+		"total_bytes": fileSize(ev.FilePath),
 	})
 	task, err := p.client.CreateIndexTask(ctx, p.indexID, src)
 	if err != nil {
@@ -236,6 +243,13 @@ func (p *TwelveLabsIndexer) indexOne(ctx context.Context, ev SegmentEvent) {
 		done, werr := p.client.WaitForTask(ctx, task.ID, twelvelabs.WaitOpts{
 			InitialInterval: p.pollInterval,
 			MaxInterval:     p.pollMaxInterval,
+			StatusFunc: func(t *twelvelabs.Task) {
+				p.postProgress(ev, map[string]any{
+					"event":   "task_status",
+					"task_id": t.ID,
+					"status":  t.Status,
+				})
+			},
 		})
 		if werr != nil {
 			p.postError(ev, fmt.Errorf("wait task %s: %w", task.ID, werr))
@@ -275,15 +289,34 @@ func (p *TwelveLabsIndexer) postProgress(ev SegmentEvent, payload map[string]any
 }
 
 func (p *TwelveLabsIndexer) postError(ev SegmentEvent, err error) {
-	p.postEvent(ev, map[string]any{
+	if p.emit == nil {
+		log.Printf("twelvelabs_indexer: error: %v", err)
+		return
+	}
+	payload := map[string]any{
 		"event":         "error",
 		"output_id":     ev.OutputID,
 		"file_path":     ev.FilePath,
 		"segment_index": ev.SegmentIndex,
 		"error":         err.Error(),
+	}
+	p.emit(&Metadata{
+		FilePath: ev.FilePath,
+		Failed:   true,
+		Custom:   map[string]any{"twelvelabs": payload},
 	})
 }
 
 func init() {
 	Register("twelvelabs_indexer", func() Processor { return &TwelveLabsIndexer{} })
+}
+
+// fileSize returns the size of the file at path, or 0 if it cannot be
+// determined (e.g. remote URLs or stat errors).
+func fileSize(path string) int64 {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return 0
+	}
+	return fi.Size()
 }

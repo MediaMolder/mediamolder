@@ -38,22 +38,24 @@ type Task struct {
 // TaskSource describes the source for a CreateIndexTask call.
 // Exactly one of File or URL should be set.
 type TaskSource struct {
-	File     string // local file path
-	FileName string // filename sent in the multipart form; defaults to base of File
-	URL      string // remote URL (mutually exclusive with File)
-	Language string // optional ISO-639-1 language hint
+	File         string                  // local file path
+	FileName     string                  // filename sent in the multipart form; defaults to base of File
+	URL          string                  // remote URL (mutually exclusive with File)
+	Language     string                  // optional ISO-639-1 language hint
+	ProgressFunc func(sent, total int64) // called periodically during file upload; may be nil
 }
 
 // WaitOpts controls WaitForTask and WaitForEmbedTask polling behaviour.
 type WaitOpts struct {
-	InitialInterval time.Duration // default 2s
-	MaxInterval     time.Duration // default 30s
+	InitialInterval time.Duration    // default 2s
+	MaxInterval     time.Duration    // default 30s
+	StatusFunc      func(task *Task) // called after each poll with the latest task state; may be nil
 }
 
 // AnalyzeRequest drives a Pegasus analyze call.
 type AnalyzeRequest struct {
-	VideoID     string  // for an already-indexed video
-	VideoURL    string  // for a one-shot URL
+	VideoID     string // for an already-indexed video
+	VideoURL    string // for a one-shot URL
 	Prompt      string
 	Stream      bool
 	Temperature float32
