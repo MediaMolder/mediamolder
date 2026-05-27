@@ -188,6 +188,26 @@ export function useJobRun(getConfig: () => JobConfig | null): RunState {
       const data = parseEvent<{ message?: string; time_ms: number }>(ev);
       if (data?.message) setLogs((l) => trimLog(l, { time_ms: data.time_ms, message: data.message! }));
     });
+    es.addEventListener('metadata', (ev: MessageEvent) => {
+      const data = parseEvent<{
+        node_id: string;
+        time_ms: number;
+        metadata?: { file_path?: string; custom?: { twelvelabs?: Record<string, unknown> } };
+      }>(ev);
+      if (!data) return;
+      const tl = data.metadata?.custom?.twelvelabs;
+      if (!tl) return;
+      const event = String(tl['event'] ?? '');
+      const filePath = String(tl['file_path'] ?? data.metadata?.file_path ?? '');
+      const taskId = tl['task_id'] ? ` task=${tl['task_id']}` : '';
+      const videoId = tl['video_id'] ? ` video=${tl['video_id']}` : '';
+      const status = tl['status'] ? ` status=${tl['status']}` : '';
+      const errMsg = tl['error'] ? ` error=${tl['error']}` : '';
+      const fileLabel = filePath ? ` ${filePath}` : '';
+      const msg = `[${data.node_id}] ${event}${fileLabel}${taskId}${videoId}${status}${errMsg}`;
+      const level: LogEntry['level'] = event === 'error' ? 'error' : 'info';
+      setLogs((l) => trimLog(l, { time_ms: data.time_ms, message: msg, level }));
+    });
     es.addEventListener('done', (ev: MessageEvent) => {
       const data = parseEvent<{ status: JobStatus; error: string }>(ev);
       if (data) {

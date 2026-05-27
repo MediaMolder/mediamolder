@@ -225,10 +225,21 @@ func TestTwelveLabsIndexer_OnSegment_HappyPath(t *testing.T) {
 		t.Fatalf("Close: %v", err)
 	}
 
-	if len(got) != 1 {
-		t.Fatalf("emitted %d metadata, want 1", len(got))
+	// Filter to final events only (progress events like "uploading", "task_created",
+	// "waiting" are emitted in addition to the terminal "indexed"/"error" event).
+	var finals []*Metadata
+	for _, md := range got {
+		if tl, ok := md.Custom["twelvelabs"].(map[string]any); ok {
+			ev, _ := tl["event"].(string)
+			if ev == "indexed" || ev == "error" {
+				finals = append(finals, md)
+			}
+		}
 	}
-	payload, ok := got[0].Custom["twelvelabs"].(map[string]any)
+	if len(finals) != 1 {
+		t.Fatalf("emitted %d final metadata, want 1", len(finals))
+	}
+	payload, ok := finals[0].Custom["twelvelabs"].(map[string]any)
 	if !ok {
 		t.Fatalf("missing twelvelabs payload: %#v", got[0].Custom)
 	}
@@ -285,7 +296,13 @@ func TestTwelveLabsIndexer_MaxConcurrent(t *testing.T) {
 
 	var counter int32
 	p.SetMetadataEmitter(func(md *Metadata) {
-		atomic.AddInt32(&counter, 1)
+		// Count only terminal events (indexed/error), not progress events.
+		if tl, ok := md.Custom["twelvelabs"].(map[string]any); ok {
+			ev, _ := tl["event"].(string)
+			if ev == "indexed" || ev == "error" {
+				atomic.AddInt32(&counter, 1)
+			}
+		}
 	})
 
 	file := writeTempFile(t, "x")

@@ -210,15 +210,29 @@ func (p *TwelveLabsIndexer) indexOne(ctx context.Context, ev SegmentEvent) {
 	if strings.HasPrefix(ev.FilePath, "http://") || strings.HasPrefix(ev.FilePath, "https://") {
 		src = twelvelabs.TaskSource{URL: ev.FilePath}
 	}
+	p.postProgress(ev, map[string]any{
+		"event":     "uploading",
+		"file_path": ev.FilePath,
+		"index_id":  p.indexID,
+	})
 	task, err := p.client.CreateIndexTask(ctx, p.indexID, src)
 	if err != nil {
 		p.postError(ev, fmt.Errorf("create task: %w", err))
 		return
 	}
+	p.postProgress(ev, map[string]any{
+		"event":    "task_created",
+		"task_id":  task.ID,
+		"index_id": p.indexID,
+	})
 
 	status := task.Status
 	videoID := task.VideoID
 	if p.waitForReady {
+		p.postProgress(ev, map[string]any{
+			"event":   "waiting",
+			"task_id": task.ID,
+		})
 		done, werr := p.client.WaitForTask(ctx, task.ID, twelvelabs.WaitOpts{
 			InitialInterval: p.pollInterval,
 			MaxInterval:     p.pollMaxInterval,
@@ -246,6 +260,15 @@ func (p *TwelveLabsIndexer) indexOne(ctx context.Context, ev SegmentEvent) {
 func (p *TwelveLabsIndexer) postEvent(ev SegmentEvent, payload map[string]any) {
 	if p.emit == nil {
 		log.Printf("twelvelabs_indexer: no emitter installed; payload=%v", payload)
+		return
+	}
+	p.emit(&Metadata{FilePath: ev.FilePath, Custom: map[string]any{"twelvelabs": payload}})
+}
+
+// postProgress emits an intermediate progress metadata event without
+// logging to stderr when no emitter is installed (progress is best-effort).
+func (p *TwelveLabsIndexer) postProgress(ev SegmentEvent, payload map[string]any) {
+	if p.emit == nil {
 		return
 	}
 	p.emit(&Metadata{FilePath: ev.FilePath, Custom: map[string]any{"twelvelabs": payload}})
