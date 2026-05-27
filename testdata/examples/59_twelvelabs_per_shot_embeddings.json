@@ -1,0 +1,32 @@
+{
+  "schema_version": "1.1",
+  "description": "Per shot embeddings with the marengo3.0 model, output as JSON files; write API metadata to JSONL.",
+  "ffmpeg_cmd": "not possible in ffmpeg",
+  "inputs": [{ "id": "in0", "url": "input.mp4" }],
+  "graph": {
+    "nodes": [
+      { "id": "scene",     "type": "go_processor", "processor": "scene_change_adaptive" },
+      { "id": "embed",     "type": "go_processor", "processor": "twelvelabs_embedder",
+        "params": {
+          "model":      "marengo3.0",
+          "scopes":     ["clip"],
+          "out_dir":    "out/embeddings",
+          "out_format": "json"
+        } },
+      { "id": "embed_log", "type": "go_processor", "processor": "metadata_file_writer",
+        "params": { "output_file": "out/embed_events.jsonl" } }
+    ],
+    "edges": [
+      { "from": "in0:v:0",       "to": "scene:default", "type": "video" },
+      { "from": "scene:default", "to": "shots:v",        "type": "video" },
+      { "from": "in0:a:0",       "to": "shots:a",        "type": "audio" },
+      { "from": "shots",         "to": "embed",          "type": "events" },
+      { "from": "embed",         "to": "embed_log",      "type": "events" }
+    ]
+  },
+  "outputs": [
+    { "id": "shots", "url": "out/shot-%05d.mp4",
+      "segment_format": "mp4", "segment_on_metadata": "scene_change",
+      "codec_video": "copy", "codec_audio": "copy" }
+  ]
+}
