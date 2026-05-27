@@ -165,6 +165,26 @@ var curatedNodes = map[string]NodeMeta{
 		Friendly: "Scene change (histogram)",
 		Aliases:  []string{"goscenedetect", "histogram", "luma"},
 	},
+
+	// ── TwelveLabs multimodal analysis ────────────────────────
+	// REST integration with the TwelveLabs Video Understanding API
+	// (Marengo + Pegasus). See docs/twelvelabs.md for the full guide.
+	"twelvelabs_indexer": {
+		Friendly: "TwelveLabs index",
+		Aliases:  []string{"twelvelabs", "ai", "marengo", "pegasus", "upload", "index"},
+	},
+	"twelvelabs_analyzer": {
+		Friendly: "TwelveLabs analyze (Pegasus)",
+		Aliases:  []string{"twelvelabs", "ai", "pegasus", "caption", "summary", "chapters"},
+	},
+	"twelvelabs_searcher": {
+		Friendly: "TwelveLabs search (Marengo)",
+		Aliases:  []string{"twelvelabs", "ai", "marengo", "search", "semantic"},
+	},
+	"twelvelabs_embedder": {
+		Friendly: "TwelveLabs embeddings (Marengo)",
+		Aliases:  []string{"twelvelabs", "ai", "marengo", "embedding", "vector", "clip"},
+	},
 }
 
 // NodeMeta is the per-node curation entry.
