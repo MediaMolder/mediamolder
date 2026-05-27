@@ -900,6 +900,23 @@ type Output struct {
 	// or 1080i/25 through libx264 / libxavs2 / mpeg2video. Pair
 	// with FieldOrder ∈ {"tt","bb","tb","bt"}.
 	InterlacedEncode bool `json:"interlaced_encode,omitempty"`
+
+	// SegmentOnMetadata enables metadata-driven output segmentation.
+	// When non-empty, the value is a key in processors.Metadata.Custom;
+	// whenever an upstream go_processor emits a ProcessorMetadata event
+	// with Custom[SegmentOnMetadata] set to a truthy value, the runtime
+	// closes the current output file at the next video keyframe and opens
+	// the next segment file. URL must contain a printf integer verb
+	// (e.g. "%05d") to generate per-segment filenames; the counter starts
+	// at 0. Use ForceKeyFrames: "source" on the upstream encoder so that
+	// keyframes align with scene-change boundaries.
+	// Incompatible with Kind=="tee", Realtime pre-roll, and CoverArt.
+	SegmentOnMetadata string `json:"segment_on_metadata,omitempty"`
+
+	// SegmentFormat overrides the muxer format name for each segment file
+	// when SegmentOnMetadata is set. When empty the format is derived from
+	// Format or the URL extension (same as a non-segmented output).
+	SegmentFormat string `json:"segment_format,omitempty"`
 }
 
 // ColorMetadata is the typed projection of FFmpeg's per-stream color
@@ -1671,6 +1688,9 @@ func validate(cfg *Config) error {
 			return err
 		}
 		if err := validateCoverArt(out); err != nil {
+			return err
+		}
+		if err := validateSegmentOnMetadata(out); err != nil {
 			return err
 		}
 	}

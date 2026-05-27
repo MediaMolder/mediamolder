@@ -93,6 +93,18 @@ type ProcessorMetadata struct {
 
 func (ProcessorMetadata) eventTag() {}
 
+// SegmentCompleted is emitted by a segment_sink output after a segment file
+// has been closed (trailer written). Downstream go_processors connected via
+// "events" edges (e.g. a twelvelabs_indexer) can watch for this event to
+// process each completed segment file.
+type SegmentCompleted struct {
+	OutputID     string `json:"output_id"`
+	FilePath     string `json:"file_path"`
+	SegmentIndex int    `json:"segment_index"`
+}
+
+func (SegmentCompleted) eventTag() {}
+
 // RealTimeViolation is emitted by the adaptive control loop (Phase 5) when a
 // node cannot meet its FPS target and the CPU thread budget is exhausted. The
 // Reason field describes the specific cause: budget exhausted, frame-drop

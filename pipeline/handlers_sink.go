@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/MediaMolder/MediaMolder/av"
@@ -63,6 +64,13 @@ type sinkWriter struct {
 	shiftUS int64       // subtracted from kept packets so output anchors at PTS 0
 	mu      *sync.Mutex // nil for single-stream path; shared across goroutines otherwise
 	pipe    *Pipeline
+	// pendingCut is non-nil when the output has SegmentOnMetadata set.
+	// The go_processor handler sets it to true when the matching Custom
+	// key is emitted; handleSink rotates the muxer at the next keyframe.
+	pendingCut *atomic.Bool
+	// segCounter is the zero-based index of the current segment.
+	// 0 on the first segment; incremented each time the muxer is rotated.
+	segCounter int
 }
 
 // limitForChan returns the max-frames cap for input channel i (0 = unlimited).
@@ -247,6 +255,14 @@ func (w *sinkWriter) flushBSF(i int, _ [2]int, st *chanState) error {
 	return nil
 }
 
+// chanCtx tracks per-channel muxing bookkeeping inside handleSink.
+type chanCtx struct {
+	idx   int
+	dstTB [2]int
+	rs    *sinkRescale
+	st    *chanState
+}
+
 func (r *graphRunner) handleSink(ctx context.Context, node *graph.Node, ins []<-chan any) error {
 	sink := r.sinks[node.ID]
 	if sink == nil {
@@ -269,13 +285,11 @@ func (r *graphRunner) handleSink(ctx context.Context, node *graph.Node, ins []<-
 		pipe:    r.pipe,
 	}
 
+	// The pending-cut flag was pre-registered in r.segmentCuts during openSink
+	// (before any goroutines started). Just wire it into the sinkWriter.
+	w.pendingCut = sink.pendingCut
+
 	// Pre-build per-channel rescale + chanState bookkeeping.
-	type chanCtx struct {
-		idx   int
-		dstTB [2]int
-		rs    *sinkRescale
-		st    *chanState
-	}
 	ctxs := make([]*chanCtx, len(ins))
 	for i := range ins {
 		var rs *sinkRescale
@@ -433,6 +447,18 @@ func (r *graphRunner) handleSink(ctx context.Context, node *graph.Node, ins []<-
 				break
 			}
 			pkt := v.(*av.Packet)
+			// Rotate segment at the next video keyframe when a cut is pending.
+			if w.pendingCut != nil && w.pendingCut.Swap(false) && pkt.IsKeyFrame() {
+				nextURL := fmt.Sprintf(sink.cfg.URL, w.segCounter+1)
+				if err := r.rotateSegment(w, &sink.cfg, nextURL); err != nil {
+					_ = pkt.Close()
+					return err
+				}
+				c.dstTB = sink.muxer.StreamTimeBase(0)
+				if c.rs != nil {
+					c.dstTB = c.rs.dstTB
+				}
+			}
 			if err := processOne(c, pkt); err != nil {
 				return err
 			}
@@ -441,7 +467,18 @@ func (r *graphRunner) handleSink(ctx context.Context, node *graph.Node, ins []<-
 		if err := w.flushBSF(0, c.dstTB, c.st); err != nil {
 			return err
 		}
-		return sink.muxer.WriteTrailer()
+		if err := sink.muxer.WriteTrailer(); err != nil {
+			return err
+		}
+		// Emit SegmentCompleted for the last segment.
+		if w.pendingCut != nil {
+			r.pipe.events.Post(SegmentCompleted{
+				OutputID:     sink.cfg.ID,
+				FilePath:     fmt.Sprintf(sink.cfg.URL, w.segCounter),
+				SegmentIndex: w.segCounter,
+			})
+		}
+		return nil
 	}
 
 	// Multiple input streams: interleave with per-stream goroutines.
@@ -450,10 +487,28 @@ func (r *graphRunner) handleSink(ctx context.Context, node *graph.Node, ins []<-
 	for _, c := range ctxs {
 		c := c
 		in := ins[c.idx]
+		isVideo := c.idx < len(w.node.Inbound) && w.node.Inbound[c.idx].Type == graph.PortVideo
 		eg.Go(func() error {
 			defer w.recordShortest(c.st.lastPTSus, c.st.lastPTSok)
 			for v := range in {
 				pkt := v.(*av.Packet)
+				// Only the video channel drives segment rotation.
+				if isVideo && w.pendingCut != nil && w.pendingCut.Swap(false) && pkt.IsKeyFrame() {
+					nextURL := fmt.Sprintf(sink.cfg.URL, w.segCounter+1)
+					// Hold w.mu for the full WriteTrailer + reopen to prevent
+					// audio goroutines from writing to a closed/new muxer.
+					w.mu.Lock()
+					rotErr := r.rotateSegment(w, &sink.cfg, nextURL)
+					w.mu.Unlock()
+					if rotErr != nil {
+						_ = pkt.Close()
+						return rotErr
+					}
+					c.dstTB = sink.muxer.StreamTimeBase(c.idx)
+					if c.rs != nil {
+						c.dstTB = c.rs.dstTB
+					}
+				}
 				if err := processOne(c, pkt); err != nil {
 					return err
 				}
@@ -465,7 +520,279 @@ func (r *graphRunner) handleSink(ctx context.Context, node *graph.Node, ins []<-
 	if err := eg.Wait(); err != nil {
 		return err
 	}
-	return sink.muxer.WriteTrailer()
+	if err := sink.muxer.WriteTrailer(); err != nil {
+		return err
+	}
+	// Emit SegmentCompleted for the last segment.
+	if w.pendingCut != nil {
+		r.pipe.events.Post(SegmentCompleted{
+			OutputID:     sink.cfg.ID,
+			FilePath:     fmt.Sprintf(sink.cfg.URL, w.segCounter),
+			SegmentIndex: w.segCounter,
+		})
+	}
+	return nil
+}
+
+// rotateSegment closes the current segment file and opens the next one.
+// Must be called with w.mu held (multi-stream) or from a single goroutine
+// (single-stream). BSF chains are closed without flushing; any BSF-buffered
+// packets at the rotation boundary are discarded (acceptable for metadata-
+// driven segmentation). On success it updates w.sink.muxer,
+// w.sink.streamRescale, w.sink.streamBSF, and w.segCounter.
+// The caller is responsible for refreshing its own c.dstTB after the call.
+func (r *graphRunner) rotateSegment(w *sinkWriter, out *Output, newURL string) error {
+	sink := w.sink
+
+	// Close the current segment (write container trailer + flush avio).
+	if err := sink.muxer.WriteTrailer(); err != nil {
+		return fmt.Errorf("segment rotate write trailer: %w", err)
+	}
+
+	// Notify downstream processors that the segment is complete.
+	prevURL := fmt.Sprintf(out.URL, w.segCounter)
+	r.pipe.events.Post(SegmentCompleted{
+		OutputID:     out.ID,
+		FilePath:     prevURL,
+		SegmentIndex: w.segCounter,
+	})
+
+	// Close old BSF chains (no flush — discarding any buffered packets
+	// at the segment boundary is acceptable and avoids a deadlock when
+	// w.mu is already held by the video goroutine).
+	for i := range sink.streamBSF {
+		if sink.streamBSF[i] != nil {
+			_ = sink.streamBSF[i].Close()
+			sink.streamBSF[i] = nil
+		}
+	}
+
+	// Open the new segment muxer.
+	format := out.Format
+	if out.SegmentFormat != "" {
+		format = out.SegmentFormat
+	}
+	newMuxer, err := av.OpenOutputWithFormat(newURL, format)
+	if err != nil {
+		return fmt.Errorf("segment rotate open %q: %w", newURL, err)
+	}
+
+	// Add one output stream per inbound edge (same logic as openSink, minus
+	// cover art and attachments which are only written to the first segment).
+	newRescales := make([]*sinkRescale, len(w.node.Inbound))
+	for i, e := range w.node.Inbound {
+		from := e.From
+		var outIdx int
+		switch from.Kind {
+		case graph.KindEncoder:
+			enc := r.encoders[from.ID]
+			if enc == nil {
+				newMuxer.Abort()
+				return fmt.Errorf("segment rotate sink %q: no encoder for %q", w.node.ID, from.ID)
+			}
+			idx, addErr := newMuxer.AddStream(enc)
+			if addErr != nil {
+				newMuxer.Abort()
+				return fmt.Errorf("segment rotate add stream: %w", addErr)
+			}
+			outIdx = idx
+			newRescales[i] = &sinkRescale{srcTB: enc.TimeBase(), dstTB: newMuxer.StreamTimeBase(outIdx)}
+		case graph.KindCopy:
+			srcInput, srcIdx, srcTB, cpErr := r.copySourceFor(from)
+			if cpErr != nil {
+				newMuxer.Abort()
+				return fmt.Errorf("segment rotate copy source: %w", cpErr)
+			}
+			idx, addErr := newMuxer.AddStreamFromInput(srcInput, srcIdx)
+			if addErr != nil {
+				newMuxer.Abort()
+				return fmt.Errorf("segment rotate add stream from input: %w", addErr)
+			}
+			outIdx = idx
+			newRescales[i] = &sinkRescale{srcTB: srcTB, dstTB: newMuxer.StreamTimeBase(outIdx)}
+		default:
+			newMuxer.Abort()
+			return fmt.Errorf("segment rotate sink %q: unknown edge kind %q", w.node.ID, from.Kind)
+		}
+		// Apply optional codec_tag override.
+		var tag string
+		switch e.Type {
+		case graph.PortVideo:
+			tag = out.CodecTagVideo
+		case graph.PortAudio:
+			tag = out.CodecTagAudio
+		case graph.PortSubtitle:
+			tag = out.CodecTagSubtitle
+		}
+		if tag != "" {
+			if tagErr := newMuxer.SetStreamCodecTag(outIdx, tag); tagErr != nil {
+				newMuxer.Abort()
+				return fmt.Errorf("segment rotate set codec_tag: %w", tagErr)
+			}
+		}
+	}
+
+	// Attach new BSF chains.
+	newBSF := make([]*av.BitstreamFilter, len(w.node.Inbound))
+	for i, e := range w.node.Inbound {
+		var spec string
+		switch e.Type {
+		case graph.PortVideo:
+			spec = out.BSFVideo
+		case graph.PortAudio:
+			spec = out.BSFAudio
+		case graph.PortSubtitle:
+			spec = out.BSFSubtitle
+		}
+		if spec == "" {
+			continue
+		}
+		bsf, bsfErr := newMuxer.AttachStreamBSF(i, spec)
+		if bsfErr != nil {
+			for _, b := range newBSF {
+				if b != nil {
+					_ = b.Close()
+				}
+			}
+			newMuxer.Abort()
+			return fmt.Errorf("segment rotate attach bsf: %w", bsfErr)
+		}
+		newBSF[i] = bsf
+	}
+
+	// Apply container metadata.
+	if metaErr := r.applyOutputMetadata(newMuxer, out); metaErr != nil {
+		for _, b := range newBSF {
+			if b != nil {
+				_ = b.Close()
+			}
+		}
+		newMuxer.Abort()
+		return fmt.Errorf("segment rotate metadata: %w", metaErr)
+	}
+
+	// Apply per-stream color metadata and HDR10 side data.
+	if out.Color != nil || out.HDR != nil {
+		for i, e := range w.node.Inbound {
+			if e.Type != graph.PortVideo {
+				continue
+			}
+			if out.Color != nil {
+				if colorErr := newMuxer.SetStreamColor(i, av.ColorParams{
+					Range:          out.Color.Range,
+					Primaries:      out.Color.Primaries,
+					Transfer:       out.Color.Transfer,
+					Space:          out.Color.Space,
+					ChromaLocation: out.Color.ChromaLocation,
+				}); colorErr != nil {
+					for _, b := range newBSF {
+						if b != nil {
+							_ = b.Close()
+						}
+					}
+					newMuxer.Abort()
+					return fmt.Errorf("segment rotate set color: %w", colorErr)
+				}
+			}
+			if out.HDR != nil {
+				if md := out.HDR.MasteringDisplay; md != nil {
+					hasPrim := md.DisplayPrimariesRX != 0 || md.WhitePointX != 0
+					hasLum := md.MaxLuminance != 0
+					if hasPrim || hasLum {
+						if hdrErr := newMuxer.SetStreamMasteringDisplay(i, av.MasteringDisplay{
+							HasPrimaries: hasPrim,
+							DisplayPrim: [6]int{
+								md.DisplayPrimariesRX, md.DisplayPrimariesRY,
+								md.DisplayPrimariesGX, md.DisplayPrimariesGY,
+								md.DisplayPrimariesBX, md.DisplayPrimariesBY,
+							},
+							WhitePoint:   [2]int{md.WhitePointX, md.WhitePointY},
+							HasLuminance: hasLum,
+							MinLuminance: md.MinLuminance,
+							MaxLuminance: md.MaxLuminance,
+						}); hdrErr != nil {
+							for _, b := range newBSF {
+								if b != nil {
+									_ = b.Close()
+								}
+							}
+							newMuxer.Abort()
+							return fmt.Errorf("segment rotate set mastering display: %w", hdrErr)
+						}
+					}
+				}
+				if cll := out.HDR.ContentLightLevel; cll != nil && (cll.MaxCLL != 0 || cll.MaxFALL != 0) {
+					if hdrErr := newMuxer.SetStreamContentLightLevel(i, av.ContentLightLevel{
+						MaxCLL:  cll.MaxCLL,
+						MaxFALL: cll.MaxFALL,
+					}); hdrErr != nil {
+						for _, b := range newBSF {
+							if b != nil {
+								_ = b.Close()
+							}
+						}
+						newMuxer.Abort()
+						return fmt.Errorf("segment rotate set content light level: %w", hdrErr)
+					}
+				}
+				if dv := out.HDR.DoVi; dv != nil && dv.Profile != 0 {
+					rpu := true
+					if dv.RPUPresent != nil {
+						rpu = *dv.RPUPresent
+					}
+					bl := true
+					if dv.BLPresent != nil {
+						bl = *dv.BLPresent
+					}
+					if hdrErr := newMuxer.SetStreamDoViConfig(i, av.DoViConfig{
+						Profile:           dv.Profile,
+						Level:             dv.Level,
+						RPUPresent:        rpu,
+						ELPresent:         dv.ELPresent,
+						BLPresent:         bl,
+						BLCompatibilityID: dv.BLCompatibilityID,
+					}); hdrErr != nil {
+						for _, b := range newBSF {
+							if b != nil {
+								_ = b.Close()
+							}
+						}
+						newMuxer.Abort()
+						return fmt.Errorf("segment rotate set dovi config: %w", hdrErr)
+					}
+				}
+			}
+		}
+	}
+
+	// Write the container header.
+	if hdrErr := newMuxer.WriteHeaderWithOptions(buildMuxerOptions(out)); hdrErr != nil {
+		for _, b := range newBSF {
+			if b != nil {
+				_ = b.Close()
+			}
+		}
+		newMuxer.Abort()
+		return fmt.Errorf("segment rotate write header: %w", hdrErr)
+	}
+
+	// Some muxers adjust stream time_base in WriteHeader; refresh.
+	for i, rs := range newRescales {
+		if rs == nil {
+			continue
+		}
+		if i < len(newBSF) && newBSF[i] != nil {
+			continue
+		}
+		rs.dstTB = newMuxer.StreamTimeBase(i)
+	}
+
+	// Commit the new muxer state.
+	sink.muxer = newMuxer
+	sink.streamRescale = newRescales
+	sink.streamBSF = newBSF
+	w.segCounter++
+	return nil
 }
 
 func (r *graphRunner) openSink(_ *graph.Graph, node *graph.Node) (*sinkResources, error) {
@@ -498,9 +825,13 @@ func (r *graphRunner) openSink(_ *graph.Graph, node *graph.Node) (*sinkResources
 		}
 		muxer = m
 	default:
-		m, oerr := av.OpenOutputWithFormat(out.URL, out.Format)
+		openURL := out.URL
+		if out.SegmentOnMetadata != "" {
+			openURL = fmt.Sprintf(out.URL, 0)
+		}
+		m, oerr := av.OpenOutputWithFormat(openURL, out.Format)
 		if oerr != nil {
-			return nil, fmt.Errorf("open output %q: %w", out.URL, oerr)
+			return nil, fmt.Errorf("open output %q: %w", openURL, oerr)
 		}
 		muxer = m
 	}
@@ -897,7 +1228,7 @@ func (r *graphRunner) openSink(_ *graph.Graph, node *graph.Node) (*sinkResources
 		rs.dstTB = muxer.StreamTimeBase(i)
 	}
 
-	return &sinkResources{
+	sr := &sinkResources{
 		muxer:         muxer,
 		cfg:           *out,
 		streamRescale: rescales,
@@ -908,7 +1239,15 @@ func (r *graphRunner) openSink(_ *graph.Graph, node *graph.Node) (*sinkResources
 		shortest:      out.Shortest,
 		shortestPTSus: noLimitUS,
 		preroll:       r.buildPreroll(out, rescales),
-	}, nil
+	}
+	// Pre-register the pending-cut flag for metadata-driven segmentation.
+	// This is done before goroutines start so r.segmentCuts needs no mutex.
+	if out.SegmentOnMetadata != "" {
+		flag := &atomic.Bool{}
+		sr.pendingCut = flag
+		r.segmentCuts[out.SegmentOnMetadata] = append(r.segmentCuts[out.SegmentOnMetadata], flag)
+	}
+	return sr, nil
 }
 
 // copySourceFor resolves a stream-copy node back to the input it reads

@@ -174,6 +174,12 @@ type sinkResources struct {
 	// nil when prerolling is disabled; the sink handler then writes
 	// straight through to the muxer as before.
 	preroll *OutputBuffer
+
+	// pendingCut is non-nil when the output has SegmentOnMetadata set.
+	// Registered in r.segmentCuts during openSink (before goroutines start).
+	// The go_processor handler sets it to true whenever the matching Custom
+	// key is truthy; handleSink rotates the segment at the next video keyframe.
+	pendingCut *atomic.Bool
 }
 
 type sinkRescale struct {
@@ -217,6 +223,12 @@ type graphRunner struct {
 	// by runGraph before any nodes are opened; closed in close().
 	// (Wave 10 #56)
 	hwDevices map[string]*av.HWDeviceContext
+	// segmentCuts maps a Metadata.Custom key to the set of pending-cut
+	// flags registered by segment_sink outputs that watch that key.
+	// When a go_processor emits ProcessorMetadata with Custom[key] truthy,
+	// the handler sets every matching flag. Each flag is owned by a sink
+	// goroutine (via handleSink) and read atomically.
+	segmentCuts map[string][]*atomic.Bool
 }
 
 func newGraphRunner(cfg *Config, pipe *Pipeline) *graphRunner {
@@ -231,8 +243,9 @@ func newGraphRunner(cfg *Config, pipe *Pipeline) *graphRunner {
 		trackers:     make(map[string]*NodePerfTracker),
 		goProcessors: make(map[string]processors.Processor),
 		eventsSinks:  make(map[string][]*processors.EventSink),
-		passLogFiles: make(map[string]*os.File),
-		hwDevices:    make(map[string]*av.HWDeviceContext),
+		passLogFiles:  make(map[string]*os.File),
+		hwDevices:     make(map[string]*av.HWDeviceContext),
+		segmentCuts:   make(map[string][]*atomic.Bool),
 	}
 }
 

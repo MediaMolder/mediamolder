@@ -125,5 +125,12 @@ func ClonePacket(src *Packet) (*Packet, error) {
 	return &Packet{p: c}, nil
 }
 
+// IsKeyFrame reports whether the packet has the AV_PKT_FLAG_KEY flag set.
+// Returns false for a nil packet. Mirrors the AV_PKT_FLAG_KEY test performed
+// by libavformat/segment.c when deciding whether to open a new segment.
+func (pkt *Packet) IsKeyFrame() bool {
+	return pkt != nil && pkt.p != nil && pkt.p.flags&C.AV_PKT_FLAG_KEY != 0
+}
+
 // raw returns the underlying C pointer. For use within the av package only.
 func (pkt *Packet) raw() *C.AVPacket { return pkt.p }
