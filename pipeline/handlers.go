@@ -239,6 +239,13 @@ type graphRunner struct {
 	// inner_processor param). They are not in goProcessors and have no
 	// AV frame loop; handleGoProcessor returns nil for them.
 	pureEventSinkNodes map[string]struct{}
+	// eventDrivenGoProcessors is the set of go_processor node IDs that
+	// are driven by inbound "events" edges (e.g. twelvelabs_indexer with
+	// an events edge from an input or a sink) rather than AV frame
+	// streams. When such a node has no AV inputs, handleGoProcessor
+	// returns nil because the work is dispatched via OnSegmentCompleted
+	// or the metadata emitter, not via the AV scheduler.
+	eventDrivenGoProcessors map[string]struct{}
 }
 
 func newGraphRunner(cfg *Config, pipe *Pipeline) *graphRunner {
@@ -254,6 +261,7 @@ func newGraphRunner(cfg *Config, pipe *Pipeline) *graphRunner {
 		goProcessors:       make(map[string]processors.Processor),
 		eventsSinks:        make(map[string][]*processors.EventSink),
 		pureEventSinkNodes: make(map[string]struct{}),
+		eventDrivenGoProcessors: make(map[string]struct{}),
 		passLogFiles:     make(map[string]*os.File),
 		hwDevices:        make(map[string]*av.HWDeviceContext),
 		segmentCuts:      make(map[string][]*atomic.Bool),
