@@ -1088,6 +1088,7 @@ func (p *Pipeline) runGraph(ctx context.Context) (runErr error) {
 			// eventsSinks table below. Skip go_processor initialisation for them.
 			if node.Processor == "metadata_file_writer" {
 				if _, hasInner := node.Params["inner_processor"]; !hasInner {
+					runner.pureEventSinkNodes[node.ID] = struct{}{}
 					continue
 				}
 			}

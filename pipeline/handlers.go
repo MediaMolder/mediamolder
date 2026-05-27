@@ -234,6 +234,11 @@ type graphRunner struct {
 	// processors.SegmentEventConsumer that should be notified when the
 	// sink finishes writing a segment file.
 	segmentConsumers map[string][]processors.SegmentEventConsumer
+	// pureEventSinkNodes is the set of go_processor node IDs that act
+	// solely as events-wiring sinks (metadata_file_writer without an
+	// inner_processor param). They are not in goProcessors and have no
+	// AV frame loop; handleGoProcessor returns nil for them.
+	pureEventSinkNodes map[string]struct{}
 }
 
 func newGraphRunner(cfg *Config, pipe *Pipeline) *graphRunner {
@@ -246,8 +251,9 @@ func newGraphRunner(cfg *Config, pipe *Pipeline) *graphRunner {
 		encoderOpts:      make(map[string]av.EncoderOptions),
 		sinks:            make(map[string]*sinkResources),
 		trackers:         make(map[string]*NodePerfTracker),
-		goProcessors:     make(map[string]processors.Processor),
-		eventsSinks:      make(map[string][]*processors.EventSink),
+		goProcessors:       make(map[string]processors.Processor),
+		eventsSinks:        make(map[string][]*processors.EventSink),
+		pureEventSinkNodes: make(map[string]struct{}),
 		passLogFiles:     make(map[string]*os.File),
 		hwDevices:        make(map[string]*av.HWDeviceContext),
 		segmentCuts:      make(map[string][]*atomic.Bool),
