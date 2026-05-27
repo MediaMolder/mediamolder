@@ -48,6 +48,11 @@ type Metadata struct {
 	Detections   []Detection    `json:"detections,omitempty"`
 	QualityScore float64        `json:"quality_score,omitempty"`
 	Custom       map[string]any `json:"custom,omitempty"`
+	// FilePath is the source file that produced this metadata event.
+	// Populated by event-driven processors so the engine can propagate
+	// the path to downstream SegmentEventConsumer nodes via chained
+	// "events" edges.
+	FilePath string `json:"file_path,omitempty"`
 }
 
 // Detection represents a single detected object in a video frame.

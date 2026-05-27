@@ -301,7 +301,7 @@ func (p *Pipeline) stepForward(target State) error {
 		// Wave 7 #36d: a config may have zero Outputs when every sink
 		// is a filter_sink (nullsink/anullsink terminating a side-effect
 		// chain such as ebur128 or ametadata=mode=print).
-		if len(p.cfg.Outputs) == 0 && !configHasFilterSink(p.cfg) {
+		if len(p.cfg.Outputs) == 0 && !configHasFilterSink(p.cfg) && !configHasOnlyGoProcessors(p.cfg) {
 			return fmt.Errorf("config has no outputs or filter_sink nodes")
 		}
 		if len(p.cfg.Inputs) == 0 && !configHasFilterSource(p.cfg) {
@@ -829,6 +829,21 @@ func configHasFilterSink(cfg *Config) bool {
 	return false
 }
 
+// configHasOnlyGoProcessors reports whether every node in cfg.Graph is a
+// go_processor. When true the pipeline requires no AV outputs; all work
+// is performed by the processors themselves via events edges.
+func configHasOnlyGoProcessors(cfg *Config) bool {
+	if len(cfg.Graph.Nodes) == 0 {
+		return false
+	}
+	for _, n := range cfg.Graph.Nodes {
+		if n.Type != "go_processor" {
+			return false
+		}
+	}
+	return true
+}
+
 func buildFilterSpec(node NodeDef) string {
 	if node.Filter == "" {
 		return "null"
@@ -1151,6 +1166,7 @@ func (p *Pipeline) runGraph(ctx context.Context) (runErr error) {
 		}
 		if async, ok := proc.(processors.AsyncMetadataProcessor); ok {
 			nodeID := tgtID
+			pipeCtx := ctx // capture before inner variable shadowing
 			async.SetMetadataEmitter(func(md *processors.Metadata) {
 				if md == nil {
 					return
@@ -1159,11 +1175,41 @@ func (p *Pipeline) runGraph(ctx context.Context) (runErr error) {
 					NodeID:   nodeID,
 					Metadata: md,
 				})
-				ctx := processors.ProcessorContext{StreamID: nodeID}
+				pCtx := processors.ProcessorContext{StreamID: nodeID}
 				for _, s := range runner.eventsSinks[nodeID] {
-					s.Write(ctx, md)
+					s.Write(pCtx, md)
+				}
+				// Chain downstream SegmentEventConsumers (processor→processor
+				// "events" edges). FilePath is propagated from the metadata so
+				// the downstream consumer receives the original source path.
+				if downstream := runner.segmentConsumers[nodeID]; len(downstream) > 0 {
+					ev := processors.SegmentEvent{OutputID: nodeID, FilePath: md.FilePath}
+					for _, c := range downstream {
+						c.OnSegmentCompleted(pipeCtx, ev)
+					}
 				}
 			})
+		}
+	}
+
+	// Dispatch "from-input" events synchronously: for each input node that
+	// is the source of an "events" edge, fire OnSegmentCompleted immediately
+	// so the processor's wg.Add(1) is called before sched.Run starts and
+	// runner.close() can correctly wait via wg.Wait().
+	{
+		inputURLByID := make(map[string]string, len(cfg.Inputs))
+		for _, inp := range cfg.Inputs {
+			inputURLByID[inp.ID] = inp.URL
+		}
+		for srcID, consumers := range runner.segmentConsumers {
+			url, isInput := inputURLByID[srcID]
+			if !isInput {
+				continue
+			}
+			ev := processors.SegmentEvent{OutputID: srcID, FilePath: url, SegmentIndex: 0}
+			for _, c := range consumers {
+				c.OnSegmentCompleted(ctx, ev)
+			}
 		}
 	}
 

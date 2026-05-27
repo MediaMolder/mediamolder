@@ -255,3 +255,107 @@ func TestParseConfigNodeDeviceUnknownRef(t *testing.T) {
 		t.Fatal("expected error for node.device referencing unknown hardware_device")
 	}
 }
+
+// ── configHasOnlyGoProcessors ─────────────────────────────────────────────
+
+func TestConfigHasOnlyGoProcessors(t *testing.T) {
+	onlyGP := &Config{
+		Graph: GraphDef{
+			Nodes: []NodeDef{
+				{ID: "a", Type: "go_processor", Processor: "noop"},
+				{ID: "b", Type: "go_processor", Processor: "noop"},
+			},
+		},
+	}
+	if !configHasOnlyGoProcessors(onlyGP) {
+		t.Error("expected true for all-go_processor graph")
+	}
+
+	mixed := &Config{
+		Graph: GraphDef{
+			Nodes: []NodeDef{
+				{ID: "enc", Type: "encoder"},
+				{ID: "proc", Type: "go_processor", Processor: "noop"},
+			},
+		},
+	}
+	if configHasOnlyGoProcessors(mixed) {
+		t.Error("expected false for mixed-type graph")
+	}
+
+	empty := &Config{Graph: GraphDef{}}
+	if configHasOnlyGoProcessors(empty) {
+		t.Error("expected false for empty node list")
+	}
+}
+
+func TestValidateAcceptsZeroOutputsForGoProcessorOnly(t *testing.T) {
+	raw := `{
+  "schema_version": "1.1",
+  "inputs": [{"id":"in0","url":"clip.mp4"}],
+  "graph": {
+    "nodes": [
+      {"id":"indexer","type":"go_processor","processor":"twelvelabs_indexer","params":{"index_id":"x"}}
+    ],
+    "edges": [
+      {"from":"in0","to":"indexer","type":"events"}
+    ]
+  },
+  "outputs": []
+}`
+	_, err := ParseConfig([]byte(raw))
+	if err != nil {
+		t.Fatalf("ParseConfig with zero outputs and go_processor-only graph: %v", err)
+	}
+}
+
+func TestValidateRejectsZeroOutputsForMixedGraph(t *testing.T) {
+	raw := `{
+  "schema_version": "1.0",
+  "inputs": [{"id":"src","url":"in.mp4","streams":[{"input_index":0,"type":"video","track":0}]}],
+  "graph": {
+    "nodes": [{"id":"enc","type":"encoder","params":{"codec":"libx264"}}],
+    "edges": [
+      {"from":"src:v:0","to":"enc:default","type":"video"},
+      {"from":"enc:default","to":"out:v","type":"video"}
+    ]
+  },
+  "outputs": []
+}`
+	_, err := ParseConfig([]byte(raw))
+	if err == nil {
+		t.Fatal("expected error for zero outputs with non-go_processor nodes")
+	}
+}
+
+// ── StateReady transition for go_processor-only pipelines ─────────────────
+
+func TestStateReadyAcceptsGoProcessorOnlyConfig(t *testing.T) {
+	// Verifies that the engine's StateReady guard does not reject a
+	// pipeline that has zero outputs when all graph nodes are go_processors.
+	// NewPipeline does not open any files; the StateReady transition is cheap.
+	raw := `{
+  "schema_version": "1.1",
+  "inputs": [{"id":"in0","url":"clip.mp4"}],
+  "graph": {
+    "nodes": [
+      {"id":"indexer","type":"go_processor","processor":"twelvelabs_indexer","params":{"index_id":"x"}}
+    ],
+    "edges": [
+      {"from":"in0","to":"indexer","type":"events"}
+    ]
+  },
+  "outputs": []
+}`
+	cfg, err := ParseConfig([]byte(raw))
+	if err != nil {
+		t.Fatalf("ParseConfig: %v", err)
+	}
+	p, err := NewPipeline(cfg)
+	if err != nil {
+		t.Fatalf("NewPipeline: %v", err)
+	}
+	if err := p.SetState(StateReady); err != nil {
+		t.Fatalf("SetState(StateReady): %v", err)
+	}
+}

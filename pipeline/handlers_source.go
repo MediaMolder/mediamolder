@@ -110,6 +110,12 @@ func (r *graphRunner) handleSource(ctx context.Context, node *graph.Node, outs [
 
 	t := perfTrackerFrom(ctx)
 
+	// Fast path: this input has no AV consumers — all downstream edges are
+	// "events" type handled out-of-band by the engine. Skip demuxing.
+	if len(streamIdxToFrameChans) == 0 && len(streamIdxToCopyChans) == 0 {
+		return nil
+	}
+
 	// sendFrame delivers f to each listed output channel. When more
 	// than one channel is listed (multiple consumers of the same
 	// stream) the frame is cloned for all but the last recipient so

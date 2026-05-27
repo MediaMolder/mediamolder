@@ -1445,7 +1445,7 @@ func validate(cfg *Config) error {
 				break
 			}
 		}
-		if !hasFilterSink {
+		if !hasFilterSink && !configHasOnlyGoProcessors(cfg) {
 			return fmt.Errorf("config must have at least one output")
 		}
 	}

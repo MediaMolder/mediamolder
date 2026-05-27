@@ -92,22 +92,30 @@ API-key resolution follows the same precedence chain as the CLI.
 
 ### Pass-through (whole file)
 
-Upload a file as-is and have Pegasus summarise it:
+Upload a file as-is and have Pegasus summarise it 
+[testdata/examples/57_twelvelabs_index_file.json]:
 
 ```json
 {
   "schema_version": "1.1",
-  "inputs": [{ "id": "src", "url": "my-clip.mp4" }],
-  "nodes": [
-    { "id": "file",    "type": "file_source",   "input":  "src" },
-    { "id": "indexer", "type": "go_processor",  "processor": "twelvelabs_indexer",
-      "params": { "index_id": "${TL_INDEX}", "wait_for_ready": true } },
-    { "id": "summary", "type": "go_processor",  "processor": "twelvelabs_analyzer",
-      "params": { "prompt": "Summarise in one sentence." } }
-  ],
-  "edges": [
-    { "from": "file",    "to": "indexer" },
-    { "from": "indexer", "to": "summary", "kind": "events" }
+  "inputs": [{ "id": "in0", "url": "my-clip.mp4" }],
+  "graph": {
+    "nodes": [
+      { "id": "indexer", "type": "go_processor", "processor": "twelvelabs_indexer",
+        "params": { "index_id": "${TL_INDEX}", "wait_for_ready": true } },
+      { "id": "summary", "type": "go_processor", "processor": "twelvelabs_analyzer",
+        "params": { "index_id": "${TL_INDEX}", "prompt": "Summarise in one sentence." } }
+    ],
+    "edges": [
+      { "from": "in0:v:0", "to": "out0:v",  "type": "video" },
+      { "from": "in0:a:0", "to": "out0:a",  "type": "audio" },
+      { "from": "out0",    "to": "indexer", "type": "events" },
+      { "from": "out0",    "to": "summary", "type": "events" }
+    ]
+  },
+  "outputs": [
+    { "id": "out0", "url": "out/my-clip-indexed.mp4",
+      "codec_video": "copy", "codec_audio": "copy" }
   ]
 }
 ```
@@ -116,37 +124,39 @@ Upload a file as-is and have Pegasus summarise it:
 
 Detect shot boundaries, cut into one MP4 per shot, and index + caption
 each:
-
+[testdata/examples/58_twelvelabs_scenes.json]
 ```json
 {
   "schema_version": "1.1",
-  "inputs":  [{ "id": "src", "url": "my-clip.mp4" }],
+  "inputs": [{ "id": "in0", "url": "my-clip.mp4" }],
+  "graph": {
+    "nodes": [
+      { "id": "scene",   "type": "go_processor", "processor": "scene_change_adaptive" },
+      { "id": "indexer", "type": "go_processor", "processor": "twelvelabs_indexer",
+        "params": { "index_id": "${TL_INDEX}" } },
+      { "id": "caption", "type": "go_processor", "processor": "twelvelabs_analyzer",
+        "params": { "index_id": "${TL_INDEX}", "prompt": "One-sentence caption of this shot." } }
+    ],
+    "edges": [
+      { "from": "in0:v:0",       "to": "scene:default", "type": "video" },
+      { "from": "scene:default", "to": "shots:v",        "type": "video" },
+      { "from": "in0:a:0",       "to": "shots:a",        "type": "audio" },
+      { "from": "shots",         "to": "indexer",        "type": "events" },
+      { "from": "shots",         "to": "caption",        "type": "events" }
+    ]
+  },
   "outputs": [
     { "id": "shots", "url": "out/shot-%05d.mp4",
-      "segment_format": "mp4", "segment_on_metadata": "scene_change" }
-  ],
-  "nodes": [
-    { "id": "dec",     "type": "source",       "input":  "src" },
-    { "id": "scene",   "type": "go_processor", "processor": "scene_change_adaptive" },
-    { "id": "enc",     "type": "sink",         "output": "shots" },
-    { "id": "indexer", "type": "go_processor", "processor": "twelvelabs_indexer",
-      "params": { "index_id": "${TL_INDEX}" } },
-    { "id": "caption", "type": "go_processor", "processor": "twelvelabs_analyzer",
-      "params": { "prompt": "One-sentence caption of this shot." } }
-  ],
-  "edges": [
-    { "from": "dec",     "to": "scene" },
-    { "from": "scene",   "to": "enc" },
-    { "from": "enc",     "to": "indexer", "kind": "events" },
-    { "from": "enc",     "to": "caption", "kind": "events" }
+      "segment_format": "mp4", "segment_on_metadata": "scene_change",
+      "codec_video": "copy", "codec_audio": "copy" }
   ]
 }
 ```
 
-The `events`-kind edge from `segment_sink` (`enc`) delivers a
-`SegmentCompleted` event whenever a shot file is closed; the engine
-auto-registers any compatible downstream `go_processor` as a
-`SegmentEventConsumer`. Run with metadata captured to a file:
+The `events` edges from the `shots` output deliver a `SegmentCompleted`
+event whenever a shot file is closed; the engine auto-registers any
+compatible downstream `go_processor` as a `SegmentEventConsumer`. Run
+with metadata captured to a file:
 
 ```bash
 mediamolder run graph.json --metadata-out captions.jsonl
@@ -157,27 +167,29 @@ mediamolder run graph.json --metadata-out captions.jsonl
 ```json
 {
   "schema_version": "1.1",
-  "inputs":  [{ "id": "src", "url": "input.mp4" }],
+  "inputs": [{ "id": "in0", "url": "input.mp4" }],
+  "graph": {
+    "nodes": [
+      { "id": "scene", "type": "go_processor", "processor": "scene_change_adaptive" },
+      { "id": "embed", "type": "go_processor", "processor": "twelvelabs_embedder",
+        "params": {
+          "model":      "marengo3.0",
+          "scopes":     ["clip"],
+          "out_dir":    "out/embeddings",
+          "out_format": "json"
+        } }
+    ],
+    "edges": [
+      { "from": "in0:v:0",       "to": "scene:default", "type": "video" },
+      { "from": "scene:default", "to": "shots:v",        "type": "video" },
+      { "from": "in0:a:0",       "to": "shots:a",        "type": "audio" },
+      { "from": "shots",         "to": "embed",          "type": "events" }
+    ]
+  },
   "outputs": [
     { "id": "shots", "url": "out/shot-%05d.mp4",
-      "segment_format": "mp4", "segment_on_metadata": "scene_change" }
-  ],
-  "nodes": [
-    { "id": "dec",   "type": "source",       "input":  "src" },
-    { "id": "scene", "type": "go_processor", "processor": "scene_change_adaptive" },
-    { "id": "enc",   "type": "sink",         "output": "shots" },
-    { "id": "embed", "type": "go_processor", "processor": "twelvelabs_embedder",
-      "params": {
-        "model":      "marengo3.0",
-        "scopes":     ["clip"],
-        "out_dir":    "out/embeddings",
-        "out_format": "json"
-      } }
-  ],
-  "edges": [
-    { "from": "dec",   "to": "scene" },
-    { "from": "scene", "to": "enc" },
-    { "from": "enc",   "to": "embed", "kind": "events" }
+      "segment_format": "mp4", "segment_on_metadata": "scene_change",
+      "codec_video": "copy", "codec_audio": "copy" }
   ]
 }
 ```
