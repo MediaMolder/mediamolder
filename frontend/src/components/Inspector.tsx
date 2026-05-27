@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useState } from 'react';
+import { Fragment, useCallback, useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { FlowEdge, FlowNode } from '../lib/jsonAdapter';
 import { displayUrl, nodeDisplayLabel, nodeDisplaySublabel } from '../lib/jsonAdapter';
@@ -2556,9 +2556,10 @@ function TLFieldRow({
   }
 }
 
-/** Index picker that fetches /api/twelvelabs/indexes on demand. Always
- * falls back to a free-text input so the user can paste an ID even when
- * the GUI server can't reach the TwelveLabs API. */
+/** Index picker that auto-fetches /api/twelvelabs/indexes when the node
+ * is opened, showing a friendly-name select as the primary control.
+ * Falls back to a free-text input when the API is unreachable or the
+ * current ID doesn't appear in the fetched list. */
 function TLIndexPicker({
   value,
   onChange,
@@ -2570,7 +2571,7 @@ function TLIndexPicker({
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  const refresh = async () => {
+  const refresh = useCallback(async () => {
     setLoading(true);
     setErr(null);
     try {
@@ -2579,10 +2580,10 @@ function TLIndexPicker({
         const body = await res.text();
         throw new Error(`${res.status} ${res.statusText}: ${body.slice(0, 200)}`);
       }
-      const data = await res.json() as { indexes?: Array<{ _id?: string; id?: string; name?: string }> };
+      const data = await res.json() as { indexes?: Array<{ _id?: string; id?: string; index_name?: string; name?: string }> };
       const list: TLIndexSummary[] = (data.indexes ?? []).map((ix) => ({
         id: String(ix._id ?? ix.id ?? ''),
-        name: String(ix.name ?? ''),
+        name: String(ix.index_name ?? ix.name ?? ix._id ?? ix.id ?? ''),
       })).filter((ix) => ix.id);
       setIndexes(list);
     } catch (e) {
@@ -2590,34 +2591,56 @@ function TLIndexPicker({
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
+
+  // Auto-fetch when the node is opened in the Inspector.
+  useEffect(() => { void refresh(); }, [refresh]);
+
+  const knownIndex = indexes?.find((ix) => ix.id === value);
+  const hasIndexes = indexes !== null && indexes.length > 0;
 
   return (
     <>
       <label style={{ marginTop: 4 }}>
-        Index ID<span style={{ color: 'var(--danger, #c33)' }}> *</span>
+        Index<span style={{ color: 'var(--danger, #c33)' }}> *</span>
       </label>
-      <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-        <input type="text" value={value} placeholder="e.g. 68a1… (or pick below)"
-          style={{ flex: 1 }}
-          onChange={(e) => onChange(e.target.value)} />
-        <button onClick={refresh} disabled={loading} title="Fetch indexes via /api/twelvelabs/indexes">
-          {loading ? '…' : 'Refresh'}
-        </button>
-      </div>
-      {indexes && indexes.length > 0 && (
-        <select value={indexes.some((ix) => ix.id === value) ? value : ''}
-          style={{ marginTop: 4 }}
-          onChange={(e) => onChange(e.target.value)}>
-          <option value="">— pick an existing index —</option>
-          {indexes.map((ix) => (
-            <option key={ix.id} value={ix.id}>{ix.name} ({ix.id})</option>
-          ))}
-        </select>
+      {hasIndexes ? (
+        // Primary control: friendly-name select.
+        <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+          <select value={value} style={{ flex: 1 }}
+            onChange={(e) => onChange(e.target.value)}>
+            <option value="">— choose an index —</option>
+            {indexes!.map((ix) => (
+              <option key={ix.id} value={ix.id}>{ix.name}</option>
+            ))}
+          </select>
+          <button onClick={() => void refresh()} disabled={loading} title="Refresh index list">
+            {loading ? '…' : '↻'}
+          </button>
+        </div>
+      ) : (
+        // Fallback: raw text input (API unreachable, loading, or no indexes).
+        <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+          <input type="text" value={value}
+            placeholder={loading ? 'Loading…' : 'e.g. 68a1…'}
+            style={{ flex: 1 }}
+            disabled={loading}
+            onChange={(e) => onChange(e.target.value)} />
+          <button onClick={() => void refresh()} disabled={loading}
+            title="Fetch indexes via /api/twelvelabs/indexes">
+            {loading ? '…' : 'Refresh'}
+          </button>
+        </div>
       )}
-      {indexes && indexes.length === 0 && !err && (
+      {/* Current value not in fetched list — show the raw ID so the user knows what's set. */}
+      {hasIndexes && value && !knownIndex && (
         <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 4 }}>
-          No indexes yet — create one with <code>mediamolder twelvelabs indexes create</code>.
+          Current ID <code>{value}</code> not found in fetched indexes — it may belong to a different account or the list needs a refresh.
+        </div>
+      )}
+      {indexes !== null && indexes.length === 0 && !err && (
+        <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 4 }}>
+          No indexes found — create one with <code>mediamolder twelvelabs indexes create</code>.
         </div>
       )}
       {err && (
@@ -2626,7 +2649,7 @@ function TLIndexPicker({
         </div>
       )}
       <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 4, marginBottom: 6 }}>
-        The picker calls <code>/api/twelvelabs/indexes</code> on the GUI server using the same API-key precedence as the runtime processors.
+        Indexes are fetched from <code>/api/twelvelabs/indexes</code> using the same API-key precedence as the runtime processors.
       </div>
     </>
   );
