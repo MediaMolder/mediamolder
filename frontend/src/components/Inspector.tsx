@@ -1732,6 +1732,10 @@ function GoProcessorParams({
     return <SceneChangeParams processorName={processorName!} params={params} onChange={onChange} />;
   }
 
+  if (processorName?.startsWith('twelvelabs_')) {
+    return <TwelveLabsParams processorName={processorName} params={params} onChange={onChange} />;
+  }
+
   if (processorName === 'metadata_file_writer') {
     const outputFile = typeof params['output_file'] === 'string' ? params['output_file'] : '';
     // inner_processor is preserved for backward-compat round-trip if present,
@@ -2171,6 +2175,459 @@ function SceneChangeParams({
       {Object.keys(overflow).length > 0 && (
         <ParamsEditor params={overflow} onChange={(next) => onChange({ ...params, ...next })} />
       )}
+    </>
+  );
+}
+
+/* ---------- TwelveLabsParams ----------
+ * Structured Inspector form for the four `twelvelabs_*` go_processor nodes.
+ * Each processor has a task-specific section above a collapsible
+ * “Authentication & polling” block that mirrors the params accepted by
+ * `processors/twelvelabs_common.go`. Params not handled here fall through
+ * to the generic ParamsEditor at the bottom. */
+
+interface TLField {
+  key: string;
+  label: string;
+  type: 'text' | 'password' | 'number' | 'checkbox' | 'select' | 'string-list' | 'textarea';
+  placeholder?: string;
+  defaultValue?: unknown;
+  options?: Array<{ value: string; label: string }>;
+  min?: number;
+  max?: number;
+  step?: number;
+  required?: boolean;
+  hint?: string;
+  /** Only render when this predicate against the current params is true. */
+  visibleWhen?: (params: Record<string, unknown>) => boolean;
+}
+
+const TL_AUTH_FIELDS: TLField[] = [
+  { key: 'api_key', label: 'API key (overrides env / config file)', type: 'password',
+    placeholder: 'tlk_…',
+    hint: 'Leave blank to fall back to TWELVELABS_API_KEY or ~/.config/mediamolder/twelvelabs.json.' },
+  { key: 'api_key_env', label: 'API-key env var', type: 'text',
+    placeholder: 'TWELVELABS_API_KEY',
+    hint: 'Name of the environment variable to read when api_key is unset.' },
+  { key: 'base_url', label: 'Base URL override', type: 'text',
+    placeholder: 'https://api.twelvelabs.io/v1.3',
+    hint: 'Leave blank to use the production endpoint.' },
+  { key: 'poll_interval_s', label: 'Initial poll interval (s)', type: 'number',
+    min: 0.1, step: 0.1, placeholder: '2', hint: 'Initial WaitForTask backoff. Default 2s.' },
+  { key: 'poll_max_interval_s', label: 'Max poll interval (s)', type: 'number',
+    min: 1, step: 1, placeholder: '30', hint: 'Backoff ceiling for long-running tasks. Default 30s.' },
+  { key: 'request_timeout_s', label: 'Per-request timeout (s)', type: 'number',
+    min: 0, step: 1, placeholder: '0 (unbounded)',
+    hint: 'Per-HTTP-request timeout. 0 / blank = unbounded.' },
+  { key: 'max_concurrent', label: 'Max concurrent uploads / calls', type: 'number',
+    min: 1, step: 1, placeholder: '2', hint: 'Cap on in-flight TwelveLabs operations. Default 2.' },
+];
+
+interface TLProcessorSchema {
+  title: string;
+  description: string;
+  /** Operation-specific fields; rendered top-down. */
+  fields: TLField[];
+  /** When true, render an index picker (with refresh) above the fields. */
+  indexPicker?: boolean;
+  /** Show only a subset of the shared auth/polling fields. */
+  authFields?: TLField[];
+}
+
+const TL_SCHEMAS: Record<string, TLProcessorSchema> = {
+  twelvelabs_indexer: {
+    title: 'TwelveLabs indexer',
+    description: 'Uploads each completed segment to a TwelveLabs index. Emits an "indexed" event with the resulting video_id.',
+    indexPicker: true,
+    fields: [
+      { key: 'auto_create_index', label: 'Auto-create index on first segment', type: 'checkbox',
+        defaultValue: false,
+        hint: 'When checked, creates a new index with the name + models below the first time a segment arrives.' },
+      { key: 'index_name', label: 'Index name (when auto-creating)', type: 'text',
+        placeholder: 'my-index',
+        visibleWhen: (p) => p['auto_create_index'] === true,
+        hint: 'Name for the auto-created index. Required when auto-create is on.' },
+      { key: 'models', label: 'Models (auto-create)', type: 'string-list',
+        defaultValue: ['marengo2.7'],
+        placeholder: 'marengo2.7',
+        visibleWhen: (p) => p['auto_create_index'] === true,
+        hint: 'Comma-separated. Common values: marengo3.0, pegasus1.5.' },
+      { key: 'wait_for_ready', label: 'Wait for indexing to complete', type: 'checkbox',
+        defaultValue: true,
+        hint: 'When checked, block until each upload reaches the "ready" state. Required if a downstream node needs the video_id.' },
+    ],
+  },
+  twelvelabs_analyzer: {
+    title: 'TwelveLabs analyzer (Pegasus)',
+    description: 'Uploads each segment to a staging index, then runs Pegasus analyze with your prompt. Emits captions / chapters as events.',
+    indexPicker: true,
+    fields: [
+      { key: 'prompt', label: 'Prompt', type: 'textarea',
+        placeholder: 'Describe what happens in this video.',
+        defaultValue: 'Describe what happens in this video.',
+        hint: 'Natural-language prompt sent to Pegasus for every segment.' },
+      { key: 'temperature', label: 'Temperature', type: 'number',
+        min: 0, max: 1, step: 0.05, placeholder: '0.2', defaultValue: 0.2,
+        hint: 'Pegasus sampling temperature. 0 = deterministic, 1 = most creative.' },
+      { key: 'segments', label: 'Return structured chapter markers', type: 'checkbox',
+        defaultValue: false,
+        hint: 'When checked, request Pegasus to emit timestamped chapter segments alongside the free-text response.' },
+    ],
+  },
+  twelvelabs_searcher: {
+    title: 'TwelveLabs searcher (Marengo)',
+    description: 'Runs Marengo natural-language search on the configured index. Per segment by default, or on a fixed timer.',
+    indexPicker: true,
+    fields: [
+      { key: 'query', label: 'Query text', type: 'text',
+        placeholder: 'a person walking a dog',
+        hint: 'Required unless query_media_url is set.' },
+      { key: 'query_media_url', label: 'Query media URL (image / audio)', type: 'text',
+        placeholder: 'https://example.com/query.jpg',
+        hint: 'Alternative to query text — search by an example image or audio clip.' },
+      { key: 'search_options', label: 'Modalities', type: 'string-list',
+        defaultValue: ['visual', 'audio'], placeholder: 'visual, audio',
+        hint: 'Subset of ["visual", "audio"]. Default both.' },
+      { key: 'threshold', label: 'Score threshold', type: 'select',
+        defaultValue: 'medium',
+        options: [
+          { value: 'low', label: 'low' },
+          { value: 'medium', label: 'medium (default)' },
+          { value: 'high', label: 'high' },
+        ],
+        hint: 'Server-side relevance filter applied by Marengo.' },
+      { key: 'min_score', label: 'Min client-side score', type: 'number',
+        min: 0, max: 1, step: 0.05, placeholder: '0',
+        hint: 'Drop any matches with a score below this value (after the server threshold). 0 = keep all.' },
+      { key: 'page_limit', label: 'Page limit', type: 'number',
+        min: 0, step: 1, placeholder: '0 (server default)',
+        hint: 'Max matches per page. 0 / blank = let the API decide.' },
+      { key: 'interval_s', label: 'Periodic query interval (s)', type: 'number',
+        min: 0, step: 1, placeholder: '0 (per-segment)',
+        hint: 'When > 0, re-run the query on a timer instead of per completed segment.' },
+    ],
+  },
+  twelvelabs_embedder: {
+    title: 'TwelveLabs embedder (Marengo)',
+    description: 'Generates Marengo video embeddings per segment. Inline on the event bus, or to disk.',
+    fields: [
+      { key: 'model', label: 'Embedding model', type: 'select',
+        defaultValue: 'marengo3.0',
+        options: [
+          { value: 'marengo3.0', label: 'marengo3.0' },
+          { value: 'marengo2.7', label: 'marengo2.7' },
+        ],
+        hint: 'TwelveLabs embedding model.' },
+      { key: 'scopes', label: 'Scopes', type: 'string-list',
+        defaultValue: ['clip'], placeholder: 'clip, video',
+        hint: 'Subset of ["clip", "video"]. "clip" = one vector for the whole segment; "video" = sliding window.' },
+      { key: 'window_s', label: 'Video-window length (s)', type: 'number',
+        min: 0.5, step: 0.5, placeholder: '6', defaultValue: 6,
+        visibleWhen: (p) => {
+          const s = p['scopes'];
+          return Array.isArray(s) && s.some((x) => String(x).toLowerCase() === 'video');
+        },
+        hint: 'time_segment_duration for the "video" scope (ignored otherwise).' },
+      { key: 'out_dir', label: 'Output directory (optional)', type: 'text',
+        placeholder: 'e.g. out/embeddings',
+        hint: 'When set, vectors are written to "<out_dir>/<basename>.embeddings.<ext>" and stripped from the inline payload.' },
+      { key: 'out_format', label: 'Output format', type: 'select',
+        defaultValue: 'json',
+        options: [
+          { value: 'json', label: 'json (one file per segment)' },
+          { value: 'jsonl', label: 'jsonl (one vector per line)' },
+        ],
+        visibleWhen: (p) => typeof p['out_dir'] === 'string' && (p['out_dir'] as string).length > 0,
+        hint: 'File format when writing to out_dir.' },
+    ],
+  },
+};
+
+interface TLIndexSummary { id: string; name: string }
+
+function TwelveLabsParams({
+  processorName,
+  params,
+  onChange,
+}: {
+  processorName: string;
+  params: Record<string, unknown>;
+  onChange: (next: Record<string, unknown>) => void;
+}) {
+  const schema = TL_SCHEMAS[processorName];
+  const authFields = schema?.authFields ?? TL_AUTH_FIELDS;
+  const knownKeys = new Set<string>([
+    ...(schema?.fields.map((f) => f.key) ?? []),
+    ...authFields.map((f) => f.key),
+    'index_id',
+  ]);
+  const overflow = Object.fromEntries(Object.entries(params).filter(([k]) => !knownKeys.has(k)));
+
+  const set = (key: string, value: unknown) => {
+    const next = { ...params };
+    const isBlank = value === '' || value === undefined || value === null;
+    if (isBlank) delete next[key]; else next[key] = value;
+    onChange(next);
+  };
+
+  if (!schema) {
+    return <ParamsEditor params={params} onChange={onChange} />;
+  }
+
+  return (
+    <>
+      <div style={{ fontSize: 11, color: 'var(--text-dim)', marginBottom: 8 }}>
+        <strong style={{ color: 'var(--text)' }}>{schema.title}</strong>
+        <div style={{ marginTop: 2 }}>{schema.description}</div>
+        <div style={{ marginTop: 4 }}>
+          See{' '}
+          <a href="/api/twelvelabs/ping" target="_blank" rel="noopener noreferrer"
+             style={{ color: 'var(--text-dim)' }}>API ping</a>
+          {' · '}
+          <a href="https://docs.twelvelabs.io/v1.3/api-reference/introduction"
+             target="_blank" rel="noopener noreferrer"
+             style={{ color: 'var(--text-dim)' }}>API reference</a>
+        </div>
+      </div>
+
+      {schema.indexPicker && (
+        <TLIndexPicker
+          value={typeof params['index_id'] === 'string' ? (params['index_id'] as string) : ''}
+          onChange={(id) => set('index_id', id)}
+        />
+      )}
+
+      {schema.fields.map((f) => (
+        (f.visibleWhen?.(params) ?? true) && (
+          <TLFieldRow key={f.key} field={f}
+            value={params[f.key]}
+            onChange={(v) => set(f.key, v)} />
+        )
+      ))}
+
+      <details style={{ marginTop: 10 }}>
+        <summary style={{ cursor: 'pointer', fontSize: 12, color: 'var(--text-dim)' }}>
+          Authentication &amp; polling
+        </summary>
+        <div style={{ marginTop: 6 }}>
+          {authFields.map((f) => (
+            <TLFieldRow key={f.key} field={f}
+              value={params[f.key]}
+              onChange={(v) => set(f.key, v)} />
+          ))}
+        </div>
+      </details>
+
+      {Object.keys(overflow).length > 0 && (
+        <>
+          <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 10 }}>Other params</div>
+          <ParamsEditor params={overflow} onChange={(next) => onChange({ ...params, ...next })} />
+        </>
+      )}
+    </>
+  );
+}
+
+function TLFieldRow({
+  field,
+  value,
+  onChange,
+}: {
+  field: TLField;
+  value: unknown;
+  onChange: (v: unknown) => void;
+}) {
+  const labelEl = (
+    <label style={{ marginTop: 8 }}>
+      {field.label}
+      {field.required ? <span style={{ color: 'var(--danger, #c33)' }}> *</span> : null}
+    </label>
+  );
+  const hintEl = field.hint && (
+    <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: -4, marginBottom: 4 }}>
+      {field.hint}
+    </div>
+  );
+
+  switch (field.type) {
+    case 'checkbox': {
+      const checked = Boolean(value ?? field.defaultValue ?? false);
+      return (
+        <Fragment>
+          <label style={{ display: 'flex', alignItems: 'flex-start', gap: 6, marginTop: 8, cursor: 'pointer' }}>
+            <input type="checkbox" checked={checked} style={{ marginTop: 2, flexShrink: 0 }}
+              onChange={(e) => onChange(e.target.checked)} />
+            <span>
+              {field.label}
+              {field.hint && (
+                <div style={{ fontSize: 11, color: 'var(--text-dim)', fontWeight: 'normal', marginTop: 2 }}>
+                  {field.hint}
+                </div>
+              )}
+            </span>
+          </label>
+        </Fragment>
+      );
+    }
+    case 'select': {
+      const v = value ?? field.defaultValue ?? '';
+      return (
+        <Fragment>
+          {labelEl}
+          <select value={String(v)} onChange={(e) => onChange(e.target.value)}>
+            {field.options?.map((opt) => (
+              <option key={opt.value} value={opt.value}>{opt.label}</option>
+            ))}
+          </select>
+          {hintEl}
+        </Fragment>
+      );
+    }
+    case 'number': {
+      const v = value === undefined || value === null || value === '' ? '' : String(value);
+      return (
+        <Fragment>
+          {labelEl}
+          <input type="number" value={v}
+            min={field.min} max={field.max} step={field.step}
+            placeholder={field.placeholder}
+            onChange={(e) => {
+              const t = e.target.value;
+              if (t === '') { onChange(undefined); return; }
+              const n = parseFloat(t);
+              if (!Number.isNaN(n)) onChange(n);
+            }} />
+          {hintEl}
+        </Fragment>
+      );
+    }
+    case 'string-list': {
+      const arr = Array.isArray(value) ? (value as unknown[]).map(String)
+                : Array.isArray(field.defaultValue) ? (field.defaultValue as unknown[]).map(String)
+                : [];
+      return (
+        <Fragment>
+          {labelEl}
+          <input type="text" value={arr.join(', ')}
+            placeholder={field.placeholder}
+            onChange={(e) => {
+              const parts = e.target.value.split(',').map((s) => s.trim()).filter(Boolean);
+              onChange(parts.length ? parts : undefined);
+            }} />
+          {hintEl}
+        </Fragment>
+      );
+    }
+    case 'textarea': {
+      const v = value === undefined || value === null ? '' : String(value);
+      return (
+        <Fragment>
+          {labelEl}
+          <textarea value={v} rows={3} placeholder={field.placeholder}
+            style={{ width: '100%', resize: 'vertical' }}
+            onChange={(e) => onChange(e.target.value || undefined)} />
+          {hintEl}
+        </Fragment>
+      );
+    }
+    case 'password': {
+      const v = value === undefined || value === null ? '' : String(value);
+      return (
+        <Fragment>
+          {labelEl}
+          <input type="password" value={v} placeholder={field.placeholder} autoComplete="off"
+            onChange={(e) => onChange(e.target.value || undefined)} />
+          {hintEl}
+        </Fragment>
+      );
+    }
+    case 'text':
+    default: {
+      const v = value === undefined || value === null ? '' : String(value);
+      return (
+        <Fragment>
+          {labelEl}
+          <input type="text" value={v} placeholder={field.placeholder}
+            onChange={(e) => onChange(e.target.value || undefined)} />
+          {hintEl}
+        </Fragment>
+      );
+    }
+  }
+}
+
+/** Index picker that fetches /api/twelvelabs/indexes on demand. Always
+ * falls back to a free-text input so the user can paste an ID even when
+ * the GUI server can't reach the TwelveLabs API. */
+function TLIndexPicker({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (id: string) => void;
+}) {
+  const [indexes, setIndexes] = useState<TLIndexSummary[] | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const refresh = async () => {
+    setLoading(true);
+    setErr(null);
+    try {
+      const res = await fetch('/api/twelvelabs/indexes');
+      if (!res.ok) {
+        const body = await res.text();
+        throw new Error(`${res.status} ${res.statusText}: ${body.slice(0, 200)}`);
+      }
+      const data = await res.json() as { indexes?: Array<{ _id?: string; id?: string; name?: string }> };
+      const list: TLIndexSummary[] = (data.indexes ?? []).map((ix) => ({
+        id: String(ix._id ?? ix.id ?? ''),
+        name: String(ix.name ?? ''),
+      })).filter((ix) => ix.id);
+      setIndexes(list);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <>
+      <label style={{ marginTop: 4 }}>
+        Index ID<span style={{ color: 'var(--danger, #c33)' }}> *</span>
+      </label>
+      <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+        <input type="text" value={value} placeholder="e.g. 68a1… (or pick below)"
+          style={{ flex: 1 }}
+          onChange={(e) => onChange(e.target.value)} />
+        <button onClick={refresh} disabled={loading} title="Fetch indexes via /api/twelvelabs/indexes">
+          {loading ? '…' : 'Refresh'}
+        </button>
+      </div>
+      {indexes && indexes.length > 0 && (
+        <select value={indexes.some((ix) => ix.id === value) ? value : ''}
+          style={{ marginTop: 4 }}
+          onChange={(e) => onChange(e.target.value)}>
+          <option value="">— pick an existing index —</option>
+          {indexes.map((ix) => (
+            <option key={ix.id} value={ix.id}>{ix.name} ({ix.id})</option>
+          ))}
+        </select>
+      )}
+      {indexes && indexes.length === 0 && !err && (
+        <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 4 }}>
+          No indexes yet — create one with <code>mediamolder twelvelabs indexes create</code>.
+        </div>
+      )}
+      {err && (
+        <div style={{ fontSize: 11, color: 'var(--danger, #c33)', marginTop: 4 }}>
+          {err.includes('401') ? 'Authentication failed — set TWELVELABS_API_KEY or the api_key field below.' : err}
+        </div>
+      )}
+      <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 4, marginBottom: 6 }}>
+        The picker calls <code>/api/twelvelabs/indexes</code> on the GUI server using the same API-key precedence as the runtime processors.
+      </div>
     </>
   );
 }

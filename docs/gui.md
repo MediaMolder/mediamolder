@@ -1441,6 +1441,15 @@ To wire in the GUI:
 2. Drag from the **pink** (events) output handle on the segment sink to the **pink** input handle of the TwelveLabs node.
 3. Open the Inspector and set `index_id` (and any other required params). API-key resolution is automatic: the node checks the `api_key` param, then `TWELVELABS_API_KEY`, then `~/.config/mediamolder/twelvelabs.json`.
 
+### Inspector property panel
+
+Each `twelvelabs_*` node has a dedicated Inspector form with labelled inputs, defaults, and inline help — you don't need to memorise param names:
+
+- **Index picker** (indexer / analyzer / searcher): free-text `index_id` field plus a **Refresh** button that calls `/api/twelvelabs/indexes` and renders a dropdown of existing indexes by name. Required fields are marked with a red asterisk.
+- **Per-processor controls**: e.g. the analyzer exposes a multi-line *Prompt* box, *Temperature* slider, and *Return structured chapter markers* checkbox; the searcher exposes *Query text* vs *Query media URL*, a *Modalities* string-list, a *Score threshold* select (low / medium / high), and a *Periodic query interval* number; the embedder exposes *Model*, *Scopes*, conditional *Video-window length* (only when scope = `video`), and conditional *Output format* (only when *Output directory* is set).
+- **Authentication & polling**: a collapsible section at the bottom holds the shared auth/polling params (`api_key` rendered as a password input, `api_key_env`, `base_url`, `poll_interval_s`, `poll_max_interval_s`, `request_timeout_s`, `max_concurrent`). Leave any of them blank to fall back to the documented defaults.
+- **Other params**: anything not covered above falls through to the generic key/value editor at the bottom of the panel, so future API additions remain editable without a new build.
+
 ### Authentication
 
 Set your API key once — no GUI settings panel is required:

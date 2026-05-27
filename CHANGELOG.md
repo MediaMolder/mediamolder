@@ -6,6 +6,21 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 ## [Unreleased]
 
 ### Added
+- **Typed Inspector forms for the four `twelvelabs_*` go_processor
+  nodes.** `frontend/src/components/Inspector.tsx` now renders a
+  dedicated property panel per processor with labelled inputs,
+  defaults, inline help text, conditional visibility (e.g. *Index name
+  / Models* only when *Auto-create* is on; *Video-window length* only
+  when scopes include `video`; *Output format* only when *Output
+  directory* is set), a required-field marker on `index_id`, and a
+  free-text/dropdown **Index picker** with a Refresh button that calls
+  `/api/twelvelabs/indexes`. A collapsible *Authentication & polling*
+  block surfaces the shared `api_key` / `api_key_env` / `base_url` /
+  `poll_interval_s` / `poll_max_interval_s` / `request_timeout_s` /
+  `max_concurrent` params (api_key rendered as a password field); any
+  params not covered by the typed schema still fall through to the
+  generic key/value editor so authors can set advanced or future
+  params without a new build.
 - **TwelveLabs integration phase 9 — GUI palette curation for the
   `twelvelabs_*` processors.** `internal/gui/curation.go` now lists
   friendly names (e.g. “TwelveLabs analyze (Pegasus)”) and aliases for
