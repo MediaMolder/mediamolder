@@ -18,10 +18,9 @@ import (
 func (r *graphRunner) handleGoProcessor(ctx context.Context, node *graph.Node, ins []<-chan any, outs []chan<- any) error {
 	proc := r.goProcessors[node.ID]
 	if proc == nil {
-		// Events-wiring nodes (e.g. metadata_file_writer acting as an events
-		// sink) are registered in eventsSinks, not goProcessors.  They have no
-		// AV frame loop to run; treat this handler as a no-op for them.
-		if len(r.eventsSinks[node.ID]) > 0 || len(r.segmentConsumers[node.ID]) > 0 {
+		// Pure-events-sink nodes (metadata_file_writer without inner_processor)
+		// are tracked in pureEventSinkNodes. They have no AV frame loop.
+		if _, ok := r.pureEventSinkNodes[node.ID]; ok {
 			return nil
 		}
 		return fmt.Errorf("go_processor handler: no processor for node %q", node.ID)
