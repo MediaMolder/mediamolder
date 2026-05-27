@@ -20,6 +20,7 @@ This guide covers every feature available in MediaMolder, from installing the bi
    - [perf](#39-perf)
    - [hwbench](#310-hwbench)
    - [go-scene-detect](#311-go-scene-detect)
+   - [twelvelabs](#312-twelvelabs)
 4. [Graph JSON reference](#4-graph-json-reference)
    - [Top-level structure](#41-top-level-structure)
    - [inputs](#42-inputs)
@@ -39,6 +40,9 @@ This guide covers every feature available in MediaMolder, from installing the bi
    - [Bitstream filters](#59-bitstream-filters)
    - [Live / device inputs](#510-live--device-inputs)
    - [Scene detection in a pipeline](#511-scene-detection-in-a-pipeline)
+   - [TwelveLabs cloud analysis in a pipeline](#512-twelvelabs-cloud-analysis-in-a-pipeline)
+   - [Real-time mode](#513-real-time-mode)
+   - [TwelveLabs cloud analysis in a pipeline](#512-twelvelabs-cloud-analysis-in-a-pipeline)
 6. [Validation](#6-validation)
 7. [Graphical user interface](#7-graphical-user-interface)
 8. [Tips and troubleshooting](#8-tips-and-troubleshooting)
@@ -91,7 +95,7 @@ Signals `SIGINT` / `SIGTERM` (Ctrl-C) cancel the run cleanly, flushing any in-pr
 
 | Flag | Description |
 |---|---|
-| `--realtime` | Enable adaptive real-time mode — see [§5.12](#512-real-time-mode) |
+| `--realtime` | Enable adaptive real-time mode — see [§5.13](#513-real-time-mode) |
 | `--metrics-addr <addr>` | Start a metrics/perf HTTP server on this address while the job runs (e.g. `:9090`). Exposes `/perf`, `/perf/stream`, `/metrics` (Prometheus), `/health`, and — with `--realtime` — `/realtime/*` endpoints. Leave empty (default) to disable. Use with `mediamolder perf` or `mediamolder watch` in a second terminal. |
 | `--json` | Output progress snapshots as JSON Lines on stderr instead of the default human-readable line |
 | `--metadata-out <path>` | Write processor metadata events (e.g. scene-change JSON) to a file; use `-` for stdout |
@@ -419,7 +423,59 @@ comparison table see [docs/scene-detection.md](scene-detection.md).
 
 ---
 
-## 4. Graph JSON reference
+### 3.12 `twelvelabs`
+
+Ad-hoc operations against the [TwelveLabs Video Understanding API](https://docs.twelvelabs.io/v1.3/api-reference/introduction) (Marengo + Pegasus) — index files, run analysis, search, and generate embeddings without writing a graph.
+
+```sh
+mediamolder twelvelabs <verb> [flags]
+```
+
+| Verb | Description |
+|---|---|
+| `index` | Upload a file to an index and wait for it to be ready. |
+| `analyze` | Run Pegasus analyze on an already-indexed video. |
+| `search` | Run Marengo natural-language search on an index. |
+| `embed` | Generate Marengo video embeddings for a file. |
+| `indexes list` | List all indexes in the account. |
+| `indexes create` | Create a new index. |
+| `indexes delete` | Delete an index. |
+
+Common flags available on all verbs:
+
+| Flag | Default | Description |
+|---|---|---|
+| `--api-key <key>` | _(env/file)_ | TwelveLabs API key (overrides env + config file). |
+| `--base-url <url>` | _(production)_ | Override the API base URL (for testing). |
+| `--format json\|text` | `json` | Output format. |
+
+**API-key resolution order:** `--api-key` flag → `TWELVELABS_API_KEY` environment variable → `~/.config/mediamolder/twelvelabs.json` (`{"api_key": "tlk_…"}`).
+
+**Quick examples:**
+
+```sh
+# Create an index that supports both Marengo and Pegasus.
+mediamolder twelvelabs indexes create --name my-index --models marengo3.0,pegasus1.5
+
+# Upload a file and wait for it to be ingested.
+mediamolder twelvelabs index --index <index-id> my-clip.mp4
+
+# Ask Pegasus to caption the clip (use the video_id printed above).
+mediamolder twelvelabs analyze --video-id <video-id> \
+    --prompt "Summarise the clip in one sentence."
+
+# Semantic search.
+mediamolder twelvelabs search --index <index-id> --query "a person walking a dog"
+
+# Generate Marengo embeddings to a JSON file.
+mediamolder twelvelabs embed --video my-clip.mp4 --out my-clip.embeddings.json
+```
+
+Run `mediamolder twelvelabs help` or `mediamolder twelvelabs <verb> --help` for the full flag reference.
+
+For in-graph usage (uploading, analyzing, searching, or embedding clips automatically as a pipeline runs) see [§5.12](#512-twelvelabs-cloud-analysis-in-a-pipeline) below and the full [TwelveLabs Guide](twelvelabs.md).
+
+---
 
 ### 4.1 Top-level structure
 
@@ -680,7 +736,7 @@ See `testdata/examples/40_metadata_routing.json` for the explicit graph-node for
 | `threads` | int | Maximum worker threads (0 = auto) |
 | `hw_accel` | string | Hardware acceleration backend: `"cuda"`, `"vaapi"`, `"qsv"`, `"videotoolbox"` |
 | `hw_device` | string | Device selector: GPU index (`"0"`), `/dev/dri/renderD128` for VAAPI, etc. |
-| `realtime` | bool | Enable adaptive real-time mode: the control loop dynamically steps encoder presets, increases thread counts, and (as a last resort) drops frames to keep every node at or above its `fps_target`. Set via `--realtime` CLI flag or the **Real-time** checkbox in the GUI toolbar — see [§5.12](#512-real-time-mode) |
+| `realtime` | bool | Enable adaptive real-time mode: the control loop dynamically steps encoder presets, increases thread counts, and (as a last resort) drops frames to keep every node at or above its `fps_target`. Set via `--realtime` CLI flag or the **Real-time** checkbox in the GUI toolbar — see [§5.13](#513-real-time-mode) |
 | `highest_quality_preset` | string | The slowest (highest quality) preset the adaptive controller is allowed to use. The controller may step freely to any faster preset to maintain real-time throughput. Only meaningful when `realtime: true`. Example: `"medium"` permits stepping from `medium` all the way to `ultrafast`. Omit to allow the full ladder. |
 | `preset_group_step` | bool | When `true` (default), step every eligible video encoder together once a quorum is simultaneously behind. |
 | `target_fps` | number | Graph-level real-time fps target. `0` = derive from the source frame rate. |
@@ -1280,7 +1336,57 @@ For full parameter references and algorithm descriptions see
 
 ---
 
-### 5.12 Real-time mode
+### 5.12 TwelveLabs cloud analysis in a pipeline
+
+Four built-in `go_processor` nodes connect a running graph to the [TwelveLabs Video Understanding API](https://docs.twelvelabs.io/v1.3/api-reference/introduction). They consume **`events`-kind edges** from a `segment_sink` output (triggered when a segment file is closed) and post to the REST API in the background.
+
+| Processor | What it does |
+|---|---|
+| `twelvelabs_indexer` | Upload each completed segment to a TwelveLabs index; emit `{event:"indexed", video_id, …}`. |
+| `twelvelabs_analyzer` | Run Pegasus analyze; emit `{event:"analyzed", text, chapters, …}`. |
+| `twelvelabs_searcher` | Run Marengo search (per segment or on a timer); emit `{event:"search", matches, …}`. |
+| `twelvelabs_embedder` | Generate Marengo embeddings per clip; emit `{event:"embedded", dim, vectors, …}` or write to disk. |
+
+**Minimal graph — index every shot:**
+
+```json
+{
+  "schema_version": "1.1",
+  "inputs":  [{ "id": "src", "url": "my-clip.mp4" }],
+  "outputs": [
+    { "id": "shots", "url": "out/shot-%05d.mp4",
+      "segment_format": "mp4", "segment_on_metadata": "scene_change" }
+  ],
+  "graph": {
+    "nodes": [
+      { "id": "dec",     "type": "source",       "input": "src" },
+      { "id": "scene",   "type": "go_processor", "processor": "scene_change_adaptive" },
+      { "id": "enc",     "type": "sink",         "output": "shots" },
+      { "id": "indexer", "type": "go_processor", "processor": "twelvelabs_indexer",
+        "params": { "index_id": "${TL_INDEX}" } }
+    ],
+    "edges": [
+      { "from": "dec",     "to": "scene" },
+      { "from": "scene",   "to": "enc" },
+      { "from": "enc",     "to": "indexer", "kind": "events" }
+    ]
+  }
+}
+```
+
+Capture results with:
+
+```sh
+mediamolder run graph.json --metadata-out results.jsonl
+```
+
+**API-key resolution** inside the graph follows the same precedence as the CLI: `api_key` processor param → `TWELVELABS_API_KEY` env → `~/.config/mediamolder/twelvelabs.json`.
+
+For the complete parameter reference, more graph recipes (whole-file, per-shot embeddings), and cost/rate-limit notes see the [TwelveLabs Guide](twelvelabs.md).
+
+---
+
+### 5.13 Real-time mode
 
 Real-time mode activates an adaptive control loop that runs every 500 ms while the pipeline is playing. It observes per-node performance and attempts to keep every node at or above its configured `fps_target`.
 
@@ -1418,6 +1524,8 @@ mediamolder version
 | [subtitles.md](subtitles.md) | Subtitle format support, burn-in, passthrough, charset handling |
 | [architecture/error-handling.md](architecture/error-handling.md) | Error policy, retry, fallback |
 | [architecture/observability.md](architecture/observability.md) | Event bus, metrics, SSE API |
+| [scene-detection.md](scene-detection.md) | Scene detector algorithms, CLI usage, pipeline JSON, events |
+| [twelvelabs.md](twelvelabs.md) | TwelveLabs Video Understanding API — quick-start, graph recipes, processor reference |
 | [architecture/graph-state-machine.md](architecture/graph-state-machine.md) | Graph lifecycle, pause/resume, seek |
 | [build-and-packaging.md](build-and-packaging.md) | Static linking, cross-compilation, packaging |
 | [architecture/graph_validation_design.md](architecture/graph_validation_design.md) | Validation architecture and issue code catalogue |
