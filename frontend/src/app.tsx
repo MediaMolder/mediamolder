@@ -292,6 +292,9 @@ function Editor() {
           setEdges((es) =>
             es.filter((e) => {
               if (e.source !== flowId || e.sourceHandle == null) return true;
+              // Events edges are routing annotations, not AV streams — never
+              // remove them based on probe results.
+              if ((e.data as { streamType?: string } | null)?.streamType === 'events') return true;
               return streams.includes(e.sourceHandle.split(':')[0]);
             }),
           );

@@ -15,6 +15,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/MediaMolder/MediaMolder/internal/twelvelabs"
 )
 
 // indexerMockServer simulates the TwelveLabs REST surface used by
@@ -133,10 +135,33 @@ func newTestIndexer(t *testing.T, m *indexerMockServer, extra map[string]any) *T
 
 func TestTwelveLabsIndexer_Init_MissingAPIKey(t *testing.T) {
 	t.Setenv("TWELVELABS_API_KEY", "")
+	// Redirect config-file lookup away from any real ~/.config file.
+	orig := twelvelabs.DefaultConfigPath
+	twelvelabs.DefaultConfigPath = filepath.Join(t.TempDir(), "no_such.json")
+	t.Cleanup(func() { twelvelabs.DefaultConfigPath = orig })
 	p := &TwelveLabsIndexer{}
 	err := p.Init(map[string]any{"index_id": "idx-1"})
 	if err == nil || !strings.Contains(err.Error(), "api key") {
 		t.Fatalf("expected api key error, got %v", err)
+	}
+}
+
+func TestTwelveLabsIndexer_APIKeyFromConfigFile(t *testing.T) {
+	t.Setenv("TWELVELABS_API_KEY", "")
+	dir := t.TempDir()
+	cfgFile := filepath.Join(dir, "twelvelabs.json")
+	if err := os.WriteFile(cfgFile, []byte(`{"api_key":"filecfgkey"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	orig := twelvelabs.DefaultConfigPath
+	twelvelabs.DefaultConfigPath = cfgFile
+	t.Cleanup(func() { twelvelabs.DefaultConfigPath = orig })
+	p := &TwelveLabsIndexer{}
+	if err := p.Init(map[string]any{"index_id": "idx-1"}); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	if p.apiKey != "filecfgkey" {
+		t.Fatalf("apiKey = %q, want filecfgkey", p.apiKey)
 	}
 }
 

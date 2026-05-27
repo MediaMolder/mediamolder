@@ -79,6 +79,32 @@ func TestTopology_DanglingSource(t *testing.T) {
 	}
 }
 
+// TestTopology_DanglingSourceEventsEdge verifies that an input whose only
+// outbound connection is an events edge is not flagged as TOPO_DANGLING_SOURCE.
+// Events edges are stripped from the AV graph but are valid connections for
+// go_processor-only pipelines (e.g. TwelveLabs indexer with no AV output).
+func TestTopology_DanglingSourceEventsEdge(t *testing.T) {
+	cfg := &Config{
+		SchemaVersion: "1.1",
+		Inputs:        []Input{{ID: "in0", URL: "file:///clip.mp4"}},
+		Graph: GraphDef{
+			Nodes: []NodeDef{
+				{ID: "indexer", Type: "go_processor", Processor: "twelvelabs_indexer"},
+			},
+			Edges: []EdgeDef{
+				{From: "in0", To: "indexer", Type: "events"},
+			},
+		},
+		Outputs: []Output{},
+	}
+	r := ValidateConfigStatic(cfg, nil)
+	for _, iss := range r.Issues {
+		if iss.Code == "TOPO_DANGLING_SOURCE" {
+			t.Errorf("unexpected TOPO_DANGLING_SOURCE: %+v", iss)
+		}
+	}
+}
+
 func TestTopology_DanglingSink(t *testing.T) {
 	cfg := minCfg(
 		[]Input{defaultInput()},

@@ -8,11 +8,14 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/MediaMolder/MediaMolder/internal/twelvelabs"
 )
 
 // analyzerMockServer simulates POST /tasks, GET /tasks/{id}, and POST /analyze.
@@ -107,6 +110,10 @@ func newTestAnalyzer(t *testing.T, m *analyzerMockServer, extra map[string]any) 
 
 func TestTwelveLabsAnalyzer_Init_MissingKey(t *testing.T) {
 	t.Setenv("TWELVELABS_API_KEY", "")
+	// Redirect config-file lookup away from any real ~/.config file.
+	orig := twelvelabs.DefaultConfigPath
+	twelvelabs.DefaultConfigPath = filepath.Join(t.TempDir(), "no_such.json")
+	t.Cleanup(func() { twelvelabs.DefaultConfigPath = orig })
 	p := &TwelveLabsAnalyzer{}
 	err := p.Init(map[string]any{"index_id": "idx-1"})
 	if err == nil || !strings.Contains(err.Error(), "api key") {
