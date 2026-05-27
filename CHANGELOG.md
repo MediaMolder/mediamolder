@@ -30,6 +30,31 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   upload never stalls segment rotation. See
   [docs/architecture/twelvelabs_integration.md](docs/architecture/twelvelabs_integration.md).
 
+- **TwelveLabs integration phase 6 — analyzer, searcher, and embedder
+  processors.** Three new event-driven `go_processor` nodes that wrap the
+  Marengo and Pegasus APIs:
+  - `twelvelabs_analyzer` uploads each completed segment to a staging
+    index, waits for it to be ready, then runs Pegasus `Analyze` with the
+    configured prompt and emits `Metadata.Custom["twelvelabs"]={event:"analyzed",
+    video_id, text, chapters, …}`. Optional `segments: true` requests
+    structured timestamped chapters.
+  - `twelvelabs_searcher` runs Marengo `Search` either on a fixed timer
+    (`interval_s > 0`) or per completed segment, with a `min_score` filter
+    and emits `{event:"search", matches:[{video_id,start_s,end_s,score,confidence}], …}`.
+  - `twelvelabs_embedder` submits each segment to `/embed/tasks`, waits
+    for the result, and emits `{event:"embedded", dim, count, embeddings|out_file, …}`.
+    When `out_dir` is set, vectors are written to
+    `<out_dir>/<basename>.embeddings.{json,jsonl}` and omitted from the
+    inline payload.
+
+  All three share a small `tlClientFromParams` / `tlPollOpts` /
+  `tlMaxConcurrent` helper set (`processors/twelvelabs_common.go`),
+  implement `SegmentEventConsumer` + `AsyncMetadataProcessor` (so the
+  existing phase-5 engine wiring picks them up automatically), and bound
+  concurrent work with a configurable semaphore. Each processor has its
+  own `httptest`-backed unit suite covering init validation, happy path,
+  error path, and registry lookup.
+
 - **Phase 8 — real-time controller observability (backend).**
   A new `RTControllerSnapshot` struct (plus `ControllerNodeSnapshot` and
   `SinkNodeSnapshot`) captures the full per-tick state of the adaptive
