@@ -27,6 +27,10 @@ Everything runs in-process: no subprocesses, no network calls, no Python. Your p
 		- [`metadata_file_writer`](#metadata_file_writer)
 		- [`sei_hello`](#sei_hello)
 		- [`vidi_analyzer`](#vidi_analyzer)
+		- [`twelvelabs_indexer`](#twelvelabs_indexer)
+		- [`twelvelabs_analyzer`](#twelvelabs_analyzer)
+		- [`twelvelabs_searcher`](#twelvelabs_searcher)
+		- [`twelvelabs_embedder`](#twelvelabs_embedder)
 	- [Helper functions](#helper-functions)
 		- [Letterbox](#letterbox)
 		- [ImageToFloat32Tensor](#imagetofloat32tensor)
@@ -57,6 +61,7 @@ Everything runs in-process: no subprocesses, no network calls, no Python. Your p
 		- [Parameters](#parameters)
 		- [What it does](#what-it-does)
 	- [Vidi 2.5 multimodal analysis](#vidi-25-multimodal-analysis)
+	- [TwelveLabs video understanding](#twelvelabs-video-understanding)
 	- [Schema version](#schema-version)
 
 ---
@@ -517,6 +522,24 @@ Requires a separate Python service. See the full [Vidi 2.5 Guide](vidi-guide.md)
   }
 }
 ```
+
+### `twelvelabs_indexer`
+
+Uploads each completed segment / file into a [TwelveLabs](https://twelvelabs.io) index (Marengo + Pegasus). Emits an `indexed` event with the resulting `task_id` and `video_id`.
+
+### `twelvelabs_analyzer`
+
+Runs Pegasus analyze on each completed segment to emit captions, summaries, and optional structured chapter markers.
+
+### `twelvelabs_searcher`
+
+Runs a Marengo natural-language search against an index — on a timer or per segment — and publishes timestamped matches.
+
+### `twelvelabs_embedder`
+
+Generates Marengo video embeddings per clip (and optionally per fixed window), inline on the event bus or to per-segment `json` / `jsonl` files.
+
+All four nodes share an API-key resolution chain (`api_key` param → `TWELVELABS_API_KEY` env → `~/.config/mediamolder/twelvelabs.json`) and emit to `Metadata.Custom["twelvelabs"]`. See the full [TwelveLabs Guide](twelvelabs.md) for parameters, graph examples, and the CLI / HTTP surface.
 
 ---
 
@@ -991,6 +1014,21 @@ Inside `YOLODetector.Process()`, you'd use `FrameToFloat32Tensor` to prepare the
 The `vidi_analyzer` processor integrates [Vidi 2.5](https://github.com/bytedance/vidi) — a 9B-parameter multimodal LMM — as a first-class pipeline node. It batches decoded video frames, encodes them as JPEG, and POSTs them to a FastAPI inference service. Results are published as structured `Metadata`.
 
 See the dedicated [Vidi 2.5 Guide](vidi-guide.md) for full setup instructions, Python service template, task reference, and performance tips.
+
+---
+
+## TwelveLabs video understanding
+
+The `twelvelabs_*` processors connect MediaMolder graphs to the [TwelveLabs Video Understanding API](https://docs.twelvelabs.io/v1.3/api-reference/introduction) (Marengo + Pegasus). They cover four common operations:
+
+- `twelvelabs_indexer` — upload completed segments / files into an index.
+- `twelvelabs_analyzer` — Pegasus captions / summaries / chapters.
+- `twelvelabs_searcher` — Marengo natural-language search.
+- `twelvelabs_embedder` — Marengo video embeddings (inline or to disk).
+
+The nodes consume `events`-kind edges from a `segment_sink` (or any node that emits `SegmentCompleted`) and post to the REST API in the background, then emit structured results on the event bus. The `mediamolder twelvelabs` CLI and the `/api/twelvelabs/*` HTTP routes wrap the same client for ad-hoc operations.
+
+Full guide: [docs/twelvelabs.md](twelvelabs.md).
 
 ---
 

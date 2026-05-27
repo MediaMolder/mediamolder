@@ -16,8 +16,17 @@ Implementation progress:
   (`cmd/mediamolder/cmd_twelvelabs.go`).
 - ✅ Phase 8 — `/api/twelvelabs/*` HTTP routes
   (`internal/gui/twelvelabs.go`, shared `internal/twelvelabs/auth.go`).
-- ⏳ Phases 9–10 — GUI palette/Settings card, end-to-end recipes +
-  user guide, observability.
+- ✅ Phase 9 — GUI palette curation (friendly names, aliases,
+  descriptions, event-stream metadata) in `internal/gui/curation.go`
+  and `internal/gui/api.go`; the four `twelvelabs_*` nodes now surface
+  in the server-driven palette with searchable aliases. A dedicated
+  Settings card / connection-test UI is deferred — the CLI / env /
+  config-file precedence and the new `/api/twelvelabs/ping` route
+  cover the supported integration surface.
+- ✅ Phase 10 — user guide ([docs/twelvelabs.md](../twelvelabs.md))
+  with quick-start, recipes, processor reference, and HTTP/CLI table;
+  cross-references added in `README.md` and
+  `docs/go-processor-nodes.md`.
 
 ---
 
