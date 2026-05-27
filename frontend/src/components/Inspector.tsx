@@ -2221,6 +2221,12 @@ const TL_AUTH_FIELDS: TLField[] = [
     hint: 'Per-HTTP-request timeout. 0 / blank = unbounded.' },
   { key: 'max_concurrent', label: 'Max concurrent uploads / calls', type: 'number',
     min: 1, step: 1, placeholder: '2', hint: 'Cap on in-flight TwelveLabs operations. Default 2.' },
+  { key: 'log_file', label: 'API log file (JSONL)', type: 'text',
+    placeholder: '/tmp/tl_api.jsonl',
+    hint: 'Append each API request/response as a JSON line to this file. Leave blank to disable.' },
+  { key: 'log_api_calls', label: 'Log API calls to stderr', type: 'checkbox',
+    defaultValue: false,
+    hint: 'When checked, print each API request/response to stderr in addition to (or instead of) log_file.' },
 ];
 
 interface TLProcessorSchema {
