@@ -287,6 +287,18 @@ export function MMNode({ id, data, selected }: NodeProps & { data: FlowNodeData 
         </div>
       )}
 
+      {/* Events source handle on output nodes: events edges flow from an
+          output (completion trigger) to go_processor nodes (consumers). */}
+      {isOutput && supported.includes('events') && (
+        <Handle
+          type="source"
+          position={Position.Right}
+          id="events"
+          className="handle-events"
+          style={{ top: slotTop('events') }}
+        />
+      )}
+
       {/* Source (right) handles */}
       {!isOutput &&
         supported.flatMap((t) => {
