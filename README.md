@@ -152,6 +152,8 @@ run directly inside your media graph. See [Yolo-V8 Guide](docs/yolov8-guide.md)
 
 For multimodal scene understanding — captions, temporal grounding, edit plans, QA — the built-in `vidi_analyzer` node connects any pipeline to a [Vidi 2.5](https://github.com/bytedance/vidi) inference service. See [Vidi 2.5 Guide](docs/vidi-guide.md)
 
+For cloud-hosted video understanding — index, search, caption, and embed clips via the [TwelveLabs](https://twelvelabs.io) Marengo and Pegasus models — the `twelvelabs_indexer`, `twelvelabs_analyzer`, `twelvelabs_searcher`, and `twelvelabs_embedder` nodes are built in. See [TwelveLabs Guide](docs/twelvelabs.md)
+
 ### Hardware acceleration — any platform, properly
 
  MediaMolder makes hardware acceleration *safe and understandable*. See [hardware-acceleration.md](docs/hardware-acceleration.md)
@@ -235,6 +237,7 @@ For detailed instructions see [MacOS](docs/build/macos.md), [Windows](docs/build
 - [Scene Detection (go-scene-detect)](docs/scene-detection.md)
 - [Yolov8 object detection/classification](docs/yolov8-guide.md)
 - [Vidi 2.5 multimodal analysis](docs/vidi-guide.md)
+- [TwelveLabs video understanding](docs/twelvelabs.md)
 - [Real-Time Controller](docs/realtime-controller.md) — adaptive control loop, encoder preset stepping, output buffers, `mediamolder watch`, HTTP API
 
 ### Code

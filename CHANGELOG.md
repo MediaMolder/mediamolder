@@ -6,6 +6,28 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 ## [Unreleased]
 
 ### Added
+- **TwelveLabs integration phase 9 — GUI palette curation for the
+  `twelvelabs_*` processors.** `internal/gui/curation.go` now lists
+  friendly names (e.g. “TwelveLabs analyze (Pegasus)”) and aliases for
+  the four nodes; `internal/gui/api.go` returns one-sentence
+  descriptions and an `["events"]` stream-kind so they connect cleanly
+  to upstream `segment_sink` outputs in the visual editor. No frontend
+  code changes are required — the palette is server-driven and the
+  generic `ParamsEditor` already handles the string / number / bool
+  parameter set.
+
+- **TwelveLabs integration phase 10 — user-facing documentation.** A
+  new [docs/twelvelabs.md](docs/twelvelabs.md) guide covers API-key
+  setup, the `mediamolder twelvelabs` CLI, the
+  `/api/twelvelabs/*` HTTP routes, three graph recipes (whole-file,
+  shot-aware chunking, per-shot embeddings to disk), and a parameter
+  reference for all four processors. Cross-references added in
+  `README.md` and `docs/go-processor-nodes.md` (Contents +
+  per-processor blurbs + a dedicated section pointing to the guide).
+  The integration plan checklist in
+  [docs/architecture/twelvelabs_integration.md](docs/architecture/twelvelabs_integration.md)
+  is updated to mark phases 9–10 complete.
+
 - **TwelveLabs integration phase 5 — `twelvelabs_indexer` processor.**
   A new event-driven `go_processor` (`processors.TwelveLabsIndexer`) that
   uploads completed segment files to a TwelveLabs index and emits an
