@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -33,6 +34,10 @@ type TwelveLabsIndexer struct {
 	pollInterval    time.Duration
 	pollMaxInterval time.Duration
 	maxConcurrent   int
+	// url, when non-empty, is uploaded directly to TwelveLabs instead of
+	// using the FilePath from a SegmentEvent. Supports http(s) URLs as well
+	// as local file paths. Set via the "url" param in Init.
+	url string
 
 	client     *twelvelabs.Client
 	emit       MetadataEmitter
@@ -56,8 +61,13 @@ type TwelveLabsIndexer struct {
 //   - poll_interval_s (float, default 2): initial poll interval for WaitForTask.
 //   - poll_max_interval_s (float, default 30): max poll interval.
 //   - max_concurrent (int, default 2): cap on in-flight uploads.
+//   - url (string, optional): file path or HTTP URL to upload directly.
+//     When set, SegmentEvent.FilePath is ignored in favour of this value.
+//     Useful for input-only pipelines (no output sink) where the file URL
+//     is known at config time (see docs/twelvelabs.md).
 //   - base_url (string, optional): override TwelveLabs API base URL (for tests).
 func (p *TwelveLabsIndexer) Init(params map[string]any) error {
+	p.url, _ = params["url"].(string)
 	envName := "TWELVELABS_API_KEY"
 	if s, ok := params["api_key_env"].(string); ok && s != "" {
 		envName = s
@@ -66,6 +76,10 @@ func (p *TwelveLabsIndexer) Init(params map[string]any) error {
 		p.apiKey = s
 	} else {
 		p.apiKey = os.Getenv(envName)
+	}
+	if p.apiKey == "" {
+		// Fall back to ~/.config/mediamolder/twelvelabs.json.
+		p.apiKey, _ = twelvelabs.ResolveAPIKey("")
 	}
 	if p.apiKey == "" {
 		return fmt.Errorf("twelvelabs_indexer: api key not set (env %q empty and no api_key param)", envName)
@@ -169,6 +183,10 @@ func (p *TwelveLabsIndexer) OnSegmentCompleted(ctx context.Context, ev SegmentEv
 }
 
 func (p *TwelveLabsIndexer) indexOne(ctx context.Context, ev SegmentEvent) {
+	// url param overrides the event's FilePath.
+	if p.url != "" {
+		ev.FilePath = p.url
+	}
 	if p.autoCreateIndex {
 		p.createOnce.Do(func() {
 			specs := make([]twelvelabs.ModelSpec, 0, len(p.models))
@@ -188,7 +206,11 @@ func (p *TwelveLabsIndexer) indexOne(ctx context.Context, ev SegmentEvent) {
 		}
 	}
 
-	task, err := p.client.CreateIndexTask(ctx, p.indexID, twelvelabs.TaskSource{File: ev.FilePath})
+	src := twelvelabs.TaskSource{File: ev.FilePath}
+	if strings.HasPrefix(ev.FilePath, "http://") || strings.HasPrefix(ev.FilePath, "https://") {
+		src = twelvelabs.TaskSource{URL: ev.FilePath}
+	}
+	task, err := p.client.CreateIndexTask(ctx, p.indexID, src)
 	if err != nil {
 		p.postError(ev, fmt.Errorf("create task: %w", err))
 		return
@@ -221,12 +243,12 @@ func (p *TwelveLabsIndexer) indexOne(ctx context.Context, ev SegmentEvent) {
 	})
 }
 
-func (p *TwelveLabsIndexer) postEvent(_ SegmentEvent, payload map[string]any) {
+func (p *TwelveLabsIndexer) postEvent(ev SegmentEvent, payload map[string]any) {
 	if p.emit == nil {
 		log.Printf("twelvelabs_indexer: no emitter installed; payload=%v", payload)
 		return
 	}
-	p.emit(&Metadata{Custom: map[string]any{"twelvelabs": payload}})
+	p.emit(&Metadata{FilePath: ev.FilePath, Custom: map[string]any{"twelvelabs": payload}})
 }
 
 func (p *TwelveLabsIndexer) postError(ev SegmentEvent, err error) {
