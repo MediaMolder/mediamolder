@@ -10,8 +10,10 @@ Implementation progress:
 - ✅ Phase 4 — `segment_on_metadata` validation in `pipeline`.
 - ✅ Phase 5 — `twelvelabs_indexer` processor + engine wiring for
   `SegmentEventConsumer` / `AsyncMetadataProcessor` (Flows B/C).
-- ⏳ Phases 6–10 — analyzer / searcher / embedder processors, CLI
-  subcommand, GUI palette, end-to-end recipes, observability.
+- ✅ Phase 6 — `twelvelabs_analyzer`, `twelvelabs_searcher`, and
+  `twelvelabs_embedder` processors (shared `processors/twelvelabs_common.go`).
+- ⏳ Phases 7–10 — CLI subcommand, GUI palette, end-to-end recipes,
+  observability.
 
 ---
 
@@ -734,7 +736,7 @@ Ordered list of commits. Each ends green on `go test ./... && (cd frontend && np
      named `Metadata` event arrives on the bus.
    - Schema bump documented in `schema/v1.1.json`.
    - Tests cover scene-change-triggered cutting on a synthetic input.
-5. **`feat(processors): twelvelabs_indexer`**
+5. ✅ **`feat(processors): twelvelabs_indexer`**
    - Listens for completed-file events from `file_source` (Flow A) or
      `segment_sink` (Flows B/C), uploads, emits metadata.
    - Mirrors `vidi_analyzer` structure (Init, Process, Stop, Register).
