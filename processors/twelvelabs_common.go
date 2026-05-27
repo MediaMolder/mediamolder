@@ -5,8 +5,12 @@ package processors
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
+	"log"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/MediaMolder/MediaMolder/internal/twelvelabs"
@@ -19,6 +23,10 @@ import (
 //   - api_key (string, optional): API key literal.
 //   - api_key_env (string, default "TWELVELABS_API_KEY"): env var holding key.
 //   - base_url (string, optional): override the API base URL (used by tests).
+//   - log_file (string, optional): path to a JSONL file; every API round-trip
+//     is appended as one JSON object per line.
+//   - log_api_calls (bool, optional): if true, also log round-trips to stderr
+//     via the standard logger in addition to (or instead of) log_file.
 //
 // Returns an error if no key is available.
 func tlClientFromParams(params map[string]any) (*twelvelabs.Client, error) {
@@ -41,6 +49,32 @@ func tlClientFromParams(params map[string]any) (*twelvelabs.Client, error) {
 	c := twelvelabs.New(key)
 	if base, ok := params["base_url"].(string); ok && base != "" {
 		c.BaseURL = base
+	}
+
+	// Install API call logger if requested.
+	logFile, _ := params["log_file"].(string)
+	logToStderr, _ := params["log_api_calls"].(bool)
+	if logFile != "" || logToStderr {
+		var loggers []func(twelvelabs.APILogEntry)
+		if logFile != "" {
+			fn, closer, err := newJSONLLogger(logFile)
+			if err != nil {
+				return nil, fmt.Errorf("twelvelabs: open log_file %q: %w", logFile, err)
+			}
+			_ = closer // file stays open for the process lifetime; OS closes on exit
+			loggers = append(loggers, fn)
+		}
+		if logToStderr {
+			loggers = append(loggers, func(e twelvelabs.APILogEntry) {
+				log.Printf("twelvelabs api: %s %s status=%d dur=%dms err=%s",
+					e.Method, e.URL, e.Status, e.DurationMS, e.Err)
+			})
+		}
+		c = c.WithLogger(func(e twelvelabs.APILogEntry) {
+			for _, fn := range loggers {
+				fn(e)
+			}
+		})
 	}
 	return c, nil
 }
@@ -106,4 +140,23 @@ func tlUploadAndWait(ctx context.Context, c *twelvelabs.Client, indexID, file st
 		return task.ID, "", fmt.Errorf("wait task %s: %w", task.ID, err)
 	}
 	return task.ID, done.VideoID, nil
+}
+
+// newJSONLLogger opens (or creates) path for appending and returns a logger
+// function that marshals each APILogEntry as a single JSON line. The returned
+// io.Closer should be called when the file is no longer needed; the caller is
+// responsible for its lifecycle.
+func newJSONLLogger(path string) (func(twelvelabs.APILogEntry), io.Closer, error) {
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		return nil, nil, err
+	}
+	enc := json.NewEncoder(f)
+	var mu sync.Mutex
+	fn := func(e twelvelabs.APILogEntry) {
+		mu.Lock()
+		defer mu.Unlock()
+		_ = enc.Encode(e)
+	}
+	return fn, f, nil
 }

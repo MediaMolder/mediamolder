@@ -40,6 +40,10 @@ type Client struct {
 	APIKey    string       // value of the x-api-key request header
 	HTTP      *http.Client // default: 60 s timeout
 	UserAgent string       // sent in the User-Agent header
+	// Logger, when non-nil, is called for every completed API round-trip.
+	// Install via WithLogger rather than setting directly; that method wires
+	// the loggingTransport onto the HTTP client.
+	Logger func(APILogEntry)
 }
 
 // New returns a Client configured with apiKey and production defaults.
@@ -153,6 +157,25 @@ func (c *Client) uploadMultipart(
 	return resp, nil
 }
 
+// progressReader wraps an io.Reader and invokes fn after every Read with the
+// cumulative bytes sent and the total size. fn is called synchronously from
+// the upload goroutine; implementations must be fast and non-blocking.
+type progressReader struct {
+	r     io.Reader
+	total int64
+	sent  int64
+	fn    func(sent, total int64)
+}
+
+func (pr *progressReader) Read(p []byte) (int, error) {
+	n, err := pr.r.Read(p)
+	pr.sent += int64(n)
+	if pr.fn != nil {
+		pr.fn(pr.sent, pr.total)
+	}
+	return n, err
+}
+
 // decodeJSON limits the read to maxResponseBodyBytes, decodes JSON from r into
 // v, and closes r.
 func decodeJSON(r io.ReadCloser, v any) error {
@@ -172,6 +195,22 @@ func (c *Client) httpClient() *http.Client {
 		return c.HTTP
 	}
 	return http.DefaultClient
+}
+
+// WithLogger returns a shallow clone of c with every HTTP round-trip
+// delivered to fn via loggingTransport. The original client is not modified.
+func (c *Client) WithLogger(fn func(APILogEntry)) *Client {
+	clone := *c
+	base := c.httpClient()
+	transport := base.Transport
+	if transport == nil {
+		transport = http.DefaultTransport
+	}
+	newHTTP := *base
+	newHTTP.Transport = &loggingTransport{wrap: transport, fn: fn}
+	clone.HTTP = &newHTTP
+	clone.Logger = fn
+	return &clone
 }
 
 // uploadHTTPClient returns a copy of the configured HTTP client with Timeout

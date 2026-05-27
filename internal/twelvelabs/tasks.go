@@ -6,6 +6,7 @@ package twelvelabs
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"time"
@@ -41,7 +42,15 @@ func (c *Client) CreateIndexTask(ctx context.Context, indexID string, src TaskSo
 			filename = filepath.Base(src.File)
 		}
 
-		resp, err := c.uploadMultipart(ctx, "/tasks", fields, "video_file", filename, f)
+		var r io.Reader = f
+		if src.ProgressFunc != nil {
+			fi, err := f.Stat()
+			if err == nil {
+				r = &progressReader{r: f, total: fi.Size(), fn: src.ProgressFunc}
+			}
+		}
+
+		resp, err := c.uploadMultipart(ctx, "/tasks", fields, "video_file", filename, r)
 		if err != nil {
 			return nil, err
 		}
@@ -99,6 +108,9 @@ func (c *Client) WaitForTask(ctx context.Context, id string, opts WaitOpts) (*Ta
 			return task, nil
 		case TaskStatusFailed:
 			return nil, fmt.Errorf("twelvelabs: task %s failed", id)
+		}
+		if opts.StatusFunc != nil {
+			opts.StatusFunc(task)
 		}
 
 		select {
