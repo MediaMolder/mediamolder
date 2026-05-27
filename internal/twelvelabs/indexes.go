@@ -15,8 +15,8 @@ func (c *Client) CreateIndex(ctx context.Context, name string, models []ModelSpe
 		return nil, fmt.Errorf("twelvelabs: CreateIndex: name is required")
 	}
 	body := map[string]any{
-		"name":   name,
-		"models": models,
+		"index_name": name,
+		"models":     models,
 	}
 	resp, err := c.do(ctx, http.MethodPost, "/indexes", body)
 	if err != nil {

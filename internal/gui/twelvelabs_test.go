@@ -24,14 +24,14 @@ func newTLAPIMock(t *testing.T) *httptest.Server {
 		case http.MethodGet:
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"data": []map[string]any{
-					{"_id": "idx-1", "name": "demo"},
+					{"_id": "idx-1", "index_name": "demo"},
 				},
 			})
 		case http.MethodPost:
 			var body map[string]any
 			_ = json.NewDecoder(r.Body).Decode(&body)
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"_id": "idx-new", "name": body["name"],
+				"_id": "idx-new", "index_name": body["index_name"],
 			})
 		}
 	})
@@ -110,8 +110,8 @@ func TestTwelveLabsAPI_CreateIndex(t *testing.T) {
 	srv := newTLAPIMock(t)
 	withTLClient(t, srv.URL)
 	resp, body := doJSON(t, tlMux(), http.MethodPost, "/api/twelvelabs/indexes", map[string]any{
-		"name":   "demo",
-		"models": []map[string]any{{"name": "marengo3.0"}},
+		"index_name": "demo",
+		"models": []map[string]any{{"model_name": "marengo3.0"}},
 	})
 	if resp.StatusCode != 200 || !strings.Contains(string(body), "idx-new") {
 		t.Fatalf("create: status=%d body=%s", resp.StatusCode, body)

@@ -7,14 +7,14 @@ import "time"
 
 // ModelSpec identifies a TwelveLabs model to attach to an index.
 type ModelSpec struct {
-	Name    string   `json:"name"`
-	Options []string `json:"options,omitempty"`
+	Name    string   `json:"model_name"`
+	Options []string `json:"model_options,omitempty"`
 }
 
 // Index is a TwelveLabs index resource.
 type Index struct {
 	ID        string      `json:"_id"`
-	Name      string      `json:"name"`
+	Name      string      `json:"index_name"`
 	Models    []ModelSpec `json:"models"`
 	CreatedAt string      `json:"created_at"`
 }

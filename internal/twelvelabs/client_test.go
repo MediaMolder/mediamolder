@@ -21,6 +21,7 @@ func newTestClient(srv *httptest.Server) *Client {
 }
 
 func TestCreateIndex(t *testing.T) {
+	var gotBody map[string]any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || r.URL.Path != "/indexes" {
 			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
@@ -30,6 +31,7 @@ func TestCreateIndex(t *testing.T) {
 		if r.Header.Get("x-api-key") != "test-api-key" {
 			t.Errorf("missing x-api-key header")
 		}
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(Index{ID: "idx1", Name: "test-index"})
 	}))
@@ -45,6 +47,25 @@ func TestCreateIndex(t *testing.T) {
 	}
 	if idx.Name != "test-index" {
 		t.Errorf("Name: got %q, want test-index", idx.Name)
+	}
+	// Regression: request body must use index_name, not name (TwelveLabs v1.3 API).
+	if v, ok := gotBody["index_name"]; !ok || v != "test-index" {
+		t.Errorf("request body index_name: got %v (key present=%v), want test-index", v, ok)
+	}
+	if _, hasName := gotBody["name"]; hasName {
+		t.Errorf("request body must not contain 'name' key; use 'index_name'")
+	}
+	// Regression: model name must serialise as model_name, not name.
+	if models, ok := gotBody["models"].([]any); ok && len(models) > 0 {
+		m, _ := models[0].(map[string]any)
+		if v, ok := m["model_name"]; !ok || v != "marengo3.0" {
+			t.Errorf("request body models[0].model_name: got %v (key present=%v), want marengo3.0", v, ok)
+		}
+		if _, hasName := m["name"]; hasName {
+			t.Errorf("request body models[0] must not contain 'name' key; use 'model_name'")
+		}
+	} else {
+		t.Error("request body models field missing or empty")
 	}
 }
 
@@ -79,6 +100,42 @@ func TestListIndexes(t *testing.T) {
 	}
 	if len(indexes) != 2 {
 		t.Errorf("len: got %d, want 2", len(indexes))
+	}
+}
+
+// TestListIndexes_RawAPIFields regression: the TwelveLabs v1.3 API returns
+// index_name / model_name / model_options — verify they decode correctly.
+func TestListIndexes_RawAPIFields(t *testing.T) {
+	raw := `{"data":[{"_id":"abc123","index_name":"my-index","created_at":"2026-01-01T00:00:00Z","models":[{"model_name":"marengo3.0","model_options":["visual","audio"]}]}]}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(raw))
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv)
+	indexes, err := c.ListIndexes(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(indexes) != 1 {
+		t.Fatalf("len: got %d, want 1", len(indexes))
+	}
+	idx := indexes[0]
+	if idx.ID != "abc123" {
+		t.Errorf("ID: got %q, want abc123", idx.ID)
+	}
+	if idx.Name != "my-index" {
+		t.Errorf("Name: got %q, want my-index (check json:\"index_name\" tag)", idx.Name)
+	}
+	if len(idx.Models) != 1 {
+		t.Fatalf("Models len: got %d, want 1", len(idx.Models))
+	}
+	if idx.Models[0].Name != "marengo3.0" {
+		t.Errorf("Models[0].Name: got %q, want marengo3.0 (check json:\"model_name\" tag)", idx.Models[0].Name)
+	}
+	if len(idx.Models[0].Options) != 2 || idx.Models[0].Options[0] != "visual" {
+		t.Errorf("Models[0].Options: got %v, want [visual audio] (check json:\"model_options\" tag)", idx.Models[0].Options)
 	}
 }
 

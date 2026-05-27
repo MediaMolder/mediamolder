@@ -78,7 +78,7 @@ func handleTwelveLabsListIndexes(w http.ResponseWriter, r *http.Request) {
 }
 
 type createIndexRequest struct {
-	Name   string                 `json:"name"`
+	Name   string                 `json:"index_name"`
 	Models []twelvelabs.ModelSpec `json:"models"`
 }
 
