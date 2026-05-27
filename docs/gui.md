@@ -30,6 +30,7 @@ see [using-mediamolder.md](using-mediamolder.md).
 - [Filter categories](#filter-categories)
 - [File browser](#file-browser)
 - [Scene detection processors](#scene-detection-processors)
+- [TwelveLabs processors](#twelvelabs-processors)
 - [FFmpeg CLI export](#ffmpeg-cli-export)
 - [Performance overlay](#performance-overlay)
 - [Development workflow](#development-workflow)
@@ -1194,7 +1195,9 @@ Validated pairs (non-exhaustive):
 
 Unknown codecs or missing format fields produce no warning (no opinion).
 
-### FFmpeg CLI export
+---
+
+## FFmpeg CLI export
 
 **-> FFmpeg** (toolbar button, enabled when the canvas is non-empty) converts
 the current graph back to an equivalent `ffmpeg …` command line. It posts the
@@ -1407,6 +1410,67 @@ is still available as a generic wrapper — see example
 | Low-motion or animation (limited colour change) | `scene_change_hash` or `scene_change_histogram` |
 | Need exact FFmpeg `scdet` parity | `scene_change` |
 
+---
+
+## TwelveLabs processors
+
+Four built-in `go_processor` nodes integrate the [TwelveLabs Video Understanding API](https://docs.twelvelabs.io/v1.3/api-reference/introduction) directly into a pipeline graph.
+
+| Processor | Common-palette view | Search aliases |
+|---|---|---|
+| `twelvelabs_indexer` | ✓ | `twelvelabs`, `ai`, `marengo`, `pegasus`, `upload`, `index` |
+| `twelvelabs_analyzer` | ✓ | `twelvelabs`, `ai`, `pegasus`, `caption`, `summary`, `chapters` |
+| `twelvelabs_searcher` | ✓ | `twelvelabs`, `ai`, `marengo`, `search`, `semantic` |
+| `twelvelabs_embedder` | ✓ | `twelvelabs`, `ai`, `marengo`, `embedding`, `vector`, `clip` |
+
+### Wiring TwelveLabs nodes
+
+These processors consume **`events`-kind edges** — the pink handle on the right of a segment sink (or any upstream node that emits `SegmentCompleted`). They do not sit on the video path.
+
+```
+[source] ─video▶ [scene_change_adaptive] ─video▶ [segment_sink]
+                                                       │
+                                              events (pink)
+                                                       │
+                                                       ▼
+                                              [twelvelabs_indexer]
+```
+
+To wire in the GUI:
+1. Drag a **TwelveLabs** node from the Processors palette onto the canvas.
+2. Drag from the **pink** (events) output handle on the segment sink to the **pink** input handle of the TwelveLabs node.
+3. Open the Inspector and set `index_id` (and any other required params). API-key resolution is automatic: the node checks the `api_key` param, then `TWELVELABS_API_KEY`, then `~/.config/mediamolder/twelvelabs.json`.
+
+### Authentication
+
+Set your API key once — no GUI settings panel is required:
+
+```sh
+export TWELVELABS_API_KEY="tlk_…"
+```
+
+Or store it persistently in `~/.config/mediamolder/twelvelabs.json`:
+
+```json
+{"api_key": "tlk_…"}
+```
+
+The same key is also used by the `mediamolder twelvelabs` CLI subcommand and the `/api/twelvelabs/*` HTTP routes exposed by the GUI server.
+
+### HTTP routes (available while the GUI server is running)
+
+| Method | Path | Description |
+|---|---|---|
+| `GET`    | `/api/twelvelabs/ping`           | Verify API key and connectivity. |
+| `GET`    | `/api/twelvelabs/indexes`        | List all indexes. |
+| `POST`   | `/api/twelvelabs/indexes`        | Create an index. |
+| `DELETE` | `/api/twelvelabs/indexes/{id}`   | Delete an index. |
+| `POST`   | `/api/twelvelabs/search`         | Natural-language search. |
+
+See the [TwelveLabs Guide](twelvelabs.md) for full parameter reference, graph recipes, and cost notes.
+
+---
+
 ## Development workflow
 
 ```sh
@@ -1466,6 +1530,7 @@ without the GUI never need to include it.
 | [concepts-and-graph-basics.md](concepts-and-graph-basics.md) | Core concepts, node types, edge rules |
 | [json-config-reference.md](json-config-reference.md) | Complete field-by-field JSON schema |
 | [scene-detection.md](scene-detection.md) | Scene detector algorithms, CLI usage, pipeline JSON, events |
+| [twelvelabs.md](twelvelabs.md) | TwelveLabs Video Understanding — quick-start, graph recipes, processor reference |
 | [go-processor-nodes.md](go-processor-nodes.md) | Go processor API and built-in processors |
 | [hardware-acceleration.md](hardware-acceleration.md) | Hardware setup, zero-copy paths, GPU encoder options |
 | [ffmpeg-migration-guide.md](ffmpeg-migration-guide.md) | FFmpeg CLI → JSON mapping |
