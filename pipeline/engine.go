@@ -1182,6 +1182,12 @@ func (p *Pipeline) runGraph(ctx context.Context) (runErr error) {
 					NodeID:   nodeID,
 					Metadata: md,
 				})
+				// Progress events are SSE-only: skip file sinks and downstream
+				// consumer chaining so intermediate status updates (uploading,
+				// task_created, waiting) do not trigger downstream processors.
+				if md.Progress {
+					return
+				}
 				pCtx := processors.ProcessorContext{StreamID: nodeID}
 				for _, s := range runner.eventsSinks[nodeID] {
 					s.Write(pCtx, md)

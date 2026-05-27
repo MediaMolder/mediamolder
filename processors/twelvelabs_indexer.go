@@ -271,7 +271,7 @@ func (p *TwelveLabsIndexer) postProgress(ev SegmentEvent, payload map[string]any
 	if p.emit == nil {
 		return
 	}
-	p.emit(&Metadata{FilePath: ev.FilePath, Custom: map[string]any{"twelvelabs": payload}})
+	p.emit(&Metadata{FilePath: ev.FilePath, Progress: true, Custom: map[string]any{"twelvelabs": payload}})
 }
 
 func (p *TwelveLabsIndexer) postError(ev SegmentEvent, err error) {

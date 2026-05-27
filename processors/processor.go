@@ -53,6 +53,11 @@ type Metadata struct {
 	// the path to downstream SegmentEventConsumer nodes via chained
 	// "events" edges.
 	FilePath string `json:"file_path,omitempty"`
+	// Progress, when true, marks this as an intermediate status update.
+	// The engine forwards it to SSE subscribers for GUI display but does
+	// not chain it to downstream SegmentEventConsumer nodes or write it
+	// to EventSink file writers.
+	Progress bool `json:"progress,omitempty"`
 }
 
 // Detection represents a single detected object in a video frame.

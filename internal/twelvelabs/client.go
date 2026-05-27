@@ -141,7 +141,9 @@ func (c *Client) uploadMultipart(
 	req.Header.Set("Content-Type", mw.FormDataContentType())
 	c.setCommonHeaders(req)
 
-	resp, err := c.httpClient().Do(req)
+	// Uploads can take arbitrarily long for large files; rely on ctx for
+	// deadline control rather than the client's fixed Timeout.
+	resp, err := c.uploadHTTPClient().Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("twelvelabs: upload %s: %w", path, err)
 	}
@@ -170,6 +172,19 @@ func (c *Client) httpClient() *http.Client {
 		return c.HTTP
 	}
 	return http.DefaultClient
+}
+
+// uploadHTTPClient returns a copy of the configured HTTP client with Timeout
+// set to zero. File uploads can take longer than the fixed per-request
+// timeout; the caller's context provides the deadline instead.
+func (c *Client) uploadHTTPClient() *http.Client {
+	base := c.httpClient()
+	if base.Timeout == 0 {
+		return base
+	}
+	cp := *base
+	cp.Timeout = 0
+	return &cp
 }
 
 func (c *Client) setCommonHeaders(req *http.Request) {
