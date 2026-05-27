@@ -842,6 +842,7 @@ function Editor() {
   const rtSnapshot = useRTSnapshot(isRunning && !!(job.global_options?.realtime));
 
   const onRun = useCallback(() => {
+    setShowValidatePanel(false);
     setShowRunPanel(true);
     void run.start();
   }, [run]);
