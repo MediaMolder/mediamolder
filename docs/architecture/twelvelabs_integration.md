@@ -12,8 +12,10 @@ Implementation progress:
   `SegmentEventConsumer` / `AsyncMetadataProcessor` (Flows B/C).
 - ✅ Phase 6 — `twelvelabs_analyzer`, `twelvelabs_searcher`, and
   `twelvelabs_embedder` processors (shared `processors/twelvelabs_common.go`).
-- ⏳ Phases 7–10 — CLI subcommand, GUI palette, end-to-end recipes,
-  observability.
+- ✅ Phase 7 — `mediamolder twelvelabs` CLI subcommand
+  (`cmd/mediamolder/cmd_twelvelabs.go`).
+- ⏳ Phases 8–10 — `/api/twelvelabs/*` routes, GUI palette/Settings card,
+  end-to-end recipes + user guide, observability.
 
 ---
 
