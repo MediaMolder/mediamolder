@@ -485,7 +485,11 @@ export function configToFlow(cfg: JobConfig, opts: ConvertOptions = {}): {
   const edges: FlowEdge[] = cfg.graph.edges.map((e, idx) => {
     const fromHead = endpointHead(e.from);
     const toHead = endpointHead(e.to);
-    const sourceId = inputIds.has(fromHead) ? INPUT_PREFIX + fromHead : fromHead;
+    const sourceId = inputIds.has(fromHead)
+      ? INPUT_PREFIX + fromHead
+      : outputIds.has(fromHead)
+        ? OUTPUT_PREFIX + fromHead
+        : fromHead;
     const targetId = outputIds.has(toHead) ? OUTPUT_PREFIX + toHead : toHead;
 
     // For audio edges from input nodes, encode the track index in the
