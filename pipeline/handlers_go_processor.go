@@ -88,7 +88,12 @@ func (r *graphRunner) handleGoProcessor(ctx context.Context, node *graph.Node, i
 					}
 				}
 			}
-			f.Close()
+			// Only close the input frame if the processor returned a new one.
+			// When out == f (pass-through) closing f would free the AVFrame
+			// that out still points to, making f.p nil on the next line.
+			if out != f {
+				f.Close()
+			}
 			f = out
 			if cutSignaled && f != nil {
 				f.SetPictType(av.PictureTypeI)
