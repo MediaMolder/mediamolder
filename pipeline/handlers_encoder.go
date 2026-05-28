@@ -470,6 +470,16 @@ func (r *graphRunner) createEncoder(dag *graph.Graph, node *graph.Node) (*av.Enc
 		} else {
 			opts.Width = si.Width
 			opts.Height = si.Height
+			// Propagate the source stream's timebase so the encoder uses the
+			// same TB as the incoming decoded frames.  Without this the encoder
+			// defaults to 1/framerate (e.g. {1,24}), but decoded frames arrive
+			// with PTS values in the source TB (e.g. 1/12288).  sinkRescale
+			// then rescales from {1,24} back to {1,12288}, inflating every PTS
+			// by framerate_den/source_tb_den (e.g. 512x) and producing wildly
+			// oversized container durations.
+			if si.TimeBase[1] > 0 {
+				opts.TimeBase = si.TimeBase
+			}
 		}
 		frameRate := si.FrameRate
 		if frameRate[0] <= 0 || frameRate[1] <= 0 {
