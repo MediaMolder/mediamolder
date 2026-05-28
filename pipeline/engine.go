@@ -844,6 +844,51 @@ func configHasOnlyGoProcessors(cfg *Config) bool {
 	return true
 }
 
+// eventLiveNodes returns the set of node IDs that are "live" by virtue of
+// being reachable from any AV-sink-connected node via "events" or "file"
+// edges. These edges are stripped from the graph before AV compilation, so
+// nodes reachable only through them are reported as dead by the AV compiler
+// even though they perform meaningful side-effects (uploads, log writes).
+//
+// The returned set is used to suppress false-positive dead_node warnings
+// for those nodes.
+func eventLiveNodes(cfg *Config, avLive map[string]bool) map[string]bool {
+	// Build a quick lookup: for each node ID, which node IDs are its
+	// targets via file/events edges?
+	targets := make(map[string][]string, len(cfg.Graph.Edges))
+	for _, e := range cfg.Graph.Edges {
+		if e.Type != "events" && e.Type != "file" {
+			continue
+		}
+		srcID := edgeNodeID(e.From)
+		tgtID := edgeNodeID(e.To)
+		targets[srcID] = append(targets[srcID], tgtID)
+	}
+
+	live := make(map[string]bool, len(cfg.Graph.Nodes))
+	// Seed: all AV-live nodes.
+	for id := range avLive {
+		live[id] = true
+	}
+	// Forward-propagate over events/file edges until stable.
+	changed := true
+	for changed {
+		changed = false
+		for srcID, tgts := range targets {
+			if !live[srcID] {
+				continue
+			}
+			for _, tgtID := range tgts {
+				if !live[tgtID] {
+					live[tgtID] = true
+					changed = true
+				}
+			}
+		}
+	}
+	return live
+}
+
 func buildFilterSpec(node NodeDef) string {
 	if node.Filter == "" {
 		return "null"
@@ -972,6 +1017,9 @@ func (p *Pipeline) runGraph(ctx context.Context) (runErr error) {
 	if err != nil {
 		return fmt.Errorf("compile graph: %w", err)
 	}
+	// evLive is computed lazily on the first dead_node warning that might be
+	// suppressed because it is reachable via events/file edges.
+	var evLive map[string]bool
 	for _, w := range plan.Warnings {
 		// For go_processor-only pipelines, events edges are stripped from the
 		// AV graph before compilation, so dead_node and disconnected_source
@@ -979,6 +1027,33 @@ func (p *Pipeline) runGraph(ctx context.Context) (runErr error) {
 		if configHasOnlyGoProcessors(cfg) &&
 			(w.Code == graph.WarnDeadNode || w.Code == graph.WarnDisconnectedSource) {
 			continue
+		}
+		// Suppress dead_node for nodes that are reachable from an AV-live
+		// node via "events" or "file" edges (e.g. indexer, caption, *_log
+		// nodes in a segment-sink → TwelveLabs chain). These edges are
+		// stripped before AV compilation, so the AV compiler can't see
+		// them; the nodes are not truly dead.
+		if w.Code == graph.WarnDeadNode {
+			if evLive == nil {
+				avLive := make(map[string]bool, len(dag.Nodes))
+				var markLive func(n *graph.Node)
+				markLive = func(n *graph.Node) {
+					if avLive[n.ID] {
+						return
+					}
+					avLive[n.ID] = true
+					for _, e := range n.Inbound {
+						markLive(e.From)
+					}
+				}
+				for _, sink := range dag.Sinks {
+					markLive(sink)
+				}
+				evLive = eventLiveNodes(cfg, avLive)
+			}
+			if evLive[w.NodeID] {
+				continue
+			}
 		}
 		p.events.Post(ErrorEvent{
 			Err:  fmt.Errorf("graph compilation warning [%s]: %s", w.Code, w.Message),
