@@ -61,10 +61,22 @@ export function MMNode({ id, data, selected }: NodeProps & { data: FlowNodeData 
   // media types the catalog reported as supported. An empty/missing
   // streams list means "unknown" — fall back to all four so the user can
   // still wire the node manually.
-  const supported: readonly StreamHandle[] =
-    isOutput || !data.streams || data.streams.length === 0
-      ? STREAM_HANDLES
-      : STREAM_HANDLES.filter((t) => data.streams!.includes(t));
+  const supported: readonly StreamHandle[] = (() => {
+    if (isOutput || !data.streams || data.streams.length === 0) return STREAM_HANDLES;
+    const filtered = STREAM_HANDLES.filter((t) => data.streams!.includes(t));
+    // go_processor nodes always support file (target: receive written file
+    // paths from input/output nodes) and events (source: emit completion
+    // callbacks to downstream processors), regardless of what AV types the
+    // /api/nodes catalog reports. The catalog only describes AV pins.
+    if (data.kind === 'go_processor') {
+      const alwaysOn: StreamHandle[] = ['file', 'events'];
+      if (alwaysOn.every((t) => filtered.includes(t))) return filtered;
+      return STREAM_HANDLES.filter(
+        (t) => filtered.includes(t) || alwaysOn.includes(t),
+      );
+    }
+    return filtered;
+  })();
 
   // Per-track source handle count for input nodes.
   // Prefer the stored audioTrackCount (set by configToFlow on load and
