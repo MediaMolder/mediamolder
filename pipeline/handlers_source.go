@@ -959,6 +959,17 @@ func (r *graphRunner) copySourceFor(copyNode *graph.Node) (*av.InputFormatContex
 	}
 	in := copyNode.Inbound[0]
 	from := in.From
+	// A go_processor may sit between the source and the copy node as a
+	// pass-through (e.g. scene_change_adaptive detecting cuts while packets
+	// flow onward unchanged). Walk backward through go_processor nodes until
+	// we reach the actual source. The port type and track index are taken
+	// from the copy node's own inbound edge so the correct stream is matched.
+	for from.Kind == graph.KindGoProcessor {
+		if len(from.Inbound) != 1 {
+			return nil, 0, [2]int{}, fmt.Errorf("copy node %q: pass-through go_processor %q has %d inbound edges (expected 1)", copyNode.ID, from.ID, len(from.Inbound))
+		}
+		from = from.Inbound[0].From
+	}
 	if from.Kind != graph.KindSource {
 		return nil, 0, [2]int{}, fmt.Errorf("copy node %q: upstream %q (kind=%v) must be a source", copyNode.ID, from.ID, from.Kind)
 	}

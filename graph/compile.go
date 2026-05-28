@@ -116,28 +116,6 @@ func detectDeadBranches(g *Graph, plan *ExecutionPlan) {
 		walk(sink)
 	}
 
-	// Propagate liveness forward along "events" and "file" edges. A
-	// go_processor or metadata_file_writer attached to a live node via such
-	// an edge is not a dead node — its side-effects (uploads, log writes)
-	// are the intended output even though no AV stream flows through it.
-	// Repeat until stable so that multi-hop chains (sink→indexer→caption→log)
-	// are all marked live.
-	changed := true
-	for changed {
-		changed = false
-		for _, node := range g.Order {
-			if !live[node.ID] {
-				continue
-			}
-			for _, e := range node.Outbound {
-				if (e.Type == PortEvents || e.Type == "file") && !live[e.To.ID] {
-					live[e.To.ID] = true
-					changed = true
-				}
-			}
-		}
-	}
-
 	// Any node not in the live set is a dead branch.
 	for _, node := range g.Order {
 		if !live[node.ID] {
