@@ -183,7 +183,7 @@
         "to": { "type": "string", "minLength": 1 },
         "type": {
           "type": "string",
-          "enum": ["video", "audio", "subtitle", "data", "metadata"]
+          "enum": ["video", "audio", "subtitle", "data", "metadata", "events", "file"]
         }
       }
     },

@@ -56,7 +56,7 @@ func classifyBuildError(err error) (code, msg string) {
 func sourceIDsWithEventsEdges(cfg *Config) map[string]bool {
 	m := make(map[string]bool)
 	for _, e := range cfg.Graph.Edges {
-		if e.Type == "events" {
+		if e.Type == "events" || e.Type == "file" {
 			base := e.From
 			if i := strings.Index(base, ":"); i >= 0 {
 				base = base[:i]

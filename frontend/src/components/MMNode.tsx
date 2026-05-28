@@ -5,7 +5,7 @@ import { MULTI_AUDIO_INPUT_FILTERS } from '../lib/jsonAdapter';
 import type { NodeDef, ProbedStream } from '../lib/jobTypes';
 import { displayName, lookupFriendlyName, useNamingMode } from '../lib/friendlyNames';
 
-const STREAM_HANDLES = ['video', 'audio', 'subtitle', 'data', 'events'] as const;
+const STREAM_HANDLES = ['video', 'audio', 'subtitle', 'data', 'events', 'file'] as const;
 type StreamHandle = (typeof STREAM_HANDLES)[number];
 
 export interface MMNodeRunData {
@@ -160,13 +160,14 @@ export function MMNode({ id, data, selected }: NodeProps & { data: FlowNodeData 
       case 'subtitle': return AUDIO_BASE + maxAudioSlots * TRACK_PITCH;
       case 'data': return AUDIO_BASE + maxAudioSlots * TRACK_PITCH + SLOT_PITCH;
       case 'events': return AUDIO_BASE + maxAudioSlots * TRACK_PITCH + SLOT_PITCH * 2;
+      case 'file':   return AUDIO_BASE + maxAudioSlots * TRACK_PITCH + SLOT_PITCH * 3;
       default: return 16;
     }
   };
 
   // Ensure the node container is tall enough to contain all handle dots.
   const nodeMinHeight = maxAudioSlots > 1
-    ? slotTop('events') + 12
+    ? slotTop('file') + 12
     : undefined;
 
   const classes = [
@@ -184,6 +185,8 @@ export function MMNode({ id, data, selected }: NodeProps & { data: FlowNodeData 
       {/* Target (left) handles */}
       {!isInput &&
         supported.flatMap((t) => {
+          // file target handles only make sense on go_processor nodes.
+          if (t === 'file' && data.kind !== 'go_processor') return [];
           if (t === 'audio' && audioTgtCount > 1) {
             return Array.from({ length: audioTgtCount }, (_, i) => (
               <Fragment key={`tgt-audio-${i}`}>
@@ -337,6 +340,8 @@ export function MMNode({ id, data, selected }: NodeProps & { data: FlowNodeData 
           // Input nodes: audio source handle must use "audio:0" to match
           // the track-indexed sourceHandle that configToFlow assigns to
           // edges coming from input nodes (even single-track ones).
+          // file source handles are only valid on input nodes.
+          if (t === 'file' && !isInput) return [];
           const handleId = (isInput && t === 'audio') ? 'audio:0' : t;
           return [
             <Handle

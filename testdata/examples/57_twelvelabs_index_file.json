@@ -15,7 +15,7 @@
         "params": { "output_file": "out/summary.jsonl" } }
     ],
     "edges": [
-      { "from": "in0",     "to": "indexer",     "type": "events" },
+      { "from": "in0",     "to": "indexer",     "type": "file" },
       { "from": "indexer", "to": "index_log",   "type": "events" },
       { "from": "indexer", "to": "summary",     "type": "events" },
       { "from": "summary", "to": "summary_log", "type": "events" }

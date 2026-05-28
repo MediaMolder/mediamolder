@@ -1129,7 +1129,7 @@ func (p *Pipeline) runGraph(ctx context.Context) (runErr error) {
 		nodesByID[cfg.Graph.Nodes[i].ID] = &cfg.Graph.Nodes[i]
 	}
 	for _, e := range cfg.Graph.Edges {
-		if e.Type != "events" {
+		if e.Type != "events" && e.Type != "file" {
 			continue
 		}
 		srcID := edgeNodeID(e.From)
