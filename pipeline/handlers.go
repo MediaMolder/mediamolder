@@ -246,6 +246,13 @@ type graphRunner struct {
 	// returns nil because the work is dispatched via OnSegmentCompleted
 	// or the metadata emitter, not via the AV scheduler.
 	eventDrivenGoProcessors map[string]struct{}
+	// goProcessorCloseOrder lists go_processor IDs in the order close()
+	// must close them. Event producers (upstream in events edges) come
+	// before their consumers so that a producer's Close() can block until
+	// its upload goroutines fire OnSegmentCompleted on the consumer before
+	// the consumer is closed. Populated by the events-wiring loop.
+	// Any processor not in this list is closed afterwards in map order.
+	goProcessorCloseOrder []string
 }
 
 func newGraphRunner(cfg *Config, pipe *Pipeline) *graphRunner {
@@ -258,9 +265,9 @@ func newGraphRunner(cfg *Config, pipe *Pipeline) *graphRunner {
 		encoderOpts:      make(map[string]av.EncoderOptions),
 		sinks:            make(map[string]*sinkResources),
 		trackers:         make(map[string]*NodePerfTracker),
-		goProcessors:       make(map[string]processors.Processor),
-		eventsSinks:        make(map[string][]*processors.EventSink),
-		pureEventSinkNodes: make(map[string]struct{}),
+		goProcessors:             make(map[string]processors.Processor),
+		eventsSinks:             make(map[string][]*processors.EventSink),
+		pureEventSinkNodes:      make(map[string]struct{}),
 		eventDrivenGoProcessors: make(map[string]struct{}),
 		passLogFiles:     make(map[string]*os.File),
 		hwDevices:        make(map[string]*av.HWDeviceContext),
@@ -304,8 +311,21 @@ func (r *graphRunner) close() {
 	for _, enc := range r.encoders {
 		enc.Close()
 	}
-	for _, p := range r.goProcessors {
-		p.Close()
+	// Close go_processors in topological order (event producers first) so that
+	// a producer's Close() — which blocks until its upload goroutines finish
+	// and fire OnSegmentCompleted on downstream consumers — completes before
+	// the consumer's Close() waits on its own WaitGroup.
+	closedProc := make(map[string]bool, len(r.goProcessors))
+	for _, id := range r.goProcessorCloseOrder {
+		if p, ok := r.goProcessors[id]; ok {
+			p.Close()
+			closedProc[id] = true
+		}
+	}
+	for id, p := range r.goProcessors {
+		if !closedProc[id] {
+			p.Close()
+		}
 	}
 	for _, sinks := range r.eventsSinks {
 		for _, s := range sinks {

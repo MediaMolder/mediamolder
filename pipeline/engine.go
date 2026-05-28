@@ -1212,6 +1212,33 @@ func (p *Pipeline) runGraph(ctx context.Context) (runErr error) {
 		}
 	}
 
+	// Compute go_processor close order: event producers (nodes that are
+	// sources of processor→processor "events" edges) before consumers, so
+	// producer.Close() blocks until it fires OnSegmentCompleted on consumers
+	// before consumer.Close() waits on the consumer's WaitGroup.
+	{
+		seen := make(map[string]bool)
+		for _, e := range cfg.Graph.Edges {
+			if e.Type != "events" {
+				continue
+			}
+			srcID := edgeNodeID(e.From)
+			if _, isProc := runner.goProcessors[srcID]; isProc && !seen[srcID] {
+				seen[srcID] = true
+				runner.goProcessorCloseOrder = append(runner.goProcessorCloseOrder, srcID)
+			}
+		}
+		// Append any remaining go_processors (pure consumers) in sorted order.
+		var remaining []string
+		for id := range runner.goProcessors {
+			if !seen[id] {
+				remaining = append(remaining, id)
+			}
+		}
+		sort.Strings(remaining)
+		runner.goProcessorCloseOrder = append(runner.goProcessorCloseOrder, remaining...)
+	}
+
 	// Dispatch "from-input" events synchronously: for each input node that
 	// is the source of an "events" edge, fire OnSegmentCompleted immediately
 	// so the processor's wg.Add(1) is called before sched.Run starts and
