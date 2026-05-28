@@ -1105,8 +1105,12 @@ func (p *Pipeline) runGraph(ctx context.Context) (runErr error) {
 				if si, siErr := runner.resolveStreamInfo(dag, node); siErr == nil &&
 					si.Type == av.MediaTypeVideo &&
 					si.FrameRate[0] > 0 && si.FrameRate[1] > 0 {
-					initParams = copyParams(initParams)
-					initParams["frame_rate"] = float64(si.FrameRate[0]) / float64(si.FrameRate[1])
+					cp := make(map[string]any, len(initParams)+1)
+					for k, v := range initParams {
+						cp[k] = v
+					}
+					cp["frame_rate"] = float64(si.FrameRate[0]) / float64(si.FrameRate[1])
+					initParams = cp
 				}
 			}
 			if err := proc.Init(initParams); err != nil {
