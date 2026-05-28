@@ -73,12 +73,32 @@ func handleListDir(w http.ResponseWriter, r *http.Request) {
 
 	info, err := os.Stat(abs)
 	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			writeJSONError(w, http.StatusNotFound, err)
-		} else {
+		if !errors.Is(err, fs.ErrNotExist) {
 			writeJSONError(w, http.StatusForbidden, err)
+			return
 		}
-		return
+		// Walk up until we find an ancestor that exists. This lets the browser
+		// open gracefully when the stored path (e.g. "out/shot-%05d.mp4")
+		// references a directory that hasn't been created yet.
+		candidate := filepath.Dir(abs)
+		for candidate != abs {
+			if fi, serr := os.Stat(candidate); serr == nil {
+				info = fi
+				abs = candidate
+				break
+			}
+			next := filepath.Dir(candidate)
+			if next == candidate {
+				// Reached filesystem root and nothing exists.
+				writeJSONError(w, http.StatusNotFound, err)
+				return
+			}
+			candidate = next
+		}
+		if info == nil {
+			writeJSONError(w, http.StatusNotFound, err)
+			return
+		}
 	}
 	if !info.IsDir() {
 		// User passed a file path; fall back to its parent directory.
