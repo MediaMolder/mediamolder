@@ -617,6 +617,19 @@ func (e *exporter) buildOutput(out pipeline.Output) {
 		e.add("-async", strconv.Itoa(view.AudioSync))
 	}
 
+	// Output-side timing (-ss / -t / -to from out.Options).
+	// These trim the output stream on the muxer side; they live in the
+	// generic Options map (same key names as the input-side equivalents).
+	if v, ok := out.Options["ss"]; ok {
+		e.add("-ss", fmt.Sprintf("%v", v))
+	}
+	if v, ok := out.Options["t"]; ok {
+		e.add("-t", fmt.Sprintf("%v", v))
+	}
+	if v, ok := out.Options["to"]; ok {
+		e.add("-to", fmt.Sprintf("%v", v))
+	}
+
 	// Misc output flags.
 	if out.Shortest {
 		e.add("-shortest")
