@@ -96,6 +96,14 @@ func (r *graphRunner) handleGoProcessor(ctx context.Context, node *graph.Node, i
 			continue
 		}
 
+		// No downstream AV channels: this go_processor is a terminal frame
+		// processor (e.g. a scene detector whose AV output was redirected to
+		// a source by rewriteGoProcessorCopyEdges). Close the frame and loop.
+		if len(outs) == 0 {
+			f.Close()
+			continue
+		}
+
 		// Send output to all downstream channels.
 		for _, ch := range outs {
 			select {
