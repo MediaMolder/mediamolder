@@ -5,7 +5,7 @@ import { MULTI_AUDIO_INPUT_FILTERS } from '../lib/jsonAdapter';
 import type { NodeDef, ProbedStream } from '../lib/jobTypes';
 import { displayName, lookupFriendlyName, useNamingMode } from '../lib/friendlyNames';
 
-const STREAM_HANDLES = ['video', 'audio', 'subtitle', 'data', 'events', 'file'] as const;
+const STREAM_HANDLES = ['file', 'video', 'audio', 'subtitle', 'data', 'events'] as const;
 type StreamHandle = (typeof STREAM_HANDLES)[number];
 
 export interface MMNodeRunData {
@@ -21,7 +21,7 @@ export const URL_BROWSE_EVENT = 'mm.url.browse';
 // Vertical spacing constants (px).
 const SLOT_PITCH = 12;   // gap between distinct stream types (unchanged)
 const TRACK_PITCH = 10;  // gap between per-track handles of the same type
-const AUDIO_BASE = 16 + STREAM_HANDLES.indexOf('audio') * SLOT_PITCH; // 28
+const AUDIO_BASE = 16 + STREAM_HANDLES.indexOf('audio') * SLOT_PITCH; // 40 (file@16, video@28, audio@40)
 
 // Named audio layouts with per-channel names in FFmpeg av_channel_layout_default order.
 const AUDIO_LAYOUTS: { name: string; channels: number; chNames: string[] }[] = [
@@ -155,20 +155,24 @@ export function MMNode({ id, data, selected }: NodeProps & { data: FlowNodeData 
   // other stream types shift down accordingly so handles stay below audio.
   const slotTop = (t: StreamHandle, trackIdx = 0): number => {
     switch (t) {
-      case 'video': return 16;
-      case 'audio': return AUDIO_BASE + trackIdx * TRACK_PITCH;
+      case 'file':     return 16;
+      case 'video':    return 16 + SLOT_PITCH;
+      case 'audio':    return AUDIO_BASE + trackIdx * TRACK_PITCH;
       case 'subtitle': return AUDIO_BASE + maxAudioSlots * TRACK_PITCH;
-      case 'data': return AUDIO_BASE + maxAudioSlots * TRACK_PITCH + SLOT_PITCH;
-      case 'events': return AUDIO_BASE + maxAudioSlots * TRACK_PITCH + SLOT_PITCH * 2;
-      case 'file':   return AUDIO_BASE + maxAudioSlots * TRACK_PITCH + SLOT_PITCH * 3;
-      default: return 16;
+      case 'data':     return AUDIO_BASE + maxAudioSlots * TRACK_PITCH + SLOT_PITCH;
+      case 'events':   return AUDIO_BASE + maxAudioSlots * TRACK_PITCH + SLOT_PITCH * 2;
+      default:         return 16;
     }
   };
 
   // Ensure the node container is tall enough to contain all handle dots.
-  const nodeMinHeight = maxAudioSlots > 1
-    ? slotTop('file') + 12
-    : undefined;
+  // Events is the bottommost slot; nodes that carry it (go_processors,
+  // outputs) or that have multi-track audio must be tall enough to show it.
+  const lastSlot = supported[supported.length - 1] as StreamHandle;
+  const nodeMinHeight =
+    (maxAudioSlots > 1 || lastSlot === 'events')
+      ? slotTop(lastSlot) + 12
+      : undefined;
 
   const classes = [
     'mm-node',

@@ -5,6 +5,7 @@ export function Legend() {
   return (
     <div className="legend">
       <span className="legend-title">Stream types</span>
+      <span className="legend-row"><span className="legend-swatch" style={{ background: 'var(--file)' }} /> File</span>
       <span className="legend-row"><span className="legend-swatch" style={{ background: 'var(--video)' }} /> Video</span>
       <span className="legend-row"><span className="legend-swatch" style={{ background: 'var(--audio)' }} /> Audio</span>
       <span className="legend-row"><span className="legend-swatch" style={{ background: 'var(--subtitle)' }} /> Subtitle</span>
