@@ -9,28 +9,24 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 )
 
-func TestAnalyze_Sync(t *testing.T) {
+func TestAnalyze_AccumulatesText(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || r.URL.Path != "/analyze" {
 			http.NotFound(w, r)
 			return
 		}
-		var body struct {
-			Stream bool `json:"stream"`
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		for _, line := range []string{
+			`{"event_type":"stream_start","metadata":{}}`,
+			`{"event_type":"text_generation","text":"This is "}`,
+			`{"event_type":"text_generation","text":"a video about cats."}`,
+			`{"event_type":"stream_end","metadata":{}}`,
+		} {
+			w.Write([]byte(line + "\n")) //nolint:errcheck
 		}
-		json.NewDecoder(r.Body).Decode(&body) //nolint:errcheck
-		if body.Stream {
-			t.Error("sync Analyze should not set stream=true")
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(AnalyzeResult{
-			ID:   "result1",
-			Text: "This is a video about cats.",
-		})
 	}))
 	defer srv.Close()
 
@@ -41,9 +37,6 @@ func TestAnalyze_Sync(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatal(err)
-	}
-	if result.ID != "result1" {
-		t.Errorf("ID: got %q, want result1", result.ID)
 	}
 	if result.Text != "This is a video about cats." {
 		t.Errorf("Text: got %q", result.Text)
@@ -77,10 +70,10 @@ func TestAnalyze_APIError(t *testing.T) {
 
 func TestAnalyzeStream(t *testing.T) {
 	events := []string{
-		`data: {"type":"text_delta","data":"The "}`,
-		`data: {"type":"text_delta","data":"video"}`,
-		`data: {"type":"completed","data":"The video"}`,
-		`data: [DONE]`,
+		`{"event_type":"stream_start","metadata":{}}`,
+		`{"event_type":"text_generation","text":"The "}`,
+		`{"event_type":"text_generation","text":"video"}`,
+		`{"event_type":"stream_end","metadata":{}}`,
 	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
@@ -90,7 +83,7 @@ func TestAnalyzeStream(t *testing.T) {
 		if !body.Stream {
 			t.Error("AnalyzeStream should set stream=true")
 		}
-		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Content-Type", "application/x-ndjson")
 		for _, e := range events {
 			w.Write([]byte(e + "\n")) //nolint:errcheck
 		}
@@ -109,22 +102,22 @@ func TestAnalyzeStream(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(received) != 3 { // [DONE] is skipped
-		t.Errorf("chunks: got %d, want 3", len(received))
+	if len(received) != 2 { // stream_start and stream_end are skipped
+		t.Errorf("chunks: got %d, want 2", len(received))
 	}
 	combined := ""
 	for _, c := range received {
-		combined += c.Data
+		combined += c.Text
 	}
-	if !strings.Contains(combined, "The video") {
-		t.Errorf("combined text: got %q", combined)
+	if combined != "The video" {
+		t.Errorf("combined text: got %q, want %q", combined, "The video")
 	}
 }
 
 func TestAnalyzeStream_CallbackError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/event-stream")
-		w.Write([]byte(`data: {"type":"text_delta","data":"x"}` + "\n")) //nolint:errcheck
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		w.Write([]byte(`{"event_type":"text_generation","text":"x"}` + "\n")) //nolint:errcheck
 	}))
 	defer srv.Close()
 

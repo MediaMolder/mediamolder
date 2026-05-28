@@ -6,6 +6,7 @@ package twelvelabs
 import (
 	"context"
 	"net/http"
+	"strings"
 )
 
 // analyzeBody is the JSON payload for POST /analyze.
@@ -18,22 +19,18 @@ type analyzeBody struct {
 	Segments    bool    `json:"segments,omitempty"`
 }
 
-// Analyze sends a synchronous (non-streaming) Pegasus analysis request and
-// returns the complete result.
+// Analyze issues a Pegasus analysis request and returns the accumulated result.
+// The TwelveLabs v1.3 /analyze endpoint always responds with a streaming NDJSON
+// body; this helper collects all "text_generation" chunks into AnalyzeResult.Text.
 func (c *Client) Analyze(ctx context.Context, req AnalyzeRequest) (*AnalyzeResult, error) {
-	body := analyzeBody{
-		VideoID:     req.VideoID,
-		VideoURL:    req.VideoURL,
-		Prompt:      req.Prompt,
-		Temperature: req.Temperature,
-		Segments:    req.Segments,
-	}
-	resp, err := c.do(ctx, http.MethodPost, "/analyze", body)
-	if err != nil {
+	var sb strings.Builder
+	if err := c.AnalyzeStream(ctx, req, func(chunk AnalyzeChunk) error {
+		sb.WriteString(chunk.Text)
+		return nil
+	}); err != nil {
 		return nil, err
 	}
-	var result AnalyzeResult
-	return &result, decodeJSON(resp.Body, &result)
+	return &AnalyzeResult{Text: sb.String()}, nil
 }
 
 // AnalyzeStream sends a streaming Pegasus analysis request and invokes fn for

@@ -72,10 +72,14 @@ func newTLMock(t *testing.T) *httptest.Server {
 		})
 	})
 	mux.HandleFunc("/analyze", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"id": "a-1", "data": "summary",
-		})
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		for _, line := range []string{
+			`{"event_type":"stream_start","metadata":{}}`,
+			`{"event_type":"text_generation","text":"summary"}`,
+			`{"event_type":"stream_end","metadata":{}}`,
+		} {
+			_, _ = w.Write([]byte(line + "\n"))
+		}
 	})
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)

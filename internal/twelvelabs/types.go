@@ -77,10 +77,12 @@ type Chapter struct {
 	Title  string  `json:"chapter_title"`
 }
 
-// AnalyzeChunk is one SSE event during a streaming analyze call.
+// AnalyzeChunk is one NDJSON event in a Pegasus analyze response stream.
+// The TwelveLabs v1.3 API always streams the /analyze response as NDJSON,
+// regardless of whether stream=true is sent in the request body.
 type AnalyzeChunk struct {
-	Type string `json:"type"` // "text_delta" | "completed" | "error"
-	Data string `json:"data"`
+	EventType string `json:"event_type"` // "stream_start" | "text_generation" | "stream_end"
+	Text      string `json:"text"`       // populated for EventType "text_generation"
 }
 
 // SearchRequest drives a Marengo search call.
