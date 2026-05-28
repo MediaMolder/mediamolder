@@ -377,15 +377,21 @@ function Editor() {
         // still gets a distinct track.
         let rawFrom = '';
         if (sourceNode?.data.kind === 'input') {
-          const trackStr = (c.sourceHandle ?? '').split(':')[1];
-          const letter = stream === 'audio' ? 'a' : stream === 'video' ? 'v' : stream === 'subtitle' ? 's' : 'd';
-          if (trackStr !== undefined) {
-            // Per-track handle — track is encoded in the handle id.
-            rawFrom = `${sourceNode.data.label}:${letter}:${parseInt(trackStr, 10)}`;
+          if (stream === 'events' || stream === 'file') {
+            // Events and file edges carry a file-path notification, not a
+            // decoded stream. The raw ref is just the input id with no type suffix.
+            rawFrom = sourceNode.data.label as string;
           } else {
-            // Single-handle fallback: assign the next unused track index.
-            const track = nextInputTrack(sourceNode.data.label as string, stream, es);
-            rawFrom = `${sourceNode.data.label}:${letter}:${track}`;
+            const trackStr = (c.sourceHandle ?? '').split(':')[1];
+            const letter = stream === 'audio' ? 'a' : stream === 'video' ? 'v' : stream === 'subtitle' ? 's' : 'd';
+            if (trackStr !== undefined) {
+              // Per-track handle — track is encoded in the handle id.
+              rawFrom = `${sourceNode.data.label}:${letter}:${parseInt(trackStr, 10)}`;
+            } else {
+              // Single-handle fallback: assign the next unused track index.
+              const track = nextInputTrack(sourceNode.data.label as string, stream, es);
+              rawFrom = `${sourceNode.data.label}:${letter}:${track}`;
+            }
           }
         }
         const newEdge: FlowEdge = {

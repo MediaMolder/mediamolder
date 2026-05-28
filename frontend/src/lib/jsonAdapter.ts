@@ -32,6 +32,7 @@ const STREAM_LETTER: Record<StreamType, string> = {
   metadata: 'm',
   attachment: 't',
   events: 'e',
+  file: 'f',
 };
 
 /**
@@ -346,7 +347,7 @@ function inferCopyStreams(nodeId: string, edges: EdgeDef[]): string[] {
     if (endpointHead(e.from) === nodeId || endpointHead(e.to) === nodeId) {
       // "events" edges are routing annotations only; they do not represent
       // AV streams and must not be included in a node's streams list.
-      if (e.type && e.type !== 'events') seen.add(e.type);
+      if (e.type && e.type !== 'events' && e.type !== 'file') seen.add(e.type);
     }
   }
   return [...seen];
@@ -917,6 +918,10 @@ export function expandImplicitNodes(
     const targetNode = nodeById.get(e.target);
     if (!sourceNode || !targetNode) continue;
     const type = (e.data?.streamType ?? 'video') as StreamType;
+
+    // Events and file edges are routing annotations, not decoded AV streams.
+    // They must not be expanded with ghost demuxer/decoder/muxer stages.
+    if (type === 'events' || type === 'file') continue;
 
     let chainHead = e.source;
     let chainHeadRaw = e.data?.rawFrom ?? '';
