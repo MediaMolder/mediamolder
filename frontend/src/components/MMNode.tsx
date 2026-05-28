@@ -201,8 +201,11 @@ export function MMNode({ id, data, selected }: NodeProps & { data: FlowNodeData 
       {/* Target (left) handles */}
       {!isInput &&
         supported.flatMap((t) => {
-          // file target handles only make sense on go_processor nodes.
+          // file target handles only make sense on go_processor nodes that
+          // implement SegmentEventConsumer (e.g. twelvelabs_*).
+          // metadata_file_writer is driven by events edges, not file paths.
           if (t === 'file' && data.kind !== 'go_processor') return [];
+          if (t === 'file' && (data.ref as { kind?: string; def?: { processor?: string } } | undefined)?.def?.processor === 'metadata_file_writer') return [];
           if (t === 'audio' && audioTgtCount > 1) {
             return Array.from({ length: audioTgtCount }, (_, i) => (
               <Fragment key={`tgt-audio-${i}`}>
