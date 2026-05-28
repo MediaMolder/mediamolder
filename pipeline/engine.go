@@ -1031,6 +1031,17 @@ func (p *Pipeline) runGraph(ctx context.Context) (runErr error) {
 		// Suppress dead_node for nodes that are reachable from an AV-live
 		// node via "events" or "file" edges (e.g. indexer, caption, *_log
 		// nodes in a segment-sink → TwelveLabs chain). These edges are
+		// Suppress dead_node for go_processor nodes that are being used
+		// purely for side-channel analysis (no outbound AV edges). This
+		// occurs when rewriteGoProcessorCopyEdges redirects a copy node to
+		// read packets directly from the source, leaving the go_processor as
+		// a terminal frame processor with no downstream AV consumers.
+		if w.Code == graph.WarnDeadNode {
+			if n := dag.NodeByID(w.NodeID); n != nil &&
+				n.Kind == graph.KindGoProcessor && len(n.Inbound) > 0 {
+				continue
+			}
+		}
 		// stripped before AV compilation, so the AV compiler can't see
 		// them; the nodes are not truly dead.
 		if w.Code == graph.WarnDeadNode {
