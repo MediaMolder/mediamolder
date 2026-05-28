@@ -523,7 +523,11 @@ func (r *graphRunner) handleSink(ctx context.Context, node *graph.Node, ins []<-
 		in := ins[c.idx]
 		isVideo := c.idx < len(w.node.Inbound) && w.node.Inbound[c.idx].Type == graph.PortVideo
 		eg.Go(func() error {
-			defer w.recordShortest(c.st.lastPTSus, c.st.lastPTSok)
+			// Use a closure so lastPTSus/lastPTSok are read at deferred-call
+			// time, not at defer-statement time. Plain `defer f(a, b)` evaluates
+			// a and b immediately — capturing (0, false) here at goroutine start
+			// — causing recordShortest to always no-op (ok=false).
+			defer func() { w.recordShortest(c.st.lastPTSus, c.st.lastPTSok) }()
 			for v := range in {
 				pkt := v.(*av.Packet)
 				// Only the video channel drives segment rotation.
