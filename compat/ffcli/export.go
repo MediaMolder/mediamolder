@@ -245,9 +245,9 @@ func (e *exporter) buildInput(idx int, in pipeline.Input) {
 	// These are demuxer AVOptions that must appear before -i.
 	// The set is fixed so the export is deterministic and round-trippable.
 	for _, key := range []string{
-		"rtsp_transport", "stimeout",  // RTSP
-		"mode", "listen_timeout",      // SRT
-		"timeout", "rw_timeout",       // RTMP / general
+		"rtsp_transport", "stimeout", // RTSP
+		"mode", "listen_timeout", // SRT
+		"timeout", "rw_timeout", // RTMP / general
 	} {
 		if v, ok := in.Options[key]; ok {
 			e.add("-"+key, fmt.Sprint(v))

@@ -290,8 +290,9 @@ export function MMNode({ id, data, selected }: NodeProps & { data: FlowNodeData 
         </div>
       )}
 
-      {/* Events source handle on output nodes: events edges flow from an
-          output (completion trigger) to go_processor nodes (consumers). */}
+      {/* Events and file source handles on output nodes: events edges flow
+          from an output (completion trigger) and file edges flow from an
+          output (written file path) to downstream go_processor nodes. */}
       {isOutput && supported.includes('events') && (
         <Handle
           type="source"
@@ -299,6 +300,15 @@ export function MMNode({ id, data, selected }: NodeProps & { data: FlowNodeData 
           id="events"
           className="handle-events"
           style={{ top: slotTop('events') }}
+        />
+      )}
+      {isOutput && (
+        <Handle
+          type="source"
+          position={Position.Right}
+          id="file"
+          className="handle-file"
+          style={{ top: slotTop('file') }}
         />
       )}
 

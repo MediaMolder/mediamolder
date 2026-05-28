@@ -222,40 +222,41 @@ func probeFirstVideoPTSSeconds(t *testing.T, ffprobeBin, path string) float64 {
 	}
 	return v
 }
+
 // probeStreamDurationSeconds returns the duration (in seconds) of the
 // first stream matching the given codec_type (e.g. "video", "audio")
 // as reported by ffprobe.
 func probeStreamDurationSeconds(t *testing.T, ffprobeBin, path, codecType string) float64 {
-        t.Helper()
-        cmd := exec.Command(ffprobeBin,
-                "-v", "error",
-                "-show_entries", "stream=codec_type,duration",
-                "-of", "json",
-                path)
-        raw, err := cmd.Output()
-        if err != nil {
-                t.Fatalf("ffprobe: %v (stderr: %s)", err, exitStderr(err))
-        }
-        var probe struct {
-                Streams []struct {
-                        CodecType string `json:"codec_type"`
-                        Duration  string `json:"duration"`
-                } `json:"streams"`
-        }
-        if err := json.Unmarshal(raw, &probe); err != nil {
-                t.Fatalf("ffprobe parse: %v", err)
-        }
-        for _, s := range probe.Streams {
-                if s.CodecType == codecType {
-                        d, err := strconv.ParseFloat(s.Duration, 64)
-                        if err != nil {
-                                t.Fatalf("parse duration %q: %v", s.Duration, err)
-                        }
-                        return d
-                }
-        }
-        t.Fatalf("no %s stream found in %s", codecType, path)
-        return 0
+	t.Helper()
+	cmd := exec.Command(ffprobeBin,
+		"-v", "error",
+		"-show_entries", "stream=codec_type,duration",
+		"-of", "json",
+		path)
+	raw, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("ffprobe: %v (stderr: %s)", err, exitStderr(err))
+	}
+	var probe struct {
+		Streams []struct {
+			CodecType string `json:"codec_type"`
+			Duration  string `json:"duration"`
+		} `json:"streams"`
+	}
+	if err := json.Unmarshal(raw, &probe); err != nil {
+		t.Fatalf("ffprobe parse: %v", err)
+	}
+	for _, s := range probe.Streams {
+		if s.CodecType == codecType {
+			d, err := strconv.ParseFloat(s.Duration, 64)
+			if err != nil {
+				t.Fatalf("parse duration %q: %v", s.Duration, err)
+			}
+			return d
+		}
+	}
+	t.Fatalf("no %s stream found in %s", codecType, path)
+	return 0
 }
 
 // TestPerStreamStop_DrainAllStreams is a regression test for the
@@ -272,17 +273,17 @@ func probeStreamDurationSeconds(t *testing.T, ffprobeBin, path, codecType string
 //     continues until a@8.005 marks audio done (count 2/2), then breaks.
 //     All audio through a@7.984 s is flushed; output audio ≈ 8.00 s.
 func TestPerStreamStop_DrainAllStreams(t *testing.T) {
-        inputURL := filepath.Join("..", "testdata", "BBB_10sec.mp4")
-        if _, err := os.Stat(inputURL); err != nil {
-                t.Skip("testdata/BBB_10sec.mp4 missing")
-        }
-        ffprobeBin, err := exec.LookPath("ffprobe")
-        if err != nil {
-                t.Skip("ffprobe not in PATH")
-        }
+	inputURL := filepath.Join("..", "testdata", "BBB_10sec.mp4")
+	if _, err := os.Stat(inputURL); err != nil {
+		t.Skip("testdata/BBB_10sec.mp4 missing")
+	}
+	ffprobeBin, err := exec.LookPath("ffprobe")
+	if err != nil {
+		t.Skip("ffprobe not in PATH")
+	}
 
-        output := filepath.Join(t.TempDir(), "trimmed.mp4")
-        rawCfg := fmt.Sprintf(`{
+	output := filepath.Join(t.TempDir(), "trimmed.mp4")
+	rawCfg := fmt.Sprintf(`{
 		"schema_version": "1.1",
 		"inputs": [{
 			"id": "in0",
@@ -309,34 +310,34 @@ func TestPerStreamStop_DrainAllStreams(t *testing.T) {
 		}]
 	}`, inputURL, output)
 
-        cfg, err := ParseConfig([]byte(rawCfg))
-        if err != nil {
-                t.Fatalf("ParseConfig: %v", err)
-        }
-        eng, err := NewPipeline(cfg)
-        if err != nil {
-                t.Fatalf("NewPipeline: %v", err)
-        }
-        if err := eng.Run(context.Background()); err != nil {
-                t.Fatalf("Run: %v", err)
-        }
+	cfg, err := ParseConfig([]byte(rawCfg))
+	if err != nil {
+		t.Fatalf("ParseConfig: %v", err)
+	}
+	eng, err := NewPipeline(cfg)
+	if err != nil {
+		t.Fatalf("NewPipeline: %v", err)
+	}
+	if err := eng.Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
 
-        // Video: last frame just before 8 s → output duration ≈ 8 s.
-        vidDur := probeStreamDurationSeconds(t, ffprobeBin, output, "video")
-        if math.Abs(vidDur-8.0) > 0.1 {
-                t.Errorf("video duration = %.3fs, want ~8.0s", vidDur)
-        }
+	// Video: last frame just before 8 s → output duration ≈ 8 s.
+	vidDur := probeStreamDurationSeconds(t, ffprobeBin, output, "video")
+	if math.Abs(vidDur-8.0) > 0.1 {
+		t.Errorf("video duration = %.3fs, want ~8.0s", vidDur)
+	}
 
-        // Audio: with per-stream stop the packets at 7.920 s and 7.941 s
-        // (read AFTER v@8.000s in file order) must not be lost. The audio
-        // duration must reach ≥ 7.99 s.  The old break-all bug produced
-        // ≈ 7.92 s; this assertion catches a regression.
-        audDur := probeStreamDurationSeconds(t, ffprobeBin, output, "audio")
-        if audDur < 7.99 {
-                t.Errorf("audio duration = %.3fs, want ≥ 7.99s (per-stream stop not draining remaining audio)", audDur)
-        }
-        if audDur > 8.1 {
-                t.Errorf("audio duration = %.3fs, want ≤ 8.1s (stop not enforced)", audDur)
-        }
-        _ = time.Second // keep time import used
+	// Audio: with per-stream stop the packets at 7.920 s and 7.941 s
+	// (read AFTER v@8.000s in file order) must not be lost. The audio
+	// duration must reach ≥ 7.99 s.  The old break-all bug produced
+	// ≈ 7.92 s; this assertion catches a regression.
+	audDur := probeStreamDurationSeconds(t, ffprobeBin, output, "audio")
+	if audDur < 7.99 {
+		t.Errorf("audio duration = %.3fs, want ≥ 7.99s (per-stream stop not draining remaining audio)", audDur)
+	}
+	if audDur > 8.1 {
+		t.Errorf("audio duration = %.3fs, want ≤ 8.1s (stop not enforced)", audDur)
+	}
+	_ = time.Second // keep time import used
 }
