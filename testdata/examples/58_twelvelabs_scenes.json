@@ -7,7 +7,7 @@
     "nodes": [
       { "id": "scene",       "type": "go_processor", "processor": "scene_change_adaptive" },
       { "id": "indexer",     "type": "go_processor", "processor": "twelvelabs_indexer",
-        "params": { "index_id": "${TL_INDEX}" } },
+        "params": { "index_id": "${TL_INDEX}", "wait_for_ready": true } },
       { "id": "index_log",   "type": "go_processor", "processor": "metadata_file_writer",
         "params": { "output_file": "out/index_events.jsonl" } },
       { "id": "caption",     "type": "go_processor", "processor": "twelvelabs_analyzer",
@@ -19,10 +19,10 @@
       { "from": "in0:v:0",       "to": "scene:default", "type": "video" },
       { "from": "scene:default", "to": "shots:v",        "type": "video" },
       { "from": "in0:a:0",       "to": "shots:a",        "type": "audio" },
-      { "from": "shots",         "to": "indexer",        "type": "events" },
-      { "from": "indexer",       "to": "index_log",      "type": "events" },
-      { "from": "shots",         "to": "caption",        "type": "events" },
-      { "from": "caption",       "to": "caption_log",    "type": "events" }
+      { "from": "shots",   "to": "indexer",     "type": "file" },
+      { "from": "indexer", "to": "index_log",   "type": "events" },
+      { "from": "indexer", "to": "caption",     "type": "events" },
+      { "from": "caption", "to": "caption_log", "type": "events" }
     ]
   },
   "outputs": [

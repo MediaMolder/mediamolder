@@ -20,7 +20,7 @@
       { "from": "in0:v:0",       "to": "scene:default", "type": "video" },
       { "from": "scene:default", "to": "shots:v",        "type": "video" },
       { "from": "in0:a:0",       "to": "shots:a",        "type": "audio" },
-      { "from": "shots",         "to": "embed",          "type": "events" },
+      { "from": "shots",         "to": "embed",          "type": "file" },
       { "from": "embed",         "to": "embed_log",      "type": "events" }
     ]
   },
