@@ -505,6 +505,11 @@ func (r *graphRunner) handleSink(ctx context.Context, node *graph.Node, ins []<-
 		// Emit SegmentCompleted for the last segment.
 		if w.pendingCut != nil {
 			filePath := fmt.Sprintf(sink.cfg.URL, w.segCounter)
+			// Finalize (close IO + atomic rename .tmp → final) before
+			// notifying so the file exists when OnSegmentCompleted fires.
+			if err := sink.muxer.Close(); err != nil {
+				return fmt.Errorf("finalize segment %q: %w", filePath, err)
+			}
 			r.pipe.events.Post(SegmentCompleted{
 				OutputID:     sink.cfg.ID,
 				FilePath:     filePath,
@@ -564,6 +569,11 @@ func (r *graphRunner) handleSink(ctx context.Context, node *graph.Node, ins []<-
 	// Emit SegmentCompleted for the last segment.
 	if w.pendingCut != nil {
 		filePath := fmt.Sprintf(sink.cfg.URL, w.segCounter)
+		// Finalize (close IO + atomic rename .tmp → final) before
+		// notifying so the file exists when OnSegmentCompleted fires.
+		if err := sink.muxer.Close(); err != nil {
+			return fmt.Errorf("finalize segment %q: %w", filePath, err)
+		}
 		r.pipe.events.Post(SegmentCompleted{
 			OutputID:     sink.cfg.ID,
 			FilePath:     filePath,
@@ -588,15 +598,7 @@ func (r *graphRunner) rotateSegment(w *sinkWriter, out *Output, newURL string) e
 	if err := sink.muxer.WriteTrailer(); err != nil {
 		return fmt.Errorf("segment rotate write trailer: %w", err)
 	}
-
-	// Notify downstream processors that the segment is complete.
 	prevURL := fmt.Sprintf(out.URL, w.segCounter)
-	r.pipe.events.Post(SegmentCompleted{
-		OutputID:     out.ID,
-		FilePath:     prevURL,
-		SegmentIndex: w.segCounter,
-	})
-	r.dispatchSegmentCompleted(context.Background(), w.node.ID, out.ID, prevURL, w.segCounter)
 
 	// Close old BSF chains (no flush — discarding any buffered packets
 	// at the segment boundary is acceptable and avoids a deadlock when
@@ -607,6 +609,20 @@ func (r *graphRunner) rotateSegment(w *sinkWriter, out *Output, newURL string) e
 			sink.streamBSF[i] = nil
 		}
 	}
+
+	// Finalize the completed segment: close IO and atomically rename
+	// .tmp → final path so the file exists before OnSegmentCompleted fires.
+	if err := sink.muxer.Close(); err != nil {
+		return fmt.Errorf("segment rotate finalize %q: %w", prevURL, err)
+	}
+
+	// Notify downstream processors that the segment is complete.
+	r.pipe.events.Post(SegmentCompleted{
+		OutputID:     out.ID,
+		FilePath:     prevURL,
+		SegmentIndex: w.segCounter,
+	})
+	r.dispatchSegmentCompleted(context.Background(), w.node.ID, out.ID, prevURL, w.segCounter)
 
 	// Open the new segment muxer.
 	format := out.Format
