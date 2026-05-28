@@ -49,7 +49,7 @@ type TwelveLabsAnalyzer struct {
 //   - max_concurrent (int, default 2): cap on in-flight analyses.
 //   - request_timeout_s (float, default 0 = no per-request timeout).
 func (p *TwelveLabsAnalyzer) Init(params map[string]any) error {
-	c, err := tlClientFromParams(params)
+	_, c, err := tlClientFromParams(params)
 	if err != nil {
 		return fmt.Errorf("twelvelabs_analyzer: %w", err)
 	}

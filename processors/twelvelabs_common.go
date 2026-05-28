@@ -28,8 +28,9 @@ import (
 //   - log_api_calls (bool, optional): if true, also log round-trips to stderr
 //     via the standard logger in addition to (or instead of) log_file.
 //
-// Returns an error if no key is available.
-func tlClientFromParams(params map[string]any) (*twelvelabs.Client, error) {
+// Returns the resolved API key, a configured client, and an error if no key
+// is available.
+func tlClientFromParams(params map[string]any) (string, *twelvelabs.Client, error) {
 	envName := "TWELVELABS_API_KEY"
 	if s, ok := params["api_key_env"].(string); ok && s != "" {
 		envName = s
@@ -44,7 +45,7 @@ func tlClientFromParams(params map[string]any) (*twelvelabs.Client, error) {
 		key, _ = twelvelabs.ResolveAPIKey("")
 	}
 	if key == "" {
-		return nil, fmt.Errorf("twelvelabs: api key not set (env %q empty and no api_key param)", envName)
+		return "", nil, fmt.Errorf("twelvelabs: api key not set (env %q empty and no api_key param)", envName)
 	}
 	c := twelvelabs.New(key)
 	if base, ok := params["base_url"].(string); ok && base != "" {
@@ -59,7 +60,7 @@ func tlClientFromParams(params map[string]any) (*twelvelabs.Client, error) {
 		if logFile != "" {
 			fn, closer, err := newJSONLLogger(logFile)
 			if err != nil {
-				return nil, fmt.Errorf("twelvelabs: open log_file %q: %w", logFile, err)
+				return "", nil, fmt.Errorf("twelvelabs: open log_file %q: %w", logFile, err)
 			}
 			_ = closer // file stays open for the process lifetime; OS closes on exit
 			loggers = append(loggers, fn)
@@ -76,7 +77,7 @@ func tlClientFromParams(params map[string]any) (*twelvelabs.Client, error) {
 			}
 		})
 	}
-	return c, nil
+	return key, c, nil
 }
 
 // tlPollOpts pulls the optional poll_interval_s / poll_max_interval_s pair
