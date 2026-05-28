@@ -714,12 +714,14 @@ function layoutByColumn(nodes: FlowNode[], edges: FlowEdge[]): void {
   const COL_W = 220;
   const ROW_H = 90;
 
-  // Events edges (output → go_processor) represent completion callbacks, not
-  // AV stream flow. Exclude them from the topological column assignment so
-  // events-only processors are not incorrectly ranked after the output. They
-  // are placed in a dedicated pass below.
-  const isEventsEdge = (e: FlowEdge) =>
-    (e.data as { streamType?: string } | null)?.streamType === 'events';
+  // Events and file edges (output → go_processor) represent completion
+  // callbacks / written-file notifications, not AV stream flow. Exclude them
+  // from the topological column assignment so events-only processors are not
+  // incorrectly ranked before the output. They are placed in a dedicated pass below.
+  const isEventsEdge = (e: FlowEdge) => {
+    const t = (e.data as { streamType?: string } | null)?.streamType;
+    return t === 'events' || t === 'file';
+  };
   const avEdges = edges.filter((e) => !isEventsEdge(e));
   const evEdges = edges.filter(isEventsEdge);
 

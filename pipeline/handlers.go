@@ -257,22 +257,22 @@ type graphRunner struct {
 
 func newGraphRunner(cfg *Config, pipe *Pipeline) *graphRunner {
 	return &graphRunner{
-		cfg:              cfg,
-		pipe:             pipe,
-		sources:          make(map[string]*sourceResources),
-		filters:          make(map[string]*av.FilterGraph),
-		encoders:         make(map[string]*av.EncoderContext),
-		encoderOpts:      make(map[string]av.EncoderOptions),
-		sinks:            make(map[string]*sinkResources),
-		trackers:         make(map[string]*NodePerfTracker),
-		goProcessors:             make(map[string]processors.Processor),
+		cfg:                     cfg,
+		pipe:                    pipe,
+		sources:                 make(map[string]*sourceResources),
+		filters:                 make(map[string]*av.FilterGraph),
+		encoders:                make(map[string]*av.EncoderContext),
+		encoderOpts:             make(map[string]av.EncoderOptions),
+		sinks:                   make(map[string]*sinkResources),
+		trackers:                make(map[string]*NodePerfTracker),
+		goProcessors:            make(map[string]processors.Processor),
 		eventsSinks:             make(map[string][]*processors.EventSink),
 		pureEventSinkNodes:      make(map[string]struct{}),
 		eventDrivenGoProcessors: make(map[string]struct{}),
-		passLogFiles:     make(map[string]*os.File),
-		hwDevices:        make(map[string]*av.HWDeviceContext),
-		segmentCuts:      make(map[string][]*atomic.Bool),
-		segmentConsumers: make(map[string][]processors.SegmentEventConsumer),
+		passLogFiles:            make(map[string]*os.File),
+		hwDevices:               make(map[string]*av.HWDeviceContext),
+		segmentCuts:             make(map[string][]*atomic.Bool),
+		segmentConsumers:        make(map[string][]processors.SegmentEventConsumer),
 	}
 }
 
