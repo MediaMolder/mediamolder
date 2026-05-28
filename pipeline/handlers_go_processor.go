@@ -76,15 +76,23 @@ func (r *graphRunner) handleGoProcessor(ctx context.Context, node *graph.Node, i
 				s.Write(pctx, md)
 			}
 			// Signal segment_sink outputs watching any of the Custom keys.
+			// Track whether any cut flag was set so we can force an IDR on the
+			// output frame; the encoder then produces a keyframe at the exact
+			// cut boundary rather than waiting for its next scheduled GOP.
+			cutSignaled := false
 			for key, val := range md.Custom {
 				if val == true {
 					for _, flag := range r.segmentCuts[key] {
 						flag.Store(true)
+						cutSignaled = true
 					}
 				}
 			}
 			f.Close()
 			f = out
+			if cutSignaled && f != nil {
+				f.SetPictType(av.PictureTypeI)
+			}
 		}
 
 		frameIndex++
