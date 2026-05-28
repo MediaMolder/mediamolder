@@ -1072,6 +1072,13 @@ button.danger:hover { background: rgba(185, 74, 74, 0.15); }
   padding: 4px 8px;
   line-height: 1.4;
 }
+.file-browser-filename-hint {
+  grid-column: 1 / -1;
+  font-size: 11px;
+  color: var(--text-dim);
+  font-style: italic;
+  line-height: 1.4;
+}
 
 /* ---------- Help dialog ---------- */
 .help-content {

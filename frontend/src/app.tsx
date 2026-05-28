@@ -50,7 +50,7 @@ import { useJobRun } from './lib/useJobRun';
 import { inferEdgeAttributes, summariseAttributes } from './lib/streamAttrs';
 import { fetchCatalog, indexStreams } from './lib/nodeCatalog';
 import { fetchEncoderInfo } from './lib/encoderSchema';
-import type { Fix, HWAccelProbe, JobConfig, ProbeResponse, StreamType, ValidationIssue, ValidationReport } from './lib/jobTypes';
+import type { Fix, HWAccelProbe, JobConfig, Output, ProbeResponse, StreamType, ValidationIssue, ValidationReport } from './lib/jobTypes';
 import { postValidate } from './lib/validate';
 import { RTControllerNode } from './components/RTControllerNode';
 import { RTControllerInspector } from './components/RTControllerInspector';
@@ -928,6 +928,24 @@ function Editor() {
     return last > 0 ? u.slice(0, last) : undefined;
   })();
 
+  // Pre-fill the filename input with the node's existing URL filename so
+  // printf-style patterns (shot-%05d.mp4) are preserved across edits.
+  const browseDefaultFilename = (() => {
+    if (browseIsInput) return undefined;
+    const u = browseCurrentUrl ?? '';
+    const last = Math.max(u.lastIndexOf('/'), u.lastIndexOf('\\'));
+    const name = last >= 0 ? u.slice(last + 1) : u;
+    return name || 'output.mp4';
+  })();
+
+  // Segmented outputs (segment_on_metadata set) require a printf-style
+  // filename pattern; surface this in the FileBrowser title and hint.
+  const browseOutputDef =
+    browseNode?.data.ref.kind === 'output'
+      ? (browseNode.data.ref.def as Output)
+      : null;
+  const browseIsSegmented = !!browseOutputDef?.segment_on_metadata;
+
   /* Merge live metrics + errors into node data so MMNode can render badges. */
   const runByNode = useMemo(() => {
     const map = new Map<string, MMNodeRunData>();
@@ -1386,11 +1404,20 @@ function Editor() {
         <FileBrowser
           open
           mode={browseIsInput ? 'open' : 'save'}
-          title={browseIsInput ? 'Choose input file' : 'Choose output file'}
+          title={
+            browseIsInput ? 'Choose input file'
+            : browseIsSegmented ? 'Set output folder and filename pattern'
+            : 'Choose output file'
+          }
           filter={browseIsInput ? MEDIA_FILE_EXTENSIONS : undefined}
           warnExtensions={browseIsInput ? undefined : MEDIA_FILE_EXTENSIONS}
           initialPath={browseInitialDir}
-          defaultFilename={browseIsInput ? undefined : 'output.mp4'}
+          defaultFilename={browseIsInput ? undefined : (browseDefaultFilename ?? 'output.mp4')}
+          filenameHint={
+            browseIsSegmented
+              ? 'Use a printf-style pattern for per-segment files, e.g. shot-%05d.mp4 or clip_%d.mkv'
+              : undefined
+          }
           onClose={() => setBrowseNodeId(null)}
           onPick={(path) => {
             setBrowseNodeId(null);
