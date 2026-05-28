@@ -73,14 +73,14 @@ func (m *analyzerMockServer) handle(w http.ResponseWriter, r *http.Request) {
 			_, _ = w.Write([]byte(`{"error":"boom"}`))
 			return
 		}
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"id":   "an-1",
-			"data": "A cat plays piano.",
-			"chapters": []map[string]any{
-				{"start": 0.0, "end": 1.5, "chapter_title": "intro"},
-				{"start": 1.5, "end": 3.0, "chapter_title": "outro"},
-			},
-		})
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		for _, line := range []string{
+			`{"event_type":"stream_start","metadata":{}}`,
+			`{"event_type":"text_generation","text":"A cat plays piano."}`,
+			`{"event_type":"stream_end","metadata":{}}`,
+		} {
+			_, _ = w.Write([]byte(line + "\n"))
+		}
 	default:
 		w.WriteHeader(http.StatusNotFound)
 	}
@@ -134,7 +134,7 @@ func TestTwelveLabsAnalyzer_Init_MissingIndex(t *testing.T) {
 func TestTwelveLabsAnalyzer_OnSegment_HappyPath(t *testing.T) {
 	m := newAnalyzerMockServer(t)
 	m.readyAfter = 1
-	p := newTestAnalyzer(t, m, map[string]any{"segments": true})
+	p := newTestAnalyzer(t, m, nil)
 
 	var got []*Metadata
 	var mu sync.Mutex
@@ -167,13 +167,6 @@ func TestTwelveLabsAnalyzer_OnSegment_HappyPath(t *testing.T) {
 	}
 	if payload["segment_index"] != 3 {
 		t.Errorf("segment_index = %v", payload["segment_index"])
-	}
-	chs, ok := payload["chapters"].([]map[string]any)
-	if !ok || len(chs) != 2 {
-		t.Fatalf("chapters = %#v", payload["chapters"])
-	}
-	if chs[0]["title"] != "intro" {
-		t.Errorf("chapter[0].title = %v", chs[0]["title"])
 	}
 
 	m.mu.Lock()

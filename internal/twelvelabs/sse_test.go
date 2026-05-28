@@ -11,10 +11,10 @@ import (
 
 func TestScanSSE_TextDeltas(t *testing.T) {
 	input := strings.Join([]string{
-		`data: {"type":"text_delta","data":"Hello"}`,
-		`data: {"type":"text_delta","data":", world"}`,
-		`data: {"type":"completed","data":"Hello, world"}`,
-		`data: [DONE]`,
+		`{"event_type":"stream_start","metadata":{}}`,
+		`{"event_type":"text_generation","text":"Hello"}`,
+		`{"event_type":"text_generation","text":", world"}`,
+		`{"event_type":"stream_end","metadata":{}}`,
 		``,
 	}, "\n")
 
@@ -26,35 +26,34 @@ func TestScanSSE_TextDeltas(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if len(chunks) != 3 {
-		t.Fatalf("got %d chunks, want 3", len(chunks))
+	if len(chunks) != 2 {
+		t.Fatalf("got %d chunks, want 2", len(chunks))
 	}
-	if chunks[0].Data != "Hello" {
-		t.Errorf("chunk[0].Data: got %q, want Hello", chunks[0].Data)
+	if chunks[0].Text != "Hello" {
+		t.Errorf("chunk[0].Text: got %q, want Hello", chunks[0].Text)
 	}
-	if chunks[2].Type != "completed" {
-		t.Errorf("chunk[2].Type: got %q, want completed", chunks[2].Type)
+	if chunks[1].Text != ", world" {
+		t.Errorf("chunk[1].Text: got %q, want \", world\"", chunks[1].Text)
 	}
 }
 
-func TestScanSSE_SkipsDONE(t *testing.T) {
-	input := "data: [DONE]\n"
+func TestScanSSE_StopsAtStreamEnd(t *testing.T) {
+	input := `{"event_type":"stream_end","metadata":{}}` + "\n"
 	var called bool
 	scanSSE(strings.NewReader(input), func(_ AnalyzeChunk) error { //nolint:errcheck
 		called = true
 		return nil
 	})
 	if called {
-		t.Error("[DONE] should not invoke the callback")
+		t.Error("stream_end should not invoke the callback")
 	}
 }
 
-func TestScanSSE_SkipsNonDataLines(t *testing.T) {
+func TestScanSSE_SkipsNonTextGenerationEvents(t *testing.T) {
 	input := strings.Join([]string{
-		"event: message",
-		"id: 1",
-		`data: {"type":"text_delta","data":"hi"}`,
-		"",
+		`{"event_type":"stream_start","metadata":{}}`,
+		`{"event_type":"text_generation","text":"hi"}`,
+		``,
 	}, "\n")
 	var chunks []AnalyzeChunk
 	scanSSE(strings.NewReader(input), func(c AnalyzeChunk) error { //nolint:errcheck
@@ -68,8 +67,8 @@ func TestScanSSE_SkipsNonDataLines(t *testing.T) {
 
 func TestScanSSE_SkipsMalformedJSON(t *testing.T) {
 	input := strings.Join([]string{
-		"data: not-json",
-		`data: {"type":"text_delta","data":"ok"}`,
+		"not-json",
+		`{"event_type":"text_generation","text":"ok"}`,
 	}, "\n")
 	var chunks []AnalyzeChunk
 	if err := scanSSE(strings.NewReader(input), func(c AnalyzeChunk) error {
@@ -93,7 +92,7 @@ func TestScanSSE_EmptyStream(t *testing.T) {
 }
 
 func TestScanSSE_CallbackError(t *testing.T) {
-	input := `data: {"type":"text_delta","data":"x"}` + "\n"
+	input := `{"event_type":"text_generation","text":"x"}` + "\n"
 	sentinel := fmt.Errorf("stop")
 	err := scanSSE(strings.NewReader(input), func(_ AnalyzeChunk) error {
 		return sentinel
