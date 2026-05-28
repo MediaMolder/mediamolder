@@ -1099,10 +1099,37 @@ function OutputForm({
             label="URL"
             value={def.url}
             mode="save"
-            defaultFilename="output.mp4"
+            defaultFilename={def.segment_on_metadata ? 'out/shot-%05d.mp4' : 'output.mp4'}
             onChange={(v) => onChange({ ...def, url: v })}
           />
+          {def.segment_on_metadata && !/%[0-9]*d/.test(def.url) && (
+            <div style={{ fontSize: 11, color: 'var(--warn, #f59e0b)', marginBottom: 4 }}>
+              ⚠ URL must contain a printf integer verb (e.g. <code>%05d</code>) for per-segment numbering.
+            </div>
+          )}
           <Field label="Format" value={def.format ?? ''} onChange={(v) => onChange({ ...def, format: v || undefined })} />
+
+          {/* Segment splitting ------------------------------------------------------------ */}
+          <label style={{ marginTop: 12 }}>Segment splitting</label>
+          <Field
+            label="Split on metadata key"
+            value={def.segment_on_metadata ?? ''}
+            placeholder="e.g. scene_change"
+            onChange={(v) => onChange({ ...def, segment_on_metadata: v || undefined })}
+          />
+          <div style={{ fontSize: 11, color: 'var(--text-dim)', marginBottom: 4 }}>
+            When set, the output closes and re-opens at the next video keyframe each time an
+            upstream processor emits an event with this key set. The URL must contain{' '}
+            <code>%05d</code> (or similar) for per-segment numbering.{' '}
+            Example: key <code>scene_change</code>, URL <code>out/shot-%05d.mp4</code>.
+          </div>
+          <Field
+            label="Segment format"
+            value={def.segment_format ?? ''}
+            placeholder="(from URL extension)"
+            onChange={(v) => onChange({ ...def, segment_format: v || undefined })}
+          />
+          {/* ----------------------------------------------------------------------------- */}
           <CodecRow
             label="Codec (video)"
             upstream={upstreamCodecs.video}
@@ -3632,7 +3659,7 @@ function EncoderOverrideForm({
 }
 
 /* ---------- Tiny controlled text field ---------- */
-function Field({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }) {
+function Field({ label, value, placeholder, onChange }: { label: string; value: string; placeholder?: string; onChange: (v: string) => void }) {
   // Local state lets the user type freely; commit on blur to avoid touching
   // every parent state on every keystroke. Sync down when the prop changes
   // (e.g. user selects a different node).
@@ -3643,6 +3670,7 @@ function Field({ label, value, onChange }: { label: string; value: string; onCha
       <label>{label}</label>
       <input
         value={local}
+        placeholder={placeholder}
         onChange={(e) => setLocal(e.target.value)}
         onBlur={() => {
           if (local !== value) onChange(local);
