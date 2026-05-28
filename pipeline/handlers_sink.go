@@ -480,7 +480,9 @@ func (r *graphRunner) handleSink(ctx context.Context, node *graph.Node, ins []<-
 			}
 			pkt := v.(*av.Packet)
 			// Rotate segment at the next video keyframe when a cut is pending.
-			if w.pendingCut != nil && w.pendingCut.Swap(false) && pkt.IsKeyFrame() {
+			// IsKeyFrame is checked first so Swap(false) only clears the flag when
+			// a rotation actually happens; non-keyframe packets leave it set.
+			if w.pendingCut != nil && pkt.IsKeyFrame() && w.pendingCut.Swap(false) {
 				nextURL := fmt.Sprintf(sink.cfg.URL, w.segCounter+1)
 				if err := r.rotateSegment(w, &sink.cfg, nextURL); err != nil {
 					_ = pkt.Close()
@@ -536,7 +538,7 @@ func (r *graphRunner) handleSink(ctx context.Context, node *graph.Node, ins []<-
 			for v := range in {
 				pkt := v.(*av.Packet)
 				// Only the video channel drives segment rotation.
-				if isVideo && w.pendingCut != nil && w.pendingCut.Swap(false) && pkt.IsKeyFrame() {
+				if isVideo && w.pendingCut != nil && pkt.IsKeyFrame() && w.pendingCut.Swap(false) {
 					nextURL := fmt.Sprintf(sink.cfg.URL, w.segCounter+1)
 					// Hold w.mu for the full WriteTrailer + reopen to prevent
 					// audio goroutines from writing to a closed/new muxer.
