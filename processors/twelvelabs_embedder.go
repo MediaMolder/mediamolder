@@ -52,7 +52,7 @@ type TwelveLabsEmbedder struct {
 //   - max_concurrent (int, default 2): cap on in-flight embeddings.
 //   - request_timeout_s (float, default 0 = no per-request timeout).
 func (p *TwelveLabsEmbedder) Init(params map[string]any) error {
-	c, err := tlClientFromParams(params)
+	_, c, err := tlClientFromParams(params)
 	if err != nil {
 		return fmt.Errorf("twelvelabs_embedder: %w", err)
 	}

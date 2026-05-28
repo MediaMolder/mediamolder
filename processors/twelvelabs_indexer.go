@@ -36,7 +36,8 @@ type TwelveLabsIndexer struct {
 	// url, when non-empty, is uploaded directly to TwelveLabs instead of
 	// using the FilePath from a SegmentEvent. Supports http(s) URLs as well
 	// as local file paths. Set via the "url" param in Init.
-	url string
+	url    string
+	apiKey string
 
 	client     *twelvelabs.Client
 	emit       MetadataEmitter
@@ -117,10 +118,11 @@ func (p *TwelveLabsIndexer) Init(params map[string]any) error {
 	}
 	p.sem = make(chan struct{}, p.maxConcurrent)
 
-	c, err := tlClientFromParams(params)
+	key, c, err := tlClientFromParams(params)
 	if err != nil {
 		return fmt.Errorf("twelvelabs_indexer: %w", err)
 	}
+	p.apiKey = key
 	p.client = c
 	return nil
 }

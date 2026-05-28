@@ -54,7 +54,7 @@ type TwelveLabsSearcher struct {
 //   - interval_s (float, default 0): if > 0, run on a ticker; else run per segment.
 //   - request_timeout_s (float, default 0): per-request timeout.
 func (p *TwelveLabsSearcher) Init(params map[string]any) error {
-	c, err := tlClientFromParams(params)
+	_, c, err := tlClientFromParams(params)
 	if err != nil {
 		return fmt.Errorf("twelvelabs_searcher: %w", err)
 	}
