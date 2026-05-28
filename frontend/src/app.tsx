@@ -292,9 +292,10 @@ function Editor() {
           setEdges((es) =>
             es.filter((e) => {
               if (e.source !== flowId || e.sourceHandle == null) return true;
-              // Events edges are routing annotations, not AV streams — never
-              // remove them based on probe results.
-              if ((e.data as { streamType?: string } | null)?.streamType === 'events') return true;
+              // Events and file edges are routing annotations, not AV streams
+              // — never remove them based on probe results.
+              const st = (e.data as { streamType?: string } | null)?.streamType;
+              if (st === 'events' || st === 'file') return true;
               return streams.includes(e.sourceHandle.split(':')[0]);
             }),
           );
@@ -495,6 +496,10 @@ function Editor() {
       setEdges((es) =>
         es.filter((e) => {
           if (e.source !== nodeId || e.sourceHandle == null) return true;
+          // Events and file edges are routing annotations — preserve them
+          // regardless of probe results.
+          const st = (e.data as { streamType?: string } | null)?.streamType;
+          if (st === 'events' || st === 'file') return true;
           const base = e.sourceHandle.split(':')[0];
           return streams.includes(base);
         }),
