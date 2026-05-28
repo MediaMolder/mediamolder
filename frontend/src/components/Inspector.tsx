@@ -888,6 +888,67 @@ function InputForm({
         options={def.options}
         onChange={(opts) => onChange({ ...def, options: opts })}
       />
+      <label style={{ marginTop: 12 }}>Seek &amp; loop</label>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+        <input
+          type="checkbox"
+          id="in-accurate-seek"
+          checked={def.accurate_seek ?? false}
+          onChange={(e) => onChange({ ...def, accurate_seek: e.target.checked || undefined })}
+        />
+        <label htmlFor="in-accurate-seek" style={{ margin: 0, fontSize: 12 }}>
+          Accurate seek (<code>-accurate_seek</code>)
+        </label>
+      </div>
+      <div style={{ fontSize: 11, color: 'var(--text-dim)', marginBottom: 6 }}>
+        Decode from nearest keyframe to reach the exact <code>-ss</code> position.
+        Slower but frame-accurate. Keyframe seek is the default for stream copy.
+      </div>
+      <label style={{ marginTop: 4 }}>Loop count (<code>-stream_loop</code>)</label>
+      <input
+        type="number"
+        min="-1"
+        value={def.stream_loop ?? ''}
+        placeholder="-1 = infinite, 0 = no loop, N = N extra plays"
+        onChange={(e) => {
+          const v = e.target.value.trim();
+          onChange({ ...def, stream_loop: v === '' ? undefined : parseInt(v, 10) });
+        }}
+      />
+      <label style={{ marginTop: 4 }}>Input timestamp offset (<code>-itsoffset</code>)</label>
+      <input
+        type="number"
+        step="any"
+        value={def.itsoffset ?? ''}
+        placeholder="Seconds; positive = delay this input"
+        onChange={(e) => {
+          const v = e.target.value.trim();
+          onChange({ ...def, itsoffset: v === '' ? undefined : parseFloat(v) });
+        }}
+      />
+      <label style={{ marginTop: 12 }}>Metadata &amp; chapters</label>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
+        <input
+          type="checkbox"
+          id="in-map-metadata"
+          checked={def.map_metadata ?? true}
+          onChange={(e) => onChange({ ...def, map_metadata: e.target.checked })}
+        />
+        <label htmlFor="in-map-metadata" style={{ margin: 0, fontSize: 12 }}>
+          Map metadata from this input (<code>-map_metadata</code>)
+        </label>
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
+        <input
+          type="checkbox"
+          id="in-map-chapters"
+          checked={def.map_chapters ?? true}
+          onChange={(e) => onChange({ ...def, map_chapters: e.target.checked })}
+        />
+        <label htmlFor="in-map-chapters" style={{ margin: 0, fontSize: 12 }}>
+          Map chapters from this input (<code>-map_chapters</code>)
+        </label>
+      </div>
     </>
   );
 }
@@ -1113,6 +1174,52 @@ function OutputForm({
             options={def.options}
             onChange={(opts) => onChange({ ...def, options: opts })}
           />
+          <label style={{ marginTop: 12 }}>Stream control</label>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+            <input
+              type="checkbox"
+              id="out-shortest"
+              checked={def.shortest ?? false}
+              onChange={(e) => onChange({ ...def, shortest: e.target.checked || undefined })}
+            />
+            <label htmlFor="out-shortest" style={{ margin: 0, fontSize: 12 }}>
+              Stop at shortest stream (<code>-shortest</code>)
+            </label>
+          </div>
+          <div style={{ fontSize: 11, color: 'var(--text-dim)', marginBottom: 6 }}>
+            Closes the output when the first stream finishes. Recommended for stream-copy trim
+            jobs where keyframe alignment may make the video track end before audio.
+          </div>
+          <label style={{ marginTop: 4 }}>FPS mode (<code>-fps_mode</code>)</label>
+          <select
+            value={def.fps_mode ?? ''}
+            onChange={(e) =>
+              onChange({ ...def, fps_mode: (e.target.value as typeof def.fps_mode) || undefined })
+            }
+          >
+            <option value="">Default</option>
+            <option value="passthrough">passthrough — copy timestamps as-is</option>
+            <option value="vfr">vfr — variable frame rate</option>
+            <option value="cfr">cfr — constant frame rate (drop/dup frames)</option>
+            <option value="drop">drop — drop frames to match container rate</option>
+          </select>
+          <label style={{ marginTop: 4 }}>Avoid negative timestamps (<code>-avoid_negative_ts</code>)</label>
+          <select
+            value={def.avoid_negative_ts ?? ''}
+            onChange={(e) =>
+              onChange({
+                ...def,
+                avoid_negative_ts:
+                  (e.target.value as typeof def.avoid_negative_ts) || undefined,
+              })
+            }
+          >
+            <option value="">Default (auto)</option>
+            <option value="auto">auto — let muxer decide</option>
+            <option value="disabled">disabled — allow negative timestamps</option>
+            <option value="make_non_negative">make_non_negative — shift to ≥ 0</option>
+            <option value="make_zero">make_zero — shift so first timestamp is 0</option>
+          </select>
           <BSFEditor
             label="Bitstream filters (video)"
             kind="video"
