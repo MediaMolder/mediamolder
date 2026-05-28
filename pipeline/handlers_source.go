@@ -220,6 +220,20 @@ func (r *graphRunner) handleSource(ctx context.Context, node *graph.Node, outs [
 	}
 	defer pkt.Close()
 
+	// Per-stream stop tracking for the recording-time check.
+	// FFmpeg's input_packet_process() stops each stream independently
+	// when its DTS reaches recording_time + start_time (ffmpeg_demux.c
+	// ≈ L482-488). Mirroring that: once a stream's PTS >= stopPTSus we
+	// skip further packets from that stream but keep reading the file
+	// so other streams (e.g. video after audio overruns) still drain.
+	// We break the outer loop only after every selected stream has been
+	// marked done. When stopPTSus is noLimitUS the map stays nil (zero
+	// overhead for the common unlimited case).
+	var stoppedByStream map[int]bool
+	if src.stopPTSus != noLimitUS && len(src.streams) > 0 {
+		stoppedByStream = make(map[int]bool, len(src.streams))
+	}
+
 	// Per-loop-iteration min/max packet PTS (in AV_TIME_BASE
 	// microseconds) — used by the `-stream_loop` rewind path to
 	// compute the cycle's media duration so post-rewind packets can
@@ -276,23 +290,28 @@ func (r *graphRunner) handleSource(ctx context.Context, node *graph.Node, outs [
 			continue
 		}
 
-		// Honour per-input -t / -to: stop demuxing once any selected
-		// stream's packet PTS reaches the absolute stop point computed
-		// from the input's recording_time. Mirrors
-		// fftools/ffmpeg_demux.c::input_packet_process()'s `dts >=
-		// recording_time + start_time` check (with FFmpeg's default
-		// non-copy_ts start_time of 0; we apply the seek timestamp via
-		// stopPTSus instead of via per-packet ts_offset). Skips packets
-		// without a valid PTS so we don't bail out on a probe-only
-		// header. The check runs against the raw PTS (before ts_offset)
-		// so the comparison stays in source coordinates.
-		if src.stopPTSus != noLimitUS {
+		// Honour per-input -t / -to: stop each selected stream
+		// independently once its packet PTS reaches the absolute stop
+		// point. Mirrors fftools/ffmpeg_demux.c::input_packet_process()
+		// which stops per-stream (via `ds->dts >= recording_time +
+		// start_time`) rather than halting the entire demux loop on the
+		// first overrun. The critical case: in an interleaved MP4 an
+		// audio packet may exceed stopPTSus before the final GOP's
+		// video frames are read — stopping the whole loop on audio
+		// would silently drop those video frames (29.125s instead of
+		// 30s). Instead we mark that stream done and continue reading
+		// until all selected streams have overrun.
+		if stoppedByStream != nil {
 			if pts := pkt.PTS(); pts != math.MinInt64 && si.TimeBase[1] > 0 {
 				// Convert pkt PTS (in stream time_base units) to
 				// AV_TIME_BASE units (microseconds).
 				ptsUS := pts * 1_000_000 * int64(si.TimeBase[0]) / int64(si.TimeBase[1])
 				if ptsUS >= src.stopPTSus {
-					break
+					stoppedByStream[pkt.StreamIndex()] = true
+					if len(stoppedByStream) >= len(src.streams) {
+						break
+					}
+					continue
 				}
 			}
 		}
