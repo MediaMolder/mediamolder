@@ -29,10 +29,11 @@ const (
 
 // Task represents an indexing task.
 type Task struct {
-	ID      string `json:"_id"`
-	IndexID string `json:"index_id"`
-	VideoID string `json:"video_id"`
-	Status  string `json:"status"`
+	ID          string `json:"_id"`
+	IndexID     string `json:"index_id"`
+	VideoID     string `json:"video_id"`
+	Status      string `json:"status"`
+	ErrorReason string `json:"error_reason,omitempty"`
 }
 
 // TaskSource describes the source for a CreateIndexTask call.

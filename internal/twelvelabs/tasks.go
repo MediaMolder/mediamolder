@@ -107,6 +107,9 @@ func (c *Client) WaitForTask(ctx context.Context, id string, opts WaitOpts) (*Ta
 		case TaskStatusReady:
 			return task, nil
 		case TaskStatusFailed:
+			if task.ErrorReason != "" {
+				return nil, fmt.Errorf("twelvelabs: task %s failed: %s", id, task.ErrorReason)
+			}
 			return nil, fmt.Errorf("twelvelabs: task %s failed", id)
 		}
 		if opts.StatusFunc != nil {
