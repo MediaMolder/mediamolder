@@ -176,6 +176,18 @@ func (w *sinkWriter) processOne(i int, pkt *av.Packet, dstTB [2]int, rs *sinkRes
 	}
 	ptsUS, hasPTS := ptsToMicros(pkt.PTS(), dstTB)
 
+	// When no output-side -ss is configured and copyTS is false, drop any
+	// packet arriving with a negative PTS. After an input-side -ss seek the
+	// source shifts every packet by ts_offset so the keyframe that landed
+	// just before the seek point gets a small negative PTS; writing it to
+	// the muxer shortens the video track relative to audio, causing A/V
+	// duration mismatches. Mirrors of_streamcopy's ts_copy_start=0 guard
+	// in fftools/ffmpeg_mux.c: when !copy_ts the ts_copy_start defaults to
+	// 0 and packets with pts < 0 are silently dropped.
+	if !w.sink.copyTS && w.startUS == int64(av.NoPTSValue) && hasPTS && ptsUS < 0 {
+		return false, false, nil
+	}
+
 	// Output-side `-ss`: drop packets below the configured start.
 	// Mirrors of_streamcopy's `if (dts < of->start_time) return EAGAIN`.
 	if w.startUS != int64(av.NoPTSValue) && hasPTS && ptsUS < w.startUS {
@@ -1261,7 +1273,7 @@ func (r *graphRunner) openSink(_ *graph.Graph, node *graph.Node) (*sinkResources
 		timing:        outTiming,
 		copyTS:        r.cfg != nil && r.cfg.CopyTS,
 		maxFileSize:   out.MaxFileSize,
-		shortest:      out.Shortest,
+		shortest:      out.Shortest || r.hasCopyTrimPath(node),
 		shortestPTSus: noLimitUS,
 		preroll:       r.buildPreroll(out, rescales),
 	}
@@ -1348,4 +1360,31 @@ func (r *graphRunner) buildPreroll(out *Output, rescales []*sinkRescale) *Output
 		}
 	}
 	return pre
+}
+
+// hasCopyTrimPath reports whether any inbound edge of sinkNode follows a
+// stream-copy path (KindCopy → KindSource) where the source input has
+// input-side timing options (ss / t / to). When true, the caller should
+// implicitly enable -shortest: keyframe-aligned seeking causes the video
+// track to end slightly before the audio track, and -shortest truncates
+// the longer stream so both tracks share the same container duration.
+func (r *graphRunner) hasCopyTrimPath(sinkNode *graph.Node) bool {
+	for _, e := range sinkNode.Inbound {
+		if e.From == nil || e.From.Kind != graph.KindCopy {
+			continue
+		}
+		if len(e.From.Inbound) == 0 || e.From.Inbound[0].From == nil {
+			continue
+		}
+		srcNode := e.From.Inbound[0].From
+		src, ok := r.sources[srcNode.ID]
+		if !ok {
+			continue
+		}
+		opts := src.cfg.Options
+		if opts["ss"] != nil || opts["t"] != nil || opts["to"] != nil {
+			return true
+		}
+	}
+	return false
 }
