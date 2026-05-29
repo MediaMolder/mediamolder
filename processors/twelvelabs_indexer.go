@@ -114,11 +114,8 @@ func (p *TwelveLabsIndexer) Init(params map[string]any) error {
 	}
 
 	p.maxConcurrent = 2
-	if n, ok := params["max_concurrent"].(float64); ok && n >= 1 {
+	if n, ok := params["max_concurrent"].(float64); ok && n >= 1 && n <= 64 {
 		p.maxConcurrent = int(n)
-		if p.maxConcurrent > 64 {
-			p.maxConcurrent = 64
-		}
 	}
 	p.sem = make(chan struct{}, p.maxConcurrent)
 
@@ -321,7 +318,16 @@ func init() {
 // fileSize returns the size of the file at path, or 0 if it cannot be
 // determined (e.g. remote URLs or stat errors).
 func fileSize(path string) int64 {
-	fi, err := os.Stat(filepath.Clean(path))
+	cleanPath := filepath.Clean(path)
+	if !filepath.IsAbs(cleanPath) {
+		if cwd, err := os.Getwd(); err == nil {
+			cleanPath = filepath.Join(cwd, cleanPath)
+		}
+	}
+	if !strings.HasPrefix(cleanPath, string(filepath.Separator)) {
+		return 0
+	}
+	fi, err := os.Stat(cleanPath)
 	if err != nil {
 		return 0
 	}

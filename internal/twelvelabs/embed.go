@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -94,7 +95,16 @@ func (c *Client) EmbedVideo(ctx context.Context, src EmbedSource, opts EmbedOpts
 		return decodeRawEmbedTask(resp.Body)
 	}
 
-	f, err := os.Open(filepath.Clean(src.File))
+	filePath := filepath.Clean(src.File)
+	if !filepath.IsAbs(filePath) {
+		if cwd, err := os.Getwd(); err == nil {
+			filePath = filepath.Join(cwd, filePath)
+		}
+	}
+	if !strings.HasPrefix(filePath, string(filepath.Separator)) {
+		return nil, fmt.Errorf("twelvelabs: EmbedVideo: invalid path %q", src.File)
+	}
+	f, err := os.Open(filePath)
 	if err != nil {
 		return nil, fmt.Errorf("twelvelabs: EmbedVideo: open %s: %w", src.File, err)
 	}

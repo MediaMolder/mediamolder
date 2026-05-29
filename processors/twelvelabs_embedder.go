@@ -71,7 +71,16 @@ func (p *TwelveLabsEmbedder) Init(params map[string]any) error {
 		p.windowS = v
 	}
 	if s, ok := params["out_dir"].(string); ok {
-		p.outDir = filepath.Clean(s)
+		clean := filepath.Clean(s)
+		if !filepath.IsAbs(clean) {
+			if cwd, err := os.Getwd(); err == nil {
+				clean = filepath.Join(cwd, clean)
+			}
+		}
+		if !strings.HasPrefix(clean, string(filepath.Separator)) {
+			return fmt.Errorf("twelvelabs_embedder: invalid out_dir %q", s)
+		}
+		p.outDir = clean
 	}
 	p.outFormat = "json"
 	if s, ok := params["out_format"].(string); ok && s != "" {
@@ -90,6 +99,9 @@ func (p *TwelveLabsEmbedder) Init(params map[string]any) error {
 	p.sem = make(chan struct{}, p.maxConc)
 
 	if p.outDir != "" {
+		if !strings.HasPrefix(p.outDir, string(filepath.Separator)) {
+			return fmt.Errorf("twelvelabs_embedder: out_dir must be an absolute path")
+		}
 		if err := os.MkdirAll(p.outDir, 0o755); err != nil {
 			return fmt.Errorf("twelvelabs_embedder: create out_dir: %w", err)
 		}
@@ -198,6 +210,9 @@ func (p *TwelveLabsEmbedder) writeEmbeddings(segmentFile string, embs []twelvela
 	base := strings.TrimSuffix(filepath.Base(segmentFile), filepath.Ext(segmentFile))
 	ext := p.outFormat
 	out := filepath.Join(p.outDir, base+".embeddings."+ext)
+	if !strings.HasPrefix(out, p.outDir) {
+		return "", fmt.Errorf("twelvelabs_embedder: output path %q is outside out_dir", out)
+	}
 	f, err := os.Create(out)
 	if err != nil {
 		return "", err

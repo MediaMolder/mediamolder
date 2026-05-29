@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -31,7 +32,16 @@ func (c *Client) CreateIndexTask(ctx context.Context, indexID string, src TaskSo
 	}
 
 	if src.File != "" {
-		f, err := os.Open(filepath.Clean(src.File))
+		filePath := filepath.Clean(src.File)
+		if !filepath.IsAbs(filePath) {
+			if cwd, err := os.Getwd(); err == nil {
+				filePath = filepath.Join(cwd, filePath)
+			}
+		}
+		if !strings.HasPrefix(filePath, string(filepath.Separator)) {
+			return nil, fmt.Errorf("twelvelabs: CreateIndexTask: invalid path %q", src.File)
+		}
+		f, err := os.Open(filePath)
 		if err != nil {
 			return nil, fmt.Errorf("twelvelabs: CreateIndexTask: open %s: %w", src.File, err)
 		}
