@@ -100,6 +100,11 @@ func handleListDir(w http.ResponseWriter, r *http.Request) {
 			if !withinRoot {
 				break
 			}
+			if !strings.HasPrefix(candidate, string(filepath.Separator)) &&
+				(filepath.VolumeName(candidate) == "" ||
+					!strings.HasPrefix(candidate, filepath.VolumeName(candidate)+string(filepath.Separator))) {
+				break
+			}
 			if fi, serr := os.Stat(candidate); serr == nil {
 				info = fi
 				abs = candidate
