@@ -150,19 +150,20 @@ func (p *TwelveLabsIndexer) SetMetadataEmitter(emit MetadataEmitter) {
 // TwelveLabs index and (optionally) waits for the indexing task to reach a
 // terminal state. Result or error is reported via the metadata emitter.
 //
-// Concurrency is bounded by max_concurrent; if the semaphore is full the
-// call blocks until a slot is available or ctx is cancelled.
+// Concurrency is bounded by max_concurrent; the semaphore is acquired inside
+// the goroutine so this method is always non-blocking.
 func (p *TwelveLabsIndexer) OnSegmentCompleted(ctx context.Context, ev SegmentEvent) {
-	select {
-	case p.sem <- struct{}{}:
-	case <-ctx.Done():
-		p.postError(ev, ctx.Err())
-		return
-	}
-
+	// wg.Add must happen before the goroutine starts so that Close()→wg.Wait()
+	// cannot return before this work unit is registered.
 	p.wg.Add(1)
 	go func() {
 		defer p.wg.Done()
+		select {
+		case p.sem <- struct{}{}:
+		case <-ctx.Done():
+			p.postError(ev, ctx.Err())
+			return
+		}
 		defer func() { <-p.sem }()
 		p.indexOne(ctx, ev)
 	}()

@@ -111,15 +111,17 @@ func (p *TwelveLabsEmbedder) SetMetadataEmitter(emit MetadataEmitter) {
 }
 
 func (p *TwelveLabsEmbedder) OnSegmentCompleted(ctx context.Context, ev SegmentEvent) {
-	select {
-	case p.sem <- struct{}{}:
-	case <-ctx.Done():
-		p.postError(ev, ctx.Err())
-		return
-	}
+	// wg.Add must happen before the goroutine starts so that Close()→wg.Wait()
+	// cannot return before this work unit is registered.
 	p.wg.Add(1)
 	go func() {
 		defer p.wg.Done()
+		select {
+		case p.sem <- struct{}{}:
+		case <-ctx.Done():
+			p.postError(ev, ctx.Err())
+			return
+		}
 		defer func() { <-p.sem }()
 		p.embedOne(ctx, ev)
 	}()
