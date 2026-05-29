@@ -30,21 +30,25 @@ func (s *stubSegmentConsumer) OnSegmentCompleted(_ context.Context, ev processor
 }
 
 // TestDispatchSegmentCompleted verifies that handlers_sink's
-// dispatchSegmentCompleted helper invokes every registered consumer in a
-// goroutine and that consumers see the original SegmentEvent payload.
+// dispatchSegmentCompleted helper invokes every registered consumer and that
+// consumers see the original SegmentEvent payload.
 func TestDispatchSegmentCompleted(t *testing.T) {
 	r := newGraphRunner(&Config{}, nil)
 	c1 := &stubSegmentConsumer{done: make(chan struct{})}
 	c2 := &stubSegmentConsumer{done: make(chan struct{})}
 	r.segmentConsumers["sink1"] = []processors.SegmentEventConsumer{c1, c2}
 
+	// Capture channel references before dispatch: synchronous dispatch
+	// closes the channels (and sets the struct fields to nil) before returning.
+	done1, done2 := c1.done, c2.done
+
 	r.dispatchSegmentCompleted(context.Background(), "sink1", "out1", "/tmp/seg0.mp4", 0)
 
-	for _, ch := range []chan struct{}{c1.done, c2.done} {
+	for i, ch := range []chan struct{}{done1, done2} {
 		select {
 		case <-ch:
 		case <-time.After(time.Second):
-			t.Fatal("consumer not called within 1s")
+			t.Fatalf("consumer %d not called within 1s", i)
 		}
 	}
 
@@ -69,38 +73,45 @@ func TestDispatchSegmentCompleted_NoConsumers(t *testing.T) {
 }
 
 // TestDispatchSegmentCompleted_Concurrent ensures dispatch is non-blocking:
-// even with a slow consumer, dispatch returns immediately and the consumer
-// runs in its own goroutine.
+// OnSegmentCompleted implementations are contractually required to be
+// non-blocking (register via wg.Add then launch a goroutine internally).
+// dispatchSegmentCompleted calls them synchronously, which is safe because
+// each implementation returns immediately — and eliminates the WaitGroup race
+// that arose when dispatch wrapped calls in untracked goroutines.
 func TestDispatchSegmentCompleted_Concurrent(t *testing.T) {
 	r := newGraphRunner(&Config{}, nil)
-	var entered int32
+	var processed int32
 	gate := make(chan struct{})
-	slow := slowConsumer{enter: &entered, release: gate}
+	slow := goroutineConsumer{processed: &processed, release: gate}
 	r.segmentConsumers["s"] = []processors.SegmentEventConsumer{slow}
 
 	start := time.Now()
 	r.dispatchSegmentCompleted(context.Background(), "s", "o", "f", 0)
 	if d := time.Since(start); d > 50*time.Millisecond {
-		t.Errorf("dispatch blocked for %v, expected to be non-blocking", d)
+		t.Errorf("dispatch blocked for %v; OnSegmentCompleted must be non-blocking", d)
 	}
-	// Wait for the consumer goroutine to actually enter, then release it.
+	// Release the internal goroutine and verify it ran.
+	close(gate)
 	deadline := time.After(time.Second)
-	for atomic.LoadInt32(&entered) == 0 {
+	for atomic.LoadInt32(&processed) == 0 {
 		select {
 		case <-deadline:
-			t.Fatal("consumer did not run")
+			t.Fatal("consumer goroutine did not complete")
 		case <-time.After(time.Millisecond):
 		}
 	}
-	close(gate)
 }
 
-type slowConsumer struct {
-	enter   *int32
-	release chan struct{}
+// goroutineConsumer models a well-behaved SegmentEventConsumer: OnSegmentCompleted
+// is non-blocking — it launches a goroutine for the slow work and returns immediately.
+type goroutineConsumer struct {
+	processed *int32
+	release   chan struct{}
 }
 
-func (s slowConsumer) OnSegmentCompleted(_ context.Context, _ processors.SegmentEvent) {
-	atomic.AddInt32(s.enter, 1)
-	<-s.release
+func (s goroutineConsumer) OnSegmentCompleted(_ context.Context, _ processors.SegmentEvent) {
+	go func() {
+		<-s.release
+		atomic.AddInt32(s.processed, 1)
+	}()
 }
