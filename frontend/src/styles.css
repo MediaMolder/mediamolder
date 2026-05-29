@@ -11,6 +11,7 @@
   --subtitle: #f59e0b;
   --data: #a78bfa;
   --events: #f472b6;
+  --file:   #ffffff;
 }
 
 * { box-sizing: border-box; }
@@ -662,6 +663,7 @@ button.danger:hover { background: rgba(185, 74, 74, 0.15); }
 .react-flow__handle.handle-subtitle { background: var(--subtitle); }
 .react-flow__handle.handle-data     { background: var(--data); }
 .react-flow__handle.handle-events   { background: var(--events); }
+.react-flow__handle.handle-file     { background: var(--file); }
 
 /* Per-track / per-slot handle labels (source side: right of node; target side: left) */
 .handle-track-label {
@@ -691,6 +693,7 @@ button.danger:hover { background: rgba(185, 74, 74, 0.15); }
 .react-flow__edge.edge-subtitle .react-flow__edge-path { stroke: var(--subtitle); stroke-width: 2; }
 .react-flow__edge.edge-data     .react-flow__edge-path { stroke: var(--data);     stroke-width: 2; }
 .react-flow__edge.edge-events   .react-flow__edge-path { stroke: var(--events);   stroke-width: 2; stroke-dasharray: 6 3; }
+.react-flow__edge.edge-file     .react-flow__edge-path { stroke: var(--file);     stroke-width: 2; }
 .react-flow__edge.edge-implicit .react-flow__edge-path { stroke-dasharray: 4 3; opacity: 0.7; }
 
 /* Edge attribute popover rendered by MMEdge — opens on hover or click,
@@ -785,6 +788,7 @@ button.danger:hover { background: rgba(185, 74, 74, 0.15); }
 .react-flow__edge.edge-subtitle .mm-edge-popover { border-color: var(--subtitle); }
 .react-flow__edge.edge-data     .mm-edge-popover { border-color: var(--data); }
 .react-flow__edge.edge-events   .mm-edge-popover { border-color: var(--events); }
+.react-flow__edge.edge-file     .mm-edge-popover { border-color: var(--file); }
 
 /* Selected-edge highlight (so users can see what Backspace will delete). */
 .react-flow__edge.selected .react-flow__edge-path {
@@ -796,6 +800,7 @@ button.danger:hover { background: rgba(185, 74, 74, 0.15); }
 .react-flow__edge.edge-subtitle .mm-edge-popover { border-color: var(--subtitle); }
 .react-flow__edge.edge-data     .mm-edge-popover { border-color: var(--data); }
 .react-flow__edge.edge-events   .mm-edge-popover { border-color: var(--events); }
+.react-flow__edge.edge-file     .mm-edge-popover { border-color: var(--file); }
 
 
 /* ---------- Palette improvements ---------- */
@@ -1065,6 +1070,13 @@ button.danger:hover { background: rgba(185, 74, 74, 0.15); }
   border: 1px solid color-mix(in srgb, #e8a020 35%, transparent);
   border-radius: 4px;
   padding: 4px 8px;
+  line-height: 1.4;
+}
+.file-browser-filename-hint {
+  grid-column: 1 / -1;
+  font-size: 11px;
+  color: var(--text-dim);
+  font-style: italic;
   line-height: 1.4;
 }
 

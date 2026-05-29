@@ -183,19 +183,20 @@ func resolveOutputTiming(opts map[string]any, warn func(format string, args ...a
 // stopTimestampUS returns the absolute packet PTS at or after which the
 // muxer should stop accepting packets. Mirrors
 // `fftools/ffmpeg_mux.c::of_streamcopy`'s
-// `dts >= of->recording_time + start_time` check. `copyTS` corresponds
-// to FFmpeg's global `-copyts` flag: when false the runtime has
-// already shifted demuxed packets back to a 0-anchored timeline, so
-// the comparison is `pts_ts >= recordingUS`; when true the original
-// timestamps are preserved end-to-end so the comparison anchors at
-// `startUS + recordingUS` (or just `recordingUS` when no start is set).
-// Returns noLimitUS when no `-t` / `-to` is in effect.
-func (t outputTiming) stopTimestampUS(copyTS bool) int64 {
+//
+//	int64_t start_time = (of->start_time == AV_NOPTS_VALUE) ? 0 : of->start_time;
+//	if (of->recording_time != INT64_MAX && dts >= of->recording_time + start_time)
+//
+// The `copyTS` parameter is accepted for API symmetry but does not affect
+// the result: FFmpeg's `of_streamcopy` always anchors the stop at
+// `recording_time + start_time` regardless of the global `-copyts` flag.
+// When no output-side `-ss` is set (`!haveStart`), `start_time` is 0 so
+// the threshold reduces to `recordingUS` — which naturally handles both
+// the shifted-timeline case (input-side seek with ts_offset applied) and
+// the no-seek case. Returns noLimitUS when no `-t` / `-to` is in effect.
+func (t outputTiming) stopTimestampUS(_ bool) int64 {
 	if t.recordingUS == noLimitUS {
 		return noLimitUS
-	}
-	if !copyTS {
-		return t.recordingUS
 	}
 	if t.haveStart && t.startUS != int64(av.NoPTSValue) {
 		return t.startUS + t.recordingUS

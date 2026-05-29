@@ -9,9 +9,9 @@ import (
 	"fmt"
 	"math"
 
+	"github.com/MediaMolder/MediaMolder/av"
 	psd "github.com/MediaMolder/MediaMolder/go_scene_detect"
 	"github.com/MediaMolder/MediaMolder/go_scene_detect/detectors"
-	"github.com/MediaMolder/MediaMolder/av"
 )
 
 // SceneChangeAdaptive detects scene changes using PySceneDetect's AdaptiveDetector.
@@ -30,10 +30,18 @@ import (
 //	"kernel_size":        int     — dilation kernel size; 0 = auto (default)
 //	"frame_rate":         float64 — stream frame rate; auto-detected from the input stream when omitted (default 25.0 if unknown)
 type SceneChangeAdaptive struct {
-	hook      fileWriteHook
-	detector  *detectors.AdaptiveDetector
-	frameRate float64
+	hook        fileWriteHook
+	detector    *detectors.AdaptiveDetector
+	frameRate   float64
+	windowWidth int // stored after Init for LookbackFrames
 }
+
+// LookbackFrames implements processors.FrameLookahead. The AdaptiveDetector
+// evaluates the centre of a windowWidth-wide rolling window, so the cut is
+// confirmed window_width frames after the cut frame passes through. The
+// pipeline delays forwarding by this many frames so the correct frame
+// receives the IDR annotation and the gate fires at the accurate PTS.
+func (p *SceneChangeAdaptive) LookbackFrames() int { return p.windowWidth }
 
 func (p *SceneChangeAdaptive) Init(params map[string]any) error {
 	adaptiveThreshold := 3.0
@@ -112,6 +120,7 @@ func (p *SceneChangeAdaptive) Init(params map[string]any) error {
 		return fmt.Errorf("scene_change_adaptive: %w", err)
 	}
 	p.detector = d
+	p.windowWidth = windowWidth
 	return nil
 }
 

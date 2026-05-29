@@ -6,6 +6,7 @@
 // (pix_fmt, width×height, color_space, bit_rate, ...).
 
 import { useState } from 'react';
+import type React from 'react';
 import { BaseEdge, EdgeLabelRenderer, getBezierPath, useReactFlow, useStore, type EdgeProps } from '@xyflow/react';
 import type { EdgeAttribute } from '../lib/streamAttrs';
 import { attrLabel } from '../lib/streamAttrs';
@@ -40,9 +41,28 @@ export function MMEdge(props: EdgeProps) {
   const inv = zoom > 0 ? 1 / zoom : 1;
   const rf = useReactFlow();
 
+  // Drive stroke appearance via inline style so it wins over the xyflow
+  // default `.react-flow__edge-path { stroke: var(--xy-edge-stroke-default) }`
+  // rule regardless of CSS cascade order.
+  const STREAM_STROKE: Record<string, string> = {
+    file:     '#ffffff',
+    video:    'var(--video)',
+    audio:    'var(--audio)',
+    subtitle: 'var(--subtitle)',
+    data:     'var(--data)',
+    events:   'var(--events)',
+  };
+  const st = ed.streamType ?? 'video';
+  const edgeStyle: React.CSSProperties = {
+    ...style,
+    stroke: STREAM_STROKE[st] ?? STREAM_STROKE.video,
+    strokeWidth: 2,
+    ...(st === 'events' ? { strokeDasharray: '6 3' } : {}),
+  };
+
   return (
     <>
-      <BaseEdge id={id} path={edgePath} markerEnd={markerEnd} style={style} />
+      <BaseEdge id={id} path={edgePath} markerEnd={markerEnd} style={edgeStyle} />
       {/* Wide invisible hit area so hover/click works reliably on thin edges.
        * We deliberately do NOT stopPropagation so React Flow can still
        * select the edge (which makes Backspace/Delete remove it). */}

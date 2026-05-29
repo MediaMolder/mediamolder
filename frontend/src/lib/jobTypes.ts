@@ -2,7 +2,7 @@
 // Only fields used by the editor are typed; unknown JSON fields are preserved
 // via passthrough during round-trip in adapter.ts.
 
-export type StreamType = 'video' | 'audio' | 'subtitle' | 'data' | 'metadata' | 'attachment' | 'events';
+export type StreamType = 'video' | 'audio' | 'subtitle' | 'data' | 'metadata' | 'attachment' | 'events' | 'file';
 
 export interface StreamSelect {
   input_index: number;
@@ -372,6 +372,15 @@ export interface Output {
   encoder_time_base?: string;
   field_order?: '' | 'progressive' | 'tt' | 'bb' | 'tb' | 'bt';
   interlaced_encode?: boolean;
+  /** Metadata key that triggers a segment cut at the next video keyframe.
+   *  The URL must contain a printf integer verb (e.g. `%05d`) for per-segment
+   *  numbering. Example: `"scene_change"` with URL `"out/shot-%05d.mp4"`.
+   *  Incompatible with kind=tee, realtime pre-roll, and cover_art. */
+  segment_on_metadata?: string;
+  /** Muxer format name override for each segment file written when
+   *  segment_on_metadata is set. When empty, the format is derived from
+   *  `format` or the URL extension. Example: `"mp4"`. */
+  segment_format?: string;
   options?: Record<string, unknown>;
 }
 

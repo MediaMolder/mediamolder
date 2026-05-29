@@ -66,23 +66,59 @@ func handleListDir(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	abs = filepath.Clean(abs)
-	if !isWithinAnyRoot(abs, roots) {
+	// Re-derive abs from a trusted root so no tainted value reaches the
+	// file-system calls below (same pattern as handleReadFile).
+	safeAbs, ok := sanitizePathAnyRoot(abs, roots)
+	if !ok {
 		writeJSONError(w, http.StatusBadRequest, errors.New("path is outside allowed roots"))
 		return
 	}
+	abs = safeAbs
 
 	info, err := os.Stat(abs)
 	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			writeJSONError(w, http.StatusNotFound, err)
-		} else {
+		if !errors.Is(err, fs.ErrNotExist) {
 			writeJSONError(w, http.StatusForbidden, err)
+			return
 		}
-		return
+		// Walk up until we find an ancestor that exists. This lets the browser
+		// open gracefully when the stored path (e.g. "out/shot-%05d.mp4")
+		// references a directory that hasn't been created yet.
+		candidate := filepath.Dir(abs)
+		for candidate != abs {
+			// Re-derive the path from a trusted root so the value reaching
+			// os.Stat is not derived from user input (satisfies CodeQL).
+			safe, ok := sanitizePathAnyRoot(candidate, roots)
+			if !ok {
+				break
+			}
+			if fi, serr := os.Stat(safe); serr == nil {
+				info = fi
+				abs = safe
+				break
+			}
+			next := filepath.Dir(candidate)
+			if next == candidate {
+				// Reached filesystem root and nothing exists.
+				writeJSONError(w, http.StatusNotFound, err)
+				return
+			}
+			candidate = next
+		}
+		if info == nil {
+			writeJSONError(w, http.StatusNotFound, err)
+			return
+		}
 	}
 	if !info.IsDir() {
 		// User passed a file path; fall back to its parent directory.
-		abs = filepath.Dir(abs)
+		parent := filepath.Dir(abs)
+		safe, ok := sanitizePathAnyRoot(parent, roots)
+		if !ok {
+			writeJSONError(w, http.StatusBadRequest, errors.New("path is outside allowed roots"))
+			return
+		}
+		abs = safe
 	}
 
 	rawEntries, err := os.ReadDir(abs)
@@ -434,6 +470,7 @@ func handleWriteFile(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
+
 // browse: the user's shortcut roots (home, cwd, filesystem root on Unix and
 // mounted volumes) plus any local drives. Returned paths are absolute and
 // cleaned so they can be compared with filepath.Rel.

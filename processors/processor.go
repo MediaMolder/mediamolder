@@ -12,6 +12,17 @@ import (
 	"github.com/MediaMolder/MediaMolder/av"
 )
 
+// FrameLookahead is an optional interface a Processor may implement to
+// indicate that it needs a delay buffer of N frames between its output and
+// downstream consumers. go_processor uses this to give windowed detectors
+// (e.g. AdaptiveDetector with window_width=2) enough lead time to annotate
+// the correct frame rather than the frame that is 'window_width' steps late.
+type FrameLookahead interface {
+	// LookbackFrames returns the number of frames the processor needs to
+	// look behind the current frame (i.e. the minimum delay buffer depth).
+	LookbackFrames() int
+}
+
 // Processor is the interface every go_processor node must implement.
 type Processor interface {
 	// Init is called once during graph construction, before the first frame.
@@ -48,6 +59,21 @@ type Metadata struct {
 	Detections   []Detection    `json:"detections,omitempty"`
 	QualityScore float64        `json:"quality_score,omitempty"`
 	Custom       map[string]any `json:"custom,omitempty"`
+	// FilePath is the source file that produced this metadata event.
+	// Populated by event-driven processors so the engine can propagate
+	// the path to downstream SegmentEventConsumer nodes via chained
+	// "events" edges.
+	FilePath string `json:"file_path,omitempty"`
+	// Progress, when true, marks this as an intermediate status update.
+	// The engine forwards it to SSE subscribers for GUI display but does
+	// not chain it to downstream SegmentEventConsumer nodes or write it
+	// to EventSink file writers.
+	Progress bool `json:"progress,omitempty"`
+	// Failed, when true, marks this as a terminal error event.  The engine
+	// forwards it to SSE subscribers but does NOT chain it to downstream
+	// SegmentEventConsumer nodes, preventing downstream processors from
+	// acting on a failed upstream result.
+	Failed bool `json:"failed,omitempty"`
 }
 
 // Detection represents a single detected object in a video frame.

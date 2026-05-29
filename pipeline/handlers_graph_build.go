@@ -73,9 +73,9 @@ func configToGraphDef(cfg *Config) *graph.Def {
 		outByID[cfg.Outputs[i].ID] = &cfg.Outputs[i]
 	}
 	for _, e := range cfg.Graph.Edges {
-		// Skip metadata-routing and events-routing edges — they are
-		// runtime-only annotations and carry no AV frames.
-		if e.Type == "metadata" || e.Type == "events" {
+		// Skip metadata-routing, events-routing, and file-routing edges —
+		// they are runtime-only annotations and carry no AV frames.
+		if e.Type == "metadata" || e.Type == "events" || e.Type == "file" {
 			continue
 		}
 		// Drop edges feeding a sink whose Output has the corresponding
@@ -113,6 +113,7 @@ func configToGraphDef(cfg *Config) *graph.Def {
 	}
 	expandHWFilterMappings(cfg, def)
 	expandImplicitEncoders(cfg, def)
+	rewriteGoProcessorCopyEdges(def)
 	spliceAudioMergeForMultiInputEncoders(def)
 	spliceAudioAdaptersForEncoders(def)
 	spliceAudioSyncForOutputs(cfg, def)
@@ -459,6 +460,91 @@ func spliceAudioSyncForOutputs(cfg *Config, def *graph.Def) {
 // (e.g. scale -> fps -> out0:v) sitting between the input and the
 // output.
 //
+// rewriteGoProcessorCopyEdges detects AV edges where a copy node is directly
+// downstream of a go_processor (or a chain of them) and rewires the copy node
+// to receive raw packets directly from the original source input. This allows
+// the topology  in0 → scene → copy → sink  to work correctly: scene receives
+// decoded frames for side-channel analysis while copy receives raw demuxer
+// packets from in0. Without this rewrite the copy node would receive *av.Frame
+// values from the go_processor channel and panic on the type assertion.
+//
+// The go_processor is left with its inbound AV edge intact but gains no
+// outbound AV edge; it becomes a terminal frame processor (frame sink). The
+// engine's dead_node warning filter suppresses the spurious dead-branch warning
+// for such go_processor nodes.
+func rewriteGoProcessorCopyEdges(def *graph.Def) {
+	head := func(ref string) string {
+		if i := strings.IndexByte(ref, ':'); i >= 0 {
+			return ref[:i]
+		}
+		return ref
+	}
+
+	// Index node types from def.Nodes.
+	nodeTypeByID := make(map[string]string, len(def.Nodes))
+	for _, n := range def.Nodes {
+		nodeTypeByID[n.ID] = n.Type
+	}
+	// Build source-input set from def.Inputs.
+	inputIDs := make(map[string]bool, len(def.Inputs))
+	for _, inp := range def.Inputs {
+		inputIDs[inp.ID] = true
+	}
+
+	// avEdgesTo maps nodeID → slice of (from-ref, edge-type) pairs for all
+	// AV edges targeting that node. Used to trace upstream chains.
+	type inEdge struct{ from, typ string }
+	avEdgesTo := make(map[string][]inEdge, len(def.Edges))
+	for _, e := range def.Edges {
+		avEdgesTo[head(e.To)] = append(avEdgesTo[head(e.To)], inEdge{e.From, e.Type})
+	}
+
+	// findSource traces backward through go_processor nodes to find the
+	// source input that ultimately feeds a given (nodeID, edgeType) pair.
+	// Returns the full From reference (e.g. "in0:v:0") or "" if not found.
+	var findSource func(nodeID, edgeType string, depth int) string
+	findSource = func(nodeID, edgeType string, depth int) string {
+		if depth > 16 {
+			return "" // guard against cycles
+		}
+		var match inEdge
+		found := false
+		for _, e := range avEdgesTo[nodeID] {
+			if e.typ == edgeType {
+				if found {
+					return "" // fan-in: ambiguous source
+				}
+				match = e
+				found = true
+			}
+		}
+		if !found {
+			return ""
+		}
+		srcID := head(match.from)
+		if inputIDs[srcID] {
+			return match.from // reached a source input
+		}
+		if nodeTypeByID[srcID] == "go_processor" {
+			return findSource(srcID, edgeType, depth+1)
+		}
+		return "" // upstream is neither a source nor a go_processor
+	}
+
+	for i := range def.Edges {
+		e := &def.Edges[i]
+		fromID := head(e.From)
+		toID := head(e.To)
+		if nodeTypeByID[fromID] != "go_processor" || nodeTypeByID[toID] != "copy" {
+			continue
+		}
+		// This is a go_processor → copy edge. Trace back to the source.
+		if src := findSource(toID, e.Type, 0); src != "" {
+			e.From = src
+		}
+	}
+}
+
 // The GUI mirrors this pass in `materializeImplicitEncoders` so the
 // implicit encoder appears as a real editable node in the canvas; this
 // runtime fallback is what makes the JSON also work when fed directly

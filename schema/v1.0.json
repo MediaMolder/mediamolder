@@ -174,7 +174,7 @@
         "to": { "type": "string", "minLength": 1 },
         "type": {
           "type": "string",
-          "enum": ["video", "audio", "subtitle", "data", "metadata"]
+          "enum": ["video", "audio", "subtitle", "data", "metadata", "events", "file"]
         }
       }
     },
@@ -233,6 +233,8 @@
         "encoder_time_base": { "type": "string", "description": "Encoder AVCodecContext.time_base override (mirrors per-stream `-enc_time_base`). Accepts `\"demux\"`, `\"filter\"`, or `\"N/D\"` rational. Subtitle outputs reject the field at validate time." },
         "field_order": { "type": "string", "enum": ["", "progressive", "tt", "bb", "tb", "bt"], "description": "Encoder AVCodecContext.field_order (libavcodec/defs.h::AVFieldOrder). Empty leaves AV_FIELD_UNKNOWN. Mirrors `-field_order`." },
         "interlaced_encode": { "type": "boolean", "description": "Toggles AV_CODEC_FLAG_INTERLACED_DCT|INTERLACED_ME on the encoder context (avcodec.h L310/L331). Required for broadcast 1080i workflows. Incompatible with `field_order=progressive`." },
+        "segment_on_metadata": { "type": "string", "description": "Metadata.Custom key that triggers a segment cut at the next video keyframe. The output URL must contain a printf integer verb (e.g. %05d) for segment numbering. Incompatible with kind=tee, realtime pre-roll, and cover_art." },
+        "segment_format": { "type": "string", "description": "Muxer format name override for each segment file when segment_on_metadata is set. Defaults to format or the URL extension." },
         "options": {
           "type": "object",
           "additionalProperties": true

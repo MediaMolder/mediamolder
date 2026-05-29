@@ -1,0 +1,33 @@
+{
+  "schema_version": "1.1",
+  "description": "Detect shot boundaries, cut into one MP4 per shot, upload to TwelveLabs and index + caption each; write all metadata to JSONL files.",
+  "ffmpeg_cmd": "not possible in ffmpeg",
+  "inputs": [{ "id": "in0", "url": "my-clip.mp4" }],
+  "graph": {
+    "nodes": [
+      { "id": "scene",       "type": "go_processor", "processor": "scene_change_adaptive" },
+      { "id": "indexer",     "type": "go_processor", "processor": "twelvelabs_indexer",
+        "params": { "index_id": "${TL_INDEX}", "wait_for_ready": true } },
+      { "id": "index_log",   "type": "go_processor", "processor": "metadata_file_writer",
+        "params": { "output_file": "out/index_events.jsonl" } },
+      { "id": "caption",     "type": "go_processor", "processor": "twelvelabs_analyzer",
+        "params": { "index_id": "${TL_INDEX}", "prompt": "One-sentence caption of this shot." } },
+      { "id": "caption_log", "type": "go_processor", "processor": "metadata_file_writer",
+        "params": { "output_file": "out/captions.jsonl" } }
+    ],
+    "edges": [
+      { "from": "in0:v:0",       "to": "scene:default", "type": "video" },
+      { "from": "scene:default", "to": "shots:v",        "type": "video" },
+      { "from": "in0:a:0",       "to": "shots:a",        "type": "audio" },
+      { "from": "shots",   "to": "indexer",     "type": "file" },
+      { "from": "indexer", "to": "index_log",   "type": "events" },
+      { "from": "indexer", "to": "caption",     "type": "events" },
+      { "from": "caption", "to": "caption_log", "type": "events" }
+    ]
+  },
+  "outputs": [
+    { "id": "shots", "url": "out/shot-%05d.mp4",
+      "segment_format": "mp4", "segment_on_metadata": "scene_change",
+      "codec_video": "copy", "codec_audio": "copy" }
+  ]
+}

@@ -79,6 +79,8 @@ func run(args []string) error {
 		return cmdHWBench(args[1:])
 	case "go-scene-detect":
 		return cmdGoSceneDetect(args[1:])
+	case "twelvelabs":
+		return cmdTwelveLabs(args[1:])
 	case "help", "--help", "-h":
 		usage()
 		return nil
@@ -570,6 +572,10 @@ Commands:
                                 --stats=PATH, --downscale=N.
                          Attribution: algorithms ported from PySceneDetect by Brandon Castellano.
                          See https://github.com/Breakthrough/PySceneDetect
+  twelvelabs <subcmd>    TwelveLabs (Marengo + Pegasus) ad-hoc operations.
+                         Subcommands: index, analyze, search, embed,
+                                      indexes list|create|delete.
+                         Run 'mediamolder twelvelabs help' for full usage.
   gui                    Launch the browser-based visual job editor.
                          Flags: --port=N, --host=ADDR, --no-open, --dev, --examples=DIR.
   version                Print library versions.

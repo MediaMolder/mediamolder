@@ -50,7 +50,7 @@ import { useJobRun } from './lib/useJobRun';
 import { inferEdgeAttributes, summariseAttributes } from './lib/streamAttrs';
 import { fetchCatalog, indexStreams } from './lib/nodeCatalog';
 import { fetchEncoderInfo } from './lib/encoderSchema';
-import type { Fix, HWAccelProbe, JobConfig, ProbeResponse, StreamType, ValidationIssue, ValidationReport } from './lib/jobTypes';
+import type { Fix, HWAccelProbe, JobConfig, Output, ProbeResponse, StreamType, ValidationIssue, ValidationReport } from './lib/jobTypes';
 import { postValidate } from './lib/validate';
 import { RTControllerNode } from './components/RTControllerNode';
 import { RTControllerInspector } from './components/RTControllerInspector';
@@ -292,6 +292,10 @@ function Editor() {
           setEdges((es) =>
             es.filter((e) => {
               if (e.source !== flowId || e.sourceHandle == null) return true;
+              // Events and file edges are routing annotations, not AV streams
+              // — never remove them based on probe results.
+              const st = (e.data as { streamType?: string } | null)?.streamType;
+              if (st === 'events' || st === 'file') return true;
               return streams.includes(e.sourceHandle.split(':')[0]);
             }),
           );
@@ -374,15 +378,21 @@ function Editor() {
         // still gets a distinct track.
         let rawFrom = '';
         if (sourceNode?.data.kind === 'input') {
-          const trackStr = (c.sourceHandle ?? '').split(':')[1];
-          const letter = stream === 'audio' ? 'a' : stream === 'video' ? 'v' : stream === 'subtitle' ? 's' : 'd';
-          if (trackStr !== undefined) {
-            // Per-track handle — track is encoded in the handle id.
-            rawFrom = `${sourceNode.data.label}:${letter}:${parseInt(trackStr, 10)}`;
+          if (stream === 'events' || stream === 'file') {
+            // Events and file edges carry a file-path notification, not a
+            // decoded stream. The raw ref is just the input id with no type suffix.
+            rawFrom = sourceNode.data.label as string;
           } else {
-            // Single-handle fallback: assign the next unused track index.
-            const track = nextInputTrack(sourceNode.data.label as string, stream, es);
-            rawFrom = `${sourceNode.data.label}:${letter}:${track}`;
+            const trackStr = (c.sourceHandle ?? '').split(':')[1];
+            const letter = stream === 'audio' ? 'a' : stream === 'video' ? 'v' : stream === 'subtitle' ? 's' : 'd';
+            if (trackStr !== undefined) {
+              // Per-track handle — track is encoded in the handle id.
+              rawFrom = `${sourceNode.data.label}:${letter}:${parseInt(trackStr, 10)}`;
+            } else {
+              // Single-handle fallback: assign the next unused track index.
+              const track = nextInputTrack(sourceNode.data.label as string, stream, es);
+              rawFrom = `${sourceNode.data.label}:${letter}:${track}`;
+            }
           }
         }
         const newEdge: FlowEdge = {
@@ -486,6 +496,10 @@ function Editor() {
       setEdges((es) =>
         es.filter((e) => {
           if (e.source !== nodeId || e.sourceHandle == null) return true;
+          // Events and file edges are routing annotations — preserve them
+          // regardless of probe results.
+          const st = (e.data as { streamType?: string } | null)?.streamType;
+          if (st === 'events' || st === 'file') return true;
           const base = e.sourceHandle.split(':')[0];
           return streams.includes(base);
         }),
@@ -839,6 +853,7 @@ function Editor() {
   const rtSnapshot = useRTSnapshot(isRunning && !!(job.global_options?.realtime));
 
   const onRun = useCallback(() => {
+    setShowValidatePanel(false);
     setShowRunPanel(true);
     void run.start();
   }, [run]);
@@ -912,6 +927,24 @@ function Editor() {
     const last = Math.max(u.lastIndexOf('/'), u.lastIndexOf('\\'));
     return last > 0 ? u.slice(0, last) : undefined;
   })();
+
+  // Pre-fill the filename input with the node's existing URL filename so
+  // printf-style patterns (shot-%05d.mp4) are preserved across edits.
+  const browseDefaultFilename = (() => {
+    if (browseIsInput) return undefined;
+    const u = browseCurrentUrl ?? '';
+    const last = Math.max(u.lastIndexOf('/'), u.lastIndexOf('\\'));
+    const name = last >= 0 ? u.slice(last + 1) : u;
+    return name || 'output.mp4';
+  })();
+
+  // Segmented outputs (segment_on_metadata set) require a printf-style
+  // filename pattern; surface this in the FileBrowser title and hint.
+  const browseOutputDef =
+    browseNode?.data.ref.kind === 'output'
+      ? (browseNode.data.ref.def as Output)
+      : null;
+  const browseIsSegmented = !!browseOutputDef?.segment_on_metadata;
 
   /* Merge live metrics + errors into node data so MMNode can render badges. */
   const runByNode = useMemo(() => {
@@ -1371,11 +1404,20 @@ function Editor() {
         <FileBrowser
           open
           mode={browseIsInput ? 'open' : 'save'}
-          title={browseIsInput ? 'Choose input file' : 'Choose output file'}
+          title={
+            browseIsInput ? 'Choose input file'
+            : browseIsSegmented ? 'Set output folder and filename pattern'
+            : 'Choose output file'
+          }
           filter={browseIsInput ? MEDIA_FILE_EXTENSIONS : undefined}
           warnExtensions={browseIsInput ? undefined : MEDIA_FILE_EXTENSIONS}
           initialPath={browseInitialDir}
-          defaultFilename={browseIsInput ? undefined : 'output.mp4'}
+          defaultFilename={browseIsInput ? undefined : (browseDefaultFilename ?? 'output.mp4')}
+          filenameHint={
+            browseIsSegmented
+              ? 'Use a printf-style pattern for per-segment files, e.g. shot-%05d.mp4 or clip_%d.mkv'
+              : undefined
+          }
           onClose={() => setBrowseNodeId(null)}
           onPick={(path) => {
             setBrowseNodeId(null);

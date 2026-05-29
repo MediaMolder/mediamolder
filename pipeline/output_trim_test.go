@@ -47,13 +47,15 @@ func TestResolveOutputTiming_FFmpegSemantics(t *testing.T) {
 	}
 }
 
-// TestOutputTiming_StopAndStartSemantics verifies that the
-// stop/start helpers honour the -copyts vs default convention. With
-// !copyTS the runtime has shifted incoming packets back to a 0-anchored
-// timeline so the stop comparison is `pts >= recordingUS`. With copyTS
-// the original demuxer timestamps are preserved end-to-end so the stop
-// anchors at `startUS + recordingUS` (mirrors of_streamcopy in
-// fftools/ffmpeg_mux.c).
+// TestOutputTiming_StopAndStartSemantics verifies that the stop helper
+// mirrors FFmpeg's `of_streamcopy` stop condition:
+//
+//	int64_t start_time = (of->start_time == AV_NOPTS_VALUE) ? 0 : of->start_time;
+//	if (recording_time != INT64_MAX && dts >= recording_time + start_time)
+//
+// When output-side `-ss 5 -t 10` is set the stop anchors at
+// `startUS + recordingUS` regardless of copyTS. Without an output-side
+// `-ss` (haveStart=false) the stop reduces to `recordingUS`.
 func TestOutputTiming_StopAndStartSemantics(t *testing.T) {
 	timing, err := resolveOutputTiming(map[string]any{"ss": "5", "t": "10"}, nil)
 	if err != nil {
@@ -62,11 +64,10 @@ func TestOutputTiming_StopAndStartSemantics(t *testing.T) {
 	if got := timing.startTimestampUS(); got != 5_000_000 {
 		t.Errorf("startTimestampUS = %d, want 5_000_000", got)
 	}
-	// Default (not -copyts): shifted timeline → stop at recording_time.
-	if got := timing.stopTimestampUS(false); got != 10_000_000 {
-		t.Errorf("stopTimestampUS(copyTS=false) = %d, want 10_000_000", got)
+	// With output-side -ss, stop anchors at startUS + recordingUS for both copyTS values.
+	if got := timing.stopTimestampUS(false); got != 15_000_000 {
+		t.Errorf("stopTimestampUS(copyTS=false) = %d, want 15_000_000", got)
 	}
-	// -copyts: absolute timeline → stop at start + recording.
 	if got := timing.stopTimestampUS(true); got != 15_000_000 {
 		t.Errorf("stopTimestampUS(copyTS=true) = %d, want 15_000_000", got)
 	}

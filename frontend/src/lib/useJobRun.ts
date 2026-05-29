@@ -90,6 +90,7 @@ export interface LogEntry {
   time_ms: number;
   message: string;
   level?: 'info' | 'warn' | 'error';
+  replaceKey?: string; // when set, replaces the last entry with the same key
 }
 
 export interface RunState {
@@ -188,6 +189,45 @@ export function useJobRun(getConfig: () => JobConfig | null): RunState {
       const data = parseEvent<{ message?: string; time_ms: number }>(ev);
       if (data?.message) setLogs((l) => trimLog(l, { time_ms: data.time_ms, message: data.message! }));
     });
+    es.addEventListener('metadata', (ev: MessageEvent) => {
+      const data = parseEvent<{
+        node_id: string;
+        time_ms: number;
+        metadata?: { file_path?: string; custom?: { twelvelabs?: Record<string, unknown> } };
+      }>(ev);
+      if (!data) return;
+      const tl = data.metadata?.custom?.twelvelabs;
+      if (!tl) return;
+      const event = String(tl['event'] ?? '');
+      const filePath = String(tl['file_path'] ?? data.metadata?.file_path ?? '');
+      const taskId = tl['task_id'] ? ` task=${tl['task_id']}` : '';
+      const videoId = tl['video_id'] ? ` video=${tl['video_id']}` : '';
+      const errMsg = tl['error'] ? ` error=${tl['error']}` : '';
+      const fileLabel = filePath ? ` ${filePath}` : '';
+      const level: LogEntry['level'] = event === 'error' ? 'error' : 'info';
+
+      if (event === 'upload_progress') {
+        const sent = Number(tl['sent_bytes'] ?? 0);
+        const total = Number(tl['total_bytes'] ?? 0);
+        const pct = Number(tl['pct'] ?? 0);
+        const sentMB = (sent / 1_048_576).toFixed(1);
+        const totalMB = total > 0 ? ` / ${(total / 1_048_576).toFixed(1)} MB` : '';
+        const msg = `[${data.node_id}] uploading ${pct}% (${sentMB} MB${totalMB})`;
+        setLogs((l) => trimLog(l, { time_ms: data.time_ms, message: msg, level, replaceKey: `upload:${data.node_id}` }));
+        return;
+      }
+
+      if (event === 'task_status') {
+        const status = String(tl['status'] ?? '');
+        const msg = `[${data.node_id}] indexing${taskId} status=${status}`;
+        setLogs((l) => trimLog(l, { time_ms: data.time_ms, message: msg, level, replaceKey: `wait:${data.node_id}` }));
+        return;
+      }
+
+      const status = tl['status'] ? ` status=${tl['status']}` : '';
+      const msg = `[${data.node_id}] ${event}${fileLabel}${taskId}${videoId}${status}${errMsg}`;
+      setLogs((l) => trimLog(l, { time_ms: data.time_ms, message: msg, level }));
+    });
     es.addEventListener('done', (ev: MessageEvent) => {
       const data = parseEvent<{ status: JobStatus; error: string }>(ev);
       if (data) {
@@ -248,7 +288,15 @@ function parseEvent<T>(ev: MessageEvent): T | null {
 }
 
 function trimLog(arr: LogEntry[], next: LogEntry): LogEntry[] {
-  const out = [...arr, next];
+  let base = arr;
+  if (next.replaceKey) {
+    const idx = [...arr].reverse().findIndex((e: LogEntry) => e.replaceKey === next.replaceKey);
+    if (idx !== -1) {
+      const realIdx = arr.length - 1 - idx;
+      base = [...arr.slice(0, realIdx), ...arr.slice(realIdx + 1)];
+    }
+  }
+  const out = [...base, next];
   return out.length > LOG_CAP ? out.slice(out.length - LOG_CAP) : out;
 }
 
