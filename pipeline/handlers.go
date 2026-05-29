@@ -412,7 +412,7 @@ func newGraphRunner(cfg *Config, pipe *Pipeline) *graphRunner {
 		eventDrivenGoProcessors: make(map[string]struct{}),
 		passLogFiles:            make(map[string]*os.File),
 		hwDevices:               make(map[string]*av.HWDeviceContext),
-			segmentCuts:             make(map[string][]*cutGate),
+		segmentCuts:             make(map[string][]*cutGate),
 		goProcessorInputTB:      make(map[string][2]int),
 		segmentConsumers:        make(map[string][]processors.SegmentEventConsumer),
 	}
