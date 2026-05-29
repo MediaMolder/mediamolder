@@ -12,6 +12,17 @@ import (
 	"github.com/MediaMolder/MediaMolder/av"
 )
 
+// FrameLookahead is an optional interface a Processor may implement to
+// indicate that it needs a delay buffer of N frames between its output and
+// downstream consumers. go_processor uses this to give windowed detectors
+// (e.g. AdaptiveDetector with window_width=2) enough lead time to annotate
+// the correct frame rather than the frame that is 'window_width' steps late.
+type FrameLookahead interface {
+	// LookbackFrames returns the number of frames the processor needs to
+	// look behind the current frame (i.e. the minimum delay buffer depth).
+	LookbackFrames() int
+}
+
 // Processor is the interface every go_processor node must implement.
 type Processor interface {
 	// Init is called once during graph construction, before the first frame.
