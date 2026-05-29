@@ -124,6 +124,10 @@ type Processor interface {
     Process(frame *av.Frame, ctx ProcessorContext) (*av.Frame, *Metadata, error)
     Close() error
 }
+
+type FrameLookahead interface {
+  LookbackFrames() int
+}
 ```
 
 | Method | When it runs | What to do |
@@ -131,6 +135,11 @@ type Processor interface {
 | `Init` | Once, before the first frame arrives. | Read your config from `params`, load models, allocate buffers. Return an error to abort the pipeline. |
 | `Process` | Once per frame. | Inspect or modify the frame, run your logic, return the frame (or a new one) plus optional metadata. Return a `nil` frame to drop it. |
 | `Close` | Once, when the pipeline shuts down (even after errors). | Release resources, flush buffers, close files. |
+
+`FrameLookahead` is optional. Implement it when a processor confirms metadata
+for an earlier frame after seeing future frames. The runtime delays downstream
+delivery by `LookbackFrames()` frames so metadata routing and forced-IDR marks
+can target the event frame instead of the confirmation frame.
 
 ### ProcessorContext
 
@@ -315,6 +324,9 @@ Port of PySceneDetect's `AdaptiveDetector`. Wraps `scene_change_content` and nor
 each frame's content score against a rolling window mean, making it robust to sustained
 high-motion segments that would otherwise saturate the content score.
 See [docs/scene-detection.md](scene-detection.md#scene_change_adaptive) for full details.
+Because the adaptive detector confirms a cut after the rolling window is full,
+it implements `FrameLookahead`; the runtime compensates for `window_width` so
+segment cuts and encoder IDR marks land on the detected scene boundary frame.
 
 | Param | Type | Default | Description |
 |-------|------|---------|-------------|

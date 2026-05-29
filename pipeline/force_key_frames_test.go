@@ -102,7 +102,7 @@ func TestForceKeyFramesMatcher_TimeList(t *testing.T) {
 		{3000, false}, // exhausted
 	}
 	for _, c := range cases {
-		if got := m.shouldForce(c.pts, av.PictureTypeNone); got != c.want {
+		if got := m.shouldForce(c.pts, false); got != c.want {
 			t.Errorf("shouldForce(pts=%d) = %v, want %v", c.pts, got, c.want)
 		}
 	}
@@ -120,7 +120,7 @@ func TestForceKeyFramesMatcher_Expr_GTE(t *testing.T) {
 	// then t >= 4 → fires at t=4.0; etc.
 	forcedTimes := []float64{}
 	for ms := int64(0); ms <= 6000; ms += 100 {
-		if m.shouldForce(ms, av.PictureTypeNone) {
+		if m.shouldForce(ms, false) {
 			forcedTimes = append(forcedTimes, float64(ms)/1000.0)
 		}
 	}
@@ -142,20 +142,84 @@ func TestForceKeyFramesMatcher_Source(t *testing.T) {
 		t.Fatalf("matcher: %v", err)
 	}
 	defer m.Close()
-	if m.shouldForce(0, av.PictureTypeP) {
-		t.Error("P-frame should not force")
+	if m.shouldForce(0, false) {
+		t.Error("non-key source frame should not force")
 	}
-	if !m.shouldForce(100, av.PictureTypeI) {
-		t.Error("I-frame should force")
+	if !m.shouldForce(100, true) {
+		t.Error("key source frame should force")
 	}
-	if m.shouldForce(200, av.PictureTypeB) {
-		t.Error("B-frame should not force")
+	if m.shouldForce(200, false) {
+		t.Error("non-key source frame should not force")
+	}
+}
+
+func TestPrepareVideoFrameForEncoderClearsSourcePictType(t *testing.T) {
+	f, err := av.AllocFrame()
+	if err != nil {
+		t.Fatalf("AllocFrame: %v", err)
+	}
+	defer f.Close()
+	f.SetPictType(av.PictureTypeI)
+	f.SetKeyFrame(true)
+
+	prepareVideoFrameForEncoder(f, nil)
+
+	if got := f.PictType(); got != av.PictureTypeNone {
+		t.Fatalf("PictType = %d, want none", got)
+	}
+}
+
+func TestPrepareVideoFrameForEncoderHonorsGraphForceMarker(t *testing.T) {
+	f, err := av.AllocFrame()
+	if err != nil {
+		t.Fatalf("AllocFrame: %v", err)
+	}
+	defer f.Close()
+	f.SetPictType(av.PictureTypeP)
+	if err := markFrameForceKeyframe(f); err != nil {
+		t.Fatalf("markFrameForceKeyframe: %v", err)
+	}
+
+	prepareVideoFrameForEncoder(f, nil)
+
+	if got := f.PictType(); got != av.PictureTypeI {
+		t.Fatalf("PictType = %d, want I", got)
+	}
+}
+
+func TestPrepareVideoFrameForEncoderSourceUsesKeyFlag(t *testing.T) {
+	spec, _ := parseForceKeyFrames("source")
+	m, err := newForceKeyFramesMatcher(spec, 1, 1000)
+	if err != nil {
+		t.Fatalf("matcher: %v", err)
+	}
+	defer m.Close()
+
+	f, err := av.AllocFrame()
+	if err != nil {
+		t.Fatalf("AllocFrame: %v", err)
+	}
+	defer f.Close()
+	f.SetPTS(0)
+	f.SetPictType(av.PictureTypeI)
+
+	prepareVideoFrameForEncoder(f, m)
+	if got := f.PictType(); got != av.PictureTypeNone {
+		t.Fatalf("source pict_type alone forced keyframe: got %d", got)
+	}
+
+	f.SetPTS(100)
+	f.SetPictType(av.PictureTypeP)
+	f.SetKeyFrame(true)
+	prepareVideoFrameForEncoder(f, m)
+	if got := f.PictType(); got != av.PictureTypeI {
+		t.Fatalf("source key flag did not force keyframe: got %d", got)
 	}
 }
 
 func TestForceKeyFramesMatcher_NilSafe(t *testing.T) {
 	var m *forceKeyFramesMatcher
-	if m.shouldForce(0, 0) {
+	if m.shouldForce(0, false) {
 		t.Error("nil matcher should never fire")
 	}
 	m.Close() // must not panic

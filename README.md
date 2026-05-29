@@ -26,6 +26,11 @@
 
 Every codec, filter, container, and hardware backend FFmpeg offers, with significantly better usability, safety, observability, and *real-time reliability*.
 
+When a graph decodes and re-encodes video, MediaMolder follows FFmpeg's encoder
+boundary behavior: source frame types are not reused as encoder commands.
+Keyframes/IDRs are inserted by explicit graph controls such as
+`force_key_frames` and processor-generated scene-change markers.
+
 ### Real Time Encoding with Proper Metrics
 
 MediaMolder GUI — Adaptive Bitrate x264 encode with real-time controller active![Video Encoding Real Time Controller](/docs/images/real-time-controller.png)
