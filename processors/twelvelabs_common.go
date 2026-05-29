@@ -10,6 +10,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -97,9 +98,13 @@ func tlPollOpts(params map[string]any) twelvelabs.WaitOpts {
 
 // tlMaxConcurrent extracts the max_concurrent param with a default of 2.
 func tlMaxConcurrent(params map[string]any) int {
+	const maxConcurrentLimit = 64
 	n := 2
 	if v, ok := params["max_concurrent"].(float64); ok && v >= 1 {
 		n = int(v)
+		if n > maxConcurrentLimit {
+			n = maxConcurrentLimit
+		}
 	}
 	return n
 }
@@ -148,7 +153,7 @@ func tlUploadAndWait(ctx context.Context, c *twelvelabs.Client, indexID, file st
 // io.Closer should be called when the file is no longer needed; the caller is
 // responsible for its lifecycle.
 func newJSONLLogger(path string) (func(twelvelabs.APILogEntry), io.Closer, error) {
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	f, err := os.OpenFile(filepath.Clean(path), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 	if err != nil {
 		return nil, nil, err
 	}

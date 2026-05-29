@@ -82,6 +82,9 @@ func handleListDir(w http.ResponseWriter, r *http.Request) {
 		// references a directory that hasn't been created yet.
 		candidate := filepath.Dir(abs)
 		for candidate != abs {
+			if !isWithinAnyRoot(candidate, roots) {
+				break
+			}
 			if fi, serr := os.Stat(candidate); serr == nil {
 				info = fi
 				abs = candidate
