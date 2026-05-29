@@ -12,7 +12,6 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/MediaMolder/MediaMolder/av"
@@ -66,9 +65,11 @@ type sinkWriter struct {
 	mu      *sync.Mutex // nil for single-stream path; shared across goroutines otherwise
 	pipe    *Pipeline
 	// pendingCut is non-nil when the output has SegmentOnMetadata set.
-	// The go_processor handler sets it to true when the matching Custom
-	// key is emitted; handleSink rotates the muxer at the next keyframe.
-	pendingCut *atomic.Bool
+	// The go_processor handler signals it with the cut frame's source-PTS
+	// (microseconds); the video goroutine rotates the muxer at the next
+	// keyframe whose PTS is at or past that value, and non-video goroutines
+	// wait on the gate so their packets land in the correct segment.
+	pendingCut *cutGate
 	// segCounter is the zero-based index of the current segment.
 	// 0 on the first segment; incremented each time the muxer is rotated.
 	segCounter int
@@ -272,14 +273,19 @@ func (w *sinkWriter) flushBSF(i int, _ [2]int, st *chanState) error {
 type chanCtx struct {
 	idx   int
 	dstTB [2]int
+	// srcTB is the time-base of pkt.PTS() as it arrives on this channel,
+	// before processOne calls pkt.Rescale. Used for the pre-rescale
+	// microsecond conversion when comparing against the cut-PTS gate.
+	srcTB [2]int
 	rs    *sinkRescale
 	st    *chanState
 }
 
 // dispatchSegmentCompleted notifies any go_processors registered as
 // segment_sink event consumers for sinkNodeID. Each consumer's
-// OnSegmentCompleted is invoked in its own goroutine so the sink's
-// rotateSegment path is never blocked by a slow consumer.
+// OnSegmentCompleted is non-blocking: it registers wg.Add(1) then launches
+// its own goroutine internally, so calling it synchronously here is safe and
+// ensures the WaitGroup counter is incremented before Close()→wg.Wait() runs.
 func (r *graphRunner) dispatchSegmentCompleted(ctx context.Context, sinkNodeID, outputID, filePath string, segmentIndex int) {
 	consumers := r.segmentConsumers[sinkNodeID]
 	if len(consumers) == 0 {
@@ -290,8 +296,12 @@ func (r *graphRunner) dispatchSegmentCompleted(ctx context.Context, sinkNodeID, 
 		FilePath:     filePath,
 		SegmentIndex: segmentIndex,
 	}
+	// OnSegmentCompleted is non-blocking (it registers wg.Add(1) then launches
+	// its own goroutine). Call synchronously so the wg counter is incremented
+	// before dispatchSegmentCompleted returns — eliminating the race where
+	// Close()→wg.Wait() could return before the goroutine calls wg.Add.
 	for _, c := range consumers {
-		go c.OnSegmentCompleted(ctx, ev)
+		c.OnSegmentCompleted(ctx, ev)
 	}
 }
 
@@ -329,10 +339,12 @@ func (r *graphRunner) handleSink(ctx context.Context, node *graph.Node, ins []<-
 			rs = sink.streamRescale[i]
 		}
 		dstTB := sink.muxer.StreamTimeBase(i)
+		srcTB := dstTB
 		if rs != nil {
 			dstTB = rs.dstTB
+			srcTB = rs.srcTB
 		}
-		ctxs[i] = &chanCtx{idx: i, dstTB: dstTB, rs: rs, st: &chanState{}}
+		ctxs[i] = &chanCtx{idx: i, dstTB: dstTB, srcTB: srcTB, rs: rs, st: &chanState{}}
 	}
 
 	// Multi-channel paths share the muxer; serialise writes via mu.
@@ -479,18 +491,31 @@ func (r *graphRunner) handleSink(ctx context.Context, node *graph.Node, ins []<-
 				break
 			}
 			pkt := v.(*av.Packet)
-			// Rotate segment at the next video keyframe when a cut is pending.
-			// IsKeyFrame is checked first so Swap(false) only clears the flag when
-			// a rotation actually happens; non-keyframe packets leave it set.
-			if w.pendingCut != nil && pkt.IsKeyFrame() && w.pendingCut.Swap(false) {
-				nextURL := fmt.Sprintf(sink.cfg.URL, w.segCounter+1)
-				if err := r.rotateSegment(w, &sink.cfg, nextURL); err != nil {
-					_ = pkt.Close()
-					return err
-				}
-				c.dstTB = sink.muxer.StreamTimeBase(0)
-				if c.rs != nil {
-					c.dstTB = c.rs.dstTB
+			// Rotate at the first video keyframe whose source-PTS is at or past
+			// the pending cut PTS (stored in microseconds by the go_processor).
+			// Using a PTS threshold (rather than a plain bool) prevents the sink
+			// from rotating early when the go_processor runs ahead of the encoder.
+			if w.pendingCut != nil && pkt.IsKeyFrame() {
+				if cutUS := w.pendingCut.frontCut(); cutUS >= 0 {
+					if pktUS, ok := ptsToMicros(pkt.PTS(), c.srcTB); ok && pktUS >= cutUS {
+						nextURL := fmt.Sprintf(sink.cfg.URL, w.segCounter+1)
+						if err := r.rotateSegment(w, &sink.cfg, nextURL); err != nil {
+							_ = pkt.Close()
+							return err
+						}
+						w.pendingCut.popFront()
+						// Anchor the new segment at PTS 0 so each output
+						// MP4 plays back from time zero rather than carrying
+						// the original source timeline. Suppressed under
+						// -copyts.
+						if !sink.copyTS {
+							w.shiftUS = pktUS
+						}
+						c.dstTB = sink.muxer.StreamTimeBase(0)
+						if c.rs != nil {
+							c.dstTB = c.rs.dstTB
+						}
+					}
 				}
 			}
 			if err := processOne(c, pkt); err != nil {
@@ -517,7 +542,10 @@ func (r *graphRunner) handleSink(ctx context.Context, node *graph.Node, ins []<-
 				FilePath:     filePath,
 				SegmentIndex: w.segCounter,
 			})
-			r.dispatchSegmentCompleted(ctx, w.node.ID, sink.cfg.ID, filePath, w.segCounter)
+			// Use context.Background() so the dispatch goroutine is not cancelled
+			// when the scheduler errgroup context is cancelled after all node
+			// handlers return — the same reason rotateSegment uses Background().
+			r.dispatchSegmentCompleted(context.Background(), w.node.ID, sink.cfg.ID, filePath, w.segCounter)
 		}
 		return nil
 	}
@@ -535,26 +563,138 @@ func (r *graphRunner) handleSink(ctx context.Context, node *graph.Node, ins []<-
 			// a and b immediately — capturing (0, false) here at goroutine start
 			// — causing recordShortest to always no-op (ok=false).
 			defer func() { w.recordShortest(c.st.lastPTSus, c.st.lastPTSok) }()
+			// When the video goroutine exits (either normally or via error),
+			// drop all queued cuts so any still-held audio packets fall
+			// through to the current (final) muxer in the loop below.
+			if isVideo {
+				defer func() {
+					if w.pendingCut != nil {
+						w.pendingCut.clearAll()
+					}
+				}()
+			}
+			// Non-video channels (audio stream-copy etc.) typically run
+			// ahead of the video encoder's lookahead delay. Rather than
+			// blocking — which back-pressures the source goroutine that
+			// feeds video and deadlocks — we drain and locally buffer
+			// packets whose PTS is at/past the front pending cut. After
+			// each rotation we flush every held packet whose PTS is below
+			// the *next* queued cut (or all of them once the queue drains).
+			type heldPkt struct {
+				pkt *av.Packet
+				us  int64
+			}
+			var held []heldPkt
+			refreshDst := func() {
+				c.dstTB = sink.muxer.StreamTimeBase(c.idx)
+				if c.rs != nil {
+					c.dstTB = c.rs.dstTB
+				}
+			}
+			// flushHeldUpTo writes every held packet whose PTS is < boundary
+			// (boundary < 0 means "no upper bound"). Refreshes c.dstTB
+			// before the first write since the muxer may have rotated.
+			flushHeldUpTo := func(boundary int64) error {
+				if len(held) == 0 {
+					return nil
+				}
+				refreshed := false
+				keep := held[:0]
+				for _, hp := range held {
+					if boundary >= 0 && hp.us >= boundary {
+						keep = append(keep, hp)
+						continue
+					}
+					if !refreshed {
+						refreshDst()
+						refreshed = true
+					}
+					if err := processOne(c, hp.pkt); err != nil {
+						return err
+					}
+				}
+				held = keep
+				return nil
+			}
+			// audioBoundary returns the highest PTS at which a held audio
+			// packet may safely be written to the current segment. It is
+			// min(frontCut, progress+1): the next cut hasn't happened yet,
+			// AND go_processor has confirmed no earlier cut at that PTS.
+			audioBoundary := func() int64 {
+				front := w.pendingCut.frontCut()
+				prog := w.pendingCut.progress()
+				// progress+1 because a packet exactly AT progress has been
+				// processed by go_processor (so we know its cut status).
+				progBoundary := int64(math.MaxInt64)
+				if prog < math.MaxInt64 {
+					progBoundary = prog + 1
+				}
+				if front < 0 {
+					return progBoundary
+				}
+				if front < progBoundary {
+					return front
+				}
+				return progBoundary
+			}
 			for v := range in {
 				pkt := v.(*av.Packet)
-				// Only the video channel drives segment rotation.
-				if isVideo && w.pendingCut != nil && pkt.IsKeyFrame() && w.pendingCut.Swap(false) {
-					nextURL := fmt.Sprintf(sink.cfg.URL, w.segCounter+1)
-					// Hold w.mu for the full WriteTrailer + reopen to prevent
-					// audio goroutines from writing to a closed/new muxer.
-					w.mu.Lock()
-					rotErr := r.rotateSegment(w, &sink.cfg, nextURL)
-					w.mu.Unlock()
-					if rotErr != nil {
+				// If audio is holding packets and we can now safely flush
+				// some (because either the muxer rotated or go_processor
+				// advanced its progress cursor past them), do so.
+				if !isVideo && len(held) > 0 && w.pendingCut != nil {
+					if err := flushHeldUpTo(audioBoundary()); err != nil {
 						_ = pkt.Close()
-						return rotErr
+						return err
 					}
-					c.dstTB = sink.muxer.StreamTimeBase(c.idx)
-					if c.rs != nil {
-						c.dstTB = c.rs.dstTB
+				}
+				if w.pendingCut != nil {
+					pktUS, ok := ptsToMicros(pkt.PTS(), c.srcTB)
+					if isVideo {
+						if pkt.IsKeyFrame() {
+							if cutUS := w.pendingCut.frontCut(); cutUS >= 0 && ok && pktUS >= cutUS {
+								nextURL := fmt.Sprintf(sink.cfg.URL, w.segCounter+1)
+								// Hold w.mu for the full WriteTrailer + reopen
+								// to prevent audio goroutines from writing to
+								// a closed/new muxer.
+								w.mu.Lock()
+								rotErr := r.rotateSegment(w, &sink.cfg, nextURL)
+								if rotErr == nil && !sink.copyTS {
+									// Anchor each new segment at PTS 0.
+									w.shiftUS = pktUS
+								}
+								w.mu.Unlock()
+								if rotErr != nil {
+									_ = pkt.Close()
+									return rotErr
+								}
+								// Advance the queue after the muxer is reopened
+								// so audio goroutines that wake see the new
+								// front cut.
+								w.pendingCut.popFront()
+								refreshDst()
+							}
+						}
+					} else if ok {
+						// Non-video: hold packets that may belong to a
+						// future segment rather than blocking (which would
+						// deadlock the single-goroutine source).
+						if pktUS >= audioBoundary() {
+							held = append(held, heldPkt{pkt: pkt, us: pktUS})
+							continue
+						}
 					}
 				}
 				if err := processOne(c, pkt); err != nil {
+					return err
+				}
+			}
+			// Drain any remaining held packets into the final segment(s).
+			// The video goroutine's clearAll() defer empties the queue, so
+			// flushing with boundary < 0 writes everything to whatever muxer
+			// is current at that point.
+			if !isVideo && len(held) > 0 {
+				if err := flushHeldUpTo(-1); err != nil {
 					return err
 				}
 			}
@@ -581,7 +721,10 @@ func (r *graphRunner) handleSink(ctx context.Context, node *graph.Node, ins []<-
 			FilePath:     filePath,
 			SegmentIndex: w.segCounter,
 		})
-		r.dispatchSegmentCompleted(ctx, w.node.ID, sink.cfg.ID, filePath, w.segCounter)
+		// Use context.Background() so the dispatch goroutine is not cancelled
+		// when the scheduler errgroup context is cancelled after all node
+		// handlers return — the same reason rotateSegment uses Background().
+		r.dispatchSegmentCompleted(context.Background(), w.node.ID, sink.cfg.ID, filePath, w.segCounter)
 	}
 	return nil
 }
@@ -1302,9 +1445,9 @@ func (r *graphRunner) openSink(_ *graph.Graph, node *graph.Node) (*sinkResources
 	// Pre-register the pending-cut flag for metadata-driven segmentation.
 	// This is done before goroutines start so r.segmentCuts needs no mutex.
 	if out.SegmentOnMetadata != "" {
-		flag := &atomic.Bool{}
-		sr.pendingCut = flag
-		r.segmentCuts[out.SegmentOnMetadata] = append(r.segmentCuts[out.SegmentOnMetadata], flag)
+		g := newCutGate()
+		sr.pendingCut = g
+		r.segmentCuts[out.SegmentOnMetadata] = append(r.segmentCuts[out.SegmentOnMetadata], g)
 	}
 	return sr, nil
 }

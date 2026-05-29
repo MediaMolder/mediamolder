@@ -1203,6 +1203,16 @@ func (p *Pipeline) runGraph(ctx context.Context) (runErr error) {
 				return fmt.Errorf("go_processor %q init: %w", node.ID, err)
 			}
 			runner.goProcessors[node.ID] = proc
+			// Pre-resolve the input edge's time-base so handleGoProcessor can
+			// convert frame PTS values into microseconds when signalling
+			// cutGates. Cross-stream comparisons (video cut PTS vs. audio
+			// packet PTS) at the sink require a common unit.
+			if len(node.Inbound) > 0 {
+				if si, siErr := runner.resolveStreamInfo(dag, node); siErr == nil &&
+					si.TimeBase[0] > 0 && si.TimeBase[1] > 0 {
+					runner.goProcessorInputTB[node.ID] = si.TimeBase
+				}
+			}
 		case graph.KindCopy:
 			// Stream-copy nodes hold no per-node AV resources; the
 			// source already emits raw packets and the sink wires the

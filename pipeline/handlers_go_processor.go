@@ -45,6 +45,20 @@ func (r *graphRunner) handleGoProcessor(ctx context.Context, node *graph.Node, i
 	}
 
 	var frameIndex uint64
+	// Track which cutGates this processor's metadata keys can drive so we
+	// can advance/finish their progress cursor in lockstep with frame PTS.
+	progressGates := map[*cutGate]struct{}{}
+	for _, gs := range r.segmentCuts {
+		for _, g := range gs {
+			progressGates[g] = struct{}{}
+		}
+	}
+	finishProgress := func() {
+		for g := range progressGates {
+			g.finishProgress()
+		}
+	}
+	defer finishProgress()
 	for v := range ins[0] {
 		f := v.(*av.Frame)
 		frameStart := time.Now()
@@ -61,6 +75,17 @@ func (r *graphRunner) handleGoProcessor(ctx context.Context, node *graph.Node, i
 		if err != nil {
 			f.Close()
 			return fmt.Errorf("go_processor %q: %w", node.ID, err)
+		}
+
+		// Advance every gate's progress cursor to this frame's source PTS
+		// (in microseconds) so audio writers know all cuts ≤ this PTS have
+		// been seen.
+		if len(progressGates) > 0 {
+			if us, ok := ptsToMicros(f.PTS(), r.goProcessorInputTB[node.ID]); ok {
+				for g := range progressGates {
+					g.advanceProgress(us)
+				}
+			}
 		}
 
 		// Emit metadata on the event bus if provided.
@@ -82,10 +107,22 @@ func (r *graphRunner) handleGoProcessor(ctx context.Context, node *graph.Node, i
 			cutSignaled := false
 			for key, val := range md.Custom {
 				if val == true {
-					for _, flag := range r.segmentCuts[key] {
-						flag.Store(true)
-						cutSignaled = true
+					gates := r.segmentCuts[key]
+					if len(gates) == 0 {
+						continue
 					}
+					// Convert the current frame's PTS into microseconds using
+					// the resolved input time-base so cross-stream comparisons
+					// (video cut vs. audio packet PTS) at the sink are valid.
+					tb := r.goProcessorInputTB[node.ID]
+					cutUS, ok := ptsToMicros(f.PTS(), tb)
+					if !ok {
+						continue
+					}
+					for _, g := range gates {
+						g.signal(cutUS)
+					}
+					cutSignaled = true
 				}
 			}
 			// Only close the input frame if the processor returned a new one.
