@@ -32,6 +32,7 @@ const STREAM_LETTER: Record<StreamType, string> = {
   metadata: 'm',
   attachment: 't',
   events: 'e',
+  file: 'f',
 };
 
 /**
@@ -346,7 +347,7 @@ function inferCopyStreams(nodeId: string, edges: EdgeDef[]): string[] {
     if (endpointHead(e.from) === nodeId || endpointHead(e.to) === nodeId) {
       // "events" edges are routing annotations only; they do not represent
       // AV streams and must not be included in a node's streams list.
-      if (e.type && e.type !== 'events') seen.add(e.type);
+      if (e.type && e.type !== 'events' && e.type !== 'file') seen.add(e.type);
     }
   }
   return [...seen];
@@ -485,7 +486,11 @@ export function configToFlow(cfg: JobConfig, opts: ConvertOptions = {}): {
   const edges: FlowEdge[] = cfg.graph.edges.map((e, idx) => {
     const fromHead = endpointHead(e.from);
     const toHead = endpointHead(e.to);
-    const sourceId = inputIds.has(fromHead) ? INPUT_PREFIX + fromHead : fromHead;
+    const sourceId = inputIds.has(fromHead)
+      ? INPUT_PREFIX + fromHead
+      : outputIds.has(fromHead)
+        ? OUTPUT_PREFIX + fromHead
+        : fromHead;
     const targetId = outputIds.has(toHead) ? OUTPUT_PREFIX + toHead : toHead;
 
     // For audio edges from input nodes, encode the track index in the
@@ -709,13 +714,24 @@ function layoutByColumn(nodes: FlowNode[], edges: FlowEdge[]): void {
   const COL_W = 220;
   const ROW_H = 90;
 
+  // Events and file edges (output → go_processor) represent completion
+  // callbacks / written-file notifications, not AV stream flow. Exclude them
+  // from the topological column assignment so events-only processors are not
+  // incorrectly ranked before the output. They are placed in a dedicated pass below.
+  const isEventsEdge = (e: FlowEdge) => {
+    const t = (e.data as { streamType?: string } | null)?.streamType;
+    return t === 'events' || t === 'file';
+  };
+  const avEdges = edges.filter((e) => !isEventsEdge(e));
+  const evEdges = edges.filter(isEventsEdge);
+
   const adj = new Map<string, string[]>();
   const indeg = new Map<string, number>();
   nodes.forEach((n) => {
     adj.set(n.id, []);
     indeg.set(n.id, 0);
   });
-  edges.forEach((e) => {
+  avEdges.forEach((e) => {
     adj.get(e.source)?.push(e.target);
     indeg.set(e.target, (indeg.get(e.target) ?? 0) + 1);
   });
@@ -743,6 +759,16 @@ function layoutByColumn(nodes: FlowNode[], edges: FlowEdge[]): void {
   nodes.forEach((n) => {
     if (n.data.kind === 'input') col.set(n.id, 0);
     if (n.data.kind === 'output') col.set(n.id, maxCol + 1);
+  });
+  maxCol = Math.max(maxCol, ...Array.from(col.values()));
+
+  // Place events-consumer nodes one column to the right of their trigger
+  // output so they appear downstream in the left-to-right layout.
+  evEdges.forEach((e) => {
+    const srcCol = col.get(e.source) ?? 0;
+    if ((col.get(e.target) ?? 0) <= srcCol) {
+      col.set(e.target, srcCol + 1);
+    }
   });
   maxCol = Math.max(maxCol, ...Array.from(col.values()));
 
@@ -894,6 +920,10 @@ export function expandImplicitNodes(
     const targetNode = nodeById.get(e.target);
     if (!sourceNode || !targetNode) continue;
     const type = (e.data?.streamType ?? 'video') as StreamType;
+
+    // Events and file edges are routing annotations, not decoded AV streams.
+    // They must not be expanded with ghost demuxer/decoder/muxer stages.
+    if (type === 'events' || type === 'file') continue;
 
     let chainHead = e.source;
     let chainHeadRaw = e.data?.rawFrom ?? '';

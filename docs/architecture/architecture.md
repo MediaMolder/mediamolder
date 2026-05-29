@@ -157,6 +157,14 @@ JSON → PipelineConfig → Graph (DAG) → Compiled Plan → Open Resources (de
 → Execute (goroutines + channels) → Finalize (flush + atomic rename) + Events/Metrics
 ```
 
+At the encoder boundary, decoded video frame types from the source bitstream are
+sanitized before `avcodec_send_frame`. This mirrors FFmpeg's encoder pipeline:
+source `pict_type` is descriptive, while explicit controls (`force_key_frames`,
+processor force-keyframe metadata, or runtime restart points) request IDR frames.
+Windowed processors can implement `FrameLookahead`; the runtime delays frame
+delivery so metadata, segment cuts, and IDR requests are aligned to the actual
+event frame.
+
 > **📖 Expanded Level 3 Documentation Available**  
 > For **detailed subcomponent breakdowns, key Go types/interfaces, and UML-style Mermaid sequence diagrams** (parse job, build graph, full execution lifecycle, observability emission, etc.), see **[MediaMolder-Core-Detailed-Level3.md](MediaMolder-Core-Detailed-Level3.md)**. It covers all 8 core components with 10+ sequence diagrams and code examples.
 

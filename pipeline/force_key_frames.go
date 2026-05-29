@@ -61,11 +61,8 @@ var forceKeyFramesExprVars = []string{
 //     n_forced, prev_forced_n, prev_forced_t, t (see
 //     forceKeyFramesExprVars).
 //   - `source` — copy keyframes from the source: the matcher fires when
-//     the upstream frame's pict_type is already I. (FFmpeg's `source`
-//     mode actually inspects the demuxed packet flags; we approximate
-//     by looking at the decoded frame's pict_type, which the H.264 /
-//     HEVC / VP9 / AV1 decoders all populate from the bitstream's
-//     IDR / I-frame markers.)
+//     the upstream frame carries AV_FRAME_FLAG_KEY, matching FFmpeg's
+//     `forced_kf_apply` check for `frame->flags & AV_FRAME_FLAG_KEY`.
 //   - comma-separated time list — float seconds, e.g. `3,7.5,10.25`.
 //     The FFmpeg HH:MM:SS form `av_parse_time` accepts is deferred
 //     until a corpus job needs it.
@@ -166,9 +163,9 @@ func (m *forceKeyFramesMatcher) Close() {
 // shouldForce returns true when the frame should be encoded as an
 // AV_PICTURE_TYPE_I keyframe. Caller must invoke it exactly once per
 // frame in PTS order; the matcher's internal counters advance on every
-// call. srcPictType is the upstream frame's pict_type (only consulted
-// for `source` kind).
-func (m *forceKeyFramesMatcher) shouldForce(pts int64, srcPictType int) bool {
+// call. sourceKeyFrame is the upstream frame's AV_FRAME_FLAG_KEY state
+// (only consulted for `source` kind).
+func (m *forceKeyFramesMatcher) shouldForce(pts int64, sourceKeyFrame bool) bool {
 	if m == nil || m.spec == nil {
 		return false
 	}
@@ -206,7 +203,7 @@ func (m *forceKeyFramesMatcher) shouldForce(pts int64, srcPictType int) bool {
 		}
 		return false
 	case forceKeyFramesSource:
-		if srcPictType == av.PictureTypeI {
+		if sourceKeyFrame {
 			m.recordForced(t)
 			return true
 		}

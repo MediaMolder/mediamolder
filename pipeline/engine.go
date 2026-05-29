@@ -301,7 +301,7 @@ func (p *Pipeline) stepForward(target State) error {
 		// Wave 7 #36d: a config may have zero Outputs when every sink
 		// is a filter_sink (nullsink/anullsink terminating a side-effect
 		// chain such as ebur128 or ametadata=mode=print).
-		if len(p.cfg.Outputs) == 0 && !configHasFilterSink(p.cfg) {
+		if len(p.cfg.Outputs) == 0 && !configHasFilterSink(p.cfg) && !configHasOnlyGoProcessors(p.cfg) {
 			return fmt.Errorf("config has no outputs or filter_sink nodes")
 		}
 		if len(p.cfg.Inputs) == 0 && !configHasFilterSource(p.cfg) {
@@ -829,6 +829,66 @@ func configHasFilterSink(cfg *Config) bool {
 	return false
 }
 
+// configHasOnlyGoProcessors reports whether every node in cfg.Graph is a
+// go_processor. When true the pipeline requires no AV outputs; all work
+// is performed by the processors themselves via events edges.
+func configHasOnlyGoProcessors(cfg *Config) bool {
+	if len(cfg.Graph.Nodes) == 0 {
+		return false
+	}
+	for _, n := range cfg.Graph.Nodes {
+		if n.Type != "go_processor" {
+			return false
+		}
+	}
+	return true
+}
+
+// eventLiveNodes returns the set of node IDs that are "live" by virtue of
+// being reachable from any AV-sink-connected node via "events" or "file"
+// edges. These edges are stripped from the graph before AV compilation, so
+// nodes reachable only through them are reported as dead by the AV compiler
+// even though they perform meaningful side-effects (uploads, log writes).
+//
+// The returned set is used to suppress false-positive dead_node warnings
+// for those nodes.
+func eventLiveNodes(cfg *Config, avLive map[string]bool) map[string]bool {
+	// Build a quick lookup: for each node ID, which node IDs are its
+	// targets via file/events edges?
+	targets := make(map[string][]string, len(cfg.Graph.Edges))
+	for _, e := range cfg.Graph.Edges {
+		if e.Type != "events" && e.Type != "file" {
+			continue
+		}
+		srcID := edgeNodeID(e.From)
+		tgtID := edgeNodeID(e.To)
+		targets[srcID] = append(targets[srcID], tgtID)
+	}
+
+	live := make(map[string]bool, len(cfg.Graph.Nodes))
+	// Seed: all AV-live nodes.
+	for id := range avLive {
+		live[id] = true
+	}
+	// Forward-propagate over events/file edges until stable.
+	changed := true
+	for changed {
+		changed = false
+		for srcID, tgts := range targets {
+			if !live[srcID] {
+				continue
+			}
+			for _, tgtID := range tgts {
+				if !live[tgtID] {
+					live[tgtID] = true
+					changed = true
+				}
+			}
+		}
+	}
+	return live
+}
+
 func buildFilterSpec(node NodeDef) string {
 	if node.Filter == "" {
 		return "null"
@@ -957,7 +1017,55 @@ func (p *Pipeline) runGraph(ctx context.Context) (runErr error) {
 	if err != nil {
 		return fmt.Errorf("compile graph: %w", err)
 	}
+	// evLive is computed lazily on the first dead_node warning that might be
+	// suppressed because it is reachable via events/file edges.
+	var evLive map[string]bool
 	for _, w := range plan.Warnings {
+		// For go_processor-only pipelines, events edges are stripped from the
+		// AV graph before compilation, so dead_node and disconnected_source
+		// warnings are expected and should not be surfaced as errors.
+		if configHasOnlyGoProcessors(cfg) &&
+			(w.Code == graph.WarnDeadNode || w.Code == graph.WarnDisconnectedSource) {
+			continue
+		}
+		// Suppress dead_node for nodes that are reachable from an AV-live
+		// node via "events" or "file" edges (e.g. indexer, caption, *_log
+		// nodes in a segment-sink → TwelveLabs chain). These edges are
+		// Suppress dead_node for go_processor nodes that are being used
+		// purely for side-channel analysis (no outbound AV edges). This
+		// occurs when rewriteGoProcessorCopyEdges redirects a copy node to
+		// read packets directly from the source, leaving the go_processor as
+		// a terminal frame processor with no downstream AV consumers.
+		if w.Code == graph.WarnDeadNode {
+			if n := dag.NodeByID(w.NodeID); n != nil &&
+				n.Kind == graph.KindGoProcessor && len(n.Inbound) > 0 {
+				continue
+			}
+		}
+		// stripped before AV compilation, so the AV compiler can't see
+		// them; the nodes are not truly dead.
+		if w.Code == graph.WarnDeadNode {
+			if evLive == nil {
+				avLive := make(map[string]bool, len(dag.Nodes))
+				var markLive func(n *graph.Node)
+				markLive = func(n *graph.Node) {
+					if avLive[n.ID] {
+						return
+					}
+					avLive[n.ID] = true
+					for _, e := range n.Inbound {
+						markLive(e.From)
+					}
+				}
+				for _, sink := range dag.Sinks {
+					markLive(sink)
+				}
+				evLive = eventLiveNodes(cfg, avLive)
+			}
+			if evLive[w.NodeID] {
+				continue
+			}
+		}
 		p.events.Post(ErrorEvent{
 			Err:  fmt.Errorf("graph compilation warning [%s]: %s", w.Code, w.Message),
 			Time: time.Now(),
@@ -1066,6 +1174,7 @@ func (p *Pipeline) runGraph(ctx context.Context) (runErr error) {
 			// eventsSinks table below. Skip go_processor initialisation for them.
 			if node.Processor == "metadata_file_writer" {
 				if _, hasInner := node.Params["inner_processor"]; !hasInner {
+					runner.pureEventSinkNodes[node.ID] = struct{}{}
 					continue
 				}
 			}
@@ -1082,14 +1191,28 @@ func (p *Pipeline) runGraph(ctx context.Context) (runErr error) {
 				if si, siErr := runner.resolveStreamInfo(dag, node); siErr == nil &&
 					si.Type == av.MediaTypeVideo &&
 					si.FrameRate[0] > 0 && si.FrameRate[1] > 0 {
-					initParams = copyParams(initParams)
-					initParams["frame_rate"] = float64(si.FrameRate[0]) / float64(si.FrameRate[1])
+					cp := make(map[string]any, len(initParams)+1)
+					for k, v := range initParams {
+						cp[k] = v
+					}
+					cp["frame_rate"] = float64(si.FrameRate[0]) / float64(si.FrameRate[1])
+					initParams = cp
 				}
 			}
 			if err := proc.Init(initParams); err != nil {
 				return fmt.Errorf("go_processor %q init: %w", node.ID, err)
 			}
 			runner.goProcessors[node.ID] = proc
+			// Pre-resolve the input edge's time-base so handleGoProcessor can
+			// convert frame PTS values into microseconds when signalling
+			// cutGates. Cross-stream comparisons (video cut PTS vs. audio
+			// packet PTS) at the sink require a common unit.
+			if len(node.Inbound) > 0 {
+				if si, siErr := runner.resolveStreamInfo(dag, node); siErr == nil &&
+					si.TimeBase[0] > 0 && si.TimeBase[1] > 0 {
+					runner.goProcessorInputTB[node.ID] = si.TimeBase
+				}
+			}
 		case graph.KindCopy:
 			// Stream-copy nodes hold no per-node AV resources; the
 			// source already emits raw packets and the sink wires the
@@ -1106,29 +1229,135 @@ func (p *Pipeline) runGraph(ctx context.Context) (runErr error) {
 		nodesByID[cfg.Graph.Nodes[i].ID] = &cfg.Graph.Nodes[i]
 	}
 	for _, e := range cfg.Graph.Edges {
-		if e.Type != "events" {
+		if e.Type != "events" && e.Type != "file" {
 			continue
 		}
 		srcID := edgeNodeID(e.From)
 		tgtID := edgeNodeID(e.To)
 		tgt := nodesByID[tgtID]
-		if tgt == nil || tgt.Type != "go_processor" || tgt.Processor != "metadata_file_writer" {
+		if tgt == nil || tgt.Type != "go_processor" {
 			continue
 		}
-		if _, hasInner := tgt.Params["inner_processor"]; hasInner {
-			// Wrapper-mode node: events are written by the processor itself.
+
+		// metadata_file_writer in "events-wiring" mode: open a file sink
+		// and register it under the source node ID.
+		if tgt.Processor == "metadata_file_writer" {
+			if _, hasInner := tgt.Params["inner_processor"]; hasInner {
+				// Wrapper-mode node: events are written by the processor itself.
+				continue
+			}
+			outputFile, _ := tgt.Params["output_file"].(string)
+			if outputFile == "" {
+				return fmt.Errorf("metadata_file_writer %q: events edge requires output_file param", tgtID)
+			}
+			outputFormat, _ := tgt.Params["output_format"].(string)
+			sink, err := processors.NewEventSink(outputFile, outputFormat)
+			if err != nil {
+				return fmt.Errorf("metadata_file_writer %q: %w", tgtID, err)
+			}
+			runner.eventsSinks[srcID] = append(runner.eventsSinks[srcID], sink)
 			continue
 		}
-		outputFile, _ := tgt.Params["output_file"].(string)
-		if outputFile == "" {
-			return fmt.Errorf("metadata_file_writer %q: events edge requires output_file param", tgtID)
+
+		// Generic event-driven go_processor (e.g. twelvelabs_indexer).
+		// If it implements SegmentEventConsumer, register it under the
+		// source node ID so the sink dispatches SegmentCompleted events.
+		// If it implements AsyncMetadataProcessor, install a MetadataEmitter
+		// that forwards posts to the pipeline event bus and to any
+		// downstream events sinks rooted at the processor's own node ID.
+		proc := runner.goProcessors[tgtID]
+		if proc == nil {
+			continue
 		}
-		outputFormat, _ := tgt.Params["output_format"].(string)
-		sink, err := processors.NewEventSink(outputFile, outputFormat)
-		if err != nil {
-			return fmt.Errorf("metadata_file_writer %q: %w", tgtID, err)
+		if consumer, ok := proc.(processors.SegmentEventConsumer); ok {
+			runner.segmentConsumers[srcID] = append(runner.segmentConsumers[srcID], consumer)
+			runner.eventDrivenGoProcessors[tgtID] = struct{}{}
 		}
-		runner.eventsSinks[srcID] = append(runner.eventsSinks[srcID], sink)
+		if async, ok := proc.(processors.AsyncMetadataProcessor); ok {
+			runner.eventDrivenGoProcessors[tgtID] = struct{}{}
+			nodeID := tgtID
+			pipeCtx := ctx // capture before inner variable shadowing
+			async.SetMetadataEmitter(func(md *processors.Metadata) {
+				if md == nil {
+					return
+				}
+				runner.pipe.events.Post(ProcessorMetadata{
+					NodeID:   nodeID,
+					Metadata: md,
+				})
+				// Progress events are SSE-only: skip file sinks and downstream
+				// consumer chaining so intermediate status updates (uploading,
+				// task_created, waiting) do not trigger downstream processors.
+				// Failed events are similarly SSE-only: downstream processors
+				// must not be triggered when an upstream step has errored.
+				if md.Progress || md.Failed {
+					return
+				}
+				pCtx := processors.ProcessorContext{StreamID: nodeID}
+				for _, s := range runner.eventsSinks[nodeID] {
+					s.Write(pCtx, md)
+				}
+				// Chain downstream SegmentEventConsumers (processor→processor
+				// "events" edges). FilePath is propagated from the metadata so
+				// the downstream consumer receives the original source path.
+				// Custom is forwarded so downstream processors can use results
+				// from upstream (e.g. video_id from TwelveLabsIndexer).
+				if downstream := runner.segmentConsumers[nodeID]; len(downstream) > 0 {
+					ev := processors.SegmentEvent{OutputID: nodeID, FilePath: md.FilePath, Custom: md.Custom}
+					for _, c := range downstream {
+						c.OnSegmentCompleted(pipeCtx, ev)
+					}
+				}
+			})
+		}
+	}
+
+	// Compute go_processor close order: event producers (nodes that are
+	// sources of processor→processor "events" edges) before consumers, so
+	// producer.Close() blocks until it fires OnSegmentCompleted on consumers
+	// before consumer.Close() waits on the consumer's WaitGroup.
+	{
+		seen := make(map[string]bool)
+		for _, e := range cfg.Graph.Edges {
+			if e.Type != "events" {
+				continue
+			}
+			srcID := edgeNodeID(e.From)
+			if _, isProc := runner.goProcessors[srcID]; isProc && !seen[srcID] {
+				seen[srcID] = true
+				runner.goProcessorCloseOrder = append(runner.goProcessorCloseOrder, srcID)
+			}
+		}
+		// Append any remaining go_processors (pure consumers) in sorted order.
+		var remaining []string
+		for id := range runner.goProcessors {
+			if !seen[id] {
+				remaining = append(remaining, id)
+			}
+		}
+		sort.Strings(remaining)
+		runner.goProcessorCloseOrder = append(runner.goProcessorCloseOrder, remaining...)
+	}
+
+	// Dispatch "from-input" events synchronously: for each input node that
+	// is the source of an "events" edge, fire OnSegmentCompleted immediately
+	// so the processor's wg.Add(1) is called before sched.Run starts and
+	// runner.close() can correctly wait via wg.Wait().
+	{
+		inputURLByID := make(map[string]string, len(cfg.Inputs))
+		for _, inp := range cfg.Inputs {
+			inputURLByID[inp.ID] = inp.URL
+		}
+		for srcID, consumers := range runner.segmentConsumers {
+			url, isInput := inputURLByID[srcID]
+			if !isInput {
+				continue
+			}
+			ev := processors.SegmentEvent{OutputID: srcID, FilePath: url, SegmentIndex: 0}
+			for _, c := range consumers {
+				c.OnSegmentCompleted(ctx, ev)
+			}
+		}
 	}
 
 	// Register reconfigurable filters for live parameter changes.

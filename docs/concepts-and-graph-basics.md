@@ -255,6 +255,13 @@ an output and MediaMolder synthesises the encoder node automatically:
 All codec parameters — preset, rate-control mode, CRF/CQ, bitrate, keyframe
 interval, pixel format, etc. — live in `params`.
 
+When decoded video is re-encoded, MediaMolder treats the source frame's
+`pict_type` as descriptive metadata, not as an encoder command. The encoder
+boundary clears decoded source frame types before calling libavcodec, matching
+FFmpeg's `frame_encode` path. IDR frames are inserted only by explicit graph
+control: `force_key_frames`, real-time preset restarts, or processor-generated
+force-keyframe markers such as scene-change segmentation.
+
 Use `mediamolder list-codecs` to see available encoders.
 
 ---
@@ -311,6 +318,11 @@ A `go_processor` node runs a Go function as a first-class stage in the graph.
 It consumes decoded frames, optionally modifies or analyses them, and produces
 frames for downstream nodes. Useful for AI inference, custom analysis, or
 per-frame metadata injection that doesn't fit a libavfilter.
+
+Processors that detect events after a lookahead window can implement the
+optional `FrameLookahead` interface. The runtime holds that many decoded frames
+behind the processor, so metadata and forced-IDR requests can be applied to the
+actual event frame rather than the later frame that confirmed it.
 
 ```json
 {

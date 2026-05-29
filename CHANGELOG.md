@@ -5,7 +5,134 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Fixed
+- Re-encoding now clears decoded source `pict_type` at the encoder boundary,
+  matching FFmpeg's `frame_encode` behavior. Custom graph requests still force
+  IDR frames through `force_key_frames` or processor metadata, so scene-change
+  segmentation no longer inherits all-intra or source GOP structure from input
+  files.
+
 ### Added
+- **Typed Inspector forms for the four `twelvelabs_*` go_processor
+  nodes.** `frontend/src/components/Inspector.tsx` now renders a
+  dedicated property panel per processor with labelled inputs,
+  defaults, inline help text, conditional visibility (e.g. *Index name
+  / Models* only when *Auto-create* is on; *Video-window length* only
+  when scopes include `video`; *Output format* only when *Output
+  directory* is set), a required-field marker on `index_id`, and a
+  free-text/dropdown **Index picker** with a Refresh button that calls
+  `/api/twelvelabs/indexes`. A collapsible *Authentication & polling*
+  block surfaces the shared `api_key` / `api_key_env` / `base_url` /
+  `poll_interval_s` / `poll_max_interval_s` / `request_timeout_s` /
+  `max_concurrent` params (api_key rendered as a password field); any
+  params not covered by the typed schema still fall through to the
+  generic key/value editor so authors can set advanced or future
+  params without a new build.
+- **TwelveLabs integration phase 9 — GUI palette curation for the
+  `twelvelabs_*` processors.** `internal/gui/curation.go` now lists
+  friendly names (e.g. “TwelveLabs analyze (Pegasus)”) and aliases for
+  the four nodes; `internal/gui/api.go` returns one-sentence
+  descriptions and an `["events"]` stream-kind so they connect cleanly
+  to upstream `segment_sink` outputs in the visual editor. No frontend
+  code changes are required — the palette is server-driven and the
+  generic `ParamsEditor` already handles the string / number / bool
+  parameter set.
+
+- **TwelveLabs integration phase 10 — user-facing documentation.** A
+  new [docs/twelvelabs.md](docs/twelvelabs.md) guide covers API-key
+  setup, the `mediamolder twelvelabs` CLI, the
+  `/api/twelvelabs/*` HTTP routes, three graph recipes (whole-file,
+  shot-aware chunking, per-shot embeddings to disk), and a parameter
+  reference for all four processors. Cross-references added in
+  `README.md` and `docs/go-processor-nodes.md` (Contents +
+  per-processor blurbs + a dedicated section pointing to the guide).
+  The integration plan checklist in
+  [docs/architecture/twelvelabs_integration.md](docs/architecture/twelvelabs_integration.md)
+  is updated to mark phases 9–10 complete.
+
+- **TwelveLabs integration phase 5 — `twelvelabs_indexer` processor.**
+  A new event-driven `go_processor` (`processors.TwelveLabsIndexer`) that
+  uploads completed segment files to a TwelveLabs index and emits an
+  `indexed` (or `error`) record via `Metadata.Custom["twelvelabs"]`. The
+  processor is wired via an `events` edge from an upstream `segment_sink`
+  output (integration plan Flows B/C). Params: `api_key` /
+  `api_key_env`, `index_id`, `auto_create_index` + `index_name` + `models`,
+  `wait_for_ready`, `poll_interval_s` / `poll_max_interval_s`,
+  `max_concurrent`, and `base_url` (test override). Uploads are bounded by
+  a configurable semaphore and processed asynchronously without blocking
+  the segment writer.
+
+  Supporting pipeline changes: the engine's `events`-edge wiring loop in
+  `pipeline/engine.go` now also routes `SegmentCompleted` deliveries to
+  any `go_processor` that implements the new
+  `processors.SegmentEventConsumer` interface, and installs a
+  `MetadataEmitter` callback on processors that implement
+  `processors.AsyncMetadataProcessor` so they can post Metadata events
+  outside the per-frame `Process` call. `pipeline/handlers_sink.go`
+  dispatches each `SegmentCompleted` to registered consumers via a
+  non-blocking helper (`dispatchSegmentCompleted`), so a slow downstream
+  upload never stalls segment rotation. See
+  [docs/architecture/twelvelabs_integration.md](docs/architecture/twelvelabs_integration.md).
+
+- **TwelveLabs integration phase 6 — analyzer, searcher, and embedder
+  processors.** Three new event-driven `go_processor` nodes that wrap the
+  Marengo and Pegasus APIs:
+  - `twelvelabs_analyzer` uploads each completed segment to a staging
+    index, waits for it to be ready, then runs Pegasus `Analyze` with the
+    configured prompt and emits `Metadata.Custom["twelvelabs"]={event:"analyzed",
+    video_id, text, chapters, …}`. Optional `segments: true` requests
+    structured timestamped chapters.
+  - `twelvelabs_searcher` runs Marengo `Search` either on a fixed timer
+    (`interval_s > 0`) or per completed segment, with a `min_score` filter
+    and emits `{event:"search", matches:[{video_id,start_s,end_s,score,confidence}], …}`.
+  - `twelvelabs_embedder` submits each segment to `/embed/tasks`, waits
+    for the result, and emits `{event:"embedded", dim, count, embeddings|out_file, …}`.
+    When `out_dir` is set, vectors are written to
+    `<out_dir>/<basename>.embeddings.{json,jsonl}` and omitted from the
+    inline payload.
+
+  All three share a small `tlClientFromParams` / `tlPollOpts` /
+  `tlMaxConcurrent` helper set (`processors/twelvelabs_common.go`),
+  implement `SegmentEventConsumer` + `AsyncMetadataProcessor` (so the
+  existing phase-5 engine wiring picks them up automatically), and bound
+  concurrent work with a configurable semaphore. Each processor has its
+  own `httptest`-backed unit suite covering init validation, happy path,
+  error path, and registry lookup.
+
+- **TwelveLabs integration phase 7 — `mediamolder twelvelabs` CLI
+  subcommand.** A new top-level subcommand wraps `internal/twelvelabs`
+  for ad-hoc operations against an existing file or video:
+  - `mediamolder twelvelabs index --index <id> <file>` (uploads + waits
+    for indexing).
+  - `mediamolder twelvelabs analyze --video-id <id> --prompt "…"`
+    (`--segments`, `--temperature`, `--video-url` for one-shot URLs).
+  - `mediamolder twelvelabs search --index <id> --query "…"`
+    (`--options`, `--threshold`, `--page-limit`).
+  - `mediamolder twelvelabs embed --video <file> [--out PATH]`
+    (`--model`, `--scopes`, `--window`, `--format-out=json|jsonl`).
+  - `mediamolder twelvelabs indexes list|create|delete …`.
+
+  Authentication precedence (matching the integration plan): `--api-key`
+  flag → `TWELVELABS_API_KEY` env → `~/.config/mediamolder/twelvelabs.json`
+  (`{"api_key": "…"}`). A `--base-url` override is provided for tests.
+  Output is JSON by default. New tests cover help/dispatch, every verb's
+  happy path against an `httptest` mock, required-flag validation, the
+  three-level auth precedence, and `splitCSV`.
+
+- **TwelveLabs integration phase 8 — `/api/twelvelabs/*` HTTP routes.**
+  The GUI HTTP server now exposes:
+  - `GET    /api/twelvelabs/ping` (calls `ListIndexes` to verify auth).
+  - `GET    /api/twelvelabs/indexes`.
+  - `POST   /api/twelvelabs/indexes` (create; defaults to `marengo3.0`).
+  - `DELETE /api/twelvelabs/indexes/{id}`.
+  - `POST   /api/twelvelabs/search` (proxy for GUI free-text search).
+
+  API-key resolution moved to a shared `internal/twelvelabs/auth.go`
+  (`ResolveAPIKey` + `DefaultConfigPath`) so the CLI and HTTP routes use
+  the same precedence chain. Handlers live in `internal/gui/twelvelabs.go`
+  and are covered by `httptest`-backed unit tests including happy paths,
+  missing-field validation, and the auth-error path.
+
 - **Phase 8 — real-time controller observability (backend).**
   A new `RTControllerSnapshot` struct (plus `ControllerNodeSnapshot` and
   `SinkNodeSnapshot`) captures the full per-tick state of the adaptive

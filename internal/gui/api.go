@@ -475,7 +475,11 @@ func processorStreams(name string) []string {
 		"scene_change_histogram",
 		"scene_change_threshold":
 		return []string{"video", "events"}
-	case "metadata_file_writer":
+	case "metadata_file_writer",
+		"twelvelabs_indexer",
+		"twelvelabs_analyzer",
+		"twelvelabs_searcher",
+		"twelvelabs_embedder":
 		return []string{"events"}
 	}
 	return nil
@@ -506,6 +510,14 @@ func processorDescription(name string) string {
 		return "Wrap another processor and write its metadata to a JSON Lines file."
 	case "yolo_v8":
 		return "YOLOv8 object detection (requires the with_onnx build tag)."
+	case "twelvelabs_indexer":
+		return "Upload completed segments / files to a TwelveLabs index (Marengo + Pegasus). See docs/twelvelabs.md."
+	case "twelvelabs_analyzer":
+		return "Run Pegasus analyze on each completed segment to emit captions, summaries, and chapter markers."
+	case "twelvelabs_searcher":
+		return "Run Marengo semantic search on a timer or per segment and emit timestamped matches."
+	case "twelvelabs_embedder":
+		return "Generate Marengo video embeddings per segment, inline or to disk (json / jsonl)."
 	}
 	return ""
 }

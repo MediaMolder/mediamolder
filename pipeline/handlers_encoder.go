@@ -25,6 +25,35 @@ import (
 // shell-injection risk.
 var passlogfileSafe = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 
+const frameMetadataForceKeyframe = "mediamolder.force_keyframe"
+
+func markFrameForceKeyframe(f *av.Frame) error {
+	if f == nil {
+		return nil
+	}
+	if err := f.SetMetadata(frameMetadataForceKeyframe, "1"); err != nil {
+		return err
+	}
+	f.SetPictType(av.PictureTypeI)
+	return nil
+}
+
+func prepareVideoFrameForEncoder(f *av.Frame, forceKF *forceKeyFramesMatcher) {
+	if f == nil {
+		return
+	}
+	forceByGraph := f.GetMetadata(frameMetadataForceKeyframe) == "1"
+	sourceKeyFrame := f.IsKeyFrame()
+	forceBySpec := forceKF != nil && forceKF.shouldForce(f.PTS(), sourceKeyFrame)
+
+	// Match FFmpeg's frame_encode path: decoded source pict_type is not an
+	// encoder directive. Clear it, then apply only explicit keyframe requests.
+	f.SetPictType(av.PictureTypeNone)
+	if forceByGraph || forceBySpec {
+		f.SetPictType(av.PictureTypeI)
+	}
+}
+
 // encoderSession holds the per-execution state for one encoder node run and
 // drives the frame-encode-drain loop. Separating it from graphRunner makes
 // sendOne, drain, and the CFR fill loop independently testable.
@@ -152,8 +181,8 @@ func (s *encoderSession) drain(ctx context.Context) error {
 // duplicates from the CFR fill path each get their own check, mirroring
 // FFmpeg's per-frame forced_kf_apply in fftools/ffmpeg_enc.c::frame_encode.
 func (s *encoderSession) sendOne(ctx context.Context, f *av.Frame) error {
-	if s.forceKF != nil && s.forceKF.shouldForce(f.PTS(), f.PictType()) {
-		f.SetPictType(av.PictureTypeI)
+	if s.enc.MediaType() == av.MediaTypeVideo {
+		prepareVideoFrameForEncoder(f, s.forceKF)
 	}
 	if err := s.enc.SendFrame(f); err != nil {
 		return err
@@ -396,7 +425,9 @@ func (s *encoderSession) applyPresetAtNextIDR(ctx context.Context, newPreset str
 		// Force the next encoded frame to be an IDR so the reopened
 		// encoder picks up clean. This must happen before restart.
 		if f != nil && s.enc.MediaType() == av.MediaTypeVideo {
-			f.SetPictType(av.PictureTypeI)
+			if err := markFrameForceKeyframe(f); err != nil {
+				return err
+			}
 		}
 		return s.restartWithParams(ctx, s.encOpts.ThreadCount, newPreset)
 
@@ -470,6 +501,16 @@ func (r *graphRunner) createEncoder(dag *graph.Graph, node *graph.Node) (*av.Enc
 		} else {
 			opts.Width = si.Width
 			opts.Height = si.Height
+			// Propagate the source stream's timebase so the encoder uses the
+			// same TB as the incoming decoded frames.  Without this the encoder
+			// defaults to 1/framerate (e.g. {1,24}), but decoded frames arrive
+			// with PTS values in the source TB (e.g. 1/12288).  sinkRescale
+			// then rescales from {1,24} back to {1,12288}, inflating every PTS
+			// by framerate_den/source_tb_den (e.g. 512x) and producing wildly
+			// oversized container durations.
+			if si.TimeBase[1] > 0 {
+				opts.TimeBase = si.TimeBase
+			}
 		}
 		frameRate := si.FrameRate
 		if frameRate[0] <= 0 || frameRate[1] <= 0 {

@@ -5,7 +5,7 @@ import { MULTI_AUDIO_INPUT_FILTERS } from '../lib/jsonAdapter';
 import type { NodeDef, ProbedStream } from '../lib/jobTypes';
 import { displayName, lookupFriendlyName, useNamingMode } from '../lib/friendlyNames';
 
-const STREAM_HANDLES = ['video', 'audio', 'subtitle', 'data', 'events'] as const;
+const STREAM_HANDLES = ['file', 'video', 'audio', 'subtitle', 'data', 'events'] as const;
 type StreamHandle = (typeof STREAM_HANDLES)[number];
 
 export interface MMNodeRunData {
@@ -21,7 +21,7 @@ export const URL_BROWSE_EVENT = 'mm.url.browse';
 // Vertical spacing constants (px).
 const SLOT_PITCH = 12;   // gap between distinct stream types (unchanged)
 const TRACK_PITCH = 10;  // gap between per-track handles of the same type
-const AUDIO_BASE = 16 + STREAM_HANDLES.indexOf('audio') * SLOT_PITCH; // 28
+const AUDIO_BASE = 16 + STREAM_HANDLES.indexOf('audio') * SLOT_PITCH; // 40 (file@16, video@28, audio@40)
 
 // Named audio layouts with per-channel names in FFmpeg av_channel_layout_default order.
 const AUDIO_LAYOUTS: { name: string; channels: number; chNames: string[] }[] = [
@@ -61,10 +61,22 @@ export function MMNode({ id, data, selected }: NodeProps & { data: FlowNodeData 
   // media types the catalog reported as supported. An empty/missing
   // streams list means "unknown" — fall back to all four so the user can
   // still wire the node manually.
-  const supported: readonly StreamHandle[] =
-    isOutput || !data.streams || data.streams.length === 0
-      ? STREAM_HANDLES
-      : STREAM_HANDLES.filter((t) => data.streams!.includes(t));
+  const supported: readonly StreamHandle[] = (() => {
+    if (isOutput || !data.streams || data.streams.length === 0) return STREAM_HANDLES;
+    const filtered = STREAM_HANDLES.filter((t) => data.streams!.includes(t));
+    // go_processor nodes always support file (target: receive written file
+    // paths from input/output nodes) and events (source: emit completion
+    // callbacks to downstream processors), regardless of what AV types the
+    // /api/nodes catalog reports. The catalog only describes AV pins.
+    if (data.kind === 'go_processor') {
+      const alwaysOn: StreamHandle[] = ['file', 'events'];
+      if (alwaysOn.every((t) => filtered.includes(t))) return filtered;
+      return STREAM_HANDLES.filter(
+        (t) => filtered.includes(t) || alwaysOn.includes(t),
+      );
+    }
+    return filtered;
+  })();
 
   // Per-track source handle count for input nodes.
   // Prefer the stored audioTrackCount (set by configToFlow on load and
@@ -155,19 +167,24 @@ export function MMNode({ id, data, selected }: NodeProps & { data: FlowNodeData 
   // other stream types shift down accordingly so handles stay below audio.
   const slotTop = (t: StreamHandle, trackIdx = 0): number => {
     switch (t) {
-      case 'video': return 16;
-      case 'audio': return AUDIO_BASE + trackIdx * TRACK_PITCH;
+      case 'file':     return 16;
+      case 'video':    return 16 + SLOT_PITCH;
+      case 'audio':    return AUDIO_BASE + trackIdx * TRACK_PITCH;
       case 'subtitle': return AUDIO_BASE + maxAudioSlots * TRACK_PITCH;
-      case 'data': return AUDIO_BASE + maxAudioSlots * TRACK_PITCH + SLOT_PITCH;
-      case 'events': return AUDIO_BASE + maxAudioSlots * TRACK_PITCH + SLOT_PITCH * 2;
-      default: return 16;
+      case 'data':     return AUDIO_BASE + maxAudioSlots * TRACK_PITCH + SLOT_PITCH;
+      case 'events':   return AUDIO_BASE + maxAudioSlots * TRACK_PITCH + SLOT_PITCH * 2;
+      default:         return 16;
     }
   };
 
   // Ensure the node container is tall enough to contain all handle dots.
-  const nodeMinHeight = maxAudioSlots > 1
-    ? slotTop('events') + 12
-    : undefined;
+  // Events is the bottommost slot; nodes that carry it (go_processors,
+  // outputs) or that have multi-track audio must be tall enough to show it.
+  const lastSlot = supported[supported.length - 1] as StreamHandle;
+  const nodeMinHeight =
+    (maxAudioSlots > 1 || lastSlot === 'events')
+      ? slotTop(lastSlot) + 12
+      : undefined;
 
   const classes = [
     'mm-node',
@@ -184,6 +201,11 @@ export function MMNode({ id, data, selected }: NodeProps & { data: FlowNodeData 
       {/* Target (left) handles */}
       {!isInput &&
         supported.flatMap((t) => {
+          // file target handles only make sense on go_processor nodes that
+          // implement SegmentEventConsumer (e.g. twelvelabs_*).
+          // metadata_file_writer is driven by events edges, not file paths.
+          if (t === 'file' && data.kind !== 'go_processor') return [];
+          if (t === 'file' && (data.ref as { kind?: string; def?: { processor?: string } } | undefined)?.def?.processor === 'metadata_file_writer') return [];
           if (t === 'audio' && audioTgtCount > 1) {
             return Array.from({ length: audioTgtCount }, (_, i) => (
               <Fragment key={`tgt-audio-${i}`}>
@@ -287,6 +309,28 @@ export function MMNode({ id, data, selected }: NodeProps & { data: FlowNodeData 
         </div>
       )}
 
+      {/* Events and file source handles on output nodes: events edges flow
+          from an output (completion trigger) and file edges flow from an
+          output (written file path) to downstream go_processor nodes. */}
+      {isOutput && supported.includes('events') && (
+        <Handle
+          type="source"
+          position={Position.Right}
+          id="events"
+          className="handle-events"
+          style={{ top: slotTop('events') }}
+        />
+      )}
+      {isOutput && (
+        <Handle
+          type="source"
+          position={Position.Right}
+          id="file"
+          className="handle-file"
+          style={{ top: slotTop('file') }}
+        />
+      )}
+
       {/* Source (right) handles */}
       {!isOutput &&
         supported.flatMap((t) => {
@@ -325,6 +369,8 @@ export function MMNode({ id, data, selected }: NodeProps & { data: FlowNodeData 
           // Input nodes: audio source handle must use "audio:0" to match
           // the track-indexed sourceHandle that configToFlow assigns to
           // edges coming from input nodes (even single-track ones).
+          // file source handles are only valid on input nodes.
+          if (t === 'file' && !isInput) return [];
           const handleId = (isInput && t === 'audio') ? 'audio:0' : t;
           return [
             <Handle

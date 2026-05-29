@@ -245,9 +245,9 @@ func (e *exporter) buildInput(idx int, in pipeline.Input) {
 	// These are demuxer AVOptions that must appear before -i.
 	// The set is fixed so the export is deterministic and round-trippable.
 	for _, key := range []string{
-		"rtsp_transport", "stimeout",  // RTSP
-		"mode", "listen_timeout",      // SRT
-		"timeout", "rw_timeout",       // RTMP / general
+		"rtsp_transport", "stimeout", // RTSP
+		"mode", "listen_timeout", // SRT
+		"timeout", "rw_timeout", // RTMP / general
 	} {
 		if v, ok := in.Options[key]; ok {
 			e.add("-"+key, fmt.Sprint(v))
@@ -615,6 +615,19 @@ func (e *exporter) buildOutput(out pipeline.Output) {
 	// Audio sync (sourced via outputView; F1.1 refactor).
 	if view.AudioSync != 0 {
 		e.add("-async", strconv.Itoa(view.AudioSync))
+	}
+
+	// Output-side timing (-ss / -t / -to from out.Options).
+	// These trim the output stream on the muxer side; they live in the
+	// generic Options map (same key names as the input-side equivalents).
+	if v, ok := out.Options["ss"]; ok {
+		e.add("-ss", fmt.Sprintf("%v", v))
+	}
+	if v, ok := out.Options["t"]; ok {
+		e.add("-t", fmt.Sprintf("%v", v))
+	}
+	if v, ok := out.Options["to"]; ok {
+		e.add("-to", fmt.Sprintf("%v", v))
 	}
 
 	// Misc output flags.

@@ -57,6 +57,11 @@ interface Props {
   initialPath?: string;
   /** Default file name when saving. */
   defaultFilename?: string;
+  /**
+   * Optional hint shown below the filename input in save mode, e.g. to
+   * explain that printf-style patterns (shot-%05d.mp4) are supported.
+   */
+  filenameHint?: string;
   onClose: () => void;
   onPick: (path: string) => void;
 }
@@ -69,6 +74,7 @@ export function FileBrowser({
   warnExtensions,
   initialPath,
   defaultFilename,
+  filenameHint,
   onClose,
   onPick,
 }: Props) {
@@ -285,7 +291,10 @@ export function FileBrowser({
                       ⚠ No file extension — a file extension is needed to select the right muxer.
                     </div>
                   );
-                  const ext = name.slice(dot + 1).toLowerCase();
+                  // Strip printf-style placeholders (e.g. %05d, %s) before
+                  // checking the extension so patterns like shot-%05d.mp4
+                  // are evaluated as "mp4", not "%05d.mp4" or similar.
+                  const ext = name.slice(dot + 1).replace(/%[0-9]*[diouxXeEfgGcs]/g, '').toLowerCase();
                   const allowed = new Set(warnExtensions.split(',').map((s) => s.trim().toLowerCase()));
                   if (!allowed.has(ext)) return (
                     <div className="file-browser-ext-warn">
@@ -294,6 +303,11 @@ export function FileBrowser({
                   );
                   return null;
                 })()}
+                {filenameHint && (
+                  <div className="file-browser-filename-hint">
+                    {filenameHint}
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -303,7 +317,9 @@ export function FileBrowser({
           <span className="hint">
             {mode === 'open'
               ? 'Double-click a file to open, or select it and click Open.'
-              : 'Pick a folder, type a filename, and click Save.'}
+              : filenameHint
+                ? 'Navigate to the output folder, type a filename or pattern, and click Save.'
+                : 'Pick a folder, type a filename, and click Save.'}
           </span>
           <div className="spacer" />
           <button onClick={onClose}>Cancel</button>
