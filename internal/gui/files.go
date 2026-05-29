@@ -454,6 +454,7 @@ func handleWriteFile(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
+
 // browse: the user's shortcut roots (home, cwd, filesystem root on Unix and
 // mounted volumes) plus any local drives. Returned paths are absolute and
 // cleaned so they can be compared with filepath.Rel.

@@ -93,7 +93,7 @@ API-key resolution follows the same precedence chain as the CLI.
 ### Pass-through (whole file)
 
 Upload a file as-is and have Pegasus summarise it 
-[testdata/examples/57_twelvelabs_index_file.json]:
+[testdata/examples/58_twelvelabs_index_file.json]:
 
 ```json
 {
@@ -101,48 +101,57 @@ Upload a file as-is and have Pegasus summarise it
   "inputs": [{ "id": "in0", "url": "my-clip.mp4" }],
   "graph": {
     "nodes": [
-      { "id": "indexer", "type": "go_processor", "processor": "twelvelabs_indexer",
+      { "id": "indexer",     "type": "go_processor", "processor": "twelvelabs_indexer",
         "params": { "index_id": "${TL_INDEX}", "wait_for_ready": true } },
-      { "id": "summary", "type": "go_processor", "processor": "twelvelabs_analyzer",
-        "params": { "index_id": "${TL_INDEX}", "prompt": "Summarise in one sentence." } }
+      { "id": "index_log",   "type": "go_processor", "processor": "metadata_file_writer",
+        "params": { "output_file": "out/index_events.jsonl" } },
+      { "id": "summary",     "type": "go_processor", "processor": "twelvelabs_analyzer",
+        "params": { "index_id": "${TL_INDEX}", "prompt": "Summarise in one sentence." } },
+      { "id": "summary_log", "type": "go_processor", "processor": "metadata_file_writer",
+        "params": { "output_file": "out/summary.jsonl" } }
     ],
     "edges": [
-      { "from": "in0:v:0", "to": "out0:v",  "type": "video" },
-      { "from": "in0:a:0", "to": "out0:a",  "type": "audio" },
-      { "from": "out0",    "to": "indexer", "type": "events" },
-      { "from": "out0",    "to": "summary", "type": "events" }
+      { "from": "in0",     "to": "indexer",     "type": "file" },
+      { "from": "indexer", "to": "index_log",   "type": "events" },
+      { "from": "indexer", "to": "summary",     "type": "events" },
+      { "from": "summary", "to": "summary_log", "type": "events" }
     ]
   },
-  "outputs": [
-    { "id": "out0", "url": "out/my-clip-indexed.mp4",
-      "codec_video": "copy", "codec_audio": "copy" }
-  ]
+  "outputs": []
 }
 ```
 
 ### Shot-aware chunking
 
+Note that TwelveLabs will not index a video less than 4 seconds, so this particular job definition has
+limited utility at the moment.
 Detect shot boundaries, cut into one MP4 per shot, and index + caption
 each:
-[testdata/examples/58_twelvelabs_scenes.json]
+[testdata/examples/59_twelvelabs_scenes.json]
 ```json
 {
   "schema_version": "1.1",
   "inputs": [{ "id": "in0", "url": "my-clip.mp4" }],
   "graph": {
     "nodes": [
-      { "id": "scene",   "type": "go_processor", "processor": "scene_change_adaptive" },
-      { "id": "indexer", "type": "go_processor", "processor": "twelvelabs_indexer",
-        "params": { "index_id": "${TL_INDEX}" } },
-      { "id": "caption", "type": "go_processor", "processor": "twelvelabs_analyzer",
-        "params": { "index_id": "${TL_INDEX}", "prompt": "One-sentence caption of this shot." } }
+      { "id": "scene",       "type": "go_processor", "processor": "scene_change_adaptive" },
+      { "id": "indexer",     "type": "go_processor", "processor": "twelvelabs_indexer",
+        "params": { "index_id": "${TL_INDEX}", "wait_for_ready": true } },
+      { "id": "index_log",   "type": "go_processor", "processor": "metadata_file_writer",
+        "params": { "output_file": "out/index_events.jsonl" } },
+      { "id": "caption",     "type": "go_processor", "processor": "twelvelabs_analyzer",
+        "params": { "index_id": "${TL_INDEX}", "prompt": "One-sentence caption of this shot." } },
+      { "id": "caption_log", "type": "go_processor", "processor": "metadata_file_writer",
+        "params": { "output_file": "out/captions.jsonl" } }
     ],
     "edges": [
       { "from": "in0:v:0",       "to": "scene:default", "type": "video" },
       { "from": "scene:default", "to": "shots:v",        "type": "video" },
       { "from": "in0:a:0",       "to": "shots:a",        "type": "audio" },
-      { "from": "shots",         "to": "indexer",        "type": "events" },
-      { "from": "shots",         "to": "caption",        "type": "events" }
+      { "from": "shots",   "to": "indexer",     "type": "file" },
+      { "from": "indexer", "to": "index_log",   "type": "events" },
+      { "from": "indexer", "to": "caption",     "type": "events" },
+      { "from": "caption", "to": "caption_log", "type": "events" }
     ]
   },
   "outputs": [
@@ -153,8 +162,8 @@ each:
 }
 ```
 
-The `events` edges from the `shots` output deliver a `SegmentCompleted`
-event whenever a shot file is closed; the engine auto-registers any
+The `file` edge from `shots` to `indexer` delivers the completed segment
+file path when a shot file is closed; the engine auto-registers any
 compatible downstream `go_processor` as a `SegmentEventConsumer`. Run
 with metadata captured to a file:
 
@@ -164,26 +173,30 @@ mediamolder run graph.json --metadata-out captions.jsonl
 
 ### Per-shot embeddings to disk
 
+[testdata/examples/60_twelvelabs_per_shot_embeddings.json]
 ```json
 {
   "schema_version": "1.1",
   "inputs": [{ "id": "in0", "url": "input.mp4" }],
   "graph": {
     "nodes": [
-      { "id": "scene", "type": "go_processor", "processor": "scene_change_adaptive" },
-      { "id": "embed", "type": "go_processor", "processor": "twelvelabs_embedder",
+      { "id": "scene",     "type": "go_processor", "processor": "scene_change_adaptive" },
+      { "id": "embed",     "type": "go_processor", "processor": "twelvelabs_embedder",
         "params": {
           "model":      "marengo3.0",
           "scopes":     ["clip"],
           "out_dir":    "out/embeddings",
           "out_format": "json"
-        } }
+        } },
+      { "id": "embed_log", "type": "go_processor", "processor": "metadata_file_writer",
+        "params": { "output_file": "out/embed_events.jsonl" } }
     ],
     "edges": [
       { "from": "in0:v:0",       "to": "scene:default", "type": "video" },
       { "from": "scene:default", "to": "shots:v",        "type": "video" },
       { "from": "in0:a:0",       "to": "shots:a",        "type": "audio" },
-      { "from": "shots",         "to": "embed",          "type": "events" }
+      { "from": "shots",         "to": "embed",          "type": "file" },
+      { "from": "embed",         "to": "embed_log",      "type": "events" }
     ]
   },
   "outputs": [

@@ -9,9 +9,9 @@ import (
 	"fmt"
 	"math"
 
+	"github.com/MediaMolder/MediaMolder/av"
 	psd "github.com/MediaMolder/MediaMolder/go_scene_detect"
 	"github.com/MediaMolder/MediaMolder/go_scene_detect/detectors"
-	"github.com/MediaMolder/MediaMolder/av"
 )
 
 // SceneChangeAdaptive detects scene changes using PySceneDetect's AdaptiveDetector.
