@@ -6,6 +6,7 @@ package pipeline
 import (
 	"context"
 	"fmt"
+	"math"
 	"os"
 	"sync"
 	"sync/atomic"
@@ -177,9 +178,143 @@ type sinkResources struct {
 
 	// pendingCut is non-nil when the output has SegmentOnMetadata set.
 	// Registered in r.segmentCuts during openSink (before goroutines start).
-	// The go_processor handler sets it to true whenever the matching Custom
-	// key is truthy; handleSink rotates the segment at the next video keyframe.
-	pendingCut *atomic.Bool
+	// The go_processor handler stores the cut frame's source-PTS (in
+	// microseconds) when a matching Custom key is truthy; handleSink rotates
+	// the segment at the first video keyframe whose PTS is at or past that
+	// value. The gate also synchronises non-video sink writers (e.g. audio
+	// stream-copy) so they wait for the rotation before writing packets
+	// that belong to the new segment.
+	pendingCut *cutGate
+}
+
+// cutGate carries a queue of per-output segment-cut barriers between the
+// go_processor that detects scene changes and the sink writer goroutines.
+// The video goroutine performs the actual muxer rotation when it encounters
+// the keyframe at or after the front cut PTS; non-video goroutines (e.g.
+// audio copy) run ahead of the encoder's lookahead delay so they may see
+// several queued cuts before the video reaches the first one.
+type cutGate struct {
+	mu   sync.Mutex
+	cond *sync.Cond
+	cuts []int64 // FIFO of pending cut PTS in microseconds (ascending)
+	// progressUS is the latest source-PTS in microseconds that the
+	// go_processor has finished processing. Non-video sink goroutines
+	// (e.g. audio stream-copy) hold packets whose PTS exceeds this value
+	// because a future cut at that PTS may not have been signalled yet.
+	// math.MaxInt64 means the go_processor has finished and no further
+	// cuts will arrive.
+	progressUS int64
+}
+
+func newCutGate() *cutGate {
+	g := &cutGate{}
+	g.cond = sync.NewCond(&g.mu)
+	return g
+}
+
+// signal appends cutUS to the queue (deduplicated). Cuts are expected to
+// arrive in source-PTS order from the go_processor.
+func (g *cutGate) signal(cutUS int64) {
+	if g == nil {
+		return
+	}
+	g.mu.Lock()
+	if n := len(g.cuts); n == 0 || g.cuts[n-1] != cutUS {
+		g.cuts = append(g.cuts, cutUS)
+	}
+	g.mu.Unlock()
+}
+
+// frontCut returns the next pending cut PTS in microseconds, or -1 if
+// the queue is empty.
+func (g *cutGate) frontCut() int64 {
+	if g == nil {
+		return -1
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if len(g.cuts) == 0 {
+		return -1
+	}
+	return g.cuts[0]
+}
+
+// nextCutAfter returns the first queued cut strictly greater than after,
+// or -1 if no such cut exists. Used by non-video writers to decide which
+// held packets belong to the just-rotated segment vs later segments.
+func (g *cutGate) nextCutAfter(after int64) int64 {
+	if g == nil {
+		return -1
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	for _, c := range g.cuts {
+		if c > after {
+			return c
+		}
+	}
+	return -1
+}
+
+// popFront removes the head of the queue after a successful rotation and
+// broadcasts so any waiters wake.
+func (g *cutGate) popFront() {
+	if g == nil {
+		return
+	}
+	g.mu.Lock()
+	if len(g.cuts) > 0 {
+		g.cuts = g.cuts[1:]
+	}
+	g.cond.Broadcast()
+	g.mu.Unlock()
+}
+
+// clearAll drops every queued cut and wakes waiters. Used when the video
+// goroutine exits without rotating (e.g. EOS with pending cuts).
+func (g *cutGate) clearAll() {
+	if g == nil {
+		return
+	}
+	g.mu.Lock()
+	g.cuts = nil
+	g.cond.Broadcast()
+	g.mu.Unlock()
+}
+
+// advanceProgress records that the go_processor has finished processing
+// the source frame with PTS == us microseconds. Audio writers use this to
+// know that no further cut < us can ever arrive.
+func (g *cutGate) advanceProgress(us int64) {
+	if g == nil {
+		return
+	}
+	g.mu.Lock()
+	if us > g.progressUS {
+		g.progressUS = us
+	}
+	g.mu.Unlock()
+}
+
+// finishProgress marks the go_processor stream complete; no further cuts
+// will be signalled, so audio writers can flush any held packets.
+func (g *cutGate) finishProgress() {
+	if g == nil {
+		return
+	}
+	g.mu.Lock()
+	g.progressUS = math.MaxInt64
+	g.mu.Unlock()
+}
+
+// progress returns the latest go_processor frame PTS in microseconds.
+func (g *cutGate) progress() int64 {
+	if g == nil {
+		return math.MaxInt64
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.progressUS
 }
 
 type sinkRescale struct {
@@ -223,12 +358,18 @@ type graphRunner struct {
 	// by runGraph before any nodes are opened; closed in close().
 	// (Wave 10 #56)
 	hwDevices map[string]*av.HWDeviceContext
-	// segmentCuts maps a Metadata.Custom key to the set of pending-cut
+	// segmentCuts maps a Metadata.Custom key to the set of pending-cut-PTS
 	// flags registered by segment_sink outputs that watch that key.
 	// When a go_processor emits ProcessorMetadata with Custom[key] truthy,
-	// the handler sets every matching flag. Each flag is owned by a sink
-	// goroutine (via handleSink) and read atomically.
-	segmentCuts map[string][]*atomic.Bool
+	// the handler signals every matching gate with the cut PTS in microseconds.
+	// Each gate is owned by a sink goroutine (via handleSink) and read under
+	// its internal mutex.
+	segmentCuts map[string][]*cutGate
+	// goProcessorInputTB maps a go_processor node ID to the time-base of its
+	// (sole) input edge. Pre-resolved during engine setup so handleGoProcessor
+	// can convert frame PTS values to microseconds when signalling cutGates,
+	// allowing cross-stream (video → audio) PTS comparisons at the sink.
+	goProcessorInputTB map[string][2]int
 	// segmentConsumers maps a sink node ID (the SOURCE of an "events"
 	// edge) to the set of go_processors implementing
 	// processors.SegmentEventConsumer that should be notified when the
@@ -271,7 +412,8 @@ func newGraphRunner(cfg *Config, pipe *Pipeline) *graphRunner {
 		eventDrivenGoProcessors: make(map[string]struct{}),
 		passLogFiles:            make(map[string]*os.File),
 		hwDevices:               make(map[string]*av.HWDeviceContext),
-		segmentCuts:             make(map[string][]*atomic.Bool),
+			segmentCuts:             make(map[string][]*cutGate),
+		goProcessorInputTB:      make(map[string][2]int),
 		segmentConsumers:        make(map[string][]processors.SegmentEventConsumer),
 	}
 }
