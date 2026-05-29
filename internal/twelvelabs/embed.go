@@ -94,7 +94,7 @@ func (c *Client) EmbedVideo(ctx context.Context, src EmbedSource, opts EmbedOpts
 		return decodeRawEmbedTask(resp.Body)
 	}
 
-	f, err := os.Open(src.File)
+	f, err := os.Open(filepath.Clean(src.File))
 	if err != nil {
 		return nil, fmt.Errorf("twelvelabs: EmbedVideo: open %s: %w", src.File, err)
 	}

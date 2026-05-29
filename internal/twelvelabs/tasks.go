@@ -31,7 +31,7 @@ func (c *Client) CreateIndexTask(ctx context.Context, indexID string, src TaskSo
 	}
 
 	if src.File != "" {
-		f, err := os.Open(src.File)
+		f, err := os.Open(filepath.Clean(src.File))
 		if err != nil {
 			return nil, fmt.Errorf("twelvelabs: CreateIndexTask: open %s: %w", src.File, err)
 		}

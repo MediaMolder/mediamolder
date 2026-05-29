@@ -71,7 +71,7 @@ func (p *TwelveLabsEmbedder) Init(params map[string]any) error {
 		p.windowS = v
 	}
 	if s, ok := params["out_dir"].(string); ok {
-		p.outDir = s
+		p.outDir = filepath.Clean(s)
 	}
 	p.outFormat = "json"
 	if s, ok := params["out_format"].(string); ok && s != "" {
