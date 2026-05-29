@@ -66,7 +66,14 @@ func handleListDir(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	abs = filepath.Clean(abs)
-	if !isWithinAnyRoot(abs, roots) {
+	var withinRoot bool
+	for _, root := range roots {
+		if strings.HasPrefix(abs, root) {
+			withinRoot = true
+			break
+		}
+	}
+	if !withinRoot {
 		writeJSONError(w, http.StatusBadRequest, errors.New("path is outside allowed roots"))
 		return
 	}
@@ -114,6 +121,17 @@ func handleListDir(w http.ResponseWriter, r *http.Request) {
 	if !info.IsDir() {
 		// User passed a file path; fall back to its parent directory.
 		abs = filepath.Dir(abs)
+	}
+	withinRoot = false
+	for _, root := range roots {
+		if strings.HasPrefix(abs, root) {
+			withinRoot = true
+			break
+		}
+	}
+	if !withinRoot {
+		writeJSONError(w, http.StatusBadRequest, errors.New("path is outside allowed roots"))
+		return
 	}
 
 	rawEntries, err := os.ReadDir(abs)
