@@ -59,6 +59,32 @@ func (r *graphRunner) handleGoProcessor(ctx context.Context, node *graph.Node, i
 		}
 	}
 	defer finishProgress()
+
+	// If the processor implements FrameLookahead it needs a delay buffer so
+	// that when a windowed detector confirms a cut at frame K (while
+	// processing frame K+lookback), frame K is still available to receive the
+	// IDR annotation before being forwarded to the encoder.
+	lookback := 0
+	if la, ok := proc.(processors.FrameLookahead); ok {
+		lookback = la.LookbackFrames()
+	}
+	type delayEntry struct{ frame *av.Frame }
+	var delayBuf []delayEntry
+	tb := r.goProcessorInputTB[node.ID]
+
+	// sendFrame forwards f to all downstream AV channels.
+	sendFrame := func(f *av.Frame) error {
+		for _, ch := range outs {
+			select {
+			case ch <- f:
+			case <-ctx.Done():
+				f.Close()
+				return ctx.Err()
+			}
+		}
+		return nil
+	}
+
 	for v := range ins[0] {
 		f := v.(*av.Frame)
 		frameStart := time.Now()
@@ -77,11 +103,20 @@ func (r *graphRunner) handleGoProcessor(ctx context.Context, node *graph.Node, i
 			return fmt.Errorf("go_processor %q: %w", node.ID, err)
 		}
 
-		// Advance every gate's progress cursor to this frame's source PTS
-		// (in microseconds) so audio writers know all cuts ≤ this PTS have
-		// been seen.
+		// Advance every gate's progress cursor so audio writers know all
+		// cuts up to that PTS have been confirmed. When a delay buffer is
+		// active, the frame being emitted this iteration is delayBuf[0]
+		// (2 frames behind f), so using delayBuf[0].PTS() prevents the
+		// progress boundary from outrunning the cut signal and sending
+		// audio to the wrong segment.
 		if len(progressGates) > 0 {
-			if us, ok := ptsToMicros(f.PTS(), r.goProcessorInputTB[node.ID]); ok {
+			var progressPTS int64
+			if lookback > 0 && len(delayBuf) > 0 {
+				progressPTS = delayBuf[0].frame.PTS()
+			} else {
+				progressPTS = f.PTS()
+			}
+			if us, ok := ptsToMicros(progressPTS, tb); ok {
 				for g := range progressGates {
 					g.advanceProgress(us)
 				}
@@ -90,6 +125,14 @@ func (r *graphRunner) handleGoProcessor(ctx context.Context, node *graph.Node, i
 
 		// Emit metadata on the event bus if provided.
 		if md != nil && r.pipe != nil {
+			// When a delay buffer is active, the cut was detected looking back
+			// at delayBuf[0] — update the metadata PTS to that frame's PTS so
+			// the metadata file records the accurate cut timestamp.
+			if lookback > 0 && len(delayBuf) > 0 {
+				if md.Custom != nil {
+					md.Custom["pts"] = delayBuf[0].frame.PTS()
+				}
+			}
 			r.pipe.events.Post(ProcessorMetadata{
 				NodeID:     node.ID,
 				FrameIndex: frameIndex,
@@ -102,8 +145,7 @@ func (r *graphRunner) handleGoProcessor(ctx context.Context, node *graph.Node, i
 			}
 			// Signal segment_sink outputs watching any of the Custom keys.
 			// Track whether any cut flag was set so we can force an IDR on the
-			// output frame; the encoder then produces a keyframe at the exact
-			// cut boundary rather than waiting for its next scheduled GOP.
+			// correct output frame (the cut frame, not the current frame).
 			cutSignaled := false
 			for key, val := range md.Custom {
 				if val == true {
@@ -111,11 +153,15 @@ func (r *graphRunner) handleGoProcessor(ctx context.Context, node *graph.Node, i
 					if len(gates) == 0 {
 						continue
 					}
-					// Convert the current frame's PTS into microseconds using
-					// the resolved input time-base so cross-stream comparisons
-					// (video cut vs. audio packet PTS) at the sink are valid.
-					tb := r.goProcessorInputTB[node.ID]
-					cutUS, ok := ptsToMicros(f.PTS(), tb)
+					// Use the cut frame's PTS (delayBuf[0]) when a delay buffer
+					// is active; otherwise fall back to the current frame.
+					var cutPTS int64
+					if lookback > 0 && len(delayBuf) > 0 {
+						cutPTS = delayBuf[0].frame.PTS()
+					} else {
+						cutPTS = f.PTS()
+					}
+					cutUS, ok := ptsToMicros(cutPTS, tb)
 					if !ok {
 						continue
 					}
@@ -132,8 +178,14 @@ func (r *graphRunner) handleGoProcessor(ctx context.Context, node *graph.Node, i
 				f.Close()
 			}
 			f = out
-			if cutSignaled && f != nil {
-				f.SetPictType(av.PictureTypeI)
+			// Set IDR annotation: on the cut frame (delayBuf[0]) when using a
+			// delay buffer, on the current frame otherwise.
+			if cutSignaled {
+				if lookback > 0 && len(delayBuf) > 0 {
+					delayBuf[0].frame.SetPictType(av.PictureTypeI)
+				} else if f != nil {
+					f.SetPictType(av.PictureTypeI)
+				}
 			}
 		}
 
@@ -143,6 +195,19 @@ func (r *graphRunner) handleGoProcessor(ctx context.Context, node *graph.Node, i
 		// nil output means the processor consumed (dropped) the frame.
 		if out == nil {
 			f.Close()
+			// With a delay buffer still forward the oldest held frame so
+			// the buffer does not grow unboundedly.
+			if lookback > 0 && len(delayBuf) >= lookback {
+				oldest := delayBuf[0]
+				delayBuf = delayBuf[1:]
+				if len(outs) == 0 {
+					oldest.frame.Close()
+				} else {
+					if err := sendFrame(oldest.frame); err != nil {
+						return err
+					}
+				}
+			}
 			continue
 		}
 
@@ -154,14 +219,34 @@ func (r *graphRunner) handleGoProcessor(ctx context.Context, node *graph.Node, i
 			continue
 		}
 
-		// Send output to all downstream channels.
-		for _, ch := range outs {
-			select {
-			case ch <- f:
-			case <-ctx.Done():
-				f.Close()
-				return ctx.Err()
+		if lookback > 0 {
+			// Push the current output frame into the delay buffer.
+			delayBuf = append(delayBuf, delayEntry{frame: f})
+			// Once the buffer is full, forward the oldest frame (which already
+			// has any IDR annotation applied above).
+			if len(delayBuf) > lookback {
+				oldest := delayBuf[0]
+				delayBuf = delayBuf[1:]
+				if err := sendFrame(oldest.frame); err != nil {
+					return err
+				}
 			}
+		} else {
+			// No delay buffer: send immediately.
+			if err := sendFrame(f); err != nil {
+				return err
+			}
+		}
+	}
+
+	// Drain any frames still in the delay buffer at EOS.
+	for _, e := range delayBuf {
+		if len(outs) == 0 {
+			e.frame.Close()
+			continue
+		}
+		if err := sendFrame(e.frame); err != nil {
+			return err
 		}
 	}
 	return nil
