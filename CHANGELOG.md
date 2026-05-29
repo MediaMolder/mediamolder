@@ -5,6 +5,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Fixed
+- Re-encoding now clears decoded source `pict_type` at the encoder boundary,
+  matching FFmpeg's `frame_encode` behavior. Custom graph requests still force
+  IDR frames through `force_key_frames` or processor metadata, so scene-change
+  segmentation no longer inherits all-intra or source GOP structure from input
+  files.
+
 ### Added
 - **Typed Inspector forms for the four `twelvelabs_*` go_processor
   nodes.** `frontend/src/components/Inspector.tsx` now renders a

@@ -182,9 +182,13 @@ func (r *graphRunner) handleGoProcessor(ctx context.Context, node *graph.Node, i
 			// delay buffer, on the current frame otherwise.
 			if cutSignaled {
 				if lookback > 0 && len(delayBuf) > 0 {
-					delayBuf[0].frame.SetPictType(av.PictureTypeI)
+					if err := markFrameForceKeyframe(delayBuf[0].frame); err != nil {
+						return fmt.Errorf("go_processor %q: mark force keyframe: %w", node.ID, err)
+					}
 				} else if f != nil {
-					f.SetPictType(av.PictureTypeI)
+					if err := markFrameForceKeyframe(f); err != nil {
+						return fmt.Errorf("go_processor %q: mark force keyframe: %w", node.ID, err)
+					}
 				}
 			}
 		}

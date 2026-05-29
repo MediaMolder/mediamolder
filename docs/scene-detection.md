@@ -148,6 +148,11 @@ Two-pass wrapper around `scene_change_content`:
 Because the ratio is normalised by the rolling mean, gradual pans (where every frame
 shows a similar delta) do not trigger cuts. Genuine scene boundaries spike the ratio.
 
+The detector confirms a cut `window_width` frames after the centre frame of the
+rolling window. MediaMolder compensates for that lookahead in the graph runtime:
+metadata timestamps, segment cut signals, and encoder IDR requests are applied
+to the centre/cut frame, not the later confirmation frame.
+
 | Param | Type | Default | Description |
 |-------|------|---------|-------------|
 | `threshold` | float64 | 3.0 | Adaptive ratio threshold. Lower = more sensitive. |

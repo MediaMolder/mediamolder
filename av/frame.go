@@ -70,6 +70,18 @@ func (f *Frame) PTS() int64 { return int64(f.p.pts) }
 // SetPTS sets the presentation timestamp.
 func (f *Frame) SetPTS(pts int64) { f.p.pts = C.int64_t(pts) }
 
+// IsKeyFrame reports whether AV_FRAME_FLAG_KEY is set on this frame.
+func (f *Frame) IsKeyFrame() bool { return f.p.flags&C.AV_FRAME_FLAG_KEY != 0 }
+
+// SetKeyFrame sets or clears AV_FRAME_FLAG_KEY on this frame.
+func (f *Frame) SetKeyFrame(key bool) {
+	if key {
+		f.p.flags |= C.AV_FRAME_FLAG_KEY
+		return
+	}
+	f.p.flags &^= C.AV_FRAME_FLAG_KEY
+}
+
 // AVPictureType constants mirror libavutil/avutil.h's AVPictureType
 // enum. Used by SetPictType to mark a frame as a forced keyframe
 // (AV_PICTURE_TYPE_I) — libavcodec's `forced_kf_apply` path in
