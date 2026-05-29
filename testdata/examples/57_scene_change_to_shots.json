@@ -1,0 +1,50 @@
+{
+  "schema_version": "1.1",
+  "description": "Detect shot boundaries with the adaptive detector, re-encode each shot to H.264 and write one MP4 per shot; also write scene-change metadata to a JSONL file.",
+  "ffmpeg_cmd": "not possible in ffmpeg",
+  "inputs": [
+    {
+      "id": "in0",
+      "url": "{{input}}",
+      "streams": [
+        { "input_index": 0, "type": "audio", "track": 0 },
+        { "input_index": 0, "type": "video", "track": 0 }
+      ]
+    }
+  ],
+  "graph": {
+    "nodes": [
+      {
+        "id": "scene",
+        "type": "go_processor",
+        "processor": "scene_change_adaptive"
+      },
+      {
+        "id": "libx264",
+        "type": "encoder",
+        "params": { "codec": "libx264" }
+      },
+      {
+        "id": "metadata_file_writer",
+        "type": "go_processor",
+        "processor": "metadata_file_writer",
+        "params": { "output_file": "scene_changes.jsonl" }
+      }
+    ],
+    "edges": [
+      { "from": "in0:v:0",  "to": "scene:default",        "type": "video"  },
+      { "from": "in0:a:0",  "to": "shots:a",               "type": "audio"  },
+      { "from": "scene",    "to": "libx264",               "type": "video"  },
+      { "from": "libx264",  "to": "shots:v",               "type": "video"  },
+      { "from": "scene",    "to": "metadata_file_writer",  "type": "events" }
+    ]
+  },
+  "outputs": [
+    {
+      "id": "shots",
+      "url": "shot-%05d.mp4",
+      "segment_format": "mp4",
+      "segment_on_metadata": "scene_change"
+    }
+  ]
+}
