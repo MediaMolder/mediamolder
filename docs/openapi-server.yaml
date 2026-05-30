@@ -1,0 +1,295 @@
+openapi: 3.1.0
+info:
+  title: MediaMolder Remote Server API
+  version: "1.0"
+  description: |
+    HTTP API exposed by `mediamolder serve`. All `/v1/` endpoints require
+    `Authorization: Bearer <token>` (or `?token=<token>` for SSE endpoints
+    where the browser EventSource API cannot set custom headers).
+
+servers:
+  - url: https://server.example.com:8443
+
+security:
+  - bearerAuth: []
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+
+  schemas:
+    JobSubmitResponse:
+      type: object
+      required: [id, status_url, events_url]
+      properties:
+        id:
+          type: string
+          example: a1b2c3d4
+        status_url:
+          type: string
+          format: uri
+          example: https://server.example.com:8443/v1/jobs/a1b2c3d4
+        events_url:
+          type: string
+          format: uri
+          example: https://server.example.com:8443/v1/jobs/a1b2c3d4/events
+
+    JobStatus:
+      type: object
+      required: [id, status]
+      properties:
+        id:
+          type: string
+        status:
+          type: string
+          enum: [queued, running, succeeded, failed, cancelled]
+        error:
+          type: string
+          description: Present when status is "failed"
+
+    ArtifactList:
+      type: object
+      required: [artifacts]
+      properties:
+        artifacts:
+          type: array
+          items:
+            type: string
+            format: uri
+          description: Output artifact URLs (file://, s3://, or presigned https://)
+
+    UploadAllocResponse:
+      type: object
+      required: [token, upload_url, uri]
+      properties:
+        token:
+          type: string
+        upload_url:
+          type: string
+          format: uri
+          description: PUT to this URL to upload the file
+        uri:
+          type: string
+          description: upload:// URI to reference in the pipeline config's input.url
+
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+
+paths:
+  /healthz:
+    get:
+      summary: Liveness probe
+      security: []
+      responses:
+        "200":
+          description: Server is alive
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: ok
+
+  /readyz:
+    get:
+      summary: Readiness probe
+      security: []
+      responses:
+        "200":
+          description: Server is ready to accept jobs
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: ok
+
+  /v1/jobs:
+    post:
+      summary: Submit a pipeline job
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: MediaMolder pipeline config (schema_version 1.0 or 1.1)
+            example:
+              schema_version: "1.1"
+              inputs:
+                - id: src
+                  url: "file:///data/input.mp4"
+                  streams:
+                    - type: video
+                      track: 0
+                    - type: audio
+                      track: 0
+              graph:
+                nodes: []
+                edges: []
+              outputs:
+                - id: out
+                  url: "s3://my-bucket/output.mp4"
+                  codec_video: libx264
+                  codec_audio: aac
+      responses:
+        "202":
+          description: Job accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobSubmitResponse"
+        "400":
+          description: Bad request (invalid JSON or validation failure)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Missing or invalid token
+        "415":
+          description: Content-Type must be application/json
+
+  /v1/jobs/{id}:
+    get:
+      summary: Get job status
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Job status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobStatus"
+        "401":
+          description: Missing or invalid token
+        "404":
+          description: Job not found
+
+    delete:
+      summary: Cancel a running job
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Cancellation requested
+        "401":
+          description: Missing or invalid token
+        "404":
+          description: Job not found
+
+  /v1/jobs/{id}/events:
+    get:
+      summary: Stream job events (Server-Sent Events)
+      description: |
+        Returns an SSE stream (`text/event-stream`). Each event has the form
+        `event: <type>\ndata: <JSON>\n\n` where `<type>` is one of `state`,
+        `metrics`, `error`, `log`, `metadata`, or `done`.
+
+        Because the browser `EventSource` API cannot set custom headers, the
+        bearer token may also be passed via the `?token=` query parameter.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: token
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Bearer token (alternative to Authorization header; required for browser EventSource)
+      security:
+        - bearerAuth: []
+        - {}
+      responses:
+        "200":
+          description: SSE stream
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        "401":
+          description: Missing or invalid token
+        "404":
+          description: Job not found
+
+  /v1/jobs/{id}/artifacts:
+    get:
+      summary: List output artifacts for a completed job
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Artifact list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ArtifactList"
+        "401":
+          description: Missing or invalid token
+        "404":
+          description: Job not found
+
+  /v1/uploads:
+    post:
+      summary: Allocate an upload slot
+      description: |
+        Returns a token and upload URL. PUT the file to `upload_url`, then
+        reference the returned `uri` in the pipeline config's `input.url`.
+        Requires `--enable-uploads` to be set on the server.
+      responses:
+        "201":
+          description: Upload slot created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UploadAllocResponse"
+        "401":
+          description: Missing or invalid token
+        "405":
+          description: Uploads disabled (server not started with --enable-uploads)
+
+  /v1/uploads/{token}:
+    put:
+      summary: Upload a file to a previously allocated slot
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+      responses:
+        "204":
+          description: File received
+        "401":
+          description: Missing or invalid token
+        "404":
+          description: Token not found or already used
+        "405":
+          description: Uploads disabled

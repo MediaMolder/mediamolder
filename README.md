@@ -233,6 +233,7 @@ For detailed instructions see [MacOS](docs/build/macos.md), [Windows](docs/build
 
 - [Using MediaMolder (CLI)](docs/using-mediamolder.md)
 - [Visual Editor (GUI)](docs/gui.md)
+- [Remote Server (`mediamolder serve` + `job`)](docs/remote-server.md)
 - [Concepts — Graph Model, Nodes, Edges, Lifecycle](docs/concepts-and-graph-basics.md)
 - [JSON Config Reference](docs/json-config-reference.md)
 - [FFmpeg Migration Guide](docs/ffmpeg-migration-guide.md)

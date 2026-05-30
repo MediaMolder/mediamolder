@@ -1426,6 +1426,47 @@ In the GUI, check the **Real-time** checkbox in the toolbar before pressing **Ru
 
 ---
 
+### 5.14 Remote server (`serve` + `job`)
+
+Run `mediamolder serve` on a remote machine (e.g. a GPU instance) to accept job
+submissions from the GUI or `mediamolder job` CLI.
+
+```sh
+# Start a server on port 8443 with TLS and bearer-token auth
+mediamolder serve \
+  --addr=:8443 \
+  --tls-cert=/etc/mediamolder/server.crt \
+  --tls-key=/etc/mediamolder/server.key \
+  --auth-token-file=/etc/mediamolder/token
+```
+
+**`mediamolder job` subcommands:**
+
+```sh
+# Submit a pipeline config and receive a job ID
+mediamolder job submit \
+  --backend=https://my-server.example.com:8443 \
+  --token="$TOKEN" \
+  pipeline.json
+
+# Check job status
+mediamolder job status  --backend=URL --token=TOKEN  <job-id>
+
+# Cancel a running job
+mediamolder job cancel  --backend=URL --token=TOKEN  <job-id>
+
+# List output artifact URLs
+mediamolder job artifacts --backend=URL --token=TOKEN <job-id>
+```
+
+Set `MEDIAMOLDER_TOKEN` in the environment to avoid passing `--token` on every
+invocation.
+
+For the full flag reference, S3 presigning setup, and API specification see
+**[docs/remote-server.md](remote-server.md)**.
+
+---
+
 ## 6. Validation
 
 Validation is built into both the CLI and the GUI. It runs in two phases:
@@ -1517,6 +1558,7 @@ mediamolder version
 | Document | Contents |
 |---|---|
 | [gui.md](gui.md) | Complete GUI reference — canvas, palette, inspector, hardware, scene detection, keyboard shortcuts |
+| [remote-server.md](remote-server.md) | Tier 1 remote server setup, API reference, S3 presigning |
 | [concepts-and-graph-basics.md](concepts-and-graph-basics.md) | Core concepts, terminology, and design principles |
 | [json-config-reference.md](json-config-reference.md) | Complete field-by-field JSON schema reference |
 | [ffmpeg-migration-guide.md](ffmpeg-migration-guide.md) | FFmpeg command → JSON mapping table with examples |
@@ -1529,3 +1571,4 @@ mediamolder version
 | [architecture/graph-state-machine.md](architecture/graph-state-machine.md) | Graph lifecycle, pause/resume, seek |
 | [build-and-packaging.md](build-and-packaging.md) | Static linking, cross-compilation, packaging |
 | [architecture/graph_validation_design.md](architecture/graph_validation_design.md) | Validation architecture and issue code catalogue |
+| [architecture/distributed_design.md](architecture/distributed_design.md) | Distributed execution design — Tier 0/1/2, S3 presigning |

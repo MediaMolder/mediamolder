@@ -81,6 +81,10 @@ func run(args []string) error {
 		return cmdGoSceneDetect(args[1:])
 	case "twelvelabs":
 		return cmdTwelveLabs(args[1:])
+	case "serve":
+		return cmdServe(args[1:])
+	case "job":
+		return cmdJob(args[1:])
 	case "help", "--help", "-h":
 		usage()
 		return nil
@@ -578,6 +582,14 @@ Commands:
                          Run 'mediamolder twelvelabs help' for full usage.
   gui                    Launch the browser-based visual job editor.
                          Flags: --port=N, --host=ADDR, --no-open, --dev, --examples=DIR.
+  serve                  Run the Tier 1 remote execution server.
+                         Flags: --addr=:8443, --tls-cert=FILE, --tls-key=FILE,
+                                --auth-token-file=FILE, --max-jobs=N,
+                                --s3-presign-credentials=FILE, --s3-presign-ttl=DURATION,
+                                --enable-uploads, --allow-path=DIR (repeatable).
+  job <subcmd>           Interact with a remote server.
+                         Subcommands: submit, status, cancel, artifacts.
+                         Flags: --backend=URL, --token=TOKEN.
   version                Print library versions.
   help                   Show this help.
 `)
