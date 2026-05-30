@@ -1,0 +1,1080 @@
+openapi: "3.1.0"
+
+info:
+  title: MediaMolder Metrics Server API
+  version: "1.0.0"
+  license:
+    name: GNU Lesser General Public License v2.1
+    identifier: LGPL-2.1-only
+  description: |
+    HTTP API served by `mediamolder run --metrics-addr :9090` (or
+    `mediamolder gui --metrics-addr :9090`).
+
+    The server is **optional and opt-in** — it is not started unless
+    `--metrics-addr` is supplied. The conventional port is **9090**;
+    any valid `host:port` is accepted.
+
+    All endpoints are unauthenticated and intended for **localhost / private
+    network use only**. Mutating endpoints (`POST /realtime/preset`,
+    `POST /realtime/preset/clear`) are additionally gated to loopback
+    callers (`127.0.0.1` / `::1`) and return **403** for any other source IP.
+
+    The `/realtime/*` family is only registered when the pipeline was started
+    with `--realtime`. Calls to those endpoints while realtime is inactive
+    return **404**.
+
+    CORS headers (`Access-Control-Allow-Origin: *`) are set on all
+    non-`/metrics` endpoints so browser dashboards can connect directly.
+
+servers:
+  - url: http://localhost:9090
+    description: Default local metrics server (conventional port)
+
+security: []
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Shared components
+# ─────────────────────────────────────────────────────────────────────────────
+components:
+  securitySchemes: {}
+
+  schemas:
+
+    # ── Generic error (plain text for this server) ───────────────────────────
+    PlainError:
+      type: string
+      description: >
+        Plain-text error message. The metrics server uses `http.Error()` for
+        most error paths which writes `Content-Type: text/plain`.
+
+    # ── Pipeline state ───────────────────────────────────────────────────────
+    NodeMetricsSnapshot:
+      type: object
+      description: Read-only copy of a single node's throughput metrics.
+      required: [NodeID, Frames, Errors, Bytes, FPS, Elapsed, AvgLatency, MaxLatency]
+      properties:
+        NodeID:
+          type: string
+          description: Graph node identifier.
+        Frames:
+          type: integer
+          format: int64
+          description: Total frames processed.
+        Errors:
+          type: integer
+          format: int64
+          description: Total errors recorded by this node.
+        Bytes:
+          type: integer
+          format: int64
+          description: Total bytes processed (encoded / muxed).
+        FPS:
+          type: number
+          format: double
+          description: Windowed frames-per-second.
+        Elapsed:
+          type: integer
+          format: int64
+          description: Elapsed wall-clock time in nanoseconds since the node started.
+        AvgLatency:
+          type: integer
+          format: int64
+          description: Average per-frame latency in nanoseconds (EWMA).
+        MaxLatency:
+          type: integer
+          format: int64
+          description: Maximum single-frame latency in nanoseconds within the current window.
+        MediaPTS:
+          type: integer
+          format: int64
+          description: >
+            Latest input PTS read by this node, in nanoseconds.
+            Non-zero for source nodes only.
+        MediaDuration:
+          type: integer
+          format: int64
+          description: >
+            Total known input duration in nanoseconds.
+            Zero for live / unknown inputs.
+        OutputPTS:
+          type: integer
+          format: int64
+          description: >
+            Latest output PTS written by this node, in nanoseconds.
+            Non-zero for sink (muxer) nodes only.
+
+    NodePerfSnapshot:
+      type: object
+      description: >
+        Point-in-time performance snapshot for one node. Returned as elements
+        of `MetricsSnapshot.Perf` and streamed individually from `/perf/stream`.
+      required: [NodeID, FPS, FPSTarget, FPSDeficit, ActiveFrac, IdleFrac, StalledFrac]
+      properties:
+        NodeID:
+          type: string
+          description: Graph node identifier.
+        FPS:
+          type: number
+          format: double
+          description: Windowed frames-per-second for this node.
+        FPSTarget:
+          type: number
+          format: double
+          description: Desired output frame rate. 0 means no target is configured.
+        FPSDeficit:
+          type: number
+          format: double
+          description: >
+            `FPSTarget − FPS`. Positive = falling behind realtime; negative = headroom.
+        ActiveFrac:
+          type: number
+          format: double
+          description: Fraction of wall time spent in PROCESSING state (0.0–1.0).
+        IdleFrac:
+          type: number
+          format: double
+          description: >
+            Fraction of wall time in IDLE (waiting for input from upstream, 0.0–1.0).
+        StalledFrac:
+          type: number
+          format: double
+          description: >
+            Fraction of wall time in STALLED (output channel full, 0.0–1.0).
+        TotalActive:
+          type: integer
+          format: int64
+          description: Cumulative PROCESSING duration in nanoseconds.
+        TotalIdle:
+          type: integer
+          format: int64
+          description: Cumulative IDLE duration in nanoseconds.
+        TotalStalled:
+          type: integer
+          format: int64
+          description: Cumulative STALLED duration in nanoseconds.
+        StallCount:
+          type: integer
+          format: int64
+          description: Total number of stall events (blocked on full output channel).
+        MaxStallDuration:
+          type: integer
+          format: int64
+          description: Maximum single stall event duration in nanoseconds.
+        InputQueueFillFrac:
+          type: number
+          format: double
+          description: >
+            EWMA of the input channel fill fraction at receive time (0.0–1.0).
+            Near 0 indicates this node is starved by upstream.
+        QueueFillFrac:
+          type: number
+          format: double
+          description: >
+            EWMA of the output channel fill fraction at send time (0.0–1.0).
+            Near 1 indicates this node produces faster than downstream can consume.
+        Elapsed:
+          type: integer
+          format: int64
+          description: Total elapsed wall-clock time in nanoseconds since the node started.
+        ThreadsConfigured:
+          type: integer
+          description: libav configured thread count. 0 means unknown or not applicable.
+        ThreadMode:
+          type: string
+          description: Threading mode string from libav.
+          enum: [none, frame, slice, auto, "n/a"]
+        ThreadsBusy:
+          type: integer
+          description: >
+            Live tasks in-flight from the execute2/execute callback.
+            `-1` means not available.
+        EstimatedCPUCores:
+          type: number
+          format: double
+          description: >
+            `ThreadsConfigured × ActiveFrac` — upper-bound CPU core utilisation estimate.
+        FrameLatencyMean:
+          type: integer
+          format: int64
+          description: EWMA of frame processing latency in nanoseconds.
+        ThreadRestarts:
+          type: integer
+          format: int64
+          description: >
+            Cumulative graceful codec restarts triggered by the realtime adaptive
+            control loop. Zero when realtime mode is disabled.
+        CodecName:
+          type: string
+          description: Encoder codec name (e.g. "libx264"). Empty for non-encoder nodes.
+        CurrentPreset:
+          type: string
+          description: Live preset name set by the adaptive controller. Empty when not applicable.
+        PresetLadder:
+          type: array
+          description: Ordered slowest→fastest preset names that the controller may select.
+          items:
+            type: string
+        PresetIndex:
+          type: integer
+          description: >
+            Zero-based position of `CurrentPreset` within `PresetLadder`.
+            `-1` when the current preset is not on the ladder.
+        PresetSwitches:
+          type: integer
+          format: int64
+          description: Number of completed adaptive preset transitions.
+        PresetLocked:
+          type: boolean
+          description: True when automatic preset stepping is disabled for this node.
+
+    OutputBufferSnapshot:
+      type: object
+      description: Per-output Phase-7 preroll buffer state.
+      required: [node_id, state, buffered_ns, target_ns, evictions]
+      properties:
+        node_id:
+          type: string
+          description: Sink node identifier.
+        state:
+          type: string
+          description: Current preroll state.
+          enum: [FILLING, READY, READY_PARTIAL, STREAMING, DRAINING]
+        buffered_ns:
+          type: integer
+          format: int64
+          description: Currently buffered PTS span in nanoseconds.
+        target_ns:
+          type: integer
+          format: int64
+          description: Configured target fill duration in nanoseconds.
+        evictions:
+          type: integer
+          format: int64
+          description: "Packets dropped from the preroll buffer (reason: overflow)."
+
+    DecisionRecord:
+      type: object
+      description: >
+        One autonomous step taken by the realtime adaptive controller.
+      required: [time, node, action]
+      properties:
+        time:
+          type: string
+          format: date-time
+          description: RFC 3339 timestamp of when the decision was made.
+        node:
+          type: string
+          description: Node ID the decision targeted.
+        action:
+          type: string
+          description: Controller action taken.
+          enum: [step_faster, step_slower, restart_threads, drop_frames, lock]
+        from:
+          type: string
+          description: Previous preset name (for preset-step actions).
+        to:
+          type: string
+          description: New preset name (for preset-step actions).
+        deficit:
+          type: number
+          format: double
+          description: FPS deficit that triggered the decision.
+        reason:
+          type: string
+          description: Human-readable explanation (e.g. "fps_deficit > threshold").
+
+    RealtimeSnapshot:
+      type: object
+      description: >
+        Graph-level adaptive realtime summary. Embedded in `MetricsSnapshot`
+        and returned standalone by `GET /realtime/status`. The zero value
+        (all fields absent / false / zero) is returned when realtime mode is off.
+      properties:
+        Enabled:
+          type: boolean
+          description: True when the pipeline was started with `--realtime`.
+        FPSTarget:
+          type: number
+          format: double
+          description: Graph-level FPS target (maximum of per-node targets).
+        FPSActual:
+          type: number
+          format: double
+          description: Graph-level achieved FPS (minimum of per-video-node fps).
+        Satisfied:
+          type: boolean
+          description: True when every node is meeting its FPS target.
+        Decisions:
+          type: array
+          description: Recent controller decisions (bounded ring buffer).
+          items:
+            $ref: "#/components/schemas/DecisionRecord"
+        Outputs:
+          type: array
+          description: Per-output preroll readiness. Empty when realtime is off.
+          items:
+            $ref: "#/components/schemas/OutputBufferSnapshot"
+        Ready:
+          type: boolean
+          description: >
+            True once every output sink has reached READY / READY_PARTIAL /
+            STREAMING state.
+        ReadyAt:
+          type: string
+          format: date-time
+          description: >
+            Wall-clock time at which `Ready` first became true.
+            Zero / absent while still filling.
+
+    MetricsSnapshot:
+      type: object
+      description: Complete pipeline metrics snapshot returned by `GET /perf`.
+      required: [State, Elapsed, Nodes, Perf]
+      properties:
+        State:
+          type: string
+          description: Pipeline state string (e.g. "Playing", "Done", "Ready").
+        Elapsed:
+          type: integer
+          format: int64
+          description: Wall-clock elapsed time in nanoseconds since the pipeline started.
+        Nodes:
+          type: array
+          description: Per-node throughput metrics (frames, bytes, latency).
+          items:
+            $ref: "#/components/schemas/NodeMetricsSnapshot"
+        MediaPTS:
+          type: integer
+          format: int64
+          description: >
+            Latest input PTS in nanoseconds, aggregated as the maximum across all
+            source nodes. Zero for live / unknown inputs.
+        MediaDuration:
+          type: integer
+          format: int64
+          description: >
+            Total known input duration in nanoseconds (max across source nodes).
+            Zero when no input declares a finite duration (live streams).
+        OutputPTS:
+          type: integer
+          format: int64
+          description: >
+            Latest output PTS in nanoseconds, aggregated as the minimum across
+            all sink (muxer) nodes that have started writing. Basis for
+            progress / speed / ETA in the GUI.
+        Perf:
+          type: array
+          description: Per-node performance timing snapshots.
+          items:
+            $ref: "#/components/schemas/NodePerfSnapshot"
+        Realtime:
+          $ref: "#/components/schemas/RealtimeSnapshot"
+
+    # ── Realtime controller types ────────────────────────────────────────────
+    ControllerNodeSnapshot:
+      type: object
+      description: Controller's per-tick view of one video encoder node.
+      required: [NodeID]
+      properties:
+        NodeID:
+          type: string
+        FPS:
+          type: number
+          format: double
+        FPSTarget:
+          type: number
+          format: double
+        FPSDeficit:
+          type: number
+          format: double
+        ActiveFrac:
+          type: number
+          format: double
+        StalledFrac:
+          type: number
+          format: double
+        IdleFrac:
+          type: number
+          format: double
+        ThreadsConfigured:
+          type: integer
+        ThreadsBusy:
+          type: integer
+          description: Live tasks in-flight. -1 means not available.
+        InputBufferFillFrac:
+          type: number
+          format: double
+          description: EWMA fill fraction of the node's input channel (0.0–1.0).
+        OutputBufferFillFrac:
+          type: number
+          format: double
+          description: EWMA fill fraction of the node's output channel (0.0–1.0).
+        FrameLatencyMean:
+          type: integer
+          format: int64
+          description: EWMA frame processing latency in nanoseconds.
+        CurrentPreset:
+          type: string
+          description: Preset name currently applied.
+        PresetIndex:
+          type: integer
+          description: Zero-based ladder index of `CurrentPreset`.
+        PresetLadder:
+          type: array
+          items:
+            type: string
+        PresetLocked:
+          type: boolean
+          description: True when automatic stepping is disabled for this node.
+        PresetSwitches:
+          type: integer
+          format: int64
+        WindowsSincePreset:
+          type: integer
+          description: Tick windows elapsed since the last preset change.
+        CooldownRemaining:
+          type: integer
+          description: >
+            Remaining cooldown tick windows before the next step is allowed.
+            0 when not in cooldown.
+        OvershootWindows:
+          type: integer
+          description: Number of consecutive windows where FPS exceeded target.
+        ThreadRestarts:
+          type: integer
+          format: int64
+
+    SinkNodeSnapshot:
+      type: object
+      description: Output-buffer state of a muxer/sink node as seen by the controller.
+      required: [NodeID, OutputBufferFillFrac]
+      properties:
+        NodeID:
+          type: string
+        OutputBufferFillFrac:
+          type: number
+          format: double
+          description: EWMA fill fraction of the output buffer (0.0–1.0).
+        BufferedNs:
+          type: integer
+          format: int64
+          description: Currently buffered PTS span in nanoseconds.
+        TargetNs:
+          type: integer
+          format: int64
+          description: Configured target fill duration in nanoseconds.
+        AheadNs:
+          type: integer
+          format: int64
+          description: >
+            How far the buffer's leading PTS edge is ahead of the real-time
+            playback position in nanoseconds. Positive = encoder leading,
+            0 = in sync, negative = encoder behind. Only meaningful during
+            STREAMING phase.
+
+    RTControllerSnapshot:
+      type: object
+      description: >
+        Full per-tick state of the realtime adaptive controller. Returned by
+        `GET /realtime/snapshot` and streamed from
+        `GET /realtime/snapshot/stream`.
+      required: [Enabled, Status, Tick, Elapsed, FPSTarget, FPSActual, Satisfied, Nodes, Sinks, RecentDecisions]
+      properties:
+        Enabled:
+          type: boolean
+          description: False when realtime mode is not active.
+        Status:
+          type: string
+          description: Human-readable controller status.
+          enum: [disabled, observing, cooldown, dropping, satisfied]
+        Tick:
+          type: integer
+          format: int64
+          description: Monotonically increasing observe() call count.
+        Elapsed:
+          type: integer
+          format: int64
+          description: Wall-clock elapsed time in nanoseconds since the pipeline started.
+        FPSTarget:
+          type: number
+          format: double
+          description: Graph-level FPS target (max of per-node targets).
+        FPSActual:
+          type: number
+          format: double
+          description: Graph-level achieved FPS (min of per-video-node fps).
+        Satisfied:
+          type: boolean
+          description: True when all video nodes meet their FPS target.
+        HighestQualityPreset:
+          type: string
+          description: >
+            Preset name of the highest-quality step currently applied
+            across all controlled nodes.
+        GroupStep:
+          type: boolean
+          description: >
+            True when group-step mode is active (all nodes step together
+            instead of individually).
+        CooldownWindows:
+          type: integer
+          description: >
+            Maximum `CooldownRemaining` across all controlled nodes.
+        TickIntervalMs:
+          type: integer
+          format: int64
+          description: Controller tick interval in milliseconds.
+        Nodes:
+          type: array
+          description: Per-tick view of each controlled encoder node.
+          items:
+            $ref: "#/components/schemas/ControllerNodeSnapshot"
+        Sinks:
+          type: array
+          description: Output-buffer state of each sink node.
+          items:
+            $ref: "#/components/schemas/SinkNodeSnapshot"
+        RecentDecisions:
+          type: array
+          description: Recent controller decisions (last N steps, bounded ring buffer).
+          items:
+            $ref: "#/components/schemas/DecisionRecord"
+
+    # ── Readiness response ───────────────────────────────────────────────────
+    ReadyResponse:
+      type: object
+      required: [ready, outputs]
+      properties:
+        ready:
+          type: boolean
+          description: >
+            True once every output sink has reached READY / READY_PARTIAL /
+            STREAMING state.
+        ready_at:
+          type: string
+          format: date-time
+          description: >
+            RFC 3339 timestamp when `ready` first became true.
+            Absent / zero while still filling.
+        outputs:
+          type: array
+          description: Per-output preroll readiness detail.
+          items:
+            $ref: "#/components/schemas/OutputBufferSnapshot"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Paths
+# ─────────────────────────────────────────────────────────────────────────────
+paths:
+
+  # ── Index page ─────────────────────────────────────────────────────────────
+  /:
+    get:
+      operationId: indexPage
+      summary: HTML index page with endpoint links
+      description: >
+        Returns a minimal HTML page with hyperlinks to all active endpoints.
+        Useful for browser-based discovery. 404 is returned for any path other
+        than exactly `/`.
+      responses:
+        "200":
+          description: HTML index.
+          content:
+            text/html:
+              schema:
+                type: string
+        "4XX":
+          description: Any path other than `/` returns 404.
+          content:
+            text/plain:
+              schema:
+                $ref: "#/components/schemas/PlainError"
+
+  # ── Liveness ───────────────────────────────────────────────────────────────
+  /health:
+    get:
+      operationId: metricsHealth
+      summary: Liveness probe
+      description: Returns the plain text string `"ok\n"`. No JSON, no body structure.
+      responses:
+        "200":
+          description: Server is alive.
+          content:
+            text/plain:
+              schema:
+                type: string
+                enum: ["ok\n"]
+        "4XX":
+          description: Should not occur; listed for schema completeness.
+          content:
+            text/plain:
+              schema:
+                $ref: "#/components/schemas/PlainError"
+
+  # ── Prometheus scrape ──────────────────────────────────────────────────────
+  /metrics:
+    get:
+      operationId: prometheusMetrics
+      summary: Prometheus scrape endpoint
+      description: >
+        Returns all registered Prometheus metrics in the OpenMetrics /
+        Prometheus text exposition format. Intended for scraping by a
+        Prometheus server — point your `scrape_config` at this URL.
+
+        All metrics are scoped to the running pipeline via a `pipeline`
+        constant label. See the `Metrics` struct in
+        `observability/metrics.go` for the full metric catalogue, which
+        includes:
+
+        | Metric | Type | Labels | Description |
+        |---|---|---|---|
+        | `mediamolder_pipeline_fps` | Gauge | node, media_type | Per-node FPS |
+        | `mediamolder_pipeline_bitrate_bps` | Gauge | node, media_type | Per-node bitrate |
+        | `mediamolder_node_latency_seconds` | Histogram | node, media_type | Per-frame latency |
+        | `mediamolder_node_buffer_fill` | Gauge | node | Output channel fill fraction |
+        | `mediamolder_pipeline_errors_total` | Counter | node, media_type | Total errors |
+        | `mediamolder_pipeline_frames_total` | Counter | node, media_type | Total frames |
+        | `mediamolder_pipeline_bytes_total` | Counter | node, media_type | Total bytes |
+        | `mediamolder_pipeline_state` | Gauge | — | State (0=NULL…3=PLAYING) |
+        | `mediamolder_node_active_fraction` | Gauge | node | Fraction in PROCESSING |
+        | `mediamolder_node_idle_fraction` | Gauge | node | Fraction in IDLE |
+        | `mediamolder_node_stalled_fraction` | Gauge | node | Fraction in STALLED |
+        | `mediamolder_node_stall_duration_seconds` | Histogram | node | Stall event durations |
+        | `mediamolder_node_stall_count_total` | Counter | node | Total stall events |
+        | `mediamolder_node_fps` | Gauge | node | Windowed FPS |
+        | `mediamolder_node_fps_target` | Gauge | node | Configured FPS target |
+        | `mediamolder_node_fps_deficit` | Gauge | node | FPS target − actual |
+        | `mediamolder_node_queue_fill` | Gauge | node | Output channel EWMA fill |
+        | `mediamolder_node_threads_configured` | Gauge | node, thread_mode | libav thread count |
+        | `mediamolder_node_threads_busy` | Gauge | node | Live tasks in-flight |
+        | `mediamolder_node_cpu_cores_estimated` | Gauge | node | threads × active_frac |
+        | `mediamolder_node_thread_restarts_total` | Counter | node | Adaptive restarts |
+        | `mediamolder_node_frame_latency_seconds` | Histogram | node | EWMA latency distribution |
+        | `mediamolder_pipeline_frames_in_flight` | Gauge | — | Frames across all channels |
+        | `mediamolder_pipeline_realtime_satisfied` | Gauge | — | 1 if all nodes meet target |
+        | `mediamolder_node_preset_current` | Gauge | node, codec | Adaptive preset ladder index |
+        | `mediamolder_node_preset_switches_total` | Counter | node | Preset transitions |
+        | `mediamolder_pipeline_fps_target` | Gauge | — | Graph-level FPS target |
+        | `mediamolder_pipeline_fps_actual` | Gauge | — | Graph-level achieved FPS |
+        | `mediamolder_realtime_decisions_total` | Counter | action | RT controller decisions |
+        | `mediamolder_output_buffer_duration_seconds` | Gauge | node | Buffered preroll duration |
+        | `mediamolder_output_buffer_target_seconds` | Gauge | node | Preroll fill target |
+        | `mediamolder_output_buffer_state` | Gauge | node, state | Active preroll state (1=active) |
+        | `mediamolder_output_buffer_evictions_total` | Counter | node, reason | Buffer evictions |
+        | `mediamolder_pipeline_ready` | Gauge | — | 1 once all outputs ready |
+      responses:
+        "200":
+          description: Prometheus text exposition format.
+          content:
+            text/plain:
+              schema:
+                type: string
+        "4XX":
+          description: Should not occur normally.
+          content:
+            text/plain:
+              schema:
+                $ref: "#/components/schemas/PlainError"
+
+  # ── Perf snapshot ──────────────────────────────────────────────────────────
+  /perf:
+    get:
+      operationId: getPerfSnapshot
+      summary: Pipeline metrics snapshot (JSON)
+      description: >
+        Returns a single `MetricsSnapshot` encoded as JSON. Called by
+        `mediamolder perf --url http://…/perf` for the in-terminal dashboard
+        and by any polling client. Each call invokes the snapshot function
+        registered by `RegisterPerfHandler`, which reads live counters from
+        the running pipeline with no lock contention.
+
+        The `Perf` array is the primary data for per-node performance analysis.
+        `Realtime` is included when `--realtime` is active; otherwise it is
+        omitted (Go `omitempty`).
+      responses:
+        "200":
+          description: Current pipeline metrics snapshot.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MetricsSnapshot"
+        "4XX":
+          description: Unused for this endpoint; included for schema completeness.
+          content:
+            text/plain:
+              schema:
+                $ref: "#/components/schemas/PlainError"
+        "500":
+          description: JSON encoding error (should not occur in practice).
+          content:
+            text/plain:
+              schema:
+                $ref: "#/components/schemas/PlainError"
+
+  # ── Perf SSE stream ─────────────────────────────────────────────────────────
+  /perf/stream:
+    get:
+      operationId: perfStream
+      summary: Live per-node performance stream (Server-Sent Events)
+      description: >
+        Streams `NodePerfSnapshot` arrays as Server-Sent Events at approximately
+        **2 Hz** (one event per 500 ms). Connect with the browser `EventSource`
+        API or an SSE client.
+
+        Each event is a single unnamed `data:` line containing a JSON-encoded
+        `array` of `NodePerfSnapshot`. An empty array (`[]`) is sent when the
+        pipeline has not yet produced performance data.
+
+        The stream does not produce a terminal `done` event — it runs until the
+        client disconnects or the server shuts down.
+      responses:
+        "200":
+          description: SSE stream opened.
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                description: >
+                  Each SSE event has the form:
+                  ```
+                  data: [{NodeID:"…", FPS:…, …}, …]
+
+                  ```
+                  (JSON array of NodePerfSnapshot per event, no `event:` name.)
+        "4XX":
+          description: Unused; included for schema completeness.
+          content:
+            text/plain:
+              schema:
+                $ref: "#/components/schemas/PlainError"
+        "500":
+          description: Streaming not supported by the HTTP transport.
+          content:
+            text/plain:
+              schema:
+                $ref: "#/components/schemas/PlainError"
+
+  # ── Realtime status ─────────────────────────────────────────────────────────
+  /realtime/status:
+    get:
+      operationId: realtimeStatus
+      summary: Real-time controller graph-level status
+      description: >
+        Returns the current `RealtimeSnapshot` — the graph-level summary of
+        the adaptive real-time controller. Includes the FPS target/actual
+        pair, the satisfied flag, per-output preroll state, and recent
+        decisions.
+
+        Available only when the pipeline was started with `--realtime`.
+        Returns **404** otherwise.
+      responses:
+        "200":
+          description: Real-time controller status.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RealtimeSnapshot"
+        "404":
+          description: Real-time mode is not active.
+          content:
+            text/plain:
+              schema:
+                $ref: "#/components/schemas/PlainError"
+
+  # ── Realtime decisions ─────────────────────────────────────────────────────
+  /realtime/decisions:
+    get:
+      operationId: realtimeDecisions
+      summary: Recent realtime controller decisions
+      description: >
+        Returns the controller's decision log as a JSON array of
+        `DecisionRecord`. The log is a bounded ring buffer; its maximum size
+        is set at pipeline construction time.
+
+        Use `?n=N` to request only the last N entries (useful for polling).
+        If `n` is omitted, all retained decisions are returned. If `n` is
+        larger than the current buffer, the full buffer is returned.
+      parameters:
+        - name: n
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+          description: >
+            Return only the last `n` decisions. Omit to receive the full
+            retained history.
+      responses:
+        "200":
+          description: Array of recent decisions. Empty array when none have been made.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/DecisionRecord"
+        "404":
+          description: Real-time mode is not active.
+          content:
+            text/plain:
+              schema:
+                $ref: "#/components/schemas/PlainError"
+
+  # ── Realtime readiness ─────────────────────────────────────────────────────
+  /realtime/ready:
+    get:
+      operationId: realtimeReady
+      summary: Graph-level preroll readiness
+      description: >
+        Returns the preroll readiness state of the pipeline. The HTTP status
+        code encodes the readiness:
+
+        - **200** — all outputs have reached `READY` / `READY_PARTIAL` /
+          `STREAMING` state.
+        - **425 (Too Early)** — still filling the preroll buffer;
+          `ready` is `false` in the body.
+
+        Useful as a startup gate: poll until you receive **200** before
+        connecting a downstream consumer.
+      responses:
+        "200":
+          description: All outputs ready.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadyResponse"
+        "425":
+          description: >
+            Still filling the preroll buffer. Body shape is identical to
+            the 200 response — inspect `ready`, `ready_at`, and `outputs`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadyResponse"
+        "404":
+          description: Real-time mode is not active.
+          content:
+            text/plain:
+              schema:
+                $ref: "#/components/schemas/PlainError"
+
+  # ── Realtime readiness SSE stream ─────────────────────────────────────────
+  /realtime/ready/stream:
+    get:
+      operationId: realtimeReadyStream
+      summary: Preroll readiness stream (Server-Sent Events)
+      description: >
+        Streams the preroll readiness state as Server-Sent Events. An
+        initial event is emitted immediately on connection. Subsequent events
+        are sent when the state changes or every 500 ms if the state is
+        unchanged.
+
+        Each `data:` payload is a JSON object with the same shape as
+        `ReadyResponse`. Once `ready` becomes `true` the stream continues
+        running (it does not close automatically) so dashboards can track
+        any subsequent state changes.
+
+        The stream closes when the client disconnects.
+      responses:
+        "200":
+          description: SSE stream opened.
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                description: >
+                  Each SSE event:
+                  ```
+                  data: {"ready":false,"ready_at":"0001-01-01T00:00:00Z","outputs":[…]}
+
+                  ```
+        "404":
+          description: Real-time mode is not active.
+          content:
+            text/plain:
+              schema:
+                $ref: "#/components/schemas/PlainError"
+        "500":
+          description: Streaming not supported by the HTTP transport.
+          content:
+            text/plain:
+              schema:
+                $ref: "#/components/schemas/PlainError"
+
+  # ── RT controller snapshot ─────────────────────────────────────────────────
+  /realtime/snapshot:
+    get:
+      operationId: realtimeSnapshot
+      summary: Full realtime controller snapshot
+      description: >
+        Returns the complete per-tick state of the adaptive realtime controller
+        as an `RTControllerSnapshot`. Includes per-node performance metrics,
+        per-node controller state (preset, cooldown, overshoot windows),
+        per-sink output buffer state, and the most recent decisions.
+
+        Returns **404** when realtime mode is not active (`Enabled` is false
+        in the snapshot).
+
+        Use `GET /realtime/snapshot/stream` for a live push feed.
+      responses:
+        "200":
+          description: Current realtime controller snapshot.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RTControllerSnapshot"
+        "404":
+          description: Real-time mode is not active.
+          content:
+            text/plain:
+              schema:
+                $ref: "#/components/schemas/PlainError"
+
+  # ── RT controller snapshot SSE stream ─────────────────────────────────────
+  /realtime/snapshot/stream:
+    get:
+      operationId: realtimeSnapshotStream
+      summary: Live realtime controller snapshot stream (Server-Sent Events)
+      description: >
+        Streams `RTControllerSnapshot` objects as Server-Sent Events at
+        approximately **2 Hz** (one event per 500 ms). Used by
+        `mediamolder watch` for the in-terminal realtime inspector.
+
+        Each event is a single unnamed `data:` line containing a
+        JSON-encoded `RTControllerSnapshot`.
+
+        If realtime mode is disabled mid-run (edge case), the server sends
+        a terminal `event: error` event with `data: realtime mode not active`
+        and closes the stream.
+
+        Returns **404** before the first event if realtime is not active.
+      responses:
+        "200":
+          description: SSE stream opened.
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                description: >
+                  Normal events:
+                  ```
+                  data: {"Enabled":true,"Status":"satisfied","Tick":42,…}
+
+                  ```
+                  Terminal error event:
+                  ```
+                  event: error
+                  data: realtime mode not active
+
+                  ```
+        "404":
+          description: Real-time mode is not active.
+          content:
+            text/plain:
+              schema:
+                $ref: "#/components/schemas/PlainError"
+        "500":
+          description: Streaming not supported by the HTTP transport.
+          content:
+            text/plain:
+              schema:
+                $ref: "#/components/schemas/PlainError"
+
+  # ── Preset override (loopback-only) ───────────────────────────────────────
+  /realtime/preset:
+    post:
+      operationId: setPresetOverride
+      summary: Override the encoder preset for a node
+      description: >
+        Instructs the realtime controller to lock the named node to the
+        specified encoder preset, bypassing automatic adaptive stepping.
+        The node's `PresetLocked` flag is set to `true`.
+
+        **Loopback-only:** this endpoint is gated to requests from
+        `127.0.0.1` / `::1`. Any other source address receives **403**.
+
+        Use `POST /realtime/preset/clear` to re-enable automatic stepping.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [Node, Preset]
+              properties:
+                Node:
+                  type: string
+                  description: >
+                    Graph node ID to lock (must be a controlled encoder node).
+                Preset:
+                  type: string
+                  description: >
+                    Preset name to apply (must be a member of the node's
+                    `PresetLadder`).
+      responses:
+        "204":
+          description: Preset override applied. No response body.
+        "400":
+          description: >
+            Malformed JSON, missing fields, unknown node ID, or preset not
+            on the node's ladder.
+          content:
+            text/plain:
+              schema:
+                $ref: "#/components/schemas/PlainError"
+        "403":
+          description: Request did not originate from the loopback interface.
+          content:
+            text/plain:
+              schema:
+                $ref: "#/components/schemas/PlainError"
+        "405":
+          description: Method not allowed (only POST is accepted).
+          content:
+            text/plain:
+              schema:
+                $ref: "#/components/schemas/PlainError"
+
+  # ── Clear preset override (loopback-only) ─────────────────────────────────
+  /realtime/preset/clear:
+    post:
+      operationId: clearPresetOverride
+      summary: Remove the preset lock for a node
+      description: >
+        Clears the preset override set by `POST /realtime/preset` and
+        re-enables automatic adaptive stepping for the named node.
+
+        **Loopback-only:** same source-IP restriction as
+        `POST /realtime/preset`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [Node]
+              properties:
+                Node:
+                  type: string
+                  description: Graph node ID whose override should be cleared.
+      responses:
+        "204":
+          description: Preset lock cleared. No response body.
+        "400":
+          description: Malformed JSON, missing `Node` field, or unknown node ID.
+          content:
+            text/plain:
+              schema:
+                $ref: "#/components/schemas/PlainError"
+        "403":
+          description: Request did not originate from the loopback interface.
+          content:
+            text/plain:
+              schema:
+                $ref: "#/components/schemas/PlainError"
+        "405":
+          description: Method not allowed (only POST is accepted).
+          content:
+            text/plain:
+              schema:
+                $ref: "#/components/schemas/PlainError"
