@@ -3,6 +3,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { JobConfig } from './jobTypes';
+import type { BackendSettings } from './backendSettings';
 
 export type JobStatus = 'idle' | 'starting' | 'running' | 'succeeded' | 'failed' | 'canceled';
 
@@ -109,7 +110,7 @@ export interface RunState {
 const LOG_CAP = 200;
 const ERR_CAP = 50;
 
-export function useJobRun(getConfig: () => JobConfig | null): RunState {
+export function useJobRun(getConfig: () => JobConfig | null, backend?: BackendSettings | null): RunState {
   const [jobId, setJobId] = useState<string | null>(null);
   const [status, setStatus] = useState<JobStatus>('idle');
   const [pipelineState, setPipelineState] = useState<string>('');
@@ -143,9 +144,17 @@ export function useJobRun(getConfig: () => JobConfig | null): RunState {
 
     let id: string;
     try {
-      const res = await fetch('/api/run', {
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      let url: string;
+      if (backend?.url) {
+        url = `${backend.url}/v1/jobs`;
+        if (backend.token) headers['Authorization'] = `Bearer ${backend.token}`;
+      } else {
+        url = '/api/run';
+      }
+      const res = await fetch(url, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify(cfg),
       });
       if (!res.ok) {
@@ -154,8 +163,13 @@ export function useJobRun(getConfig: () => JobConfig | null): RunState {
         setFinalError(err);
         return;
       }
-      const body = (await res.json()) as { job_id: string };
-      id = body.job_id;
+      if (backend?.url) {
+        const body = (await res.json()) as { id: string };
+        id = body.id;
+      } else {
+        const body = (await res.json()) as { job_id: string };
+        id = body.job_id;
+      }
     } catch (err) {
       setStatus('failed');
       setFinalError((err as Error).message);
@@ -165,7 +179,15 @@ export function useJobRun(getConfig: () => JobConfig | null): RunState {
     setJobId(id);
     setStatus('running');
 
-    const es = new EventSource(`/api/events/${id}`);
+    // EventSource cannot set custom headers; pass token as query param for remote.
+    let eventsUrl: string;
+    if (backend?.url) {
+      eventsUrl = `${backend.url}/v1/jobs/${id}/events`;
+      if (backend.token) eventsUrl += `?token=${encodeURIComponent(backend.token)}`;
+    } else {
+      eventsUrl = `/api/events/${id}`;
+    }
+    const es = new EventSource(eventsUrl);
     esRef.current = es;
 
     es.addEventListener('state', (ev: MessageEvent) => {
@@ -246,11 +268,17 @@ export function useJobRun(getConfig: () => JobConfig | null): RunState {
   const cancel = useCallback(async () => {
     if (!jobId) return;
     try {
-      await fetch(`/api/cancel/${jobId}`, { method: 'POST' });
+      if (backend?.url) {
+        const headers: Record<string, string> = {};
+        if (backend.token) headers['Authorization'] = `Bearer ${backend.token}`;
+        await fetch(`${backend.url}/v1/jobs/${jobId}`, { method: 'DELETE', headers });
+      } else {
+        await fetch(`/api/cancel/${jobId}`, { method: 'POST' });
+      }
     } catch {
       /* ignore */
     }
-  }, [jobId]);
+  }, [jobId, backend]);
 
   // Cleanup on unmount.
   useEffect(() => () => closeStream(), [closeStream]);

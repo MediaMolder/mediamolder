@@ -5,6 +5,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Added
+- **Tier 1 remote server (Phase A).** `mediamolder serve` starts a TLS-capable
+  HTTP server that accepts pipeline job submissions via a REST API (`POST /v1/jobs`)
+  and streams events to clients via Server-Sent Events. Supports bearer-token
+  authentication, concurrent job management (with optional `--max-jobs` limit),
+  transparent S3 presigning (pure-Go SigV4 — no AWS SDK), and opt-in file upload
+  (`--enable-uploads`). Adds `mediamolder job submit|status|cancel|artifacts`
+  CLI for headless submission. The GUI gains a **Backend** toolbar button to
+  point the browser at a remote server. New packages: `internal/storage` (FS
+  interface, file:// and S3 adapters, PresignResolver, UploadStore) and
+  `internal/server`. Docs: `docs/remote-server.md`, `docs/openapi-server.yaml`.
+
 ### Fixed
 - Re-encoding now clears decoded source `pict_type` at the encoder boundary,
   matching FFmpeg's `frame_encode` behavior. Custom graph requests still force
