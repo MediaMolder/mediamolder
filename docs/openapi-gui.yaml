@@ -1,0 +1,1893 @@
+openapi: "3.1.0"
+
+info:
+  title: MediaMolder GUI API
+  version: "1.0.0"
+  license:
+    name: GNU Lesser General Public License v2.1
+    identifier: LGPL-2.1-only
+  description: |
+    REST + SSE API served by `mediamolder gui` on `127.0.0.1:8080` (default).
+    All endpoints are unauthenticated and intended for **localhost use only**.
+    Do not expose the server on untrusted networks.
+
+    Request bodies are JSON unless noted. Error responses always use the
+    `Error` schema below. The SSE endpoints (`/api/events/{jobId}`,
+    `/perf/stream`) do not follow the JSON-response convention.
+
+servers:
+  - url: http://127.0.0.1:8080
+    description: Default local server
+
+# All endpoints are unauthenticated (localhost-only).
+security: []
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Shared components
+# ─────────────────────────────────────────────────────────────────────────────
+components:
+  securitySchemes: {}
+  schemas:
+
+    # ── Generic error wrapper ────────────────────────────────────────────────
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+          description: Human-readable error message.
+
+    # ── Health ───────────────────────────────────────────────────────────────
+    HealthResponse:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [ok]
+
+    # ── Node catalogue ───────────────────────────────────────────────────────
+    NodeCatalogEntry:
+      type: object
+      required: [category, type, name]
+      properties:
+        category:
+          type: string
+          description: Top-level palette group.
+          enum: [Sources, Filters, Copy, Encoders, Processors, Sinks]
+        subcategory:
+          type: string
+          description: Optional friendly sub-group within the category (e.g. "Scaling & cropping").
+        type:
+          type: string
+          description: Schema node type token.
+          enum: [input, output, filter, encoder, copy, go_processor]
+        name:
+          type: string
+          description: Canonical codec / filter / processor name passed to libav (e.g. "scale", "libx264").
+        label:
+          type: string
+          description: Human-readable display name (e.g. "Scale (resize)").
+        description:
+          type: string
+          description: One-line description of what the node does.
+        streams:
+          type: array
+          description: Media stream types the node operates on.
+          items:
+            type: string
+            enum: [video, audio, subtitle, data]
+        num_inputs:
+          type: integer
+          description: Number of input pads (0 for sources).
+        num_outputs:
+          type: integer
+          description: Number of output pads (0 for sinks).
+        common:
+          type: boolean
+          description: Whether this node appears in the "Common" palette section.
+        friendly_name:
+          type: string
+          description: Alternative human-friendly name shown when the "Friendly names" toggle is on.
+        aliases:
+          type: array
+          description: Search synonyms (e.g. ["h264"] for libx264).
+          items:
+            type: string
+
+    # ── Example listing ──────────────────────────────────────────────────────
+    ExampleEntry:
+      type: object
+      required: [name, url]
+      properties:
+        name:
+          type: string
+          description: Display name derived from the example filename.
+        url:
+          type: string
+          description: URL to fetch the raw example JSON (e.g. "/examples/01_trim_clip.json").
+
+    # ── File browser ─────────────────────────────────────────────────────────
+    FileEntry:
+      type: object
+      required: [name, path, is_dir]
+      properties:
+        name:
+          type: string
+          description: Filename component only (no directory prefix).
+        path:
+          type: string
+          description: Absolute path on the server filesystem.
+        is_dir:
+          type: boolean
+        size:
+          type: integer
+          format: int64
+          description: File size in bytes. Omitted for directories.
+
+    FileListResponse:
+      type: object
+      required: [path, entries]
+      properties:
+        path:
+          type: string
+          description: Absolute, normalised path that was listed.
+        parent:
+          type: string
+          description: Absolute path of the parent directory. Empty when at a filesystem root.
+        entries:
+          type: array
+          items:
+            $ref: "#/components/schemas/FileEntry"
+        drives:
+          type: array
+          description: >
+            Mounted drive/volume roots (e.g. "C:\\" on Windows). `null` / absent on
+            non-Windows platforms.
+          items:
+            type: string
+        roots:
+          type: array
+          description: Shortcut roots the file picker should expose ($HOME, cwd, "/", mounted volumes).
+          items:
+            type: string
+
+    MkdirRequest:
+      type: object
+      required: [path, name]
+      properties:
+        path:
+          type: string
+          description: >
+            Absolute path of the parent directory inside which the new folder
+            will be created. Must be within the server's allowed roots.
+        name:
+          type: string
+          description: >
+            New directory name — a single path component with no separators
+            and no `.` or `..` components. Max body size: 4 KiB.
+
+    MkdirResponse:
+      type: object
+      required: [path]
+      properties:
+        path:
+          type: string
+          description: Absolute path of the newly created directory.
+
+    # ── Probe ────────────────────────────────────────────────────────────────
+    ProbeRequest:
+      type: object
+      required: [url]
+      properties:
+        url:
+          type: string
+          description: >
+            Local file path or any URL accepted by libavformat (http://, rtmp://,
+            device paths, etc.).
+        format:
+          type: string
+          description: >
+            Optional libavformat short name (e.g. "dshow", "v4l2", "avfoundation",
+            "gdigrab"). Required for device inputs that cannot be auto-detected.
+        options:
+          type: object
+          description: >
+            Arbitrary key/value AVFormat options passed to the demuxer open call
+            (e.g. {"video_size": "1280x720", "framerate": "30"}).
+          additionalProperties:
+            type: string
+
+    ProbedStream:
+      type: object
+      required: [index, type]
+      properties:
+        index:
+          type: integer
+          description: Zero-based stream index within the container.
+        type:
+          type: string
+          description: Media type.
+          enum: [video, audio, subtitle, data]
+        codec:
+          type: string
+          description: Codec short name (e.g. "h264", "aac").
+        codec_tag:
+          type: string
+          description: FourCC codec tag string (e.g. "avc1").
+        profile:
+          type: string
+          description: Encoder profile name (e.g. "High", "LC").
+        level:
+          type: integer
+          description: Codec level (video streams only; 0 if not set).
+        bit_rate:
+          type: integer
+          format: int64
+          description: Stream bit-rate in bits/second.
+        bit_depth:
+          type: integer
+        bits_per_coded_sample:
+          type: integer
+        bits_per_raw_sample:
+          type: integer
+        width:
+          type: integer
+          description: Frame width in pixels (video only).
+        height:
+          type: integer
+          description: Frame height in pixels (video only).
+        pix_fmt:
+          type: string
+          description: libavutil pixel format name (e.g. "yuv420p").
+        frame_rate:
+          type: string
+          description: Average frame rate formatted as "num/den" or decimal string.
+        r_frame_rate:
+          type: string
+          description: Real (container) frame rate as "num/den".
+        sar:
+          type: string
+          description: Sample aspect ratio as "num:den".
+        field_order:
+          type: string
+          description: Interlacing field order (e.g. "progressive", "tt").
+        color_space:
+          type: string
+          description: YCbCr colour space (e.g. "bt709").
+        color_range:
+          type: string
+          description: Luma/chroma range ("tv" or "pc" / "limited" / "full").
+        color_primaries:
+          type: string
+        color_transfer:
+          type: string
+          description: Transfer characteristic (e.g. "bt709", "smpte2084").
+        sample_rate:
+          type: integer
+          description: Audio sample rate in Hz.
+        sample_fmt:
+          type: string
+          description: libavutil sample format name (e.g. "fltp").
+        channels:
+          type: integer
+          description: Number of audio channels.
+        channel_layout:
+          type: string
+          description: Named channel layout (e.g. "stereo", "5.1(side)").
+        language:
+          type: string
+          description: ISO-639-2 language tag from stream metadata.
+        duration_sec:
+          type: number
+          format: double
+          description: Stream duration in seconds.
+        start_sec:
+          type: number
+          format: double
+          description: Stream start time in seconds.
+        time_base_num:
+          type: integer
+          description: Numerator of the stream timebase.
+        time_base_den:
+          type: integer
+          description: Denominator of the stream timebase.
+
+    ProbeResponse:
+      type: object
+      required: [url, streams]
+      properties:
+        url:
+          type: string
+        streams:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProbedStream"
+        file_mtime:
+          type: integer
+          format: int64
+          description: >
+            Last-modified time of a local file as a Unix timestamp (seconds).
+            Zero / absent for network streams and device inputs.
+
+    # ── JobConfig (abbreviated — full schema in schema/v1.1.json) ────────────
+    JobConfig:
+      type: object
+      description: >
+        A full MediaMolder pipeline configuration. The authoritative schema is
+        defined in `schema/v1.1.json`. This abbreviated entry covers the
+        required top-level keys accepted / returned by the API.
+      required: [schema_version, nodes, edges]
+      properties:
+        schema_version:
+          type: string
+          description: Schema version string, e.g. "1.1" or "1.2".
+        nodes:
+          type: array
+          description: Ordered list of graph nodes (inputs, filters, encoders, outputs, processors).
+          items:
+            type: object
+        edges:
+          type: array
+          description: Directed edges connecting node output pads to node input pads.
+          items:
+            type: object
+        global_options:
+          type: object
+          description: Top-level FFmpeg global options (threads, loglevel, realtime, etc.).
+        assets:
+          type: object
+          description: Named asset registry (fonts, LUTs, ML models). Keys are asset names.
+          additionalProperties:
+            type: object
+            required: [path]
+            properties:
+              path:
+                type: string
+                description: Absolute or relative path to the asset file.
+              kind:
+                type: string
+                enum: [font, model, lut, other]
+              description:
+                type: string
+
+    # ── Validation ───────────────────────────────────────────────────────────
+    ValidationIssue:
+      type: object
+      required: [severity, code, message]
+      properties:
+        severity:
+          type: string
+          enum: [ERROR, WARNING, INFO]
+        code:
+          type: string
+          description: Machine-readable issue code (e.g. "PARSE_ERROR", "MISSING_ENCODER").
+        location:
+          type: string
+          description: >
+            Node ID or path within the config that triggered the issue
+            (e.g. "nodes[2]", "output:out0").
+        message:
+          type: string
+          description: Human-readable description of the issue.
+        suggestion:
+          type: string
+          description: Optional actionable hint for the user.
+        fix:
+          type: object
+          description: >
+            Optional machine-applicable one-click repair. Exactly one of
+            `insert_filter` or `set_output_field` will be populated.
+          properties:
+            insert_filter:
+              type: object
+              description: Insert a filter node immediately before `before_node_id`.
+              required: [before_node_id, filter_name]
+              properties:
+                before_node_id:
+                  type: string
+                filter_name:
+                  type: string
+                params:
+                  type: object
+                  additionalProperties:
+                    type: string
+            set_output_field:
+              type: object
+              description: Set a single string field on a named output node.
+              required: [output_id, field, value]
+              properties:
+                output_id:
+                  type: string
+                field:
+                  type: string
+                value:
+                  type: string
+
+    ValidationReport:
+      type: object
+      required: [issues, has_errors, has_warnings]
+      properties:
+        issues:
+          type: array
+          description: All detected issues. Empty array (never null) when the config is valid.
+          items:
+            $ref: "#/components/schemas/ValidationIssue"
+        has_errors:
+          type: boolean
+          description: True when at least one ERROR-severity issue is present.
+        has_warnings:
+          type: boolean
+          description: True when at least one WARNING-severity issue is present.
+
+    # ── Run / events ─────────────────────────────────────────────────────────
+    RunResponse:
+      type: object
+      required: [job_id]
+      properties:
+        job_id:
+          type: string
+          description: >
+            Opaque hex job identifier. Pass to `GET /api/events/{jobId}` to
+            receive SSE progress and to `POST /api/cancel/{jobId}` to abort.
+
+    CancelResponse:
+      type: object
+      required: [ok]
+      properties:
+        ok:
+          type: boolean
+          enum: [true]
+
+    # SSE event shapes (described inline; not used as request/response schemas)
+    SSEStateEvent:
+      type: object
+      required: [from, to]
+      properties:
+        from:
+          type: string
+          description: Previous pipeline state (e.g. "Ready").
+        to:
+          type: string
+          description: New pipeline state (e.g. "Playing", "Done").
+
+    SSEMetricsEvent:
+      type: object
+      properties:
+        State:
+          type: string
+        Elapsed:
+          type: number
+          format: double
+          description: Elapsed wall-clock seconds.
+        Nodes:
+          type: array
+          items:
+            type: object
+            properties:
+              NodeID:
+                type: string
+              Frames:
+                type: integer
+                format: int64
+              FPS:
+                type: number
+                format: double
+              Errors:
+                type: integer
+                format: int64
+              AvgLatency:
+                type: number
+                format: double
+        Perf:
+          type: array
+          items:
+            type: object
+            properties:
+              NodeID:
+                type: string
+              FPS:
+                type: number
+                format: double
+              FPSTarget:
+                type: number
+                format: double
+              FPSDeficit:
+                type: number
+                format: double
+              ActiveFrac:
+                type: number
+                format: double
+              IdleFrac:
+                type: number
+                format: double
+              StalledFrac:
+                type: number
+                format: double
+
+    SSEErrorEvent:
+      type: object
+      required: [error]
+      properties:
+        node_id:
+          type: string
+        stage:
+          type: string
+        error:
+          type: string
+
+    SSEDoneEvent:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [succeeded, failed, canceled]
+        error:
+          type: string
+          description: Error message when status is "failed".
+
+    # ── Convert / export command ─────────────────────────────────────────────
+    ConvertCmdRequest:
+      type: object
+      required: [command]
+      properties:
+        command:
+          type: string
+          description: >
+            Verbatim FFmpeg command line to import (with or without a leading
+            "ffmpeg" token). Example: `"ffmpeg -i in.mp4 -c:v libx264 out.mp4"`.
+
+    ConvertCmdResponse:
+      type: object
+      required: [config]
+      properties:
+        config:
+          $ref: "#/components/schemas/JobConfig"
+        unsupported:
+          type: array
+          description: >
+            List of flags or features present in the command that were not
+            imported (deprecated options, Wave 5–7 schema-promoted flags, etc.).
+          items:
+            type: string
+
+    ExportCmdRequest:
+      type: object
+      required: [config]
+      properties:
+        config:
+          $ref: "#/components/schemas/JobConfig"
+
+    ExportCmdResponse:
+      type: object
+      required: [command, lines, unsupported]
+      properties:
+        command:
+          type: string
+          description: Full single-line FFmpeg command string.
+        lines:
+          type: array
+          description: >
+            Same command split into display lines (one flag/value pair per line)
+            for the GUI's multi-line CLI panel.
+          items:
+            type: string
+        unsupported:
+          type: array
+          description: >
+            MediaMolder-only features that have no FFmpeg CLI equivalent
+            (e.g. `go_processor` nodes, asset registry, two-pass loudness).
+          items:
+            type: string
+
+    # ── AVOption descriptors ─────────────────────────────────────────────────
+    AVOptionConstant:
+      type: object
+      required: [name, value]
+      properties:
+        name:
+          type: string
+          description: Human-readable constant name (e.g. "yuv420p", "high").
+        value:
+          type: number
+          format: double
+        help:
+          type: string
+
+    AVOption:
+      type: object
+      required: [name, type]
+      properties:
+        name:
+          type: string
+          description: AVOption key name used in filter/encoder params.
+        alias:
+          type: string
+          description: Short alias (if any).
+        help:
+          type: string
+          description: Help text sourced from the FFmpeg option table.
+        type:
+          type: string
+          description: AVOption type string (e.g. "int", "float", "string", "flags", "const", "rational", "binary", "dict", "image_size", "video_rate", "color", "bool").
+        default:
+          description: Default value (type varies with `type`).
+        min:
+          type: number
+          format: double
+          description: Minimum numeric value. Absent for non-numeric types.
+        max:
+          type: number
+          format: double
+          description: Maximum numeric value. Absent for non-numeric types.
+        constants:
+          type: array
+          description: Named constants for `flags` and `int` options with enumerated values.
+          items:
+            $ref: "#/components/schemas/AVOptionConstant"
+        is_private:
+          type: boolean
+          description: True for codec-private options; false for generic AVCodecContext options.
+        expression:
+          type: boolean
+          description: True when this option is parsed by libavutil's expression evaluator.
+        variables:
+          type: array
+          description: >
+            Variable names available inside the expression string for this option.
+            Populated only when `expression` is true.
+          items:
+            type: string
+
+    FilterOptionsInfo:
+      type: object
+      required: [name, options]
+      properties:
+        name:
+          type: string
+          description: Canonical filter name.
+        description:
+          type: string
+          description: Short description from libavfilter.
+        options:
+          type: array
+          items:
+            $ref: "#/components/schemas/AVOption"
+
+    EncoderInfo:
+      type: object
+      required: [name, media_type, options]
+      properties:
+        name:
+          type: string
+          description: Canonical encoder name (e.g. "libx264", "aac").
+        long_name:
+          type: string
+          description: Full encoder name from libavcodec.
+        media_type:
+          type: string
+          enum: [video, audio, subtitle, data]
+        options:
+          type: array
+          description: >
+            Merged list of generic AVCodecContext options and codec-private options,
+            filtered to those relevant to the encoder's media type.
+          items:
+            $ref: "#/components/schemas/AVOption"
+
+    # ── Expression eval ──────────────────────────────────────────────────────
+    EvalExpressionResponse:
+      type: object
+      required: [filter, expr, variables, ok]
+      properties:
+        filter:
+          type: string
+          description: Filter name echoed from the path parameter.
+        expr:
+          type: string
+          description: Expression string echoed from the query parameter.
+        variables:
+          type: object
+          description: >
+            All variable bindings used during evaluation. Keys are variable names;
+            values are the float64 values that were bound (0 when not supplied by
+            the caller).
+          additionalProperties:
+            type: number
+            format: double
+        ok:
+          type: boolean
+          description: True when the expression parsed and evaluated successfully.
+        value:
+          type: number
+          format: double
+          description: Numeric result. Present only when `ok` is true.
+        error:
+          type: string
+          description: av_strerror() message. Present only when `ok` is false.
+
+    # ── Device listing ───────────────────────────────────────────────────────
+    DeviceEntry:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          description: Device name as reported by the libavdevice driver.
+        description:
+          type: string
+
+    # ── HW acceleration ──────────────────────────────────────────────────────
+    HWCodecInfo:
+      type: object
+      required: [name, role]
+      properties:
+        name:
+          type: string
+          description: Codec name (e.g. "h264_cuvid", "hevc_vaapi").
+        role:
+          type: string
+          enum: [encode, decode]
+        media_type:
+          type: string
+          enum: [video, audio]
+        note:
+          type: string
+          description: Capability limitation note for this GPU/driver combination.
+
+    HWAccelEntry:
+      type: object
+      required: [type, available]
+      properties:
+        type:
+          type: string
+          description: Hardware acceleration type string (e.g. "cuda", "vaapi", "videotoolbox", "d3d11va", "amf").
+        available:
+          type: boolean
+          description: Whether the device was successfully opened at startup.
+        error:
+          type: string
+          description: >
+            Reason the device could not be opened. Present only when
+            `available` is false.
+        display_name:
+          type: string
+          description: >
+            Human-readable GPU/device name (e.g. "NVIDIA GeForce RTX 4090").
+            Present only when `available` is true.
+        sw_formats:
+          type: array
+          description: Supported software pixel formats for upload/download.
+          items:
+            type: string
+        max_width:
+          type: integer
+          description: Maximum supported frame width in pixels. 0 means not reported.
+        max_height:
+          type: integer
+          description: Maximum supported frame height in pixels. 0 means not reported.
+        codecs:
+          type: array
+          description: Codecs supported by this hardware device.
+          items:
+            $ref: "#/components/schemas/HWCodecInfo"
+        filters:
+          type: array
+          description: libavfilter hardware-accelerated filter names available on this device.
+          items:
+            type: string
+        cuda_sm:
+          type: string
+          description: CUDA compute capability as "major.minor" (e.g. "8.9"). CUDA only.
+        cuda_arch:
+          type: string
+          description: CUDA architecture name (e.g. "Ada Lovelace"). CUDA only.
+
+    # ── TwelveLabs ───────────────────────────────────────────────────────────
+    TwelveLabsModelSpec:
+      type: object
+      required: [model_name]
+      properties:
+        model_name:
+          type: string
+          description: TwelveLabs model identifier (e.g. "marengo3.0", "pegasus1.1").
+        model_options:
+          type: array
+          description: Optional model-level feature flags (e.g. ["visual", "audio"]).
+          items:
+            type: string
+
+    TwelveLabsIndex:
+      type: object
+      required: [_id, index_name, models, created_at]
+      properties:
+        _id:
+          type: string
+          description: Opaque TwelveLabs index ID.
+        index_name:
+          type: string
+        models:
+          type: array
+          items:
+            $ref: "#/components/schemas/TwelveLabsModelSpec"
+        created_at:
+          type: string
+          description: ISO 8601 creation timestamp.
+
+    TwelveLabsSearchResult:
+      type: object
+      required: [video_id, start, end, score, confidence]
+      properties:
+        video_id:
+          type: string
+          description: TwelveLabs video ID of the matching clip.
+        start:
+          type: number
+          format: double
+          description: Match start time in seconds.
+        end:
+          type: number
+          format: double
+          description: Match end time in seconds.
+        score:
+          type: number
+          format: double
+          description: Relevance score in [0, 1].
+        confidence:
+          type: string
+          description: Human-readable confidence level ("low", "medium", "high").
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Paths
+# ─────────────────────────────────────────────────────────────────────────────
+paths:
+
+  # ── Health ─────────────────────────────────────────────────────────────────
+  /api/health:
+    get:
+      operationId: getHealth
+      summary: Liveness probe
+      description: Returns `{"status":"ok"}`. Use this to check that the server is up.
+      responses:
+        "200":
+          description: Server is healthy.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+        "500":
+          description: Server error.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "4XX":
+          description: Unused; included for schema completeness.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  # ── Node catalogue ──────────────────────────────────────────────────────────
+  /api/nodes:
+    get:
+      operationId: listNodes
+      summary: List available node types
+      description: >
+        Returns the full palette catalogue assembled from the live libavfilter,
+        libavcodec, and `go_processor` registries. The response is a flat array
+        — the frontend groups entries by `category` / `subcategory`. Responses
+        are generated on each request (no ETag / caching headers are set).
+      responses:
+        "200":
+          description: Array of node catalogue entries.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/NodeCatalogEntry"
+        "500":
+          description: Internal error building the catalogue.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "4XX":
+          description: Unused; included for schema completeness.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  # ── Examples ───────────────────────────────────────────────────────────────
+  /api/examples:
+    get:
+      operationId: listExamples
+      summary: List bundled example pipelines
+      description: >
+        Returns a list of example job JSON files bundled with the server
+        (or served from the `--examples-dir` directory). Each entry includes
+        a display name and a URL you can fetch to load the full pipeline JSON.
+      responses:
+        "200":
+          description: Array of example entries.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ExampleEntry"
+        "500":
+          description: Examples directory unreadable.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "4XX":
+          description: Unused; included for schema completeness.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /examples/{file}:
+    get:
+      operationId: getExampleFile
+      summary: Fetch a raw example pipeline JSON file
+      parameters:
+        - name: file
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Filename of the example (e.g. "01_trim_clip.json").
+      responses:
+        "200":
+          description: Raw JSON file content.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobConfig"
+        "404":
+          description: File not found.
+
+  # ── File browser ────────────────────────────────────────────────────────────
+  /api/files:
+    get:
+      operationId: listDir
+      summary: List a directory for the file picker
+      description: >
+        Returns a directory listing suitable for the GUI's file picker.
+        The path must resolve inside one of the server's allowed roots
+        ($HOME, cwd, "/", and mounted volumes on Unix; drive letters on Windows).
+
+        Dotfiles (names starting with ".") are always excluded.
+      parameters:
+        - name: path
+          in: query
+          required: false
+          schema:
+            type: string
+          description: >
+            Absolute or `~`-prefixed directory path to list.
+            Defaults to `$HOME`. If the path does not exist, the server walks
+            up to the nearest existing ancestor and returns that instead.
+        - name: filter
+          in: query
+          required: false
+          schema:
+            type: string
+          description: >
+            Comma-separated file extensions to include (without leading dot).
+            Example: `mp4,mkv,mov`. Omit or leave empty to include all files.
+            Directories are always included regardless of this filter.
+        - name: dirs_only
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: ["0", "1"]
+          description: >
+            Set to `"1"` to omit files and return only directories.
+            Useful for output-folder selection. Defaults to `"0"`.
+      responses:
+        "200":
+          description: Directory listing.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FileListResponse"
+        "400":
+          description: Path is invalid or outside allowed roots.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Permission denied by the OS.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: No existing ancestor found for the given path.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/files/mkdir:
+    post:
+      operationId: mkdir
+      summary: Create a new directory
+      description: >
+        Creates a single new directory inside an existing parent. Used by the
+        file-save dialog's "New folder" button. The parent directory must exist
+        and be within the server's allowed roots. The new name must be a single
+        safe path component — path separators, `.`, and `..` are rejected.
+
+        Request body size is capped at **4 KiB**.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MkdirRequest"
+      responses:
+        "200":
+          description: Directory created successfully.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MkdirResponse"
+        "400":
+          description: >
+            Missing fields, invalid folder name (contains separators or `.`/`..`),
+            or path is outside allowed roots.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Parent directory does not exist.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: A file or directory with that name already exists.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Permission denied by the OS.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  # ── Single-file read/write ──────────────────────────────────────────────────
+  /api/file:
+    get:
+      operationId: readFile
+      summary: Read a file's text content
+      description: >
+        Returns the raw text bytes of a file. The path must resolve to a
+        regular file within the server's allowed roots. Used by the GUI's
+        "Load from disk" flow.
+      parameters:
+        - name: path
+          in: query
+          required: true
+          schema:
+            type: string
+          description: Absolute or `~`-prefixed path to a regular file.
+      responses:
+        "200":
+          description: File content as plain text.
+          content:
+            text/plain:
+              schema:
+                type: string
+        "400":
+          description: Missing path, path is a directory, or outside allowed roots.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Permission denied.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: File not found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+    put:
+      operationId: writeFile
+      summary: Write text content to a file
+      description: >
+        Atomically overwrites a file with new text content using a
+        write-then-rename strategy (writes to a temp file in the same
+        directory, then renames over the target). The path must be within
+        the server's allowed roots.
+
+        Request body size is capped at **10 MiB**.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [path, content]
+              properties:
+                path:
+                  type: string
+                  description: Absolute or `~`-prefixed destination path.
+                content:
+                  type: string
+                  description: Full text content to write.
+      responses:
+        "204":
+          description: File written successfully. No body.
+        "400":
+          description: Missing or invalid fields, or path outside allowed roots.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Permission denied.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Write or rename failed (disk full, cross-device move, etc.).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  # ── Probe ──────────────────────────────────────────────────────────────────
+  /api/probe:
+    post:
+      operationId: probe
+      summary: Probe media stream metadata
+      description: >
+        Opens the given URL or file path with libavformat, calls
+        `avformat_find_stream_info`, and returns per-stream technical metadata.
+        No packets are decoded, so probing is fast and safe to call on every
+        input-node focus event.
+
+        Device inputs (dshow, v4l2, avfoundation, gdigrab) can block
+        indefinitely; the server enforces a **2-second timeout** and returns
+        504 if the device does not respond.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProbeRequest"
+      responses:
+        "200":
+          description: Probe succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProbeResponse"
+        "400":
+          description: Missing `url` field or malformed JSON.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "422":
+          description: libavformat could not open the URL (codec not found, network error, etc.).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "504":
+          description: Device open timed out (> 2 s).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  # ── Validate ───────────────────────────────────────────────────────────────
+  /api/validate:
+    post:
+      operationId: validate
+      summary: Validate a pipeline configuration
+      description: >
+        Parses a `JobConfig` and runs structural validation. Always returns
+        HTTP 200 with a `ValidationReport` — check `has_errors` in the
+        response body for the actual pass/fail result.
+
+        Two validation phases:
+        - **Phase A** (static): topology, codec/container compatibility, filter
+          arity, required fields — always runs.
+        - **Phase B** (I/O): file existence, format detection — skipped when
+          `?no_probe=1` is set.
+
+        Request body size is capped at **1 MiB**.
+      parameters:
+        - name: no_probe
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: ["0", "1"]
+          description: >
+            Set to `"1"` to skip Phase B (file/network I/O) and run only
+            static structural checks. Useful for fast validation while the user
+            is still editing.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/JobConfig"
+      responses:
+        "200":
+          description: >
+            Validation completed. Check `has_errors` / `has_warnings` in the
+            response body. HTTP 200 does **not** imply the config is valid.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ValidationReport"
+        "400":
+          description: Request body exceeds 1 MiB or is not valid UTF-8.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  # ── Run ────────────────────────────────────────────────────────────────────
+  /api/run:
+    post:
+      operationId: runJob
+      summary: Start a pipeline job
+      description: >
+        Parses the posted `JobConfig`, starts a pipeline run in a background
+        goroutine, and returns a `job_id`. Connect to
+        `GET /api/events/{jobId}` immediately after to receive live progress.
+
+        Request body size is capped at **1 MiB**.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/JobConfig"
+      responses:
+        "200":
+          description: Job started successfully.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RunResponse"
+        "400":
+          description: Body exceeds 1 MiB, is not valid JSON, or the config cannot be parsed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Internal error starting the job (e.g. graph build failure).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/cancel/{jobId}:
+    post:
+      operationId: cancelJob
+      summary: Cancel a running job
+      description: >
+        Cancels the job's `context.Context` so the pipeline unwinds cleanly.
+        The final `done` SSE event will carry `{"status":"canceled"}`.
+      parameters:
+        - name: jobId
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Job ID returned by `POST /api/run`.
+      responses:
+        "200":
+          description: Cancellation signal sent.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CancelResponse"
+        "404":
+          description: No job with that ID exists.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/events/{jobId}:
+    get:
+      operationId: jobEvents
+      summary: Stream job events (Server-Sent Events)
+      description: >
+        Streams typed Server-Sent Events for the given job. Connect using the
+        browser `EventSource` API or any SSE client.
+
+        The response uses `Content-Type: text/event-stream`. Each event has an
+        `event:` name and a `data:` payload serialised as JSON.
+
+        | `event` name | Payload schema | Meaning |
+        |---|---|---|
+        | `state` | `SSEStateEvent` | Pipeline state transition |
+        | `metrics` | `SSEMetricsEvent` | Periodic throughput snapshot (~2 Hz) |
+        | `error` | `SSEErrorEvent` | Per-node failure |
+        | `log` | `{"message": string}` | Informational message (e.g. EOS) |
+        | `metadata` | `pipeline.ProcessorMetadata` | Custom processor metadata event |
+        | `done` | `SSEDoneEvent` | Terminal event; stream closes after this |
+
+        The server sends an initial `": connected"` comment to flush headers.
+        The stream closes when the job finishes or the client disconnects.
+      parameters:
+        - name: jobId
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Job ID returned by `POST /api/run`.
+      responses:
+        "200":
+          description: SSE stream opened.
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                description: Raw SSE stream — see event table in description.
+        "404":
+          description: No job with that ID exists.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  # ── Convert / Export CLI ───────────────────────────────────────────────────
+  /api/convert-cmd:
+    post:
+      operationId: convertCmd
+      summary: Import an FFmpeg command line as a JobConfig
+      description: >
+        Parses a verbatim FFmpeg command line and converts it to a
+        MediaMolder `JobConfig`. Any parse error is returned as 422 with a
+        descriptive message so the GUI can show actionable feedback.
+
+        The `unsupported` array in the success response lists flags that were
+        parsed but not imported — deprecated options, out-of-scope flags, or
+        Wave 5–7 schema-promoted options that have dedicated first-class fields.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ConvertCmdRequest"
+      responses:
+        "200":
+          description: Command parsed and converted successfully.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConvertCmdResponse"
+        "400":
+          description: Malformed JSON request body.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "422":
+          description: The FFmpeg command could not be parsed (syntax error, unknown flag, etc.).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/export-cmd:
+    post:
+      operationId: exportCmd
+      summary: Export a JobConfig as an FFmpeg command line
+      description: >
+        Converts a `JobConfig` to an equivalent `ffmpeg …` command line.
+        The export is best-effort — MediaMolder-only features (asset registry,
+        `go_processor` nodes, two-pass loudness) are listed in `unsupported`
+        rather than causing an error.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExportCmdRequest"
+      responses:
+        "200":
+          description: Export succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExportCmdResponse"
+        "400":
+          description: Missing or malformed `config` field.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  # ── Encoder options ─────────────────────────────────────────────────────────
+  /api/encoders/{name}/options:
+    get:
+      operationId: getEncoderOptions
+      summary: Get AVOption descriptors for an encoder
+      description: >
+        Returns the full AVOption table for the named encoder: generic
+        `AVCodecContext` options merged with codec-private options, filtered
+        to those relevant to the encoder's media type. Results are cached
+        in-memory after the first call.
+
+        Use the `name` field from `GET /api/nodes` (e.g. `libx264`, `aac`,
+        `hevc_nvenc`).
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Canonical encoder name as returned by `GET /api/nodes`.
+      responses:
+        "200":
+          description: Encoder option descriptors.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EncoderInfo"
+        "400":
+          description: Name is empty.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: No encoder with that name is compiled into the linked libavcodec.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  # ── Filter options ──────────────────────────────────────────────────────────
+  /api/filters/{name}/options:
+    get:
+      operationId: getFilterOptions
+      summary: Get AVOption descriptors for a filter
+      description: >
+        Returns AVOption descriptors for every private option on the named
+        libavfilter filter. Expression-typed options are annotated with
+        `expression: true` and a `variables` list. Results are cached
+        in-memory after the first call.
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Canonical filter name (e.g. "scale", "drawtext", "overlay").
+      responses:
+        "200":
+          description: Filter option descriptors.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FilterOptionsInfo"
+        "400":
+          description: Name is empty.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: No filter with that name is compiled into the linked libavfilter.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  # ── Expression evaluator ────────────────────────────────────────────────────
+  /api/filters/{name}/eval-expression:
+    get:
+      operationId: evalExpression
+      summary: Evaluate a libavutil expression string
+      description: >
+        Evaluates `expr` in the context of the named filter using
+        libavutil's expression parser and the variable bindings supplied as
+        additional query parameters. Always returns HTTP 200; check the `ok`
+        field in the response body for the evaluation result.
+
+        **Variable bindings:** any query parameter other than `expr` is
+        interpreted as a float64 variable binding. Parameters that cannot be
+        parsed as float64 are silently ignored. Variables not supplied default
+        to `0` — the same convention used by libavfilter when a frame is not
+        yet available.
+
+        The curated variable set for the filter (e.g. `t`, `n`, `tw`, `th`,
+        `main_w`, `main_h` for `drawtext`) is echoed back in the `variables`
+        field so the GUI can surface "unknown variable" hints.
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Filter name (e.g. "drawtext", "overlay", "volume").
+        - name: expr
+          in: query
+          required: true
+          schema:
+            type: string
+          description: >
+            libavutil expression string to evaluate.
+            Examples: `"between(t,1,8)"`, `"(main_w-tw)/2"`, `"0.5*PTS"`.
+        - name: t
+          in: query
+          required: false
+          schema:
+            type: number
+            format: double
+          description: >
+            Time in seconds. One of many optional variable bindings — any
+            recognised variable for the filter can be supplied as a query
+            parameter with the same name.
+      responses:
+        "200":
+          description: >
+            Evaluation result. HTTP 200 regardless of whether the expression
+            was valid — check `ok` in the body.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EvalExpressionResponse"
+        "400":
+          description: Missing `expr` or `name` parameters.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  # ── Devices ─────────────────────────────────────────────────────────────────
+  /api/devices:
+    get:
+      operationId: listDevices
+      summary: List available capture devices
+      description: >
+        Returns the devices enumerated by each libavdevice driver compiled
+        into the linked FFmpeg (AVFoundation on macOS, dshow/gdigrab on
+        Windows, v4l2/alsa on Linux). The list is generated at request time.
+      responses:
+        "200":
+          description: Array of device entries, possibly empty.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/DeviceEntry"
+        "500":
+          description: Device enumeration error.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "4XX":
+          description: Unused; included for schema completeness.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  # ── HW acceleration ──────────────────────────────────────────────────────────
+  /api/hwaccel:
+    get:
+      operationId: listHWAccel
+      summary: List hardware acceleration availability
+      description: >
+        Returns every hardware acceleration type compiled into the linked FFmpeg,
+        together with its runtime availability probed via `av_hwdevice_ctx_create`.
+        The probe runs once at server startup (background goroutine); subsequent
+        calls return the cached result instantly.
+
+        Available entries include the GPU display name, supported pixel formats,
+        maximum frame dimensions, codec support, and (for CUDA) NVENC/NVDEC
+        capability tables.
+      responses:
+        "200":
+          description: Array of hardware acceleration entries (never null; may be empty).
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/HWAccelEntry"
+        "500":
+          description: Hardware probe error.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "4XX":
+          description: Unused; included for schema completeness.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  # ── TwelveLabs ──────────────────────────────────────────────────────────────
+  /api/twelvelabs/ping:
+    get:
+      operationId: twelvelabsPing
+      summary: Check TwelveLabs API key validity
+      description: >
+        Attempts to list indexes using the configured TwelveLabs API key
+        (read from the `TWELVELABS_API_KEY` environment variable). Returns
+        `{"ok":true}` on success. Use this before opening the TwelveLabs
+        panel to surface misconfigured credentials early.
+      responses:
+        "200":
+          description: API key is valid and the TwelveLabs API is reachable.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok]
+                properties:
+                  ok:
+                    type: boolean
+                    enum: [true]
+        "401":
+          description: API key is missing or invalid.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "502":
+          description: TwelveLabs API returned an error or is unreachable.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/twelvelabs/indexes:
+    get:
+      operationId: twelvelabsListIndexes
+      summary: List TwelveLabs indexes
+      description: >
+        Lists all indexes associated with the configured API key.
+        Requests are proxied to the TwelveLabs v1.3 API with a 30-second
+        timeout.
+      responses:
+        "200":
+          description: Array of indexes.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [indexes]
+                properties:
+                  indexes:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/TwelveLabsIndex"
+        "401":
+          description: API key missing or invalid.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "502":
+          description: TwelveLabs API error.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+    post:
+      operationId: twelvelabsCreateIndex
+      summary: Create a TwelveLabs index
+      description: >
+        Creates a new index on TwelveLabs. If `models` is omitted, a single
+        `marengo3.0` model is attached by default.
+
+        Request body size is capped at **64 KiB**.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [index_name]
+              properties:
+                index_name:
+                  type: string
+                  description: Human-readable index name. Must be non-empty.
+                models:
+                  type: array
+                  description: >
+                    Models to attach to the index. Defaults to
+                    `[{"model_name":"marengo3.0"}]` when omitted.
+                  items:
+                    $ref: "#/components/schemas/TwelveLabsModelSpec"
+      responses:
+        "200":
+          description: Index created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TwelveLabsIndex"
+        "400":
+          description: Missing `index_name` or malformed body.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: API key missing or invalid.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "502":
+          description: TwelveLabs API error.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/twelvelabs/indexes/{id}:
+    delete:
+      operationId: twelvelabsDeleteIndex
+      summary: Delete a TwelveLabs index
+      description: Deletes the index with the given ID. This operation is permanent.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: TwelveLabs index ID (the `_id` field from list/create responses).
+      responses:
+        "200":
+          description: Index deleted.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [deleted]
+                properties:
+                  deleted:
+                    type: string
+                    description: The ID of the deleted index.
+        "400":
+          description: Missing index ID.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: API key missing or invalid.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "502":
+          description: TwelveLabs API error (e.g. index not found).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/twelvelabs/search:
+    post:
+      operationId: twelvelabsSearch
+      summary: Search a TwelveLabs index
+      description: >
+        Sends a Marengo multimodal search query to TwelveLabs and returns
+        the matching video clips. Exactly one of `query` (text) or
+        `query_media_url` (image/audio URL) must be provided.
+
+        Defaults applied when fields are omitted:
+        - `search_options`: `["visual", "audio"]`
+        - `threshold`: `"medium"`
+        - `page_limit`: TwelveLabs default (typically 10)
+
+        Request body size is capped at **64 KiB**.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [index_id]
+              properties:
+                index_id:
+                  type: string
+                  description: TwelveLabs index ID to search within.
+                query:
+                  type: string
+                  description: >
+                    Natural-language text query (e.g. "person waving at the camera").
+                    Required when `query_media_url` is not set.
+                query_media_url:
+                  type: string
+                  description: >
+                    Image or audio URL to use as the search query.
+                    Required when `query` is not set.
+                search_options:
+                  type: array
+                  description: >
+                    Modalities to search across. Any combination of
+                    `"visual"`, `"audio"`, `"text_in_video"`, `"logo"`.
+                    Defaults to `["visual", "audio"]`.
+                  items:
+                    type: string
+                    enum: [visual, audio, text_in_video, logo]
+                threshold:
+                  type: string
+                  description: >
+                    Minimum confidence threshold. Lower values return more
+                    results with lower relevance.
+                  enum: [low, medium, high]
+                  default: medium
+                page_limit:
+                  type: integer
+                  description: >
+                    Maximum number of results to return. 0 uses the TwelveLabs
+                    API default (typically 10).
+      responses:
+        "200":
+          description: Search results.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [matches, count]
+                properties:
+                  matches:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/TwelveLabsSearchResult"
+                  count:
+                    type: integer
+                    description: Number of results returned.
+        "400":
+          description: Missing `index_id`, or neither `query` nor `query_media_url` provided.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: API key missing or invalid.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "502":
+          description: TwelveLabs API error.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
