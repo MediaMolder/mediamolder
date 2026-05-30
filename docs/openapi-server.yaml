@@ -60,6 +60,54 @@ components:
             format: uri
           description: Output artifact URLs (file://, s3://, or presigned https://)
 
+    ArtifactRef:
+      type: object
+      required: [uri]
+      properties:
+        uri:
+          type: string
+          format: uri
+        size:
+          type: integer
+          format: int64
+        etag:
+          type: string
+        checksum:
+          type: string
+        mime_type:
+          type: string
+
+    TaskRecord:
+      type: object
+      required: [task, status]
+      properties:
+        task:
+          type: object
+          description: The pipeline.Task document (task_id, job_id, stage_id, index, total, attempt, config, deadline)
+        status:
+          type: string
+          enum: [pending, running, succeeded, failed]
+        result:
+          type: object
+          nullable: true
+          description: TaskResult — present when status is succeeded or failed
+          properties:
+            outputs:
+              type: array
+              items:
+                $ref: "#/components/schemas/ArtifactRef"
+            error:
+              type: string
+            started_at:
+              type: string
+              format: date-time
+            finished_at:
+              type: string
+              format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
     UploadAllocResponse:
       type: object
       required: [token, upload_url, uri]
@@ -244,6 +292,34 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ArtifactList"
+        "401":
+          description: Missing or invalid token
+        "404":
+          description: Job not found
+
+  /v1/jobs/{id}/tasks:
+    get:
+      summary: List all tasks for a distributed job (Tier 2 / --mode=api only)
+      description: |
+        Returns the full task list for a Job submitted as schema_version "1.4".
+        Each entry includes the task ID, stage ID, index/total, status, and
+        result (when available). This endpoint is only available when the server
+        is running in `--mode=api`; Tier 1 (`--mode=server`) returns 404.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Task list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/TaskRecord"
         "401":
           description: Missing or invalid token
         "404":
