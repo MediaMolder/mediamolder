@@ -6,6 +6,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 ## [Unreleased]
 
 ### Added
+- **Distributed execution engine (Phase B).** `pipeline.Job` document model
+  (`schema/v1.4.json`); `internal/distributed/queue` (Queue interface +
+  in-memory adapter); `internal/distributed/state` (Store interface + SQLite
+  adapter via mattn/go-sqlite3); `internal/distributed/orchestrator`
+  (AcceptJob, stage chaining, `single` and `fanout_static` strategies, retry
+  logic); `internal/distributed/worker` (concurrent pipeline execution with
+  lease heartbeating); `internal/distributed/apiserver` (Tier 2 HTTP server
+  with `GET /v1/jobs/{id}/tasks` and SSE event-log replay). `mediamolder serve`
+  gains `--mode=api`, `--mode=worker`, `--queue`, `--state`, and `--workers`
+  flags. Tier 1 (`--mode=server`) is unchanged.
 - **Tier 1 remote server (Phase A).** `mediamolder serve` starts a TLS-capable
   HTTP server that accepts pipeline job submissions via a REST API (`POST /v1/jobs`)
   and streams events to clients via Server-Sent Events. Supports bearer-token

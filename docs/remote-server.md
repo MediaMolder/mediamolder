@@ -145,3 +145,93 @@ mediamolder job artifacts --backend=URL --token=TOKEN <job-id>
 ```
 
 The `MEDIAMOLDER_TOKEN` environment variable is used when `--token` is omitted.
+
+---
+
+## Distributed mode (`--mode=api` / `--mode=worker`)
+
+Phase B adds two new operating modes that together provide in-process distributed
+job execution backed by an in-memory queue and a SQLite state store. This is the
+recommended setup for single-host development and small-scale production.
+
+### `--mode=api` — API server + embedded workers
+
+Start a single binary that accepts Job documents, materialises tasks, and executes
+them internally using N embedded workers:
+
+```bash
+mediamolder serve \
+  --mode=api \
+  --addr=:8080 \
+  --workers=4 \
+  --state=sqlite:///var/lib/mediamolder/state.sqlite3 \
+  --auth-token-file=/etc/mediamolder/token
+```
+
+All four workers share the in-memory queue with the API server, so no external
+infrastructure is needed for development.
+
+### `--mode=worker` — Worker-only
+
+In a future multi-host deployment you can run API and worker processes separately.
+Until Phase C (real queue adapter), both processes must be in the same binary; this
+flag is provided for future compatibility:
+
+```bash
+mediamolder serve \
+  --mode=worker \
+  --workers=8 \
+  --state=sqlite:///var/lib/mediamolder/state.sqlite3
+```
+
+### New flags (api + worker modes)
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--mode` | `server` | Operating mode: `server` \| `api` \| `worker` |
+| `--queue` | `inmemory://` | Queue URI. Phase B supports `inmemory://` only. |
+| `--state` | `sqlite:///tmp/mediamolder-state.sqlite3` | State-store URI. Phase B supports `sqlite:///path`. |
+| `--workers` | `1` | Embedded worker goroutines (api mode only). |
+
+### Submitting a Job (schema_version "1.4")
+
+The `POST /v1/jobs` endpoint accepts both:
+
+- **Bare `pipeline.Config`** (schema_version "1.0"–"1.2"): wrapped in a single-task Job for
+  backward compatibility.
+- **`pipeline.Job`** (schema_version "1.4"): full distributed job with optional
+  `distribution` block.
+
+```bash
+curl -sX POST \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  --data @job.json \
+  http://localhost:8080/v1/jobs
+```
+
+Example `job.json` with a `fanout_static` strategy:
+
+```json
+{
+  "schema_version": "1.4",
+  "name": "encode-4-segments",
+  "config": { "schema_version": "1.0", "inputs": [...], "graph": {...}, "outputs": [...] },
+  "distribution": {
+    "stages": [
+      {
+        "id": "encode",
+        "strategy": { "kind": "fanout_static", "params": { "count": 4 } }
+      }
+    ]
+  }
+}
+```
+
+### Additional Tier 2 endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/v1/jobs/{id}/tasks` | List all tasks for a job with their status and results |
+| `GET` | `/v1/jobs/{id}/events` | SSE event log (replayed from SQLite, cursor via `?after=<id>`) |
+| `GET` | `/v1/jobs/{id}/artifacts` | Aggregate `ArtifactRef` list from all completed tasks |

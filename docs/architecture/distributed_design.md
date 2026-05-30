@@ -561,14 +561,15 @@ on a single worker, so users can move to Tier 2 without restructuring jobs.
 6. Updated README.md, docs/openapi-gui.yaml, docs/openapi-metrics.yaml, /docs/using_mediamolder.md and /docs/gui.md
 7. Updated architecture documents in /docs/architecture
 
-**Phase B — Job model + in-memory distributed**
-1. `pipeline/job.go` and `schema/v1.4.json`.
-2. `internal/distributed/queue` (`inmemory`) + `state` (`sqlite`).
-3. `--mode=api` and `--mode=worker` running in one binary against in-memory queue.
-4. `single` and `fanout_static` strategies.
-5. Updated README.md, docs/openapi-gui.yaml, docs/openapi-metrics.yaml, /docs/using_mediamolder.md and /docs/gui.md
-6. Updated architecture documents in /docs/architecture
-7. Tier 1 server keeps working; Tier 2 single-host works for dev.
+**Phase B — Job model + in-memory distributed** ✅ IMPLEMENTED
+1. `pipeline/job.go` and `schema/v1.4.json` — Job model with distribution, policy, and requirements.
+2. `internal/distributed/queue` (`inmemory`) + `state` (`sqlite`) — Queue and state-store abstractions with Phase B adapters.
+3. `internal/distributed/orchestrator` — AcceptJob, task materialisation, stage chaining, retry logic.
+4. `internal/distributed/worker` — Concurrent pipeline execution loop with heartbeating.
+5. `internal/distributed/apiserver` — Tier 2 HTTP API (POST/GET/DELETE /v1/jobs, GET /v1/jobs/{id}/tasks, SSE events, artifacts).
+6. `--mode=api` and `--mode=worker` in `cmd/mediamolder/serve.go`; `--queue`, `--state`, `--workers` flags.
+7. `single` and `fanout_static` strategies.
+8. Tier 1 server keeps working; Tier 2 single-host works for dev.
 
 **Phase C — Stateless orchestrator + real queue/state**
 1. `postgres` state adapter (with migrations), `sqs` or `nats` queue adapter.
