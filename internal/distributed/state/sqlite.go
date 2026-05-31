@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	_ "github.com/mattn/go-sqlite3" // SQLite driver
@@ -34,14 +35,15 @@ CREATE TABLE IF NOT EXISTS job_statuses (
 );
 
 CREATE TABLE IF NOT EXISTS tasks (
-    id         TEXT    PRIMARY KEY,
-    job_id     TEXT    NOT NULL REFERENCES jobs(id),
-    stage_id   TEXT    NOT NULL,
-    doc_json   TEXT    NOT NULL,
-    status     TEXT    NOT NULL,
+    id          TEXT    PRIMARY KEY,
+    job_id      TEXT    NOT NULL REFERENCES jobs(id),
+    stage_id    TEXT    NOT NULL,
+    doc_json    TEXT    NOT NULL,
+    status      TEXT    NOT NULL,
     result_json TEXT,
-    created_at INTEGER NOT NULL,
-    updated_at INTEGER NOT NULL
+    lease_until INTEGER NOT NULL DEFAULT 0,
+    created_at  INTEGER NOT NULL,
+    updated_at  INTEGER NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_tasks_job_stage ON tasks(job_id, stage_id);
@@ -55,7 +57,27 @@ CREATE TABLE IF NOT EXISTS job_events (
 );
 
 CREATE INDEX IF NOT EXISTS idx_events_job ON job_events(job_id, id);
+
+CREATE TABLE IF NOT EXISTS dead_letter_tasks (
+    id         TEXT    PRIMARY KEY,
+    job_id     TEXT    NOT NULL REFERENCES jobs(id),
+    stage_id   TEXT    NOT NULL,
+    task_json  TEXT    NOT NULL,
+    reason     TEXT    NOT NULL,
+    attempt    INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_dlq_job ON dead_letter_tasks(job_id);
 `
+
+// upgradeAlterStatements lists ALTER TABLE statements run after schema creation
+// to add columns introduced in Phase C. Each statement is run individually so
+// that "duplicate column name" errors (SQLite < 3.37 has no IF NOT EXISTS) can
+// be silently ignored — they just mean the column already exists.
+var upgradeAlterStatements = []string{
+	`ALTER TABLE tasks ADD COLUMN lease_until INTEGER NOT NULL DEFAULT 0`,
+}
 
 // SQLiteStore is the Phase B state-store adapter backed by mattn/go-sqlite3.
 type SQLiteStore struct {
@@ -74,6 +96,12 @@ func OpenSQLite(dsn string) (*SQLiteStore, error) {
 	if _, err := db.Exec(schema); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("state: apply schema: %w", err)
+	}
+	for _, stmt := range upgradeAlterStatements {
+		if _, err := db.Exec(stmt); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
+			_ = db.Close()
+			return nil, fmt.Errorf("state: apply upgrade migrations: %w", err)
+		}
 	}
 	return &SQLiteStore{db: db}, nil
 }
@@ -189,10 +217,14 @@ func (s *SQLiteStore) UpsertTask(ctx context.Context, t pipeline.Task, status Ta
 		return fmt.Errorf("state: marshal task: %w", err)
 	}
 	now := time.Now().UnixMilli()
+	leaseUntil := t.LeaseUntil.UnixMilli()
+	if t.LeaseUntil.IsZero() {
+		leaseUntil = 0
+	}
 	_, err = s.db.ExecContext(ctx,
-		`INSERT INTO tasks(id, job_id, stage_id, doc_json, status, created_at, updated_at) VALUES (?,?,?,?,?,?,?)
-         ON CONFLICT(id) DO UPDATE SET doc_json=excluded.doc_json, status=excluded.status, updated_at=excluded.updated_at`,
-		t.ID, t.JobID, t.StageID, string(b), string(status), now, now,
+		`INSERT INTO tasks(id, job_id, stage_id, doc_json, status, lease_until, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)
+         ON CONFLICT(id) DO UPDATE SET doc_json=excluded.doc_json, status=excluded.status, lease_until=excluded.lease_until, updated_at=excluded.updated_at`,
+		t.ID, t.JobID, t.StageID, string(b), string(status), leaseUntil, now, now,
 	)
 	return err
 }
@@ -215,13 +247,13 @@ func (s *SQLiteStore) SetTaskResult(ctx context.Context, taskID string, r pipeli
 
 func (s *SQLiteStore) GetTask(ctx context.Context, taskID string) (TaskRecord, error) {
 	return s.scanTask(s.db.QueryRowContext(ctx,
-		`SELECT doc_json, status, result_json, updated_at FROM tasks WHERE id=?`, taskID,
+		`SELECT doc_json, status, result_json, lease_until, updated_at FROM tasks WHERE id=?`, taskID,
 	))
 }
 
 func (s *SQLiteStore) TasksByStage(ctx context.Context, jobID, stageID string) ([]TaskRecord, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT doc_json, status, result_json, updated_at FROM tasks WHERE job_id=? AND stage_id=? ORDER BY rowid`,
+		`SELECT doc_json, status, result_json, lease_until, updated_at FROM tasks WHERE job_id=? AND stage_id=? ORDER BY rowid`,
 		jobID, stageID,
 	)
 	if err != nil {
@@ -233,7 +265,7 @@ func (s *SQLiteStore) TasksByStage(ctx context.Context, jobID, stageID string) (
 
 func (s *SQLiteStore) ListTasks(ctx context.Context, jobID string) ([]TaskRecord, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT doc_json, status, result_json, updated_at FROM tasks WHERE job_id=? ORDER BY rowid`,
+		`SELECT doc_json, status, result_json, lease_until, updated_at FROM tasks WHERE job_id=? ORDER BY rowid`,
 		jobID,
 	)
 	if err != nil {
@@ -251,8 +283,9 @@ func (s *SQLiteStore) scanTask(row rowScanner) (TaskRecord, error) {
 	var docJSON string
 	var statusStr string
 	var resultJSON sql.NullString
+	var leaseUntilMs int64
 	var updatedAtMs int64
-	if err := row.Scan(&docJSON, &statusStr, &resultJSON, &updatedAtMs); err != nil {
+	if err := row.Scan(&docJSON, &statusStr, &resultJSON, &leaseUntilMs, &updatedAtMs); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return TaskRecord{}, fmt.Errorf("state: task not found")
 		}
@@ -262,10 +295,14 @@ func (s *SQLiteStore) scanTask(row rowScanner) (TaskRecord, error) {
 	if err := json.Unmarshal([]byte(docJSON), &t); err != nil {
 		return TaskRecord{}, fmt.Errorf("state: unmarshal task: %w", err)
 	}
+	if leaseUntilMs > 0 {
+		t.LeaseUntil = time.UnixMilli(leaseUntilMs)
+	}
 	rec := TaskRecord{
-		Task:      t,
-		Status:    TaskStatus(statusStr),
-		UpdatedAt: time.UnixMilli(updatedAtMs),
+		Task:       t,
+		Status:     TaskStatus(statusStr),
+		LeaseUntil: t.LeaseUntil,
+		UpdatedAt:  time.UnixMilli(updatedAtMs),
 	}
 	if resultJSON.Valid && resultJSON.String != "" {
 		var r pipeline.TaskResult
@@ -283,18 +320,23 @@ func (s *SQLiteStore) scanTaskRows(rows *sql.Rows) ([]TaskRecord, error) {
 		var docJSON string
 		var statusStr string
 		var resultJSON sql.NullString
+		var leaseUntilMs int64
 		var updatedAtMs int64
-		if err := rows.Scan(&docJSON, &statusStr, &resultJSON, &updatedAtMs); err != nil {
+		if err := rows.Scan(&docJSON, &statusStr, &resultJSON, &leaseUntilMs, &updatedAtMs); err != nil {
 			return nil, err
 		}
 		var t pipeline.Task
 		if err := json.Unmarshal([]byte(docJSON), &t); err != nil {
 			return nil, fmt.Errorf("state: unmarshal task: %w", err)
 		}
+		if leaseUntilMs > 0 {
+			t.LeaseUntil = time.UnixMilli(leaseUntilMs)
+		}
 		rec := TaskRecord{
-			Task:      t,
-			Status:    TaskStatus(statusStr),
-			UpdatedAt: time.UnixMilli(updatedAtMs),
+			Task:       t,
+			Status:     TaskStatus(statusStr),
+			LeaseUntil: t.LeaseUntil,
+			UpdatedAt:  time.UnixMilli(updatedAtMs),
 		}
 		if resultJSON.Valid && resultJSON.String != "" {
 			var r pipeline.TaskResult
@@ -304,6 +346,85 @@ func (s *SQLiteStore) scanTaskRows(rows *sql.Rows) ([]TaskRecord, error) {
 			rec.Result = &r
 		}
 		out = append(out, rec)
+	}
+	return out, rows.Err()
+}
+
+// ---- Phase C additions ----------------------------------------------------
+
+func (s *SQLiteStore) RenewTaskLease(ctx context.Context, taskID string, until time.Time) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE tasks SET lease_until=?, updated_at=? WHERE id=?`,
+		until.UnixMilli(), time.Now().UnixMilli(), taskID,
+	)
+	return err
+}
+
+func (s *SQLiteStore) ListExpiredLeases(ctx context.Context) ([]TaskRecord, error) {
+	now := time.Now().UnixMilli()
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT doc_json, status, result_json, lease_until, updated_at FROM tasks
+         WHERE status=? AND lease_until > 0 AND lease_until < ? ORDER BY rowid`,
+		string(TaskStatusRunning), now,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return s.scanTaskRows(rows)
+}
+
+func (s *SQLiteStore) DeadLetterTask(ctx context.Context, taskID, reason string) error {
+	rec, err := s.GetTask(ctx, taskID)
+	if err != nil {
+		return err
+	}
+	b, err := json.Marshal(rec.Task)
+	if err != nil {
+		return fmt.Errorf("state: marshal task for dlq: %w", err)
+	}
+	now := time.Now().UnixMilli()
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO dead_letter_tasks(id, job_id, stage_id, task_json, reason, attempt, created_at)
+         VALUES (?,?,?,?,?,?,?)
+         ON CONFLICT(id) DO NOTHING`,
+		taskID, rec.Task.JobID, rec.Task.StageID, string(b), reason, rec.Task.Attempt, now,
+	); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE tasks SET status=?, updated_at=? WHERE id=?`,
+		string(TaskStatusFailed), now, taskID,
+	); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *SQLiteStore) ListDeadLetterTasks(ctx context.Context, jobID string) ([]DeadLetterRecord, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, job_id, stage_id, task_json, reason, attempt, created_at
+         FROM dead_letter_tasks WHERE job_id=? ORDER BY created_at`,
+		jobID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []DeadLetterRecord
+	for rows.Next() {
+		var r DeadLetterRecord
+		var createdAtMs int64
+		if err := rows.Scan(&r.TaskID, &r.JobID, &r.StageID, &r.TaskJSON, &r.Reason, &r.Attempt, &createdAtMs); err != nil {
+			return nil, err
+		}
+		r.CreatedAt = time.UnixMilli(createdAtMs)
+		out = append(out, r)
 	}
 	return out, rows.Err()
 }

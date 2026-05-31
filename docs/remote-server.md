@@ -150,9 +150,10 @@ The `MEDIAMOLDER_TOKEN` environment variable is used when `--token` is omitted.
 
 ## Distributed mode (`--mode=api` / `--mode=worker`)
 
-Phase B adds two new operating modes that together provide in-process distributed
-job execution backed by an in-memory queue and a SQLite state store. This is the
-recommended setup for single-host development and small-scale production.
+Two operating modes provide distributed job execution. Phase B uses an in-memory
+queue and SQLite state store (single-host, dev/small-scale). Phase C adds
+production-grade Postgres and NATS / SQS adapters for true multi-instance
+stateless deployments.
 
 ### `--mode=api` — API server + embedded workers
 
@@ -168,30 +169,81 @@ mediamolder serve \
   --auth-token-file=/etc/mediamolder/token
 ```
 
-All four workers share the in-memory queue with the API server, so no external
-infrastructure is needed for development.
+#### Multi-instance with Postgres + NATS
+
+Run two (or more) API instances sharing a Postgres state store and a NATS
+JetStream queue. Any instance can accept jobs; any worker can execute them.
+
+```bash
+# Instance 1
+mediamolder serve \
+  --mode=api \
+  --addr=:8080 \
+  --workers=4 \
+  --state=postgres://mm:mm@db.example.com/mediamolder?sslmode=require \
+  --queue=nats://nats.example.com:4222/mediamolder \
+  --reconcile-interval=30s
+
+# Instance 2 (identical flags, different port or behind a load balancer)
+mediamolder serve \
+  --mode=api \
+  --addr=:8081 \
+  --workers=4 \
+  --state=postgres://mm:mm@db.example.com/mediamolder?sslmode=require \
+  --queue=nats://nats.example.com:4222/mediamolder \
+  --reconcile-interval=30s
+```
+
+Schema migrations are applied automatically on startup.
+
+#### Multi-instance with Postgres + SQS
+
+```bash
+export AWS_ACCESS_KEY_ID=...
+export AWS_SECRET_ACCESS_KEY=...
+export AWS_REGION=us-east-1
+
+mediamolder serve \
+  --mode=api \
+  --workers=4 \
+  --state=postgres://mm:mm@db.example.com/mediamolder?sslmode=require \
+  --queue=sqs://sqs.us-east-1.amazonaws.com/123456789012/mediamolder-tasks \
+  --reconcile-interval=30s
+```
 
 ### `--mode=worker` — Worker-only
 
-In a future multi-host deployment you can run API and worker processes separately.
-Until Phase C (real queue adapter), both processes must be in the same binary; this
-flag is provided for future compatibility:
+Run workers separately from API servers (requires a shared queue):
 
 ```bash
 mediamolder serve \
   --mode=worker \
   --workers=8 \
-  --state=sqlite:///var/lib/mediamolder/state.sqlite3
+  --state=postgres://mm:mm@db.example.com/mediamolder?sslmode=require \
+  --queue=nats://nats.example.com:4222/mediamolder
 ```
 
-### New flags (api + worker modes)
+### Dead-letter queue
+
+When a task exhausts its retry budget (`policy.max_attempts`, default 3) the
+reconciler moves it to the DLQ. Inspect dead-lettered tasks:
+
+```bash
+curl http://localhost:8080/v1/jobs/{job-id}/dlq
+```
+
+Returns a JSON array of `DeadLetterRecord` objects with `task_id`, `reason`,
+`attempt`, and `created_at`.
+
+### Distributed-mode flags
 
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--mode` | `server` | Operating mode: `server` \| `api` \| `worker` |
-| `--queue` | `inmemory://` | Queue URI. Phase B supports `inmemory://` only. |
-| `--state` | `sqlite:///tmp/mediamolder-state.sqlite3` | State-store URI. Phase B supports `sqlite:///path`. |
+| `--queue` | `inmemory://` | Queue URI: `inmemory://`, `nats://[user:pass@]host:port[/stream]`, `sqs://sqs.{region}.amazonaws.com/{account}/{queue}` |
+| `--state` | `sqlite:///tmp/mediamolder-state.sqlite3` | State-store URI: `sqlite:///path` or `postgres://[user:pass@]host/db[?opts]` |
 | `--workers` | `1` | Embedded worker goroutines (api mode only). |
+| `--reconcile-interval` | `30s` | How often the reconciler scans for expired leases. Set to `0` to disable. |
 
 ### Submitting a Job (schema_version "1.4")
 

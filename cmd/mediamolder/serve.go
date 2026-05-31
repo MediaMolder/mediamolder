@@ -17,6 +17,7 @@ import (
 	"github.com/MediaMolder/MediaMolder/internal/distributed/apiserver"
 	"github.com/MediaMolder/MediaMolder/internal/distributed/orchestrator"
 	"github.com/MediaMolder/MediaMolder/internal/distributed/queue"
+	"github.com/MediaMolder/MediaMolder/internal/distributed/reconciler"
 	"github.com/MediaMolder/MediaMolder/internal/distributed/state"
 	"github.com/MediaMolder/MediaMolder/internal/distributed/worker"
 	"github.com/MediaMolder/MediaMolder/internal/server"
@@ -61,9 +62,10 @@ func cmdServe(args []string) error {
 	fs.Var(&paths, "allow-path", "Permit file:// inputs under this directory (may be repeated)")
 
 	// Tier 2 (--mode=api | --mode=worker) flags.
-	queueURI := fs.String("queue", "inmemory://", "Queue URI (inmemory:// for single-binary mode)")
-	stateURI := fs.String("state", "", "State store URI — sqlite:///path/to/db.sqlite3 (required for api/worker mode)")
+	queueURI := fs.String("queue", "inmemory://", "Queue URI: inmemory:// | nats://host:4222[/stream] | sqs://sqs.region.amazonaws.com/acct/queue")
+	stateURI := fs.String("state", "", "State store URI: sqlite:///path | postgres://user:pass@host/db (required for api/worker mode)")
 	numWorkers := fs.Int("workers", 1, "Number of embedded worker goroutines when --mode=api")
+	reconcileInterval := fs.Duration("reconcile-interval", reconciler.DefaultInterval, "Reconciler poll interval (--mode=api only; 0 disables)")
 
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -88,7 +90,7 @@ func cmdServe(args []string) error {
 			*s3CredsFile, *s3TTL, *enableUploads, *workdir, []string(paths))
 	case "api":
 		return runAPIMode(*addr, *tlsCert, *tlsKey, authToken,
-			*queueURI, *stateURI, *numWorkers)
+			*queueURI, *stateURI, *numWorkers, *reconcileInterval)
 	case "worker":
 		return runWorkerMode(*queueURI, *stateURI, *numWorkers)
 	default:
@@ -157,7 +159,7 @@ func runServerMode(addr, tlsCert, tlsKey, authToken,
 
 // ---- mode=api --------------------------------------------------------------
 
-func runAPIMode(addr, tlsCert, tlsKey, authToken, queueURI, stateURI string, numWorkers int) error {
+func runAPIMode(addr, tlsCert, tlsKey, authToken, queueURI, stateURI string, numWorkers int, reconcileInterval time.Duration) error {
 	if addr == "" {
 		addr = ":8080"
 	}
@@ -181,6 +183,16 @@ func runAPIMode(addr, tlsCert, tlsKey, authToken, queueURI, stateURI string, num
 	workerErr := make(chan error, 1)
 	go func() { workerErr <- w.Run(ctx) }()
 
+	// Start reconciler (disabled when reconcileInterval == 0).
+	if reconcileInterval > 0 {
+		rec := reconciler.New(st, q, reconcileInterval)
+		go func() {
+			if err := rec.Run(ctx); err != nil && ctx.Err() == nil {
+				fmt.Printf("mediamolder serve: reconciler exited: %v\n", err)
+			}
+		}()
+	}
+
 	opts := apiserver.Options{
 		Addr:      addr,
 		TLSCert:   tlsCert,
@@ -196,7 +208,7 @@ func runAPIMode(addr, tlsCert, tlsKey, authToken, queueURI, stateURI string, num
 	if tlsCert != "" {
 		scheme = "https"
 	}
-	fmt.Printf("mediamolder serve: mode=api listening on %s://%s (workers=%d)\n", scheme, addr, numWorkers)
+	fmt.Printf("mediamolder serve: mode=api listening on %s://%s (workers=%d reconcile=%s)\n", scheme, addr, numWorkers, reconcileInterval)
 
 	serverErr := make(chan error, 1)
 	go func() { serverErr <- srv.ListenAndServe() }()
@@ -244,7 +256,24 @@ func openQueue(uri string) (queue.Queue, error) {
 	if uri == "" || uri == "inmemory://" {
 		return queue.NewInMemory(), nil
 	}
-	return nil, fmt.Errorf("serve: unsupported queue URI %q (Phase B supports: inmemory://)", uri)
+	if strings.HasPrefix(uri, "nats://") {
+		// URI format: nats://[user:pass@]host:port[/stream-name]
+		// Extract optional stream name from the path component.
+		streamName := ""
+		if idx := strings.Index(strings.TrimPrefix(uri, "nats://"), "/"); idx >= 0 {
+			// path after host
+			natsURL := uri
+			parts := strings.SplitN(strings.TrimPrefix(uri, "nats://"), "/", 2)
+			natsURL = "nats://" + parts[0]
+			streamName = parts[1]
+			return queue.NewNATSQueue(natsURL, streamName)
+		}
+		return queue.NewNATSQueue(uri, streamName)
+	}
+	if strings.HasPrefix(uri, "sqs://") {
+		return queue.NewSQSQueue(uri)
+	}
+	return nil, fmt.Errorf("serve: unsupported queue URI %q (supported: inmemory://, nats://, sqs://)", uri)
 }
 
 func openState(uri string) (state.Store, error) {
@@ -256,5 +285,8 @@ func openState(uri string) (state.Store, error) {
 		path := strings.TrimPrefix(uri, "sqlite://")
 		return state.OpenSQLite(path)
 	}
-	return nil, fmt.Errorf("serve: unsupported state URI %q (Phase B supports: sqlite:///path)", uri)
+	if strings.HasPrefix(uri, "postgres://") || strings.HasPrefix(uri, "postgresql://") {
+		return state.OpenPostgres(uri)
+	}
+	return nil, fmt.Errorf("serve: unsupported state URI %q (supported: sqlite://, postgres://)", uri)
 }
