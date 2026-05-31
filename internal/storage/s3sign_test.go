@@ -124,4 +124,3 @@ func TestBuildCanonicalQueryString_Sorted(t *testing.T) {
 		t.Errorf("expected X-Amz-Algorithm first, got: %s", got)
 	}
 }
-

@@ -579,12 +579,14 @@ on a single worker, so users can move to Tier 2 without restructuring jobs.
 5. Worker syncs lease to state store (`RenewTaskLease`) on every heartbeat tick.
 6. `--reconcile-interval` flag; `--queue` accepts `nats://` and `sqs://` URIs; `--state` accepts `postgres://`.
 
-**Phase D — Dynamic fan-out & gather**
-1. `fanout_dynamic` with `scene_list`, `byte_range`, `chapter_list` splitters.
-2. `gather` with concat-demuxer assembly subgraph.
-3. End-to-end: split-encode-stitch demo from CLI and GUI.
-4. Updated README.md, docs/openapi-gui.yaml, docs/openapi-metrics.yaml, /docs/using_mediamolder.md and /docs/gui.md
-5. Updated architecture documents in /docs/architecture
+**Phase D — Dynamic fan-out & gather** ✅ IMPLEMENTED
+1. `fanout_dynamic` with `scene_list` and `byte_range` splitters (`chapter_list` reserved for Phase E).
+2. `gather` with concat-demuxer assembly of fanout outputs.
+3. `split_manifest_writer` go_processor writes a `SplitManifest` JSON sidecar during the producer task.
+4. Orchestrator reads `params.manifest_uri` at stage-advance time; no RPC needed.
+5. Segment output URIs are auto-assigned as `{storage.uri}/segs/{stageID}/{index:04d}.mkv`.
+6. End-to-end demo: `testdata/demo-split-encode-stitch.json`.
+7. Updated README.md, CHANGELOG.md, docs/remote-server.md.
 
 **Phase E — Production polish**
 1. Capability-aware routing (GPU, codec, region).

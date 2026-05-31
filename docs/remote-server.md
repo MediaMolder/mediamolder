@@ -287,3 +287,64 @@ Example `job.json` with a `fanout_static` strategy:
 | `GET` | `/v1/jobs/{id}/tasks` | List all tasks for a job with their status and results |
 | `GET` | `/v1/jobs/{id}/events` | SSE event log (replayed from SQLite, cursor via `?after=<id>`) |
 | `GET` | `/v1/jobs/{id}/artifacts` | Aggregate `ArtifactRef` list from all completed tasks |
+
+
+---
+
+## Phase D — Dynamic fan-out & gather
+
+Phase D adds two new strategy kinds: `fanout_dynamic` and `gather`. Together
+they implement a split-encode-stitch pattern where a **producer stage** analyses
+the source and writes a *split manifest*, the **fanout_dynamic stage** spawns one
+encode task per segment, and the **gather stage** stitches the outputs into a
+final file.
+
+### `split_manifest_writer` processor
+
+Add this go_processor node to the producer stage pipeline. It writes a
+`SplitManifest` JSON file on `Close()`.
+
+| Param | Required | Description |
+|---|---|---|
+| `splitter` | yes | `scene_list` or `byte_range` |
+| `output_file` | yes | Absolute path to write the JSON manifest |
+| `input_uri` | no | Source URI recorded in the manifest (defaults to job `config.inputs[0].url`) |
+| `fps` | for `byte_range` | Frames per second; used to convert frame index to seconds |
+| `count` | for `byte_range` | Number of equal-duration segments to produce |
+| `threshold` | for `scene_list` | Scene-change score thresho|  (0| `threshold` | for `scene_list` | Sce*: | `threshold` | for `scene_list` | Scene-change score thresho|  (0| `threshun| `threshold` | for `scene_list` | Scene-change score thresho|  (0| `thresh**`byt| `threshold` | for `scene_list` | Scene-change score thresho|  (0| `threshots wit| `threshold` | for `scene_list` | Scene-change score thresho|  (0| `thres": "| `thresho "d| `threshold` | for `scene_listtegy": {| `threshold` | for `scene_lis
+    "params": {
+      "manifest_uri": "f      "manifest_uri": "f      "m  }
+  }
+}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}fil}}}}}}URI pointing to the JSON file written by the
+producer stage's `split_manifest_writer` node. The orchestrator reads the
+manifestmanifestmanifestmanifestmanifestmanifestmanifestmanifestmanifestmanifestmanifestmanifestmanichild tamanifestmanifestmanifestmanifestmanifestmanifestmanifestmanifestmanifestmanifestm the segmanifestmanifestmanifestmanifestmanifestmanifestmanifestmanifestmanifestma:
+
+```
+{storage.uri}/segs/{stageID}/{index:04d}.mkv
+```
+
+### `gather` strategy
+
+```json
+{
+  "id": "stitch",
+  "depends_on": ["encode"],
+  "strategy": { "kind": "gather" }
+}
+```
+
+When all tasks in every `depends_on` stage succeed, the orchestrator:
+
+1. Retrieves all completed tasks from the first `depends_on` stage, sorted by
+   `Task.Index`.
+2. Collects `Config.Outputs[0].URL` from each task.
+3. Builds a single task whose first input uses the concat demuxer
+   (`Kind: "concat"`) listing all segment outputs in order.
+4. The4. The4. The4. The4. The4. The4. The4. The4 from the job (the final file).
+
+An optional `source_stage` param overrides which stage's outputs are gatherAn optional `source_stage` param overrides which stage's outputs are gd exAn optional `source_stage` param overrides which stage's outputs are gatherAn optional `source_stage` param overrides which stage's outputs are gd exAn optional `source_stage` param overrides which stage's outputs are gatherAn optional `source_stage` param overrides whicmedAnmolder-demo
+mediamolder serve &
+curl -s -X POST -H "Content-Type: application/json" \
+  --data @testdata/demo-split-encode-stitch.json \
+  http://localhost:8080/v1/jobs
+```
