@@ -94,9 +94,9 @@ func (w *httpPutWriter) Close() error {
 // It enables a single storage FS abstraction across workers that may receive
 // file://, https:// (presigned PUT), and s3:// URIs in the same task config.
 type RouterFS struct {
-	file  *FileFS
-	sink  *HTTPSinkFS
-	s3    *S3FS // nil when no S3 credentials are configured
+	file *FileFS
+	sink *HTTPSinkFS
+	s3   *S3FS // nil when no S3 credentials are configured
 }
 
 // NewRouterFS creates a RouterFS. s3 may be nil for workers without S3 creds.

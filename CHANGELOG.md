@@ -6,6 +6,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 ## [Unreleased]
 
 ### Added
+- **Remote backend user guide** (`docs/remote-backend-guide.md`): step-by-step
+  guide for Tier 1 (single-machine `--mode=server`) and Tier 2 (distributed
+  cluster) deployments; covers TLS, static token and OIDC auth, mTLS, S3
+  presigning, capability routing, AWS-native stack, OTEL tracing, security
+  checklist, and troubleshooting. Linked from README and `docs/gui.md`.
 - **Distributed execution engine (Phase E).** Capability-aware routing:
   `WorkerRequirements.Region`, `WorkerCapabilities.Region`, `queue.TaskSatisfiedBy`,
   `ReceiveFilter.Region`; workers only dequeue tasks whose `requires.*` they

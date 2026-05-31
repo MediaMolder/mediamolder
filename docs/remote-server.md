@@ -28,7 +28,7 @@ mediamolder serve \
 mediamolder job submit \
   --backend=https://my-server.example.com:8443 \
   --token="$TOKEN" \
-  pipeline.json
+  job.json
 ```
 
 ## Flags
@@ -337,10 +337,10 @@ Returns a JSON array of `DeadLetterRecord` objects with `task_id`, `reason`,
 
 The `POST /v1/jobs` endpoint accepts both:
 
-- **Bare `pipeline.Config`** (schema_version "1.0"–"1.2"): wrapped in a single-task Job for
-  backward compatibility.
-- **`pipeline.Job`** (schema_version "1.4"): full distributed job with optional
-  `distribution` block.
+- **Graph-only JSON** (schema_version "1.0"–"1.2"): a bare graph definition,
+  wrapped in a single-task Job for backward compatibility.
+- **Full Job JSON** (schema_version "1.4"): a distributed job document with an
+  optional `distribution` block.
 
 ```bash
 curl -sX POST \

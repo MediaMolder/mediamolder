@@ -771,16 +771,16 @@ There are three ways to capture metadata on disk, depending on your use case:
 The simplest approach. Pass `--metadata-out <path>` to the `run` command and all `ProcessorMetadata` events are written as JSON Lines:
 
 ```bash
-mediamolder run --metadata-out detections.jsonl pipeline.json
+mediamolder run --metadata-out detections.jsonl job.json
 ```
 
 Use `-` to write to stdout (useful for piping):
 
 ```bash
-mediamolder run --metadata-out - pipeline.json 2>/dev/null | jq '.metadata.detections[]'
+mediamolder run --metadata-out - job.json 2>/dev/null | jq '.metadata.detections[]'
 ```
 
-This captures metadata from **all** `go_processor` nodes in the pipeline. Each line includes `node_id` so you can filter by source.
+This captures metadata from **all** `go_processor` nodes in the graph. Each line includes `node_id` so you can filter by source.
 
 ### metadata_file_writer processor
 
