@@ -1559,4 +1559,4 @@ In the dialog:
 Settings are persisted in `localStorage`. When a remote backend is configured the
 **Backend** button is highlighted. Click it again and choose **Use Local** to revert.
 
-See [remote-server.md](remote-server.md) for server setup instructions.
+See [remote-backend-guide.md](remote-backend-guide.md) for a step-by-step setup guide covering Tier 1 (single server), Tier 2 (distributed cluster), auth options, and troubleshooting. The full flag reference is in [remote-server.md](remote-server.md).

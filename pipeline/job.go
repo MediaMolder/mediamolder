@@ -75,9 +75,9 @@ type WorkerRequirements struct {
 	// HardwareAccel lists required hardware acceleration types (e.g. "cuda", "videotoolbox").
 	HardwareAccel []string `json:"hardware_accel,omitempty"`
 	// Codecs lists codec names the worker must support (e.g. "h264_nvenc").
-	Codecs          []string `json:"codecs,omitempty"`
-	MinFreeDiskBytes int64   `json:"min_free_disk_bytes,omitempty"`
-	MinFreeMemBytes  int64   `json:"min_free_mem_bytes,omitempty"`
+	Codecs           []string `json:"codecs,omitempty"`
+	MinFreeDiskBytes int64    `json:"min_free_disk_bytes,omitempty"`
+	MinFreeMemBytes  int64    `json:"min_free_mem_bytes,omitempty"`
 	// Region constrains which region a worker must be in (e.g. "us-east-1"). Empty means any.
 	Region string `json:"region,omitempty"`
 	// EstimatedDurationNS is a scheduling hint (nanoseconds) used for presigned URL TTL.

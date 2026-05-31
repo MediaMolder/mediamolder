@@ -13,7 +13,7 @@ import (
 	"strings"
 )
 
-// Config is the top-level MediaMolder pipeline configuration (JSON schema v1.0).
+// Config is the top-level MediaMolder graph/job configuration (JSON schema v1.0).
 // It maps 1:1 with the JSON command payload described in the project specification.
 type Config struct {
 	SchemaVersion string `json:"schema_version"`

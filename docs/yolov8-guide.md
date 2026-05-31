@@ -254,7 +254,7 @@ Each `Detection` has:
 The quickest way — no JSON changes needed:
 
 ```bash
-mediamolder run --metadata-out detections.jsonl pipeline.json
+mediamolder run --metadata-out detections.jsonl job.json
 ```
 
 Every detection event is written as a JSON Lines record:

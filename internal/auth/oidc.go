@@ -201,9 +201,9 @@ type jwtHeader struct {
 }
 
 type jwtClaims struct {
-	Iss string      `json:"iss"`
-	Exp int64       `json:"exp"`
-	Aud audClaim    `json:"aud"`
+	Iss string   `json:"iss"`
+	Exp int64    `json:"exp"`
+	Aud audClaim `json:"aud"`
 }
 
 // audClaim accepts both a single string and an array of strings.
