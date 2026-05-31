@@ -8,6 +8,7 @@ package queue
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/MediaMolder/MediaMolder/pipeline"
@@ -21,6 +22,34 @@ type ReceiveFilter struct {
 	// Task.Requires.HardwareAccel and Task.Requires.Codecs.
 	// Empty means "accept any task".
 	Capabilities []string
+	// Region is the deployment region this worker is in (e.g. "us-east-1").
+	// Empty means "accept tasks regardless of region requirement".
+	Region string
+}
+
+// TaskSatisfiedBy reports whether task t can be executed by a worker
+// described by filter f. It is used by queue adapters to skip tasks whose
+// requirements the current worker cannot meet.
+func TaskSatisfiedBy(t pipeline.Task, f ReceiveFilter) bool {
+	if f.Region != "" && t.Requires.Region != "" && f.Region != t.Requires.Region {
+		return false
+	}
+	// Build a set from the worker's advertised capabilities.
+	have := make(map[string]bool, len(f.Capabilities))
+	for _, c := range f.Capabilities {
+		have[strings.ToLower(c)] = true
+	}
+	for _, req := range t.Requires.HardwareAccel {
+		if !have[strings.ToLower(req)] {
+			return false
+		}
+	}
+	for _, req := range t.Requires.Codecs {
+		if !have[strings.ToLower(req)] {
+			return false
+		}
+	}
+	return true
 }
 
 // Lease wraps a task received from the queue together with its commit handle.

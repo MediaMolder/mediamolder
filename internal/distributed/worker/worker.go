@@ -14,6 +14,9 @@ import (
 	"sync"
 	"time"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/propagation"
+
 	"github.com/MediaMolder/MediaMolder/internal/distributed/orchestrator"
 	"github.com/MediaMolder/MediaMolder/internal/distributed/queue"
 	"github.com/MediaMolder/MediaMolder/internal/distributed/state"
@@ -27,24 +30,27 @@ const (
 
 // Worker runs concurrency pipeline tasks in parallel.
 type Worker struct {
-	queue       queue.Queue
-	store       state.Store
-	orch        *orchestrator.Orchestrator
-	concurrency int
+	queue        queue.Queue
+	store        state.Store
+	orch         *orchestrator.Orchestrator
+	concurrency  int
+	capabilities pipeline.WorkerCapabilities
 }
 
 // New creates a Worker.
 // concurrency controls the number of simultaneous pipeline executions; 0 is
-// treated as 1.
-func New(q queue.Queue, st state.Store, orch *orchestrator.Orchestrator, concurrency int) *Worker {
+// treated as 1. caps advertises the capabilities this worker has; an empty
+// WorkerCapabilities accepts any task.
+func New(q queue.Queue, st state.Store, orch *orchestrator.Orchestrator, concurrency int, caps pipeline.WorkerCapabilities) *Worker {
 	if concurrency < 1 {
 		concurrency = 1
 	}
 	return &Worker{
-		queue:       q,
-		store:       st,
-		orch:        orch,
-		concurrency: concurrency,
+		queue:        q,
+		store:        st,
+		orch:         orch,
+		concurrency:  concurrency,
+		capabilities: caps,
 	}
 }
 
@@ -65,7 +71,14 @@ func (w *Worker) Run(ctx context.Context) error {
 
 // loop is the per-goroutine task execution loop.
 func (w *Worker) loop(ctx context.Context) {
-	filter := queue.ReceiveFilter{}
+	// Build ReceiveFilter from advertised capabilities.
+	var caps []string
+	caps = append(caps, w.capabilities.HardwareAccel...)
+	caps = append(caps, w.capabilities.Codecs...)
+	filter := queue.ReceiveFilter{
+		Capabilities: caps,
+		Region:       w.capabilities.Region,
+	}
 	for {
 		lease, err := w.queue.Receive(ctx, filter)
 		if err != nil {
@@ -80,6 +93,12 @@ func (w *Worker) loop(ctx context.Context) {
 func (w *Worker) executeTask(ctx context.Context, lease queue.Lease) {
 	t := lease.Task
 	t.LeaseUntil = lease.LeaseUntil // sync queue lease into task for state tracking
+
+	// Re-attach the task's span to the job's distributed trace if the
+	// orchestrator injected a trace context.
+	if len(t.TraceContext) > 0 {
+		ctx = otel.GetTextMapPropagator().Extract(ctx, propagation.MapCarrier(t.TraceContext))
+	}
 
 	// Mark task running in state store.
 	if err := w.store.UpsertTask(ctx, t, state.TaskStatusRunning); err != nil {

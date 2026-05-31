@@ -78,6 +78,8 @@ type WorkerRequirements struct {
 	Codecs          []string `json:"codecs,omitempty"`
 	MinFreeDiskBytes int64   `json:"min_free_disk_bytes,omitempty"`
 	MinFreeMemBytes  int64   `json:"min_free_mem_bytes,omitempty"`
+	// Region constrains which region a worker must be in (e.g. "us-east-1"). Empty means any.
+	Region string `json:"region,omitempty"`
 	// EstimatedDurationNS is a scheduling hint (nanoseconds) used for presigned URL TTL.
 	EstimatedDurationNS int64 `json:"estimated_duration_ns,omitempty"`
 }
@@ -107,6 +109,10 @@ type Task struct {
 	LeaseUntil time.Time `json:"lease_until"`
 
 	Requires WorkerRequirements `json:"requires,omitempty"`
+
+	// TraceContext carries W3C traceparent/tracestate headers injected by the
+	// orchestrator so the worker can attach its spans to the job's trace.
+	TraceContext map[string]string `json:"trace_context,omitempty"`
 }
 
 // ArtifactRef identifies a produced output object.
@@ -138,6 +144,8 @@ type WorkerCapabilities struct {
 	WorkerID      string   `json:"worker_id"`
 	HardwareAccel []string `json:"hardware_accel,omitempty"`
 	Codecs        []string `json:"codecs,omitempty"`
-	FreeDiskBytes int64    `json:"free_disk_bytes,omitempty"`
-	FreeMemBytes  int64    `json:"free_mem_bytes,omitempty"`
+	// Region is the deployment region this worker is in (e.g. "us-east-1").
+	Region        string `json:"region,omitempty"`
+	FreeDiskBytes int64  `json:"free_disk_bytes,omitempty"`
+	FreeMemBytes  int64  `json:"free_mem_bytes,omitempty"`
 }

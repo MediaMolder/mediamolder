@@ -60,14 +60,14 @@ func (q *InMemory) Publish(_ context.Context, t pipeline.Task) error {
 	return nil
 }
 
-// Receive blocks until a task whose notBefore has elapsed is available,
-// then returns a 30-second Lease. ctx cancellation is honoured.
-func (q *InMemory) Receive(ctx context.Context, _ ReceiveFilter) (Lease, error) {
+// Receive blocks until a task whose notBefore has elapsed and which satisfies
+// filter is available, then returns a 30-second Lease. ctx cancellation is honoured.
+func (q *InMemory) Receive(ctx context.Context, filter ReceiveFilter) (Lease, error) {
 	for {
 		q.mu.Lock()
 		now := time.Now()
 		for i, p := range q.items {
-			if !now.Before(p.notBefore) {
+			if !now.Before(p.notBefore) && TaskSatisfiedBy(p.task, filter) {
 				q.items = append(q.items[:i], q.items[i+1:]...)
 				until := now.Add(30 * time.Second)
 				q.leases[p.task.ID] = leaseRecord{task: p.task, until: until}

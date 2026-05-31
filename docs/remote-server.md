@@ -153,7 +153,8 @@ The `MEDIAMOLDER_TOKEN` environment variable is used when `--token` is omitted.
 Two operating modes provide distributed job execution. Phase B uses an in-memory
 queue and SQLite state store (single-host, dev/small-scale). Phase C adds
 production-grade Postgres and NATS / SQS adapters for true multi-instance
-stateless deployments.
+stateless deployments. Phase E adds OIDC/mTLS auth, OTEL trace propagation,
+DynamoDB state, capability-aware routing, and presigned-URL output writers.
 
 ### `--mode=api` — API server + embedded workers
 
@@ -168,6 +169,41 @@ mediamolder serve \
   --state=sqlite:///var/lib/mediamolder/state.sqlite3 \
   --auth-token-file=/etc/mediamolder/token
 ```
+
+#### OIDC authentication (Phase E)
+
+Replace static bearer tokens with OIDC JWT verification:
+
+```bash
+mediamolder serve \
+  --mode=api \
+  --addr=:8080 \
+  --oidc-issuer=https://accounts.google.com \
+  --oidc-client-id=MY_CLIENT_ID \
+  --workers=4 \
+  --state=postgres://mm:mm@db/mm
+```
+
+All requests must carry a valid Bearer JWT. `/healthz` and `/readyz` are
+exempt. The JWKS is fetched from `{issuer}/.well-known/openid-configuration`
+at startup and re-fetched once on unknown `kid`.
+
+#### mTLS client certificate verification (Phase E)
+
+```bash
+mediamolder serve \
+  --mode=api \
+  --addr=:8443 \
+  --tls-cert=/etc/ssl/server.crt \
+  --tls-key=/etc/ssl/server.key \
+  --mtls-ca=/etc/ssl/client-ca.pem \
+  --workers=4 \
+  --state=postgres://mm:mm@db/mm
+```
+
+`--mtls-ca` must be a PEM bundle containing one or more CA certificates.
+Client certificates signed by any of those CAs are accepted; all others are
+rejected at the TLS handshake.
 
 #### Multi-instance with Postgres + NATS
 
@@ -211,6 +247,24 @@ mediamolder serve \
   --reconcile-interval=30s
 ```
 
+#### AWS-native stack with DynamoDB state (Phase E)
+
+```bash
+export AWS_ACCESS_KEY_ID=...
+export AWS_SECRET_ACCESS_KEY=...
+export AWS_REGION=us-east-1
+
+mediamolder serve \
+  --mode=api \
+  --workers=4 \
+  --state=dynamodb://dynamodb.us-east-1.amazonaws.com/mediamolder-state \
+  --queue=sqs://sqs.us-east-1.amazonaws.com/123456789012/mediamolder-tasks \
+  --reconcile-interval=30s
+```
+
+The DynamoDB table must be pre-created with `PK` (string) as partition key
+and `SK` (string) as sort key. No other attributes need to be declared.
+
 ### `--mode=worker` — Worker-only
 
 Run workers separately from API servers (requires a shared queue):
@@ -222,6 +276,35 @@ mediamolder serve \
   --state=postgres://mm:mm@db.example.com/mediamolder?sslmode=require \
   --queue=nats://nats.example.com:4222/mediamolder
 ```
+
+#### Capability-aware routing (Phase E)
+
+Workers can advertise the hardware accelerators and codecs they support.
+The orchestrator stamps `WorkerRequirements` onto each task; workers only
+dequeue tasks they can satisfy.
+
+```bash
+# GPU worker in us-east-1 with CUDA and NVENC codecs.
+mediamolder serve \
+  --mode=worker \
+  --workers=4 \
+  --capabilities=cuda,h264_nvenc,hevc_nvenc \
+  --region=us-east-1 \
+  --state=postgres://mm:mm@db/mm \
+  --queue=nats://nats:4222/mediamolder
+
+# CPU-only worker with no region restriction.
+mediamolder serve \
+  --mode=worker \
+  --workers=8 \
+  --state=postgres://mm:mm@db/mm \
+  --queue=nats://nats:4222/mediamolder
+```
+
+Tasks without `requires` are accepted by any worker. Tasks with
+`requires.hardware_accel` or `requires.codecs` are only accepted by workers
+whose `--capabilities` include all listed entries (case-insensitive). Tasks
+with `requires.region` are only accepted by workers whose `--region` matches.
 
 ### Dead-letter queue
 
@@ -241,9 +324,14 @@ Returns a JSON array of `DeadLetterRecord` objects with `task_id`, `reason`,
 |------|---------|-------------|
 | `--mode` | `server` | Operating mode: `server` \| `api` \| `worker` |
 | `--queue` | `inmemory://` | Queue URI: `inmemory://`, `nats://[user:pass@]host:port[/stream]`, `sqs://sqs.{region}.amazonaws.com/{account}/{queue}` |
-| `--state` | `sqlite:///tmp/mediamolder-state.sqlite3` | State-store URI: `sqlite:///path` or `postgres://[user:pass@]host/db[?opts]` |
+| `--state` | `sqlite:///tmp/mediamolder-state.sqlite3` | State-store URI: `sqlite:///path`, `postgres://[user:pass@]host/db[?opts]`, `dynamodb://dynamodb.{region}.amazonaws.com/{table}` |
 | `--workers` | `1` | Embedded worker goroutines (api mode only). |
 | `--reconcile-interval` | `30s` | How often the reconciler scans for expired leases. Set to `0` to disable. |
+| `--capabilities` | _(none)_ | Comma-separated capability list advertised by this worker, e.g. `cuda,h264_nvenc`. |
+| `--region` | _(none)_ | Deployment region advertised by this worker (e.g. `us-east-1`). |
+| `--oidc-issuer` | _(none)_ | OIDC issuer URL for JWT validation. Mutually exclusive with `--auth-token-file`. |
+| `--oidc-client-id` | _(none)_ | Expected OIDC audience / client ID. |
+| `--mtls-ca` | _(none)_ | Path to PEM CA bundle for mTLS client certificate verification. Requires `--tls-cert`/`--tls-key`. |
 
 ### Submitting a Job (schema_version "1.4")
 
