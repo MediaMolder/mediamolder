@@ -22,6 +22,7 @@ import (
 	"github.com/MediaMolder/MediaMolder/internal/distributed/worker"
 	"github.com/MediaMolder/MediaMolder/internal/server"
 	"github.com/MediaMolder/MediaMolder/internal/storage"
+	"github.com/MediaMolder/MediaMolder/pipeline"
 )
 
 // allowPaths is a repeatable --allow-path flag.
@@ -63,9 +64,16 @@ func cmdServe(args []string) error {
 
 	// Tier 2 (--mode=api | --mode=worker) flags.
 	queueURI := fs.String("queue", "inmemory://", "Queue URI: inmemory:// | nats://host:4222[/stream] | sqs://sqs.region.amazonaws.com/acct/queue")
-	stateURI := fs.String("state", "", "State store URI: sqlite:///path | postgres://user:pass@host/db (required for api/worker mode)")
+	stateURI := fs.String("state", "", "State store URI: sqlite:///path | postgres://user:pass@host/db | dynamodb://dynamodb.region.amazonaws.com/table")
 	numWorkers := fs.Int("workers", 1, "Number of embedded worker goroutines when --mode=api")
 	reconcileInterval := fs.Duration("reconcile-interval", reconciler.DefaultInterval, "Reconciler poll interval (--mode=api only; 0 disables)")
+
+	// Phase E flags.
+	capabilities := fs.String("capabilities", "", "Comma-separated capability list this worker advertises (e.g. cuda,h264_nvenc)")
+	workerRegion := fs.String("region", "", "Deployment region advertised by this worker (e.g. us-east-1)")
+	oidcIssuer := fs.String("oidc-issuer", "", "OIDC issuer URL for JWT validation (e.g. https://accounts.google.com)")
+	oidcClientID := fs.String("oidc-client-id", "", "Expected OIDC audience / client ID")
+	mtlsCA := fs.String("mtls-ca", "", "Path to PEM CA bundle for mTLS client certificate verification")
 
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -90,9 +98,11 @@ func cmdServe(args []string) error {
 			*s3CredsFile, *s3TTL, *enableUploads, *workdir, []string(paths))
 	case "api":
 		return runAPIMode(*addr, *tlsCert, *tlsKey, authToken,
-			*queueURI, *stateURI, *numWorkers, *reconcileInterval)
+			*queueURI, *stateURI, *numWorkers, *reconcileInterval,
+			*oidcIssuer, *oidcClientID, *mtlsCA,
+			*capabilities, *workerRegion)
 	case "worker":
-		return runWorkerMode(*queueURI, *stateURI, *numWorkers)
+		return runWorkerMode(*queueURI, *stateURI, *numWorkers, *capabilities, *workerRegion)
 	default:
 		return fmt.Errorf("serve: unknown --mode %q (valid: server, api, worker)", *mode)
 	}
@@ -159,7 +169,7 @@ func runServerMode(addr, tlsCert, tlsKey, authToken,
 
 // ---- mode=api --------------------------------------------------------------
 
-func runAPIMode(addr, tlsCert, tlsKey, authToken, queueURI, stateURI string, numWorkers int, reconcileInterval time.Duration) error {
+func runAPIMode(addr, tlsCert, tlsKey, authToken, queueURI, stateURI string, numWorkers int, reconcileInterval time.Duration, oidcIssuer, oidcClientID, mtlsCA, capabilitiesCSV, region string) error {
 	if addr == "" {
 		addr = ":8080"
 	}
@@ -174,7 +184,8 @@ func runAPIMode(addr, tlsCert, tlsKey, authToken, queueURI, stateURI string, num
 	defer st.Close()
 
 	orch := orchestrator.New(st, q)
-	w := worker.New(q, st, orch, numWorkers)
+	apiCaps := buildCaps(capabilitiesCSV, region)
+	w := worker.New(q, st, orch, numWorkers, apiCaps)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
@@ -194,11 +205,14 @@ func runAPIMode(addr, tlsCert, tlsKey, authToken, queueURI, stateURI string, num
 	}
 
 	opts := apiserver.Options{
-		Addr:      addr,
-		TLSCert:   tlsCert,
-		TLSKey:    tlsKey,
-		AuthToken: authToken,
-		Orch:      orch,
+		Addr:         addr,
+		TLSCert:      tlsCert,
+		TLSKey:       tlsKey,
+		AuthToken:    authToken,
+		OIDCIssuer:   oidcIssuer,
+		OIDCClientID: oidcClientID,
+		MTLSCACert:   mtlsCA,
+		Orch:         orch,
 	}
 	srv, err := apiserver.NewServer(opts)
 	if err != nil {
@@ -229,7 +243,7 @@ func runAPIMode(addr, tlsCert, tlsKey, authToken, queueURI, stateURI string, num
 
 // ---- mode=worker -----------------------------------------------------------
 
-func runWorkerMode(queueURI, stateURI string, concurrency int) error {
+func runWorkerMode(queueURI, stateURI string, concurrency int, capabilitiesCSV, region string) error {
 	q, err := openQueue(queueURI)
 	if err != nil {
 		return err
@@ -241,12 +255,13 @@ func runWorkerMode(queueURI, stateURI string, concurrency int) error {
 	defer st.Close()
 
 	orch := orchestrator.New(st, q)
-	w := worker.New(q, st, orch, concurrency)
+	caps := buildCaps(capabilitiesCSV, region)
+	w := worker.New(q, st, orch, concurrency, caps)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	fmt.Printf("mediamolder serve: mode=worker concurrency=%d\n", concurrency)
+	fmt.Printf("mediamolder serve: mode=worker concurrency=%d region=%q capabilities=%q\n", concurrency, region, capabilitiesCSV)
 	return w.Run(ctx)
 }
 
@@ -288,5 +303,23 @@ func openState(uri string) (state.Store, error) {
 	if strings.HasPrefix(uri, "postgres://") || strings.HasPrefix(uri, "postgresql://") {
 		return state.OpenPostgres(uri)
 	}
-	return nil, fmt.Errorf("serve: unsupported state URI %q (supported: sqlite://, postgres://)", uri)
+	if strings.HasPrefix(uri, "dynamodb://") {
+		return state.NewDynamoDBStore(uri)
+	}
+	return nil, fmt.Errorf("serve: unsupported state URI %q (supported: sqlite://, postgres://, dynamodb://)", uri)
+}
+
+// buildCaps converts CLI flags into a WorkerCapabilities value.
+func buildCaps(capabilitiesCSV, region string) pipeline.WorkerCapabilities {
+	var caps []string
+	for _, c := range strings.Split(capabilitiesCSV, ",") {
+		c = strings.TrimSpace(c)
+		if c != "" {
+			caps = append(caps, c)
+		}
+	}
+	return pipeline.WorkerCapabilities{
+		HardwareAccel: caps,
+		Region:        region,
+	}
 }

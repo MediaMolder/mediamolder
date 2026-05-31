@@ -588,13 +588,22 @@ on a single worker, so users can move to Tier 2 without restructuring jobs.
 6. End-to-end demo: `testdata/demo-split-encode-stitch.json`.
 7. Updated README.md, CHANGELOG.md, docs/remote-server.md.
 
-**Phase E — Production polish**
-1. Capability-aware routing (GPU, codec, region).
-2. OIDC/mTLS auth.
-3. OTEL trace propagation across queue.
-4. DynamoDB state adapter; signed-URL output writers.
-5. Updated README.md, docs/openapi-gui.yaml, docs/openapi-metrics.yaml, /docs/using_mediamolder.md and /docs/gui.md
-6. Updated architecture documents in /docs/architecture
+**Phase E — Production polish** ✅ IMPLEMENTED
+1. Capability-aware routing (GPU, codec, region) — `WorkerRequirements.Region`,
+   `WorkerCapabilities.Region`, `queue.TaskSatisfiedBy`, `ReceiveFilter.Region`.
+2. OIDC/mTLS auth — `internal/auth/oidc.go`: `OIDCVerifier`, middleware, `NewMTLSTLSConfig`.
+   Wired into `apiserver.Options` (`OIDCIssuer`, `OIDCClientID`, `MTLSCACert`).
+3. OTEL trace propagation across queue — `Task.TraceContext map[string]string`;
+   orchestrator injects, worker extracts via `otel.GetTextMapPropagator()`.
+4. DynamoDB state adapter (`internal/distributed/state/dynamodb.go`) — single-table
+   design, pure-Go SigV4, URI `dynamodb://host/table`.
+   Signed-URL output writers (`internal/storage/httpsink.go`) — `HTTPSinkFS` buffers
+   and PUTs to presigned HTTPS URLs; `RouterFS` selects adapter by scheme.
+5. New CLI flags: `--capabilities`, `--region`, `--oidc-issuer`, `--oidc-client-id`,
+   `--mtls-ca`. `dynamodb://` added to `openState()`.
+6. Tests: `internal/auth/oidc_test.go`, `internal/distributed/queue/capability_test.go`,
+   `internal/distributed/state/dynamodb_test.go`.
+7. Updated README.md, CHANGELOG.md, docs/remote-server.md.
 
 Each phase ships independently and leaves the previous tier(s) fully functional.
 

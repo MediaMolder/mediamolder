@@ -21,6 +21,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/MediaMolder/MediaMolder/internal/auth"
 	"github.com/MediaMolder/MediaMolder/internal/distributed/orchestrator"
 	"github.com/MediaMolder/MediaMolder/pipeline"
 )
@@ -37,6 +38,16 @@ type Options struct {
 
 	// AuthToken is the expected Bearer token. An empty string disables auth.
 	AuthToken string
+
+	// OIDCIssuer enables OIDC JWT validation when non-empty.
+	// Takes precedence over AuthToken.
+	OIDCIssuer string
+	// OIDCClientID is the expected "aud" claim; empty accepts any audience.
+	OIDCClientID string
+
+	// MTLSCACert is the path to a PEM CA bundle used to require and verify
+	// client certificates. Requires TLSCert + TLSKey.
+	MTLSCACert string
 
 	// Orch is the Orchestrator instance shared with the embedded worker(s).
 	Orch *orchestrator.Orchestrator
@@ -80,7 +91,15 @@ func NewServer(opts Options) (*Server, error) {
 	})
 
 	var handler http.Handler = mux
-	if opts.AuthToken != "" {
+	switch {
+	case opts.OIDCIssuer != "":
+		// OIDC JWT validation takes precedence over static bearer token.
+		verifier, err := auth.NewOIDCVerifier(opts.OIDCIssuer, opts.OIDCClientID)
+		if err != nil {
+			return nil, fmt.Errorf("apiserver: setup OIDC verifier: %w", err)
+		}
+		handler = verifier.Middleware(mux)
+	case opts.AuthToken != "":
 		handler = s.bearerAuthMiddleware(mux)
 	}
 	handler = logMiddleware(handler)
@@ -94,16 +113,26 @@ func NewServer(opts Options) (*Server, error) {
 }
 
 // ListenAndServe starts the server. Uses TLS when TLSCert and TLSKey are set.
+// When MTLSCACert is also set, client certificate verification is enforced.
 func (s *Server) ListenAndServe() error {
 	if s.opts.TLSCert != "" && s.opts.TLSKey != "" {
 		cert, err := tls.LoadX509KeyPair(s.opts.TLSCert, s.opts.TLSKey)
 		if err != nil {
 			return fmt.Errorf("apiserver: load TLS cert: %w", err)
 		}
-		s.httpSrv.TLSConfig = &tls.Config{
+		tlsCfg := &tls.Config{
 			Certificates: []tls.Certificate{cert},
 			MinVersion:   tls.VersionTLS13,
 		}
+		if s.opts.MTLSCACert != "" {
+			mtlsCfg, err := auth.NewMTLSTLSConfig(s.opts.MTLSCACert)
+			if err != nil {
+				return fmt.Errorf("apiserver: configure mTLS: %w", err)
+			}
+			tlsCfg.ClientAuth = mtlsCfg.ClientAuth
+			tlsCfg.ClientCAs = mtlsCfg.ClientCAs
+		}
+		s.httpSrv.TLSConfig = tlsCfg
 		return s.httpSrv.ListenAndServeTLS("", "")
 	}
 	return s.httpSrv.ListenAndServe()

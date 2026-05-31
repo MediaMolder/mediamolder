@@ -17,9 +17,9 @@ import (
 // by the orchestrator when materialising fanout_dynamic child tasks.
 // Keep JSON tags in sync with orchestrator.splitManifest.
 type splitManifest struct {
-	Splitter string          `json:"splitter"`
-	InputURI string          `json:"input_uri,omitempty"`
-	Segments []splitSegment  `json:"segments"`
+	Splitter string         `json:"splitter"`
+	InputURI string         `json:"input_uri,omitempty"`
+	Segments []splitSegment `json:"segments"`
 }
 
 // splitSegment describes one temporal slice of the source media.
@@ -56,12 +56,12 @@ type SplitManifestWriter struct {
 	fps        float64
 
 	// scene_list state
-	inner      Processor // wrapped scene_change instance
-	cuts       []float64 // scene-cut times in seconds
+	inner Processor // wrapped scene_change instance
+	cuts  []float64 // scene-cut times in seconds
 
 	// byte_range state
-	count      int
-	lastFrame  uint64
+	count     int
+	lastFrame uint64
 }
 
 func (p *SplitManifestWriter) Init(params map[string]any) error {

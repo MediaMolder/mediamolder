@@ -22,6 +22,9 @@ import (
 	"strings"
 	"time"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/propagation"
+
 	"github.com/MediaMolder/MediaMolder/internal/distributed/queue"
 	"github.com/MediaMolder/MediaMolder/internal/distributed/state"
 	"github.com/MediaMolder/MediaMolder/pipeline"
@@ -140,6 +143,7 @@ func (o *Orchestrator) enqueueInitialTasks(ctx context.Context, job *pipeline.Jo
 	if job.Distribution == nil {
 		// No distribution → single task wrapping the full config.
 		task := materializeSingle(job, "", 0, 1)
+		injectTraceContext(ctx, &task)
 		if err := o.store.UpsertTask(ctx, task, state.TaskStatusPending); err != nil {
 			return err
 		}
@@ -163,6 +167,7 @@ func (o *Orchestrator) materializeAndEnqueueStage(ctx context.Context, job *pipe
 		return fmt.Errorf("materialize stage %q: %w", stage.ID, err)
 	}
 	for _, t := range tasks {
+		injectTraceContext(ctx, &t)
 		if err := o.store.UpsertTask(ctx, t, state.TaskStatusPending); err != nil {
 			return err
 		}
@@ -639,6 +644,16 @@ func validateJob(job *pipeline.Job) error {
 }
 
 // ---- Helpers ---------------------------------------------------------------
+
+// injectTraceContext stamps t.TraceContext with the W3C traceparent/tracestate
+// extracted from ctx so the worker can re-attach its spans to the job trace.
+func injectTraceContext(ctx context.Context, t *pipeline.Task) {
+	carrier := propagation.MapCarrier{}
+	otel.GetTextMapPropagator().Inject(ctx, carrier)
+	if len(carrier) > 0 {
+		t.TraceContext = map[string]string(carrier)
+	}
+}
 
 func newID() string {
 	b := make([]byte, 8)

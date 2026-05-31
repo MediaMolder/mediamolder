@@ -6,6 +6,24 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 ## [Unreleased]
 
 ### Added
+- **Distributed execution engine (Phase E).** Capability-aware routing:
+  `WorkerRequirements.Region`, `WorkerCapabilities.Region`, `queue.TaskSatisfiedBy`,
+  `ReceiveFilter.Region`; workers only dequeue tasks whose `requires.*` they
+  satisfy. OIDC/mTLS auth: `internal/auth/oidc.go` — `OIDCVerifier` (JWKS-backed
+  RS256, pure stdlib), `Middleware`, `NewMTLSTLSConfig`; wired into
+  `apiserver.Options` via `--oidc-issuer`, `--oidc-client-id`, `--mtls-ca`.
+  OTEL trace propagation: `Task.TraceContext map[string]string` injected by
+  orchestrator and extracted by worker via `otel.GetTextMapPropagator()`.
+  DynamoDB state adapter: `internal/distributed/state/dynamodb.go` — single-table
+  design, pure-Go SigV4 (no AWS SDK), URI `dynamodb://host/table`, adds
+  `dynamodb://` to `openState()`. Signed-URL output writers:
+  `internal/storage/httpsink.go` — `HTTPSinkFS` buffers bodies and HTTP PUTs
+  to presigned HTTPS URLs; `RouterFS` dispatches by scheme (`file://`, `https://`,
+  `s3://`). New CLI flags: `--capabilities`, `--region`, `--oidc-issuer`,
+  `--oidc-client-id`, `--mtls-ca`. Tests:
+  `internal/auth/oidc_test.go` (JWT validation, middleware, mTLS config),
+  `internal/distributed/queue/capability_test.go` (routing logic),
+  `internal/distributed/state/dynamodb_test.go` (mock-server lifecycle tests).
 - **Distributed execution engine (Phase D).** `fanout_dynamic` orchestration
   strategy: reads a `SplitManifest` JSON file (produced by a producer stage)
   from `params.manifest_uri` and materialises one child encode task per segment,
