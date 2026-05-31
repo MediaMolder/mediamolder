@@ -6,6 +6,21 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 ## [Unreleased]
 
 ### Added
+- **Distributed execution engine (Phase D).** `fanout_dynamic` orchestration
+  strategy: reads a `SplitManifest` JSON file (produced by a producer stage)
+  from `params.manifest_uri` and materialises one child encode task per segment,
+  rewiring each task's first input to a concat-demuxer entry with the correct
+  `InPoint`/`OutPoint`. `gather` strategy: collects `Config.Outputs[0].URL` from
+  all succeeded tasks in the source stage (sorted by `Task.Index`) and
+  materialises a single stitch task with a concat-demuxer input listing all
+  segments. `split_manifest_writer` go_processor (`processors/`) wraps the
+  `scene_change` detector (`splitter: "scene_list"`) or divides a media file into
+  equal-duration segments (`splitter: "byte_range"`); writes the manifest JSON to
+  `params.output_file` on `Close()`. Segment output URIs are auto-assigned as
+  `{storage.uri}/segs/{stageID}/{index:04d}.mkv`. End-to-end demo job at
+  `testdata/demo-split-encode-stitch.json`. Three new orchestrator tests cover
+  the fanout_dynamic wait-for-producer, manifest-driven spawn, and gather
+  concat-assembly behaviours.
 - **Distributed execution engine (Phase C).** Postgres state adapter
   (`internal/distributed/state/postgres.go`) with embedded SQL migrations
   (`internal/distributed/state/migrations/001_initial.sql`) and advisory-lock

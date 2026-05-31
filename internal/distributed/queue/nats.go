@@ -37,7 +37,7 @@ type NATSQueue struct {
 	subject string
 	sub     *nats.Subscription
 
-	mu     sync.Mutex
+	mu       sync.Mutex
 	inFlight map[string]*nats.Msg // task ID → message
 }
 
@@ -85,11 +85,11 @@ func NewNATSQueue(url, streamName string) (*NATSQueue, error) {
 	_, err = js.ConsumerInfo(streamName, consumerName)
 	if err != nil {
 		_, err = js.AddConsumer(streamName, &nats.ConsumerConfig{
-			Durable:        consumerName,
-			AckPolicy:      nats.AckExplicitPolicy,
-			AckWait:        natsDefaultAckWait,
-			MaxDeliver:     -1,
-			FilterSubject:  subject,
+			Durable:       consumerName,
+			AckPolicy:     nats.AckExplicitPolicy,
+			AckWait:       natsDefaultAckWait,
+			MaxDeliver:    -1,
+			FilterSubject: subject,
 		})
 		if err != nil {
 			nc.Close()

@@ -5,6 +5,7 @@ package orchestrator_test
 
 import (
 	"context"
+	"os"
 	"testing"
 	"time"
 
@@ -303,5 +304,238 @@ func TestCancelJob(t *testing.T) {
 	_, statusRec, _ := st.GetJob(ctx, id)
 	if statusRec.Status != state.JobStatusCancelled {
 		t.Fatalf("want cancelled, got %s", statusRec.Status)
+	}
+}
+
+// ---- Phase D: fanout_dynamic -----------------------------------------------
+
+// TestFanoutDynamic_WaitsForProducer verifies that accepting a job with a
+// fanout_dynamic stage that depends on a single producer stage only enqueues
+// the producer task initially.
+func TestFanoutDynamic_WaitsForProducer(t *testing.T) {
+	orch, q, _ := newTestOrch(t)
+	ctx := context.Background()
+
+	manifestPath := t.TempDir() + "/manifest.json"
+
+	job := baseJob()
+	job.Distribution = &pipeline.DistributionSpec{
+		Stages: []pipeline.Stage{
+			{ID: "detect", Strategy: pipeline.StageStrategy{Kind: "single"}},
+			{
+				ID:        "encode",
+				DependsOn: []string{"detect"},
+				Strategy: pipeline.StageStrategy{
+					Kind:   "fanout_dynamic",
+					Params: map[string]any{"manifest_uri": "file://" + manifestPath},
+				},
+			},
+		},
+	}
+	_, err := orch.AcceptJob(ctx, job)
+	if err != nil {
+		t.Fatalf("AcceptJob: %v", err)
+	}
+
+	n, _ := q.Len(ctx)
+	if n != 1 {
+		t.Fatalf("want 1 task (producer) initially, got %d", n)
+	}
+
+	tctx, cancel := context.WithTimeout(ctx, time.Second)
+	defer cancel()
+	lease, _ := q.Receive(tctx, queue.ReceiveFilter{})
+	if lease.Task.StageID != "detect" {
+		t.Fatalf("want detect task, got stage %q", lease.Task.StageID)
+	}
+}
+
+// TestFanoutDynamic_SpawnsChildTasksFromManifest verifies that completing the
+// producer stage causes the orchestrator to read the manifest and spawn one
+// child encode task per segment.
+func TestFanoutDynamic_SpawnsChildTasksFromManifest(t *testing.T) {
+	orch, q, _ := newTestOrch(t)
+	ctx := context.Background()
+
+	tmpDir := t.TempDir()
+	manifestPath := tmpDir + "/manifest.json"
+	manifestJSON := `{"splitter":"scene_list","input_uri":"file:///src.mp4","segments":[{"index":0,"inpoint":0,"outpoint":12.5},{"index":1,"inpoint":12.5,"outpoint":0}]}`
+	if err := os.WriteFile(manifestPath, []byte(manifestJSON), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	job := baseJob()
+	job.Config.Inputs = []pipeline.Input{{ID: "src", URL: "file:///src.mp4"}}
+	job.Config.Outputs = []pipeline.Output{{ID: "out", URL: "file:///out.mp4"}}
+	job.Distribution = &pipeline.DistributionSpec{
+		Stages: []pipeline.Stage{
+			{ID: "detect", Strategy: pipeline.StageStrategy{Kind: "single"}},
+			{
+				ID:        "encode",
+				DependsOn: []string{"detect"},
+				Strategy: pipeline.StageStrategy{
+					Kind:   "fanout_dynamic",
+					Params: map[string]any{"manifest_uri": "file://" + manifestPath},
+				},
+			},
+		},
+	}
+	_, err := orch.AcceptJob(ctx, job)
+	if err != nil {
+		t.Fatalf("AcceptJob: %v", err)
+	}
+
+	// Receive and complete the detect (producer) task.
+	tctx, cancel := context.WithTimeout(ctx, time.Second)
+	detectLease, _ := q.Receive(tctx, queue.ReceiveFilter{})
+	cancel()
+	_ = q.Ack(ctx, detectLease.Task.ID)
+	if err := orch.OnTaskCompleted(ctx, detectLease.Task.ID, pipeline.TaskResult{
+		StartedAt: time.Now(), FinishedAt: time.Now(),
+	}); err != nil {
+		t.Fatalf("OnTaskCompleted detect: %v", err)
+	}
+
+	// Two encode tasks should now be enqueued (one per segment).
+	n, _ := q.Len(ctx)
+	if n != 2 {
+		t.Fatalf("want 2 encode tasks, got %d", n)
+	}
+
+	// Verify concat-demuxer inputs have correct InPoint/OutPoint.
+	wantIn := []float64{0.0, 12.5}
+	wantOut := []float64{12.5, 0.0}
+	received := make([]*pipeline.Task, 2)
+	for i := 0; i < 2; i++ {
+		tctx2, cancel2 := context.WithTimeout(ctx, time.Second)
+		l, _ := q.Receive(tctx2, queue.ReceiveFilter{})
+		cancel2()
+		cp := l.Task
+		received[cp.Index] = &cp
+	}
+	for i, task := range received {
+		if task == nil {
+			t.Fatalf("no task for index %d", i)
+		}
+		if len(task.Config.Inputs) == 0 {
+			t.Fatalf("task %d: no inputs", i)
+		}
+		inp := task.Config.Inputs[0]
+		if inp.Kind != "concat" {
+			t.Fatalf("task %d: want Kind=concat, got %q", i, inp.Kind)
+		}
+		if len(inp.ConcatList) != 1 {
+			t.Fatalf("task %d: want 1 concat entry, got %d", i, len(inp.ConcatList))
+		}
+		ce := inp.ConcatList[0]
+		if ce.InPoint != wantIn[i] {
+			t.Errorf("task %d: InPoint want %.1f got %.1f", i, wantIn[i], ce.InPoint)
+		}
+		if ce.OutPoint != wantOut[i] {
+			t.Errorf("task %d: OutPoint want %.1f got %.1f", i, wantOut[i], ce.OutPoint)
+		}
+	}
+}
+
+// ---- Phase D: gather -------------------------------------------------------
+
+// TestGather_BuildsConcatConfigFromFanoutOutputs runs a full
+// detect → fanout_dynamic → gather pipeline and verifies that the gather task
+// receives a concat-demuxer input listing all segment outputs in index order.
+func TestGather_BuildsConcatConfigFromFanoutOutputs(t *testing.T) {
+	orch, q, _ := newTestOrch(t)
+	ctx := context.Background()
+
+	tmpDir := t.TempDir()
+	manifestPath := tmpDir + "/manifest.json"
+	manifestJSON := `{"splitter":"byte_range","input_uri":"file:///src.mp4","segments":[{"index":0,"inpoint":0,"outpoint":10},{"index":1,"inpoint":10,"outpoint":20},{"index":2,"inpoint":20,"outpoint":0}]}`
+	if err := os.WriteFile(manifestPath, []byte(manifestJSON), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	job := baseJob()
+	job.Storage = pipeline.StorageRef{URI: "file://" + tmpDir}
+	job.Config.Inputs = []pipeline.Input{{ID: "src", URL: "file:///src.mp4"}}
+	job.Config.Outputs = []pipeline.Output{{ID: "out", URL: "file:///out.mp4"}}
+	job.Distribution = &pipeline.DistributionSpec{
+		Stages: []pipeline.Stage{
+			{ID: "detect", Strategy: pipeline.StageStrategy{Kind: "single"}},
+			{
+				ID:        "encode",
+				DependsOn: []string{"detect"},
+				Strategy: pipeline.StageStrategy{
+					Kind:   "fanout_dynamic",
+					Params: map[string]any{"manifest_uri": "file://" + manifestPath},
+				},
+			},
+			{
+				ID:        "stitch",
+				DependsOn: []string{"encode"},
+				Strategy:  pipeline.StageStrategy{Kind: "gather"},
+			},
+		},
+	}
+	_, err := orch.AcceptJob(ctx, job)
+	if err != nil {
+		t.Fatalf("AcceptJob: %v", err)
+	}
+
+	// Complete the detect stage.
+	tctx, cancel := context.WithTimeout(ctx, time.Second)
+	detectLease, _ := q.Receive(tctx, queue.ReceiveFilter{})
+	cancel()
+	_ = q.Ack(ctx, detectLease.Task.ID)
+	if err := orch.OnTaskCompleted(ctx, detectLease.Task.ID, pipeline.TaskResult{
+		StartedAt: time.Now(), FinishedAt: time.Now(),
+	}); err != nil {
+		t.Fatalf("complete detect: %v", err)
+	}
+
+	// Complete the 3 encode tasks (consume all from queue first, then ack).
+	var encodeLeases []queue.Lease
+	for i := 0; i < 3; i++ {
+		tctx2, cancel2 := context.WithTimeout(ctx, time.Second)
+		enc, err := q.Receive(tctx2, queue.ReceiveFilter{})
+		cancel2()
+		if err != nil {
+			t.Fatalf("receive encode task %d: %v", i, err)
+		}
+		encodeLeases = append(encodeLeases, enc)
+	}
+	for _, enc := range encodeLeases {
+		_ = q.Ack(ctx, enc.Task.ID)
+		if err := orch.OnTaskCompleted(ctx, enc.Task.ID, pipeline.TaskResult{
+			StartedAt: time.Now(), FinishedAt: time.Now(),
+		}); err != nil {
+			t.Fatalf("complete encode task: %v", err)
+		}
+	}
+
+	// Stitch (gather) task should now be enqueued.
+	tctx3, cancel3 := context.WithTimeout(ctx, time.Second)
+	stitchLease, err := q.Receive(tctx3, queue.ReceiveFilter{})
+	cancel3()
+	if err != nil {
+		t.Fatalf("stitch task not enqueued: %v", err)
+	}
+	if stitchLease.Task.StageID != "stitch" {
+		t.Fatalf("want stage stitch, got %q", stitchLease.Task.StageID)
+	}
+
+	inp := stitchLease.Task.Config.Inputs
+	if len(inp) == 0 {
+		t.Fatal("stitch task: no inputs")
+	}
+	if inp[0].Kind != "concat" {
+		t.Fatalf("stitch input Kind: want concat, got %q", inp[0].Kind)
+	}
+	if len(inp[0].ConcatList) != 3 {
+		t.Fatalf("stitch concat list: want 3 entries, got %d", len(inp[0].ConcatList))
+	}
+	// Segment output URLs must be distinct and ordered.
+	seg0URL := inp[0].ConcatList[0].File
+	seg2URL := inp[0].ConcatList[2].File
+	if seg0URL == seg2URL {
+		t.Fatal("concat entries 0 and 2 should have distinct output URLs")
 	}
 }

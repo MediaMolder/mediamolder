@@ -172,10 +172,10 @@ func (s *Server) handleGetJob(w http.ResponseWriter, r *http.Request) {
 	}
 	j.mu.Lock()
 	resp := map[string]any{
-		"id":        j.id,
-		"status":    j.status,
-		"error":     j.finalErr,
-		"started":   j.start.Unix(),
+		"id":         j.id,
+		"status":     j.status,
+		"error":      j.finalErr,
+		"started":    j.start.Unix(),
 		"elapsed_ms": j.elapsedMs(),
 	}
 	j.mu.Unlock()

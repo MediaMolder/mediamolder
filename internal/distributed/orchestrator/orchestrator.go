@@ -5,8 +5,9 @@
 // them on a Queue, and advances the task graph as tasks complete. It is the only
 // component that understands the DistributionSpec; workers are deliberately dumb.
 //
-// Phase B implements "single" and "fanout_static" strategies. "fanout_dynamic"
-// and "gather" are scheduled for Phase D.
+// Phase B implements "single" and "fanout_static" strategies.
+// Phase D adds "fanout_dynamic" (manifest-driven fan-out) and "gather"
+// (concat-demuxer assembly of fanout outputs).
 package orchestrator
 
 import (
@@ -15,6 +16,10 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/MediaMolder/MediaMolder/internal/distributed/queue"
@@ -153,7 +158,7 @@ func (o *Orchestrator) enqueueInitialTasks(ctx context.Context, job *pipeline.Jo
 }
 
 func (o *Orchestrator) materializeAndEnqueueStage(ctx context.Context, job *pipeline.Job, stage *pipeline.Stage) error {
-	tasks, err := materializeStage(job, stage)
+	tasks, err := o.materializeStage(ctx, job, stage)
 	if err != nil {
 		return fmt.Errorf("materialize stage %q: %w", stage.ID, err)
 	}
@@ -313,15 +318,184 @@ func (o *Orchestrator) appendEvent(ctx context.Context, jobID, evtType string, d
 // ---- Task materialisation --------------------------------------------------
 
 // materializeStage dispatches to the appropriate strategy.
-func materializeStage(job *pipeline.Job, stage *pipeline.Stage) ([]pipeline.Task, error) {
+func (o *Orchestrator) materializeStage(ctx context.Context, job *pipeline.Job, stage *pipeline.Stage) ([]pipeline.Task, error) {
 	switch stage.Strategy.Kind {
 	case "single":
 		return []pipeline.Task{materializeSingle(job, stage.ID, 0, 1)}, nil
 	case "fanout_static":
 		return materializeFanoutStatic(job, stage)
+	case "fanout_dynamic":
+		return o.materializeFanoutDynamic(ctx, job, stage)
+	case "gather":
+		return o.materializeGather(ctx, job, stage)
 	default:
-		return nil, fmt.Errorf("unsupported strategy kind %q (Phase B supports: single, fanout_static)", stage.Strategy.Kind)
+		return nil, fmt.Errorf("unsupported strategy kind %q (supported: single, fanout_static, fanout_dynamic, gather)", stage.Strategy.Kind)
 	}
+}
+
+// materializeFanoutDynamic reads a split manifest from the URI in
+// stage.Strategy.Params["manifest_uri"] and materialises one task per segment.
+// Each task receives a config whose first input is re-wired to a concat-demuxer
+// entry with the segment's InPoint/OutPoint set. The output URL is rewritten to
+// a segment-scoped URI derived from job.Storage.URI.
+func (o *Orchestrator) materializeFanoutDynamic(ctx context.Context, job *pipeline.Job, stage *pipeline.Stage) ([]pipeline.Task, error) {
+	manifestURI, _ := stage.Strategy.Params["manifest_uri"].(string)
+	if manifestURI == "" {
+		return nil, fmt.Errorf("fanout_dynamic: params.manifest_uri is required")
+	}
+
+	data, err := readManifestFile(manifestURI)
+	if err != nil {
+		return nil, fmt.Errorf("fanout_dynamic: read manifest %q: %w", manifestURI, err)
+	}
+
+	var manifest splitManifest
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		return nil, fmt.Errorf("fanout_dynamic: parse manifest: %w", err)
+	}
+	if len(manifest.Segments) == 0 {
+		return nil, fmt.Errorf("fanout_dynamic: manifest contains no segments")
+	}
+
+	deadline := taskDeadline(job)
+	n := len(manifest.Segments)
+	tasks := make([]pipeline.Task, n)
+	for i, seg := range manifest.Segments {
+		cfg := cloneConfig(job.Config)
+
+		// Determine the source URI for the concat entry.
+		srcURI := ""
+		if manifest.InputURI != "" {
+			srcURI = manifest.InputURI
+		} else if len(cfg.Inputs) > 0 {
+			srcURI = cfg.Inputs[0].URL
+		}
+
+		// Rewrite the first input to a concat-demuxer entry for this segment.
+		if len(cfg.Inputs) > 0 {
+			cfg.Inputs[0] = pipeline.Input{
+				ID:   cfg.Inputs[0].ID,
+				Kind: "concat",
+				ConcatList: []pipeline.ConcatEntry{
+					{File: srcURI, InPoint: seg.InPoint, OutPoint: seg.OutPoint},
+				},
+			}
+		}
+
+		// Assign a segment-scoped output URI so gather can collect it.
+		if len(cfg.Outputs) > 0 {
+			cfg.Outputs[0].URL = segmentOutputURI(job, stage.ID, i)
+		}
+
+		tasks[i] = pipeline.Task{
+			ID:         newID(),
+			JobID:      job.ID,
+			StageID:    stage.ID,
+			Index:      i,
+			Total:      n,
+			Attempt:    0,
+			Config:     cfg,
+			Deadline:   deadline,
+			LeaseUntil: time.Time{},
+			Requires:   job.Requirements,
+		}
+	}
+	return tasks, nil
+}
+
+// materializeGather collects the output URLs from all succeeded tasks in the
+// source stage (named by stage.Strategy.Params["source_stage"], or
+// stage.DependsOn[0] as a fallback) and materialises a single stitch task
+// whose first input uses the concat demuxer.
+func (o *Orchestrator) materializeGather(ctx context.Context, job *pipeline.Job, stage *pipeline.Stage) ([]pipeline.Task, error) {
+	srcStageID, _ := stage.Strategy.Params["source_stage"].(string)
+	if srcStageID == "" && len(stage.DependsOn) > 0 {
+		srcStageID = stage.DependsOn[0]
+	}
+	if srcStageID == "" {
+		return nil, fmt.Errorf("gather: params.source_stage or a depends_on entry is required")
+	}
+
+	recs, err := o.store.TasksByStage(ctx, job.ID, srcStageID)
+	if err != nil {
+		return nil, fmt.Errorf("gather: get source tasks for stage %q: %w", srcStageID, err)
+	}
+	if len(recs) == 0 {
+		return nil, fmt.Errorf("gather: no tasks found in source stage %q", srcStageID)
+	}
+
+	// Sort by Index so the concat list is ordered correctly.
+	sort.Slice(recs, func(i, j int) bool {
+		return recs[i].Task.Index < recs[j].Task.Index
+	})
+
+	concatList := make([]pipeline.ConcatEntry, 0, len(recs))
+	for _, r := range recs {
+		if r.Status != state.TaskStatusSucceeded {
+			continue
+		}
+		if len(r.Task.Config.Outputs) == 0 {
+			continue
+		}
+		concatList = append(concatList, pipeline.ConcatEntry{
+			File: r.Task.Config.Outputs[0].URL,
+		})
+	}
+	if len(concatList) == 0 {
+		return nil, fmt.Errorf("gather: no output URIs collected from stage %q", srcStageID)
+	}
+
+	cfg := cloneConfig(job.Config)
+	if len(cfg.Inputs) > 0 {
+		cfg.Inputs[0] = pipeline.Input{
+			ID:         cfg.Inputs[0].ID,
+			Kind:       "concat",
+			ConcatList: concatList,
+		}
+	}
+
+	_ = stage.Assembly // Assembly subgraph selection reserved for a future phase.
+
+	return []pipeline.Task{{
+		ID:         newID(),
+		JobID:      job.ID,
+		StageID:    stage.ID,
+		Index:      0,
+		Total:      1,
+		Attempt:    0,
+		Config:     cfg,
+		Deadline:   taskDeadline(job),
+		LeaseUntil: time.Time{},
+		Requires:   job.Requirements,
+	}}, nil
+}
+
+// readManifestFile reads a manifest file from a file:// URI or a bare path.
+func readManifestFile(uri string) ([]byte, error) {
+	path := strings.TrimPrefix(uri, "file://")
+	path = filepath.Clean(path)
+	if !filepath.IsAbs(path) {
+		return nil, fmt.Errorf("manifest_uri must be an absolute path (got %q)", uri)
+	}
+	return os.ReadFile(path) //nolint:gosec // path is validated above
+}
+
+// segmentOutputURI constructs a stable, stage-scoped output URI for the i-th
+// segment task. Uses job.Storage.URI as the base; falls back to os.TempDir().
+func segmentOutputURI(job *pipeline.Job, stageID string, index int) string {
+	base := strings.TrimRight(job.Storage.URI, "/")
+	if base == "" {
+		base = "file://" + strings.TrimRight(os.TempDir(), "/")
+	}
+	return fmt.Sprintf("%s/segs/%s/%04d.mkv", base, stageID, index)
+}
+
+// taskDeadline returns the task deadline for a job, honouring job.Policy.
+func taskDeadline(job *pipeline.Job) time.Time {
+	if job.Policy.TaskTimeoutNS > 0 {
+		return time.Now().Add(time.Duration(job.Policy.TaskTimeoutNS))
+	}
+	return time.Now().Add(DefaultTaskDeadline)
 }
 
 // materializeSingle creates one task that runs the full job config.
