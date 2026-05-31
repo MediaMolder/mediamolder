@@ -42,10 +42,33 @@ type JobStatusRecord struct {
 
 // TaskRecord holds a task together with its current status and optional result.
 type TaskRecord struct {
-	Task      pipeline.Task       `json:"task"`
-	Status    TaskStatus          `json:"status"`
-	Result    *pipeline.TaskResult `json:"result,omitempty"`
-	UpdatedAt time.Time           `json:"updated_at"`
+	Task       pipeline.Task        `json:"task"`
+	Status     TaskStatus           `json:"status"`
+	Result     *pipeline.TaskResult `json:"result,omitempty"`
+	LeaseUntil time.Time            `json:"lease_until,omitempty"`
+	UpdatedAt  time.Time            `json:"updated_at"`
+}
+
+// DeadLetterRecord holds a task that exhausted its retry budget.
+type DeadLetterRecord struct {
+	TaskID    string    `json:"task_id"`
+	JobID     string    `json:"job_id"`
+	StageID   string    `json:"stage_id"`
+	TaskJSON  string    `json:"task_json"`
+	Reason    string    `json:"reason"`
+	Attempt   int       `json:"attempt"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// ReconcilerLocker is an optional interface that Store adapters may implement
+// to support distributed advisory locking for the reconciler. If a Store does
+// not implement ReconcilerLocker the reconciler assumes single-instance mode
+// and skips coordination.
+type ReconcilerLocker interface {
+	// TryReconcilerLock attempts to acquire an exclusive advisory lock.
+	// Returns a non-nil release function, whether the lock was acquired,
+	// and any error. The release function must always be called.
+	TryReconcilerLock(ctx context.Context) (release func(context.Context), ok bool, err error)
 }
 
 // JobEvent is a single entry in the per-job event log.
@@ -74,6 +97,14 @@ type Store interface {
 	GetTask(ctx context.Context, taskID string) (TaskRecord, error)
 	TasksByStage(ctx context.Context, jobID, stageID string) ([]TaskRecord, error)
 	ListTasks(ctx context.Context, jobID string) ([]TaskRecord, error)
+
+	// Lease management (used by workers and the reconciler).
+	RenewTaskLease(ctx context.Context, taskID string, until time.Time) error
+	ListExpiredLeases(ctx context.Context) ([]TaskRecord, error)
+
+	// Dead-letter queue.
+	DeadLetterTask(ctx context.Context, taskID, reason string) error
+	ListDeadLetterTasks(ctx context.Context, jobID string) ([]DeadLetterRecord, error)
 
 	// Close releases underlying resources.
 	Close() error

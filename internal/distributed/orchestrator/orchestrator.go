@@ -111,6 +111,11 @@ func (o *Orchestrator) ListEvents(ctx context.Context, jobID string, afterID int
 	return o.store.ListEvents(ctx, jobID, afterID)
 }
 
+// ListDeadLetterTasks returns dead-lettered tasks for jobID.
+func (o *Orchestrator) ListDeadLetterTasks(ctx context.Context, jobID string) ([]state.DeadLetterRecord, error) {
+	return o.store.ListDeadLetterTasks(ctx, jobID)
+}
+
 // CancelJob marks the job as cancelled.
 func (o *Orchestrator) CancelJob(ctx context.Context, jobID string) error {
 	rec := state.JobStatusRecord{
@@ -264,11 +269,17 @@ func (o *Orchestrator) handleTaskFailure(ctx context.Context, job *pipeline.Job,
 		})
 		return o.queue.Publish(ctx, retry)
 	}
-	// Exhausted attempts → fail the job.
-	if rec.Result != nil {
-		return o.markJobDone(ctx, job.ID, rec.Result.Error)
+	// Exhausted attempts → move to DLQ and fail the job.
+	reason := "max_attempts_exceeded"
+	if rec.Result != nil && rec.Result.Error != "" {
+		reason = fmt.Sprintf("max_attempts_exceeded: %s", rec.Result.Error)
 	}
-	return o.markJobDone(ctx, job.ID, "task failed after max attempts")
+	_ = o.store.DeadLetterTask(ctx, rec.Task.ID, reason)
+	errMsg := "task failed after max attempts"
+	if rec.Result != nil && rec.Result.Error != "" {
+		errMsg = rec.Result.Error
+	}
+	return o.markJobDone(ctx, job.ID, errMsg)
 }
 
 func (o *Orchestrator) markJobDone(ctx context.Context, jobID, errMsg string) error {

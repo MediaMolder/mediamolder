@@ -66,6 +66,7 @@ func NewServer(opts Options) (*Server, error) {
 	mux.HandleFunc("GET /v1/jobs/{id}/events", s.handleJobEvents)
 	mux.HandleFunc("GET /v1/jobs/{id}/tasks", s.handleListTasks)
 	mux.HandleFunc("GET /v1/jobs/{id}/artifacts", s.handleJobArtifacts)
+	mux.HandleFunc("GET /v1/jobs/{id}/dlq", s.handleListDLQ)
 	mux.HandleFunc("DELETE /v1/jobs/{id}", s.handleCancelJob)
 
 	// Health probes.
@@ -272,6 +273,21 @@ func (s *Server) handleCancelJob(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]string{"id": id, "status": "cancelled"})
+}
+
+func (s *Server) handleListDLQ(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	recs, err := s.opts.Orch.ListDeadLetterTasks(r.Context(), id)
+	if err != nil {
+		writeJSONError(w, http.StatusNotFound, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if recs == nil {
+		_, _ = w.Write([]byte("[]"))
+		return
+	}
+	_ = json.NewEncoder(w).Encode(recs)
 }
 
 // ---- Middleware & helpers ----------------------------------------------------

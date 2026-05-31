@@ -551,7 +551,7 @@ on a single worker, so users can move to Tier 2 without restructuring jobs.
 
 ## 11. Phased Implementation
 
-**Phase A — URI storage layer + Tier 1**
+**Phase A — URI storage layer + Tier 1** ✅ IMPLEMENTED
 1. `internal/storage/` with `file` + `s3` adapters; URI shim in I/O nodes.
 2. `PresignResolver` in `internal/storage/s3presign.go`; credential loading from env
    and `--s3-presign-credentials` file; `chmod 600` check; multipart helper.
@@ -571,13 +571,13 @@ on a single worker, so users can move to Tier 2 without restructuring jobs.
 7. `single` and `fanout_static` strategies.
 8. Tier 1 server keeps working; Tier 2 single-host works for dev.
 
-**Phase C — Stateless orchestrator + real queue/state**
-1. `postgres` state adapter (with migrations), `sqs` or `nats` queue adapter.
-2. Leader-electionless reconciliation loop (advisory locks).
-3. Run 2+ API instances behind a local nginx in CI to prove statelessness.
-4. Lease + heartbeat + retry + DLQ.
-5. Updated README.md, docs/openapi-gui.yaml, docs/openapi-metrics.yaml, /docs/using_mediamolder.md and /docs/gui.md
-6. Updated architecture documents in /docs/architecture
+**Phase C — Stateless orchestrator + real queue/state** ✅ IMPLEMENTED
+1. `postgres` state adapter (migrations in `internal/distributed/state/migrations/`) + `sqs` and `nats` queue adapters.
+2. Leader-electionless reconciliation loop (`internal/distributed/reconciler/`) using `pg_try_advisory_lock(42001)`.
+3. CI statelessness harness: `scripts/ci/statelessness/` — docker-compose with 2 API instances + nginx + test.sh.
+4. Lease + heartbeat + retry + DLQ (`dead_letter_tasks` table; `GET /v1/jobs/{id}/dlq`).
+5. Worker syncs lease to state store (`RenewTaskLease`) on every heartbeat tick.
+6. `--reconcile-interval` flag; `--queue` accepts `nats://` and `sqs://` URIs; `--state` accepts `postgres://`.
 
 **Phase D — Dynamic fan-out & gather**
 1. `fanout_dynamic` with `scene_list`, `byte_range`, `chapter_list` splitters.

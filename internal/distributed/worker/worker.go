@@ -79,6 +79,7 @@ func (w *Worker) loop(ctx context.Context) {
 // executeTask runs a single pipeline task and reports the result.
 func (w *Worker) executeTask(ctx context.Context, lease queue.Lease) {
 	t := lease.Task
+	t.LeaseUntil = lease.LeaseUntil // sync queue lease into task for state tracking
 
 	// Mark task running in state store.
 	if err := w.store.UpsertTask(ctx, t, state.TaskStatusRunning); err != nil {
@@ -99,6 +100,10 @@ func (w *Worker) executeTask(ctx context.Context, lease queue.Lease) {
 			case <-hbCtx.Done():
 				return
 			case <-ticker.C:
+				newUntil := time.Now().Add(leaseExtension)
+				if err := w.store.RenewTaskLease(ctx, t.ID, newUntil); err != nil {
+					fmt.Printf("worker: renew lease state %s: %v\n", t.ID, err)
+				}
 				if err := w.queue.Heartbeat(ctx, t.ID, leaseExtension); err != nil {
 					// Non-fatal: the lease will expire and the task will be
 					// re-delivered if the pipeline takes too long.

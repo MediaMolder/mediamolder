@@ -6,6 +6,19 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 ## [Unreleased]
 
 ### Added
+- **Distributed execution engine (Phase C).** Postgres state adapter
+  (`internal/distributed/state/postgres.go`) with embedded SQL migrations
+  (`internal/distributed/state/migrations/001_initial.sql`) and advisory-lock
+  based leaderless reconciliation; NATS JetStream queue adapter
+  (`internal/distributed/queue/nats.go`); SQS queue adapter
+  (`internal/distributed/queue/sqs.go`, pure-Go SigV4 — no AWS SDK);
+  `internal/distributed/reconciler` package that re-enqueues expired-lease tasks
+  or moves them to the dead-letter queue; `GET /v1/jobs/{id}/dlq` endpoint;
+  `--reconcile-interval` flag; `--queue` now accepts `nats://` and `sqs://`
+  URIs; `--state` now accepts `postgres://` URIs. CI statelessness harness at
+  `scripts/ci/statelessness/` proves two API instances sharing Postgres + NATS
+  are fully stateless. SQLite compatibility fix: `ALTER TABLE … ADD COLUMN`
+  duplicate-column error silently ignored on SQLite < 3.37.
 - **Distributed execution engine (Phase B).** `pipeline.Job` document model
   (`schema/v1.4.json`); `internal/distributed/queue` (Queue interface +
   in-memory adapter); `internal/distributed/state` (Store interface + SQLite
