@@ -9,7 +9,7 @@ package ffcli
 // F1.2 will add a normalized-graph source (resolveOutputViewFromGraph) so
 // that ExportGraph can run without reading shorthand fields. The formatter
 // (buildOutput) reads only from outputView, never directly from
-// `pipeline.Output` shorthand fields, which is what makes the F2 schema
+// `job.Output` shorthand fields, which is what makes the F2 schema
 // deprecation possible.
 //
 // This file also owns codec-specific encoder-params routing: for encoders
@@ -28,7 +28,7 @@ import (
 	"strings"
 
 	"github.com/MediaMolder/MediaMolder/graph"
-	"github.com/MediaMolder/MediaMolder/pipeline"
+	"github.com/MediaMolder/MediaMolder/job"
 )
 
 // encoderView is the resolved encoder + timing state for a single
@@ -65,7 +65,7 @@ type outputView struct {
 // it preserves today's Export(cfg) semantics exactly. F1.2 adds a
 // graph-aware resolver that takes precedence when a normalized graph
 // is available.
-func resolveOutputViewFromConfig(cfg *pipeline.Config, out pipeline.Output) outputView {
+func resolveOutputViewFromConfig(cfg *job.Config, out job.Output) outputView {
 	v := outputView{
 		Video: encoderView{
 			Codec:          out.CodecVideo,
@@ -108,11 +108,11 @@ func resolveOutputViewFromConfig(cfg *pipeline.Config, out pipeline.Output) outp
 // graphCodecsForOutput is the package-level helper that backs
 // (*exporter).graphCodecs; lifted here so resolveOutputView can call
 // it without going through an exporter instance.
-func graphCodecsForOutput(cfg *pipeline.Config, outID string) map[string]string {
+func graphCodecsForOutput(cfg *job.Config, outID string) map[string]string {
 	if cfg == nil || len(cfg.Graph.Nodes) == 0 {
 		return nil
 	}
-	nodeByID := make(map[string]pipeline.NodeDef, len(cfg.Graph.Nodes))
+	nodeByID := make(map[string]job.NodeDef, len(cfg.Graph.Nodes))
 	for _, n := range cfg.Graph.Nodes {
 		nodeByID[n.ID] = n
 	}
@@ -168,7 +168,7 @@ func graphCodecsForOutput(cfg *pipeline.Config, outID string) map[string]string 
 // graph nodes today, so resolveOutputViewFromGraph does not see them;
 // the caller (buildOutput) handles those separately by reading from
 // cfg.Outputs.
-func resolveOutputViewFromGraph(cfg *pipeline.Config, def *graph.Def, out pipeline.Output) outputView {
+func resolveOutputViewFromGraph(cfg *job.Config, def *graph.Def, out job.Output) outputView {
 	// Start from shorthand so unfilled slots round-trip cleanly.
 	v := resolveOutputViewFromConfig(cfg, out)
 	if def == nil {
@@ -257,7 +257,7 @@ func pickEncoderView(v *outputView, typ string) *encoderView {
 // recoverAudioSyncFromGraph walks edges backwards from outID's audio
 // inputs looking for an "__async__" filter node whose Filter spec
 // matches "aresample=async=N[:first_pts=0]" (the form emitted by
-// pipeline.spliceAudioSyncForOutputs). Returns the recovered N, or
+// job.spliceAudioSyncForOutputs). Returns the recovered N, or
 // 0 if no such node is reachable.
 func recoverAudioSyncFromGraph(def *graph.Def, nodeByID map[string]graph.NodeDef, outID string) int {
 	// Build a reverse adjacency: nodeID -> incoming edges.

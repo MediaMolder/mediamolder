@@ -20,7 +20,7 @@ import (
 	"github.com/MediaMolder/MediaMolder/internal/distributed/orchestrator"
 	"github.com/MediaMolder/MediaMolder/internal/distributed/queue"
 	"github.com/MediaMolder/MediaMolder/internal/distributed/state"
-	"github.com/MediaMolder/MediaMolder/pipeline"
+	"github.com/MediaMolder/MediaMolder/job"
 )
 
 const (
@@ -34,14 +34,14 @@ type Worker struct {
 	store        state.Store
 	orch         *orchestrator.Orchestrator
 	concurrency  int
-	capabilities pipeline.WorkerCapabilities
+	capabilities job.WorkerCapabilities
 }
 
 // New creates a Worker.
 // concurrency controls the number of simultaneous pipeline executions; 0 is
 // treated as 1. caps advertises the capabilities this worker has; an empty
 // WorkerCapabilities accepts any task.
-func New(q queue.Queue, st state.Store, orch *orchestrator.Orchestrator, concurrency int, caps pipeline.WorkerCapabilities) *Worker {
+func New(q queue.Queue, st state.Store, orch *orchestrator.Orchestrator, concurrency int, caps job.WorkerCapabilities) *Worker {
 	if concurrency < 1 {
 		concurrency = 1
 	}
@@ -154,7 +154,7 @@ func (w *Worker) executeTask(ctx context.Context, lease queue.Lease) {
 
 // run executes the pipeline and returns a TaskResult. All errors are captured
 // in TaskResult.Error so the worker always reports a structured result.
-func (w *Worker) run(ctx context.Context, t *pipeline.Task) (result pipeline.TaskResult) {
+func (w *Worker) run(ctx context.Context, t *job.Task) (result job.TaskResult) {
 	result.StartedAt = time.Now()
 	defer func() { result.FinishedAt = time.Now() }()
 
@@ -166,7 +166,7 @@ func (w *Worker) run(ctx context.Context, t *pipeline.Task) (result pipeline.Tas
 		defer cancel()
 	}
 
-	pipe, err := pipeline.NewPipeline(&t.Config)
+	pipe, err := job.NewPipeline(&t.Config)
 	if err != nil {
 		result.Error = fmt.Sprintf("build pipeline: %v", err)
 		return

@@ -12,7 +12,7 @@ import (
 	"testing"
 )
 
-// minimalConfig is a valid pipeline.Config JSON for test submissions.
+// minimalConfig is a valid job.Config JSON for test submissions.
 // It uses a lavfi source so no real media file is needed.
 const minimalConfig = `{
   "schema_version": "1.1",

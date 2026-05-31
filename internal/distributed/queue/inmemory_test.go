@@ -10,11 +10,11 @@ import (
 	"time"
 
 	"github.com/MediaMolder/MediaMolder/internal/distributed/queue"
-	"github.com/MediaMolder/MediaMolder/pipeline"
+	"github.com/MediaMolder/MediaMolder/job"
 )
 
-func makeTask(id string) pipeline.Task {
-	return pipeline.Task{ID: id, JobID: "job1", StageID: "s1"}
+func makeTask(id string) job.Task {
+	return job.Task{ID: id, JobID: "job1", StageID: "s1"}
 }
 
 func TestInMemory_PublishReceive(t *testing.T) {

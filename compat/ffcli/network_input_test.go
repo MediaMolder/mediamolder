@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/MediaMolder/MediaMolder/pipeline"
+	"github.com/MediaMolder/MediaMolder/job"
 )
 
 // TestParseRTSPTransport verifies that -rtsp_transport before -i is stored
@@ -98,7 +98,7 @@ func TestParseNetworkFlagsNotInGlobal(t *testing.T) {
 		t.Fatal(err)
 	}
 	// rtsp_transport must appear in the input's Options, not leak into GlobalOptions.
-	// GlobalOptions (pipeline.Options) has no extra/arbitrary keys; verifying
+	// GlobalOptions (job.Options) has no extra/arbitrary keys; verifying
 	// HardwareAccel is empty is a sufficient proxy that no bleed-through occurred.
 	if cfg.GlobalOptions.HardwareAccel != "" {
 		t.Errorf("unexpected GlobalOptions.HardwareAccel = %q", cfg.GlobalOptions.HardwareAccel)
@@ -112,17 +112,17 @@ func TestParseNetworkFlagsNotInGlobal(t *testing.T) {
 // TestExportRTSPTransport verifies that Input.Options["rtsp_transport"] is
 // serialised as -rtsp_transport <value> before -i in the CLI output.
 func TestExportRTSPTransport(t *testing.T) {
-	cfg := &pipeline.Config{
+	cfg := &job.Config{
 		SchemaVersion: "1.1",
-		Inputs: []pipeline.Input{
+		Inputs: []job.Input{
 			{
 				ID:      "cam",
 				URL:     "rtsp://192.168.1.100/stream",
 				Options: map[string]any{"rtsp_transport": "tcp"},
-				Streams: []pipeline.StreamSelect{{InputIndex: 0, Type: "video"}},
+				Streams: []job.StreamSelect{{InputIndex: 0, Type: "video"}},
 			},
 		},
-		Outputs: []pipeline.Output{
+		Outputs: []job.Output{
 			{ID: "out", URL: "/tmp/out.mp4"},
 		},
 	}
@@ -142,9 +142,9 @@ func TestExportRTSPTransport(t *testing.T) {
 // TestExportSRTOptions verifies that SRT mode and listen_timeout are emitted
 // before -i in the CLI output (Wave 11 #67).
 func TestExportSRTOptions(t *testing.T) {
-	cfg := &pipeline.Config{
+	cfg := &job.Config{
 		SchemaVersion: "1.1",
-		Inputs: []pipeline.Input{
+		Inputs: []job.Input{
 			{
 				ID:  "src",
 				URL: "srt://:9000",
@@ -152,10 +152,10 @@ func TestExportSRTOptions(t *testing.T) {
 					"mode":           "listener",
 					"listen_timeout": "30000000",
 				},
-				Streams: []pipeline.StreamSelect{{InputIndex: 0, Type: "video"}},
+				Streams: []job.StreamSelect{{InputIndex: 0, Type: "video"}},
 			},
 		},
-		Outputs: []pipeline.Output{
+		Outputs: []job.Output{
 			{ID: "out", URL: "/tmp/out.mp4"},
 		},
 	}

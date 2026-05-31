@@ -83,7 +83,7 @@ components:
       properties:
         task:
           type: object
-          description: The pipeline.Task document (task_id, job_id, stage_id, index, total, attempt, config, deadline)
+          description: The job.Task document (task_id, job_id, stage_id, index, total, attempt, config, deadline)
         status:
           type: string
           enum: [pending, running, succeeded, failed]

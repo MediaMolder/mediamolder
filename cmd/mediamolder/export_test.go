@@ -13,10 +13,10 @@ import (
 )
 
 // TestCmdExport_FromGraph is the F1.5 acceptance gate: writing a
-// minimal pipeline.Config to disk and invoking `mediamolder export
+// minimal job.Config to disk and invoking `mediamolder export
 // --from-graph <file>` must print the same FFmpeg command as the
 // shorthand-sourced `mediamolder export <file>` for any
-// configuration that round-trips through pipeline.NormalizeConfig.
+// configuration that round-trips through job.NormalizeConfig.
 // This proves the CLI dispatches both sub-paths correctly and that
 // they share the same renderer.
 func TestCmdExport_FromGraph(t *testing.T) {

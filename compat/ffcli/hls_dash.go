@@ -5,8 +5,8 @@
 package ffcli
 
 // hls_dash.go — Translate FFmpeg `-hls_*` / `-dash_*` / segmenter
-// AVOption CLI flags into the typed pipeline.HLSOptions /
-// pipeline.DASHOptions structs. Mirrors the AVOption tables in
+// AVOption CLI flags into the typed job.HLSOptions /
+// job.DASHOptions structs. Mirrors the AVOption tables in
 // libavformat/hlsenc.c and libavformat/dashenc.c.
 
 import (
@@ -14,13 +14,13 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/MediaMolder/MediaMolder/pipeline"
+	"github.com/MediaMolder/MediaMolder/job"
 )
 
-// setHLSOption populates one field of pipeline.HLSOptions from a
+// setHLSOption populates one field of job.HLSOptions from a
 // raw `-hls_*` / `-master_pl_name` / `-var_stream_map` /
 // `-start_number` CLI flag value.
-func setHLSOption(h *pipeline.HLSOptions, flag, raw string) error {
+func setHLSOption(h *job.HLSOptions, flag, raw string) error {
 	switch flag {
 	case "-hls_time":
 		f, err := strconv.ParseFloat(raw, 64)
@@ -66,9 +66,9 @@ func setHLSOption(h *pipeline.HLSOptions, flag, raw string) error {
 	return nil
 }
 
-// setDASHOption populates one field of pipeline.DASHOptions from a
+// setDASHOption populates one field of job.DASHOptions from a
 // raw DASH-muxer CLI flag value.
-func setDASHOption(d *pipeline.DASHOptions, flag, raw string) error {
+func setDASHOption(d *job.DASHOptions, flag, raw string) error {
 	switch flag {
 	case "-seg_duration":
 		f, err := strconv.ParseFloat(raw, 64)

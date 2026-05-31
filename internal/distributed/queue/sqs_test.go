@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/MediaMolder/MediaMolder/pipeline"
+	"github.com/MediaMolder/MediaMolder/job"
 )
 
 // redirectTransport rewrites every outbound request to a fixed base URL so
@@ -45,7 +45,7 @@ func newTestSQSQueue(t *testing.T, srv *httptest.Server) *SQSQueue {
 		accessKey: "AKIAIOSFODNN7EXAMPLE",
 		secretKey: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
 		receipts:  make(map[string]string),
-		tasks:     make(map[string]pipeline.Task),
+		tasks:     make(map[string]job.Task),
 	}
 }
 
@@ -63,7 +63,7 @@ func TestSQS_Publish_SigV4Header(t *testing.T) {
 	defer srv.Close()
 
 	q := newTestSQSQueue(t, srv)
-	task := pipeline.Task{ID: "t-sigv4-test", JobID: "j-1"}
+	task := job.Task{ID: "t-sigv4-test", JobID: "j-1"}
 
 	if err := q.Publish(nil, task); err != nil { //nolint:staticcheck
 		t.Fatalf("Publish: %v", err)
@@ -88,7 +88,7 @@ func TestSQS_Publish_SigV4Header(t *testing.T) {
 // TestSQS_Publish_Receive_Ack exercises a full round-trip against a mock
 // server that simulates the minimal SQS JSON API.
 func TestSQS_Publish_Receive_Ack(t *testing.T) {
-	task := pipeline.Task{ID: "rt-task-1", JobID: "j-2"}
+	task := job.Task{ID: "rt-task-1", JobID: "j-2"}
 	taskJSON, _ := json.Marshal(task)
 
 	var receivedSendBody []byte

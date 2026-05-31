@@ -704,7 +704,7 @@ Requires `TWELVELABS_API_KEY` and a small fixture (`testdata/clip.mp4`,
 - API key never written to logs, traces, or graph JSON exports.
 - The graph JSON references `${TL_INDEX}` and `${TWELVELABS_API_KEY}`
   via the existing env-var substitution layer; storing the literal key
-  in a graph is rejected by `pipeline.NormalizeConfig` with a warning.
+  in a graph is rejected by `job.NormalizeConfig` with a warning.
 - Upload bodies are streamed, never buffered, to avoid leaking
   multi-GB clips into process memory on `/proc/<pid>/maps`.
 - TLS: stdlib `http.Client` with default cert verification; no override.

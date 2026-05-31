@@ -14,7 +14,7 @@ import (
 
 	_ "github.com/mattn/go-sqlite3" // SQLite driver
 
-	"github.com/MediaMolder/MediaMolder/pipeline"
+	"github.com/MediaMolder/MediaMolder/job"
 )
 
 const schema = `
@@ -110,7 +110,7 @@ func (s *SQLiteStore) Close() error { return s.db.Close() }
 
 // ---- Job operations -------------------------------------------------------
 
-func (s *SQLiteStore) CreateJob(ctx context.Context, j pipeline.Job) error {
+func (s *SQLiteStore) CreateJob(ctx context.Context, j job.Job) error {
 	b, err := json.Marshal(j)
 	if err != nil {
 		return fmt.Errorf("state: marshal job: %w", err)
@@ -137,19 +137,19 @@ func (s *SQLiteStore) CreateJob(ctx context.Context, j pipeline.Job) error {
 	return tx.Commit()
 }
 
-func (s *SQLiteStore) GetJob(ctx context.Context, id string) (pipeline.Job, JobStatusRecord, error) {
+func (s *SQLiteStore) GetJob(ctx context.Context, id string) (job.Job, JobStatusRecord, error) {
 	var docJSON string
 	if err := s.db.QueryRowContext(ctx,
 		`SELECT doc_json FROM jobs WHERE id=?`, id,
 	).Scan(&docJSON); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return pipeline.Job{}, JobStatusRecord{}, fmt.Errorf("state: job %q not found", id)
+			return job.Job{}, JobStatusRecord{}, fmt.Errorf("state: job %q not found", id)
 		}
-		return pipeline.Job{}, JobStatusRecord{}, err
+		return job.Job{}, JobStatusRecord{}, err
 	}
-	var j pipeline.Job
+	var j job.Job
 	if err := json.Unmarshal([]byte(docJSON), &j); err != nil {
-		return pipeline.Job{}, JobStatusRecord{}, fmt.Errorf("state: unmarshal job: %w", err)
+		return job.Job{}, JobStatusRecord{}, fmt.Errorf("state: unmarshal job: %w", err)
 	}
 
 	var status, errMsg string
@@ -157,7 +157,7 @@ func (s *SQLiteStore) GetJob(ctx context.Context, id string) (pipeline.Job, JobS
 	if err := s.db.QueryRowContext(ctx,
 		`SELECT status, error, updated_at FROM job_statuses WHERE job_id=?`, id,
 	).Scan(&status, &errMsg, &updatedAtMs); err != nil {
-		return pipeline.Job{}, JobStatusRecord{}, err
+		return job.Job{}, JobStatusRecord{}, err
 	}
 	rec := JobStatusRecord{
 		Status:    JobStatus(status),
@@ -211,7 +211,7 @@ func (s *SQLiteStore) ListEvents(ctx context.Context, jobID string, afterID int6
 
 // ---- Task management ------------------------------------------------------
 
-func (s *SQLiteStore) UpsertTask(ctx context.Context, t pipeline.Task, status TaskStatus) error {
+func (s *SQLiteStore) UpsertTask(ctx context.Context, t job.Task, status TaskStatus) error {
 	b, err := json.Marshal(t)
 	if err != nil {
 		return fmt.Errorf("state: marshal task: %w", err)
@@ -229,7 +229,7 @@ func (s *SQLiteStore) UpsertTask(ctx context.Context, t pipeline.Task, status Ta
 	return err
 }
 
-func (s *SQLiteStore) SetTaskResult(ctx context.Context, taskID string, r pipeline.TaskResult) error {
+func (s *SQLiteStore) SetTaskResult(ctx context.Context, taskID string, r job.TaskResult) error {
 	b, err := json.Marshal(r)
 	if err != nil {
 		return fmt.Errorf("state: marshal task result: %w", err)
@@ -291,7 +291,7 @@ func (s *SQLiteStore) scanTask(row rowScanner) (TaskRecord, error) {
 		}
 		return TaskRecord{}, err
 	}
-	var t pipeline.Task
+	var t job.Task
 	if err := json.Unmarshal([]byte(docJSON), &t); err != nil {
 		return TaskRecord{}, fmt.Errorf("state: unmarshal task: %w", err)
 	}
@@ -305,7 +305,7 @@ func (s *SQLiteStore) scanTask(row rowScanner) (TaskRecord, error) {
 		UpdatedAt:  time.UnixMilli(updatedAtMs),
 	}
 	if resultJSON.Valid && resultJSON.String != "" {
-		var r pipeline.TaskResult
+		var r job.TaskResult
 		if err := json.Unmarshal([]byte(resultJSON.String), &r); err != nil {
 			return TaskRecord{}, fmt.Errorf("state: unmarshal task result: %w", err)
 		}
@@ -325,7 +325,7 @@ func (s *SQLiteStore) scanTaskRows(rows *sql.Rows) ([]TaskRecord, error) {
 		if err := rows.Scan(&docJSON, &statusStr, &resultJSON, &leaseUntilMs, &updatedAtMs); err != nil {
 			return nil, err
 		}
-		var t pipeline.Task
+		var t job.Task
 		if err := json.Unmarshal([]byte(docJSON), &t); err != nil {
 			return nil, fmt.Errorf("state: unmarshal task: %w", err)
 		}
@@ -339,7 +339,7 @@ func (s *SQLiteStore) scanTaskRows(rows *sql.Rows) ([]TaskRecord, error) {
 			UpdatedAt:  time.UnixMilli(updatedAtMs),
 		}
 		if resultJSON.Valid && resultJSON.String != "" {
-			var r pipeline.TaskResult
+			var r job.TaskResult
 			if err := json.Unmarshal([]byte(resultJSON.String), &r); err != nil {
 				return nil, fmt.Errorf("state: unmarshal task result: %w", err)
 			}

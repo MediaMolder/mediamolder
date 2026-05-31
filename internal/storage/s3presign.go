@@ -9,10 +9,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/MediaMolder/MediaMolder/pipeline"
+	"github.com/MediaMolder/MediaMolder/job"
 )
 
-// PresignResolver converts s3:// URIs inside a pipeline.Config into presigned
+// PresignResolver converts s3:// URIs inside a job.Config into presigned
 // HTTPS URLs before the pipeline engine sees the configuration.
 //
 // Presigning activates only when a non-nil S3FS is provided. When fs is nil,
@@ -34,7 +34,7 @@ func NewPresignResolver(fs *S3FS, ttl time.Duration) *PresignResolver {
 // Resolve walks cfg and replaces every s3:// URL with a presigned HTTPS URL.
 // It returns a shallow copy of cfg with the substituted URLs; the original
 // cfg is not modified. When no S3FS is configured, cfg is returned as-is.
-func (r *PresignResolver) Resolve(ctx context.Context, cfg *pipeline.Config) (*pipeline.Config, error) {
+func (r *PresignResolver) Resolve(ctx context.Context, cfg *job.Config) (*job.Config, error) {
 	if r == nil || r.fs == nil {
 		return cfg, nil
 	}
@@ -42,9 +42,9 @@ func (r *PresignResolver) Resolve(ctx context.Context, cfg *pipeline.Config) (*p
 	// Shallow-copy the top-level struct; deep-copy the slice headers so we
 	// can replace individual elements without modifying the caller's slice.
 	out := *cfg
-	out.Inputs = make([]pipeline.Input, len(cfg.Inputs))
+	out.Inputs = make([]job.Input, len(cfg.Inputs))
 	copy(out.Inputs, cfg.Inputs)
-	out.Outputs = make([]pipeline.Output, len(cfg.Outputs))
+	out.Outputs = make([]job.Output, len(cfg.Outputs))
 	copy(out.Outputs, cfg.Outputs)
 
 	for i, inp := range out.Inputs {
@@ -57,7 +57,7 @@ func (r *PresignResolver) Resolve(ctx context.Context, cfg *pipeline.Config) (*p
 		}
 		// Walk the inline concat playlist.
 		if len(inp.ConcatList) > 0 {
-			entries := make([]pipeline.ConcatEntry, len(inp.ConcatList))
+			entries := make([]job.ConcatEntry, len(inp.ConcatList))
 			copy(entries, inp.ConcatList)
 			for j, e := range entries {
 				if strings.HasPrefix(e.File, "s3://") {

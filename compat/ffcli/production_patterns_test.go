@@ -32,7 +32,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/MediaMolder/MediaMolder/pipeline"
+	"github.com/MediaMolder/MediaMolder/job"
 )
 
 // productionPattern is the on-disk manifest for one pattern. Fields
@@ -57,7 +57,7 @@ type productionPattern struct {
 //     greppable as a roadmap signal even when everything skips).
 //  2. If `Blockers` is non-empty, t.Skips with a single
 //     "blocked-by: <key1>; <key2>; ..." line — easy to grep.
-//  3. Otherwise, attempts ffcli.Parse + pipeline.Run on a tmpdir
+//  3. Otherwise, attempts ffcli.Parse + job.Run on a tmpdir
 //     output. Skips when ffmpeg/ffprobe/the input fixture aren't
 //     available. (The first pattern with no blockers will start
 //     running for real — that's the success criterion for landing the
@@ -160,12 +160,12 @@ func TestProductionPatternsCorpus(t *testing.T) {
 				inp.Options["ss"] = "450"
 				inp.Options["t"] = "10"
 			}
-			eng, err := pipeline.NewPipeline(cfg)
+			eng, err := job.NewPipeline(cfg)
 			if err != nil {
-				t.Fatalf("pipeline.NewPipeline: %v", err)
+				t.Fatalf("job.NewPipeline: %v", err)
 			}
 			if err := eng.Run(context.Background()); err != nil {
-				t.Fatalf("pipeline.Run: %v", err)
+				t.Fatalf("job.Run: %v", err)
 			}
 			if st, err := os.Stat(out); err != nil {
 				t.Fatalf("output missing: %v", err)

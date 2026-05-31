@@ -9,15 +9,15 @@ import (
 	"net/http"
 
 	"github.com/MediaMolder/MediaMolder/compat/ffcli"
-	"github.com/MediaMolder/MediaMolder/pipeline"
+	"github.com/MediaMolder/MediaMolder/job"
 )
 
 // exportCmdRequest is the JSON body accepted by POST /api/export-cmd.
-// Config is a mediamolder JobConfig (pipeline.Config) as produced by
+// Config is a mediamolder JobConfig (job.Config) as produced by
 // the GUI editor's flowToConfig helper. The server converts it into an
 // ffmpeg command-line string via compat/ffcli.Export.
 type exportCmdRequest struct {
-	Config *pipeline.Config `json:"config"`
+	Config *job.Config `json:"config"`
 }
 
 // exportCmdResponse is the success body returned by POST /api/export-cmd.

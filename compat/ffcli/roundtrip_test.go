@@ -7,7 +7,7 @@ package ffcli
 //
 // Each entry takes an FFmpeg command line, runs it through the
 // ffmpeg(1) binary, parses the same command through ffcli.Parse +
-// runs the resulting JSON through pipeline.Pipeline, then probes both
+// runs the resulting JSON through job.Pipeline, then probes both
 // outputs with ffprobe(1) and asserts the technical metadata matches.
 // This is the minimum-viable proof that "JSON round-trips through
 // MediaMolder produce the same media as the equivalent ffmpeg
@@ -29,7 +29,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/MediaMolder/MediaMolder/pipeline"
+	"github.com/MediaMolder/MediaMolder/job"
 )
 
 type roundTripCase struct {
@@ -79,7 +79,7 @@ var roundTripCases = []roundTripCase{
 	{
 		// Positional filter args (`scale=320:240`) — regression for the
 		// `_pos*` synthesis in parseFilterExpr being passed verbatim by
-		// pipeline.buildFilterSpec. With the fix, positional keys are
+		// job.buildFilterSpec. With the fix, positional keys are
 		// emitted as bare in-order values before any named args.
 		name:        "vf_scale_positional_x264_audio_copy",
 		cmd:         "ffmpeg -y -i {{input}} -vf scale=320:240 -c:v libx264 -preset ultrafast -c:a copy {{output}}",
@@ -164,14 +164,14 @@ func runFFmpeg(t *testing.T, bin string, args []string) {
 	}
 }
 
-func runMediaMolder(t *testing.T, cfg *pipeline.Config) {
+func runMediaMolder(t *testing.T, cfg *job.Config) {
 	t.Helper()
-	eng, err := pipeline.NewPipeline(cfg)
+	eng, err := job.NewPipeline(cfg)
 	if err != nil {
-		t.Fatalf("pipeline.NewPipeline: %v", err)
+		t.Fatalf("job.NewPipeline: %v", err)
 	}
 	if err := eng.Run(context.Background()); err != nil {
-		t.Fatalf("pipeline.Run: %v", err)
+		t.Fatalf("job.Run: %v", err)
 	}
 }
 

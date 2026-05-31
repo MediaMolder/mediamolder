@@ -12,7 +12,7 @@ import (
 
 	"github.com/nats-io/nats.go"
 
-	"github.com/MediaMolder/MediaMolder/pipeline"
+	"github.com/MediaMolder/MediaMolder/job"
 )
 
 const (
@@ -24,7 +24,7 @@ const (
 
 // NATSQueue is a durable task queue backed by NATS JetStream.
 //
-// Messages carry the full pipeline.Task payload as JSON. The stream uses
+// Messages carry the full job.Task payload as JSON. The stream uses
 // WorkQueuePolicy so each message is delivered to exactly one consumer.
 // Heartbeat calls msg.InProgress() to reset the AckWait timer; Ack/Nack
 // call msg.Ack() / msg.NakWithDelay() respectively.
@@ -114,7 +114,7 @@ func NewNATSQueue(url, streamName string) (*NATSQueue, error) {
 }
 
 // Publish serialises t to JSON and publishes it to the JetStream subject.
-func (q *NATSQueue) Publish(_ context.Context, t pipeline.Task) error {
+func (q *NATSQueue) Publish(_ context.Context, t job.Task) error {
 	b, err := json.Marshal(t)
 	if err != nil {
 		return fmt.Errorf("nats: marshal task: %w", err)
@@ -130,7 +130,7 @@ func (q *NATSQueue) Receive(ctx context.Context, _ ReceiveFilter) (Lease, error)
 		msgs, err := q.sub.Fetch(1, nats.MaxWait(250*time.Millisecond))
 		if err == nil && len(msgs) == 1 {
 			msg := msgs[0]
-			var t pipeline.Task
+			var t job.Task
 			if err := json.Unmarshal(msg.Data, &t); err != nil {
 				// Unparseable message — ack it to discard, don't block the queue.
 				_ = msg.Ack()

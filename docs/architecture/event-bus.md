@@ -43,13 +43,13 @@ go func() {
             fmt.Printf("stream started: %s (%s)\n", e.NodeID, e.MediaType)
         case pipeline.BufferingPercent:
             fmt.Printf("buffer %s: %.0f%%\n", e.NodeID, e.Percent*100)
-        case pipeline.MetricsSnapshotEvent:
+        case job.MetricsSnapshotEvent:
             fmt.Printf("metrics: %d nodes, state=%s\n", len(e.Snapshot.Nodes), e.Snapshot.State)
         case pipeline.ClockLost:
             fmt.Printf("clock lost: %s\n", e.Reason)
         case pipeline.ReconfigureComplete:
             fmt.Printf("reconfigured %s: %v\n", e.NodeID, e.Params)
-        case pipeline.OutputAdded:
+        case job.OutputAdded:
             fmt.Printf("output added: %s\n", e.OutputID)
         case pipeline.NodeRestart:
             fmt.Printf("node %s restart attempt %d: %v\n", e.NodeID, e.Attempt, e.Err)

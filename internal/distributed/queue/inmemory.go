@@ -8,18 +8,18 @@ import (
 	"sync"
 	"time"
 
-	"github.com/MediaMolder/MediaMolder/pipeline"
+	"github.com/MediaMolder/MediaMolder/job"
 )
 
 // pending holds a task together with the earliest time it may be delivered.
 type pending struct {
-	task      pipeline.Task
+	task      job.Task
 	notBefore time.Time
 }
 
 // leaseRecord retains the task so Nack can re-enqueue it.
 type leaseRecord struct {
-	task  pipeline.Task
+	task  job.Task
 	until time.Time
 }
 
@@ -50,7 +50,7 @@ func NewInMemory() *InMemory {
 }
 
 // Publish enqueues a task for immediate delivery.
-func (q *InMemory) Publish(_ context.Context, t pipeline.Task) error {
+func (q *InMemory) Publish(_ context.Context, t job.Task) error {
 	q.mu.Lock()
 	q.items = append(q.items, pending{task: t, notBefore: time.Now()})
 	ch := q.notify

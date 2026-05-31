@@ -22,7 +22,7 @@ import (
 	"github.com/MediaMolder/MediaMolder/internal/distributed/worker"
 	"github.com/MediaMolder/MediaMolder/internal/server"
 	"github.com/MediaMolder/MediaMolder/internal/storage"
-	"github.com/MediaMolder/MediaMolder/pipeline"
+	"github.com/MediaMolder/MediaMolder/job"
 )
 
 // allowPaths is a repeatable --allow-path flag.
@@ -310,7 +310,7 @@ func openState(uri string) (state.Store, error) {
 }
 
 // buildCaps converts CLI flags into a WorkerCapabilities value.
-func buildCaps(capabilitiesCSV, region string) pipeline.WorkerCapabilities {
+func buildCaps(capabilitiesCSV, region string) job.WorkerCapabilities {
 	var caps []string
 	for _, c := range strings.Split(capabilitiesCSV, ",") {
 		c = strings.TrimSpace(c)
@@ -318,7 +318,7 @@ func buildCaps(capabilitiesCSV, region string) pipeline.WorkerCapabilities {
 			caps = append(caps, c)
 		}
 	}
-	return pipeline.WorkerCapabilities{
+	return job.WorkerCapabilities{
 		HardwareAccel: caps,
 		Region:        region,
 	}

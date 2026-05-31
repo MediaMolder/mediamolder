@@ -307,7 +307,7 @@ These map directly onto `pipeline.SecurityConfig`.
 
 ## Phase 1: Static Analysis
 
-Runs against `pipeline.Config` alone, no file I/O.
+Runs against `job.Config` alone, no file I/O.
 
 **Checks performed:**
 - All topology issues (§1)

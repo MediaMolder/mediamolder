@@ -92,9 +92,9 @@ func (p *Provider) Tracer() trace.Tracer {
 
 // StartPipelineSpan creates a root span for a pipeline run.
 func (p *Provider) StartPipelineSpan(ctx context.Context, pipelineID string) (context.Context, trace.Span) {
-	return p.tracer.Start(ctx, "pipeline.run",
+	return p.tracer.Start(ctx, "job.run",
 		trace.WithAttributes(
-			attribute.String("pipeline.id", pipelineID),
+			attribute.String("job.id", pipelineID),
 		),
 	)
 }
@@ -102,7 +102,7 @@ func (p *Provider) StartPipelineSpan(ctx context.Context, pipelineID string) (co
 // StartNodeSpan creates a child span for a pipeline node.
 func StartNodeSpan(ctx context.Context, nodeID, kind, codec, mediaType string) (context.Context, trace.Span) {
 	tracer := otel.Tracer(tracerName)
-	return tracer.Start(ctx, "pipeline.node."+kind,
+	return tracer.Start(ctx, "job.node."+kind,
 		trace.WithAttributes(
 			attribute.String("node.id", nodeID),
 			attribute.String("node.kind", kind),

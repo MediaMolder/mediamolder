@@ -9,9 +9,9 @@ package orchestrator
 // types share only a JSON wire format, not a Go type, to avoid an import cycle
 // (pipeline → processors → pipeline).
 type splitManifest struct {
-	Splitter string          `json:"splitter"`
-	InputURI string          `json:"input_uri,omitempty"`
-	Segments []splitSegment  `json:"segments"`
+	Splitter string         `json:"splitter"`
+	InputURI string         `json:"input_uri,omitempty"`
+	Segments []splitSegment `json:"segments"`
 }
 
 // splitSegment describes one temporal slice of the source media.

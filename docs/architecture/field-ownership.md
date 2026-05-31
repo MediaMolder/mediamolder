@@ -3,9 +3,9 @@
 **Status:** authoritative classification (Milestone A of
 [private_local/normalization_plan_revised.md](../../private_local/normalization_plan_revised.md))
 
-This document classifies every field on `pipeline.Config`,
-`pipeline.Config.GlobalOptions`, `pipeline.Output`,
-`pipeline.Output.Streams[i]`, and `pipeline.Input` into one of five
+This document classifies every field on `job.Config`,
+`job.Config.GlobalOptions`, `job.Output`,
+`job.Output.Streams[i]`, and `job.Input` into one of five
 ownership classes. It is the authoritative answer to *"how much further
 can we push runtime parameters from global / output-scoped to
 node-local, and what stays global for principled reasons?"*

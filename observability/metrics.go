@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/MediaMolder/MediaMolder/pipeline/snap"
+	"github.com/MediaMolder/MediaMolder/job/snap"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
@@ -25,7 +25,7 @@ var stallDurationBuckets = []float64{0.001, 0.005, 0.010, 0.025, 0.050, 0.100, 0
 // processing latency. Range: 1 ms – 500 ms.
 var frameLatencyBuckets = []float64{0.001, 0.005, 0.010, 0.025, 0.050, 0.100, 0.250, 0.500}
 
-// Metrics holds registered Prometheus metrics for a pipeline.
+// Metrics holds registered Prometheus metrics for a job.
 type Metrics struct {
 	// Pre-existing metrics.
 	Fps           *prometheus.GaugeVec
@@ -539,7 +539,7 @@ func setCORSHeaders(w http.ResponseWriter) {
 }
 
 // RegisterPerfHandler adds a /perf endpoint that serves a live
-// pipeline.MetricsSnapshot encoded as JSON. snapFn is called on each request.
+// job.MetricsSnapshot encoded as JSON. snapFn is called on each request.
 // Must be called before Start.
 func (s *MetricsServer) RegisterPerfHandler(snapFn func() snap.MetricsSnapshot) {
 	s.mux.HandleFunc("/perf", func(w http.ResponseWriter, r *http.Request) {
