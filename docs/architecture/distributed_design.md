@@ -83,7 +83,7 @@ mediamolder serve --mode=worker   --queue=…       # Tier 2 (worker)
 
 ## 3. Job Model (one document for all tiers)
 
-A `Job` wraps the existing `pipeline.Config` and adds metadata the orchestrator needs.
+A `Job` wraps the existing `job.Config` and adds metadata the orchestrator needs.
 
 ```go
 // pipeline/job.go (new)
@@ -290,7 +290,7 @@ type Task struct {
     JobID      string          `json:"job_id"`
     StageID    string          `json:"stage_id"`
     Attempt    int             `json:"attempt"`
-    Config     Config          `json:"config"`     // self-contained pipeline.Config
+    Config     Config          `json:"config"`     // self-contained job.Config
     Inputs     []ArtifactRef   `json:"inputs"`     // resolved URIs (signed if applicable)
     Outputs    []ArtifactSlot  `json:"outputs"`    // target URIs + manifest path
     Deadline   time.Time       `json:"deadline"`
@@ -299,7 +299,7 @@ type Task struct {
 }
 ```
 
-A task is **always a complete `pipeline.Config`** — the worker is the existing engine.
+A task is **always a complete `job.Config`** — the worker is the existing engine.
 This is the property that keeps the worker dumb and the orchestrator the only place
 that understands "tasks". It also means a task can be unit-tested by running it as
 a Tier 0 job (`mediamolder run task.json`).
@@ -541,7 +541,7 @@ short-TTL signed URLs for inputs (read) and outputs (write) scoped to the job's 
 |---------------------|-------------------|
 | `mediamolder run job.json` | Unchanged. |
 | GUI on localhost | Unchanged; "Backend" selector defaults to Local. |
-| `pipeline.Config` JSON | Unchanged; now also embeddable as `job.config`. |
+| `job.Config` JSON | Unchanged; now also embeddable as `job.config`. |
 | Existing tests | Must remain green. New code lives under `internal/distributed/`, `internal/orchestrator/`, `internal/storage/`, `cmd/mediamolder/serve.go`. |
 
 A job submitted to a Tier 2 API without a `Distribution` block is run as a single task
@@ -611,7 +611,7 @@ Each phase ships independently and leaves the previous tier(s) fully functional.
 
 ## 12. Open Questions
 
-1. **Queue payload size cap.** SQS hard-limits messages to 256 KB. Large `pipeline.Config`
+1. **Queue payload size cap.** SQS hard-limits messages to 256 KB. Large `job.Config`
    payloads (e.g., long concat lists) must be stored in State and referenced by ID in
    the queue message. Decision: always store `Task.Config` in State; queue carries only
    `{job_id, task_id, lease}`.

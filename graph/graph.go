@@ -81,7 +81,7 @@ func (k NodeKind) String() string {
 // ---------- Definition types (input to Build) ----------
 
 // Def is the declarative description used to construct a Graph.
-// Callers populate it from pipeline.Config or build it programmatically.
+// Callers populate it from job.Config or build it programmatically.
 type Def struct {
 	Inputs  []InputDef
 	Nodes   []NodeDef
@@ -107,16 +107,16 @@ type NodeDef struct {
 	// output type cannot be inferred from the inbound edge type. Build
 	// rejects any outbound edge whose Type does not match. (Wave 7 #37)
 	OutputMediaType PortType
-	// Device names a HardwareDevice entry (from pipeline.Config.HardwareDevices)
+	// Device names a HardwareDevice entry (from job.Config.HardwareDevices)
 	// whose opened AVHWDeviceContext is used for this node. Empty = CPU path.
 	// (Wave 10 #56)
 	Device string
 	// AutoMapHW opts this filter node into the hardware filter
 	// auto-mapping pass in pipeline (expandHWFilterMappings). See
-	// pipeline.NodeDef.AutoMapHW for the full contract. (Wave 10 #58)
+	// job.NodeDef.AutoMapHW for the full contract. (Wave 10 #58)
 	AutoMapHW bool
 	// Internal carries typed lowering output produced by
-	// pipeline.NormalizeConfig (Milestone B). It is the typed
+	// job.NormalizeConfig (Milestone B). It is the typed
 	// replacement for the historical __* sentinel keys in Params.
 	// See internal_fields.go.
 	Internal Internal `json:"internal,omitempty"`
@@ -148,12 +148,12 @@ type Node struct {
 	// downstream type matches the upstream type. (Wave 7 #37)
 	OutputMediaType PortType
 	// Device names the hardware-acceleration device context (from
-	// pipeline.Config.HardwareDevices) to use for this node. Empty = CPU path.
+	// job.Config.HardwareDevices) to use for this node. Empty = CPU path.
 	// (Wave 10 #56)
 	Device string
 	// Internal carries typed lowering output. Forwarded verbatim
 	// from NodeDef.Internal by Build. See internal_fields.go and
-	// pipeline.NormalizeConfig.
+	// job.NormalizeConfig.
 	Internal Internal
 
 	Inbound  []*Edge

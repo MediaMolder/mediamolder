@@ -523,7 +523,7 @@ func processorDescription(name string) string {
 }
 
 // virtualSourceFilters is the GUI-visible subset of
-// pipeline.knownFilterSources (Wave 7 #36a). Kept in sync manually —
+// job.knownFilterSources (Wave 7 #36a). Kept in sync manually —
 // `pipeline` is not imported here to avoid a cgo dependency cycle.
 // Wave 8 #44.
 var virtualSourceFilters = map[string]struct{}{
@@ -543,7 +543,7 @@ var virtualSourceFilters = map[string]struct{}{
 	"amovie":      {},
 }
 
-// virtualSinkFilters mirrors pipeline.knownFilterSinks. Wave 8 #44.
+// virtualSinkFilters mirrors job.knownFilterSinks. Wave 8 #44.
 var virtualSinkFilters = map[string]struct{}{
 	"nullsink":  {},
 	"anullsink": {},

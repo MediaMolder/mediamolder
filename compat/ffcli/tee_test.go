@@ -8,19 +8,19 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/MediaMolder/MediaMolder/pipeline"
+	"github.com/MediaMolder/MediaMolder/job"
 )
 
 func TestParseTeeSlaves(t *testing.T) {
 	tests := []struct {
 		name string
 		in   string
-		want []pipeline.TeeTarget
+		want []job.TeeTarget
 	}{
 		{
 			name: "two slaves with format",
 			in:   "[f=mp4]out.mp4|[f=hls:hls_time=4]out.m3u8",
-			want: []pipeline.TeeTarget{
+			want: []job.TeeTarget{
 				{URL: "out.mp4", Format: "mp4"},
 				{URL: "out.m3u8", Format: "hls", Options: map[string]any{"hls_time": "4"}},
 			},
@@ -28,26 +28,26 @@ func TestParseTeeSlaves(t *testing.T) {
 		{
 			name: "select + onfail + bsfs",
 			in:   "[select=v:onfail=ignore:bsfs=h264_mp4toannexb]out.ts",
-			want: []pipeline.TeeTarget{
+			want: []job.TeeTarget{
 				{URL: "out.ts", Select: "v", OnFail: "ignore", BSFs: "h264_mp4toannexb"},
 			},
 		},
 		{
 			name: "use_fifo + fifo_options",
 			in:   "[f=flv:use_fifo=1:fifo_options=queue_size=60]rtmp://x/live",
-			want: []pipeline.TeeTarget{
+			want: []job.TeeTarget{
 				{URL: "rtmp://x/live", Format: "flv", UseFifo: true, FifoOptions: "queue_size=60"},
 			},
 		},
 		{
 			name: "bare URL",
 			in:   "out.mp4",
-			want: []pipeline.TeeTarget{{URL: "out.mp4"}},
+			want: []job.TeeTarget{{URL: "out.mp4"}},
 		},
 		{
 			name: "escaped pipe in URL",
 			in:   `[f=mp4]a\|b.mp4`,
-			want: []pipeline.TeeTarget{{URL: "a|b.mp4", Format: "mp4"}},
+			want: []job.TeeTarget{{URL: "a|b.mp4", Format: "mp4"}},
 		},
 	}
 	for _, tc := range tests {

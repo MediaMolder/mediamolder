@@ -14,7 +14,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/MediaMolder/MediaMolder/pipeline"
+	"github.com/MediaMolder/MediaMolder/job"
 )
 
 // drainTypedInputDemuxer extracts the input-side typed keys
@@ -24,7 +24,7 @@ import (
 // `seek_timestamp`) out of opts and into the matching typed Input
 // field, deleting the key from opts on success. Unknown keys stay
 // in opts so legacy AVDict pass-through still works.
-func drainTypedInputDemuxer(in *pipeline.Input, opts map[string]any) {
+func drainTypedInputDemuxer(in *job.Input, opts map[string]any) {
 	if opts == nil {
 		return
 	}
@@ -129,7 +129,7 @@ func drainTypedInputDemuxer(in *pipeline.Input, opts map[string]any) {
 // sample_fmt) that landed in opts because the user wrote them after
 // the last `-i` are silently dropped — they don't have an
 // output-side meaning in our schema.
-func drainTypedOutputDemuxer(out *pipeline.Output, vEnc, aEnc map[string]any, opts map[string]any) {
+func drainTypedOutputDemuxer(out *job.Output, vEnc, aEnc map[string]any, opts map[string]any) {
 	if opts == nil {
 		return
 	}

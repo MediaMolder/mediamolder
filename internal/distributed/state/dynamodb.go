@@ -18,7 +18,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/MediaMolder/MediaMolder/pipeline"
+	"github.com/MediaMolder/MediaMolder/job"
 )
 
 // DynamoDBStore is a state.Store backed by Amazon DynamoDB using the JSON API
@@ -96,7 +96,7 @@ func NewDynamoDBStore(rawURI string) (*DynamoDBStore, error) {
 
 // ---- Store interface --------------------------------------------------------
 
-func (d *DynamoDBStore) CreateJob(ctx context.Context, j pipeline.Job) error {
+func (d *DynamoDBStore) CreateJob(ctx context.Context, j job.Job) error {
 	jobJSON, err := json.Marshal(j)
 	if err != nil {
 		return err
@@ -111,18 +111,18 @@ func (d *DynamoDBStore) CreateJob(ctx context.Context, j pipeline.Job) error {
 	return d.putItem(ctx, item, "attribute_not_exists(PK)")
 }
 
-func (d *DynamoDBStore) GetJob(ctx context.Context, id string) (pipeline.Job, JobStatusRecord, error) {
+func (d *DynamoDBStore) GetJob(ctx context.Context, id string) (job.Job, JobStatusRecord, error) {
 	item, err := d.getItem(ctx, dynKey{"PK": dynS("JOB#" + id), "SK": dynS("META")})
 	if err != nil {
-		return pipeline.Job{}, JobStatusRecord{}, err
+		return job.Job{}, JobStatusRecord{}, err
 	}
-	var j pipeline.Job
+	var j job.Job
 	if err := json.Unmarshal([]byte(dynGetS(item, "job_json")), &j); err != nil {
-		return pipeline.Job{}, JobStatusRecord{}, err
+		return job.Job{}, JobStatusRecord{}, err
 	}
 	var sr JobStatusRecord
 	if err := json.Unmarshal([]byte(dynGetS(item, "status_json")), &sr); err != nil {
-		return pipeline.Job{}, JobStatusRecord{}, err
+		return job.Job{}, JobStatusRecord{}, err
 	}
 	return j, sr, nil
 }
@@ -177,7 +177,7 @@ func (d *DynamoDBStore) ListEvents(ctx context.Context, jobID string, afterID in
 	return events, nil
 }
 
-func (d *DynamoDBStore) UpsertTask(ctx context.Context, t pipeline.Task, status TaskStatus) error {
+func (d *DynamoDBStore) UpsertTask(ctx context.Context, t job.Task, status TaskStatus) error {
 	taskJSON, err := json.Marshal(t)
 	if err != nil {
 		return err
@@ -207,7 +207,7 @@ func (d *DynamoDBStore) UpsertTask(ctx context.Context, t pipeline.Task, status 
 	return d.putItem(ctx, rev, "")
 }
 
-func (d *DynamoDBStore) SetTaskResult(ctx context.Context, taskID string, r pipeline.TaskResult) error {
+func (d *DynamoDBStore) SetTaskResult(ctx context.Context, taskID string, r job.TaskResult) error {
 	pk, sk, err := d.resolveTaskKey(ctx, taskID)
 	if err != nil {
 		return err
@@ -363,7 +363,7 @@ func taskSK(stageID, taskID string) string {
 }
 
 func (d *DynamoDBStore) itemToTaskRecord(item dynItem) (TaskRecord, error) {
-	var t pipeline.Task
+	var t job.Task
 	if err := json.Unmarshal([]byte(dynGetS(item, "task_json")), &t); err != nil {
 		return TaskRecord{}, err
 	}
@@ -373,7 +373,7 @@ func (d *DynamoDBStore) itemToTaskRecord(item dynItem) (TaskRecord, error) {
 		UpdatedAt: time.Now(),
 	}
 	if resultJSON := dynGetS(item, "result_json"); resultJSON != "" {
-		var r pipeline.TaskResult
+		var r job.TaskResult
 		if err := json.Unmarshal([]byte(resultJSON), &r); err == nil {
 			rec.Result = &r
 		}

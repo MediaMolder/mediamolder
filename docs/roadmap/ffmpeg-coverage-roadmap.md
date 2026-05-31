@@ -127,7 +127,7 @@ Legend: ✅ supported · ⚠️ partial · ❌ missing
 | **Filter expression engine** (`t`, `n`, `frame`, `tw`, `th`, `text_w`, `text_h`, `w`, `h`, `enable=between(t,2,8)`, arithmetic) | ✅ | Strings reach libavfilter intact; `GET /api/filters/{name}/eval-expression` validator (§5#7); `expression: true` AVOption flag bit + curated per-filter variable registry (Wave 4 #19); syntax-highlighted `ExpressionInput` GUI control with cookbook + live validation (Wave 4 #20). |
 | **Mixed labelled + unlabelled `-filter_complex` outputs**   | ✅    | `compat/ffcli.NormalizeFilterComplex` rewrites dangling pads to synthetic `[mm_fc_out_N]`/`[mm_fc_in_0]` labels; idempotent (Wave 7 #40). Full `-filter_complex` parse → node+edge wiring deferred to Wave 8 #53. |
 | `setsar`, `setdar` (SAR/DAR overrides)                      | ✅    | `Output.SAR` / `Output.DAR` shorthand; `compat/ffcli` rewrites legacy `-aspect`. Wave 3 #15. |
-| `arnndn` (RNNoise) and other model-file filters             | ✅    | `filter_asset_paths []string` on `pipeline.Config`; validator resolves relative model-file params (`model=`, `sofa=`, `*_model`, `*_sofa`) against pipeline file dir + search dirs; GUI Inspector renders `ModelFileInput` (text + Browse…) for model-bearing option names. (Wave 11 #66) |
+| `arnndn` (RNNoise) and other model-file filters             | ✅    | `filter_asset_paths []string` on `job.Config`; validator resolves relative model-file params (`model=`, `sofa=`, `*_model`, `*_sofa`) against pipeline file dir + search dirs; GUI Inspector renders `ModelFileInput` (text + Browse…) for model-bearing option names. (Wave 11 #66) |
 | `zscale` + `tonemap` (HDR)                                  | ✅    | Validator (`pipeline.validateFilterAvailability`) rejects unknown / unbuilt filters with an actionable hint (`zscale` → `--enable-libzimg`, `tonemap_opencl` → `--enable-opencl`, …) instead of waiting for a runtime "filter not found". Palette (`/api/nodes`) only lists filters reported by `av.ListFilters()`, so unbuilt entries are absent automatically. (Wave 7 #42) |
 | `minterpolate` (motion-compensated interpolation)           | ✅    | Frame-rate / time-base plumbing done in §5 #1; the AVOption miner (§4 #19) exposes `mi_mode` / `mc_mode` / `me_mode` / `me` (and `vsbmc`) as typed `int` options carrying their named constants — the GUI Inspector renders them as enum dropdowns. (Wave 7 #43) |
 | Audio channel manipulation: `pan`, `channelsplit`, `channelmap`, `join`, `amerge`, `amix=weights` | ✅ | Backend works (Wave 7 #41); GUI channel-routing matrix done (Wave 8 #49): `PanForm` gain matrix, `ChannelMapForm` source dropdowns, `ChannelSplitForm` layout selector, `JoinForm` stream+channel pickers, `AMergeForm` input count, `AMixForm` weighted mix |
@@ -224,7 +224,7 @@ filled, the GUI also needs:
 The strategy is **library-first, schema-second, GUI-third**, in that order, for every capability:
 
 1. Make sure the underlying libav* binding in `av/` exposes whatever AVOption / API is required.
-2. Surface it as a schema field in `pipeline.Config` (and the matching `schema/v1.x.json`, `frontend/src/lib/jobTypes.ts`, and the `materializeImplicitEncoders` / `expandImplicitEncoders` adapters).
+2. Surface it as a schema field in `job.Config` (and the matching `schema/v1.x.json`, `frontend/src/lib/jobTypes.ts`, and the `materializeImplicitEncoders` / `expandImplicitEncoders` adapters).
 3. Add an inspector form in the GUI.
 
 Two **horizontal** workstreams run alongside the per-feature work:
@@ -378,7 +378,7 @@ All are now done. Listed in the order they were addressed:
    pointer for every `covered` flag. The first batch of round-trip
    tests lives at `compat/ffcli/roundtrip_test.go`: for each
    command template the harness runs both `ffmpeg(1)` and the
-   parsed `pipeline.Config` end-to-end, then `ffprobe(1)`s both
+   parsed `job.Config` end-to-end, then `ffprobe(1)`s both
    outputs and asserts identical stream counts, per-stream codec /
    resolution, and format duration within 0.5s. Initial cases
    cover stream-copy MP4→MKV, `-c:v copy -c:a aac` transcode,
@@ -1402,7 +1402,7 @@ already works in degraded form via per-filter spellings.
     Standardise how filter parameters that reference on-disk model
     files are expressed and validated (`arnndn=model=rnnoise.rnnn`,
     `sofalizer=sofa=file.sofa`). Add a
-    `filter_asset_paths []string` field to `pipeline.Config`;
+    `filter_asset_paths []string` field to `job.Config`;
     validator resolves model paths relative to the pipeline file and
     rejects missing files at `Validate()` time (mirrors the YOLO
     model-path story in `processors/`). GUI: file-picker appears in
@@ -1427,7 +1427,7 @@ already works in degraded form via per-filter spellings.
 ### 6.12 Cross-cutting accelerators (parallel with all waves)
 
 - **Capability-registry CI gate** — every PR touching
-  `pipeline.Config` must update `compat/capabilities.yaml` or the
+  `job.Config` must update `compat/capabilities.yaml` or the
   build fails. Registry exists (§5#4); add the gate.
 - **`compat/ffcli` round-trip oracle expansion** — every Wave 5–7
   schema promotion ships ≥ 3 round-trip cases against real

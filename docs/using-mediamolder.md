@@ -207,7 +207,7 @@ mediamolder export [--from-graph] <config.json>
 
 | Flag | Default | Description |
 |---|---|---|
-| `--from-graph` | `false` | Normalise through `pipeline.NormalizeConfig` first, then render via `ExportGraph`; produces a more accurate result for graphs that use implicit encoders or shorthand fields |
+| `--from-graph` | `false` | Normalise through `job.NormalizeConfig` first, then render via `ExportGraph`; produces a more accurate result for graphs that use implicit encoders or shorthand fields |
 
 **Examples:**
 

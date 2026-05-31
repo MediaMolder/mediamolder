@@ -1,7 +1,7 @@
 // Copyright (C) 2026 Thomas Vaughan
 // SPDX-License-Identifier: LGPL-2.1-or-later
 
-// Package orchestrator materializes pipeline.Job documents into tasks, enqueues
+// Package orchestrator materializes j.Job documents into tasks, enqueues
 // them on a Queue, and advances the task graph as tasks complete. It is the only
 // component that understands the DistributionSpec; workers are deliberately dumb.
 //
@@ -27,7 +27,7 @@ import (
 
 	"github.com/MediaMolder/MediaMolder/internal/distributed/queue"
 	"github.com/MediaMolder/MediaMolder/internal/distributed/state"
-	"github.com/MediaMolder/MediaMolder/pipeline"
+	j "github.com/MediaMolder/MediaMolder/job"
 )
 
 // DefaultTaskDeadline is the default duration from now used for task deadlines
@@ -52,7 +52,7 @@ func New(st state.Store, q queue.Queue) *Orchestrator {
 
 // AcceptJob validates job, assigns an ID if absent, persists it, materialises
 // initial tasks, and enqueues them. Returns the assigned job ID.
-func (o *Orchestrator) AcceptJob(ctx context.Context, job *pipeline.Job) (string, error) {
+func (o *Orchestrator) AcceptJob(ctx context.Context, job *j.Job) (string, error) {
 	if err := validateJob(job); err != nil {
 		return "", fmt.Errorf("orchestrator: invalid job: %w", err)
 	}
@@ -75,7 +75,7 @@ func (o *Orchestrator) AcceptJob(ctx context.Context, job *pipeline.Job) (string
 // OnTaskCompleted is called by a worker (or the worker bridge) when a task
 // finishes. It persists the result, checks stage completion, and either
 // advances to the next stage or marks the job done/failed.
-func (o *Orchestrator) OnTaskCompleted(ctx context.Context, taskID string, result pipeline.TaskResult) error {
+func (o *Orchestrator) OnTaskCompleted(ctx context.Context, taskID string, result j.TaskResult) error {
 	if err := o.store.SetTaskResult(ctx, taskID, result); err != nil {
 		return fmt.Errorf("orchestrator: persist result: %w", err)
 	}
@@ -105,7 +105,7 @@ func (o *Orchestrator) OnTaskCompleted(ctx context.Context, taskID string, resul
 }
 
 // GetJobStatus returns the current status for jobID (for the API /v1/jobs/{id} handler).
-func (o *Orchestrator) GetJobStatus(ctx context.Context, jobID string) (pipeline.Job, state.JobStatusRecord, error) {
+func (o *Orchestrator) GetJobStatus(ctx context.Context, jobID string) (j.Job, state.JobStatusRecord, error) {
 	return o.store.GetJob(ctx, jobID)
 }
 
@@ -139,7 +139,7 @@ func (o *Orchestrator) CancelJob(ctx context.Context, jobID string) error {
 
 // ---- Internal ---------------------------------------------------------------
 
-func (o *Orchestrator) enqueueInitialTasks(ctx context.Context, job *pipeline.Job) error {
+func (o *Orchestrator) enqueueInitialTasks(ctx context.Context, job *j.Job) error {
 	if job.Distribution == nil {
 		// No distribution → single task wrapping the full config.
 		task := materializeSingle(job, "", 0, 1)
@@ -161,7 +161,7 @@ func (o *Orchestrator) enqueueInitialTasks(ctx context.Context, job *pipeline.Jo
 	return nil
 }
 
-func (o *Orchestrator) materializeAndEnqueueStage(ctx context.Context, job *pipeline.Job, stage *pipeline.Stage) error {
+func (o *Orchestrator) materializeAndEnqueueStage(ctx context.Context, job *j.Job, stage *j.Stage) error {
 	tasks, err := o.materializeStage(ctx, job, stage)
 	if err != nil {
 		return fmt.Errorf("materialize stage %q: %w", stage.ID, err)
@@ -181,7 +181,7 @@ func (o *Orchestrator) materializeAndEnqueueStage(ctx context.Context, job *pipe
 
 // advanceStage checks whether all tasks in stageID are done; if so, materialises
 // any dependent stages. When all stages finish, the job is marked succeeded.
-func (o *Orchestrator) advanceStage(ctx context.Context, job *pipeline.Job, stageID string) error {
+func (o *Orchestrator) advanceStage(ctx context.Context, job *j.Job, stageID string) error {
 	if job.Distribution == nil {
 		// Single-task job → mark succeeded.
 		return o.markJobDone(ctx, job.ID, "")
@@ -228,7 +228,7 @@ func (o *Orchestrator) advanceStage(ctx context.Context, job *pipeline.Job, stag
 }
 
 // completedStages returns a set of stage IDs whose tasks are all succeeded.
-func (o *Orchestrator) completedStages(ctx context.Context, job *pipeline.Job) map[string]bool {
+func (o *Orchestrator) completedStages(ctx context.Context, job *j.Job) map[string]bool {
 	done := make(map[string]bool)
 	if job.Distribution == nil {
 		return done
@@ -261,7 +261,7 @@ func (o *Orchestrator) allDepsComplete(completed map[string]bool, deps []string)
 	return true
 }
 
-func (o *Orchestrator) handleTaskFailure(ctx context.Context, job *pipeline.Job, rec *state.TaskRecord) error {
+func (o *Orchestrator) handleTaskFailure(ctx context.Context, job *j.Job, rec *state.TaskRecord) error {
 	maxAttempts := job.Policy.MaxAttempts
 	if maxAttempts == 0 {
 		maxAttempts = DefaultMaxAttempts
@@ -323,10 +323,10 @@ func (o *Orchestrator) appendEvent(ctx context.Context, jobID, evtType string, d
 // ---- Task materialisation --------------------------------------------------
 
 // materializeStage dispatches to the appropriate strategy.
-func (o *Orchestrator) materializeStage(ctx context.Context, job *pipeline.Job, stage *pipeline.Stage) ([]pipeline.Task, error) {
+func (o *Orchestrator) materializeStage(ctx context.Context, job *j.Job, stage *j.Stage) ([]j.Task, error) {
 	switch stage.Strategy.Kind {
 	case "single":
-		return []pipeline.Task{materializeSingle(job, stage.ID, 0, 1)}, nil
+		return []j.Task{materializeSingle(job, stage.ID, 0, 1)}, nil
 	case "fanout_static":
 		return materializeFanoutStatic(job, stage)
 	case "fanout_dynamic":
@@ -343,7 +343,7 @@ func (o *Orchestrator) materializeStage(ctx context.Context, job *pipeline.Job, 
 // Each task receives a config whose first input is re-wired to a concat-demuxer
 // entry with the segment's InPoint/OutPoint set. The output URL is rewritten to
 // a segment-scoped URI derived from job.Storage.URI.
-func (o *Orchestrator) materializeFanoutDynamic(ctx context.Context, job *pipeline.Job, stage *pipeline.Stage) ([]pipeline.Task, error) {
+func (o *Orchestrator) materializeFanoutDynamic(ctx context.Context, job *j.Job, stage *j.Stage) ([]j.Task, error) {
 	manifestURI, _ := stage.Strategy.Params["manifest_uri"].(string)
 	if manifestURI == "" {
 		return nil, fmt.Errorf("fanout_dynamic: params.manifest_uri is required")
@@ -364,7 +364,7 @@ func (o *Orchestrator) materializeFanoutDynamic(ctx context.Context, job *pipeli
 
 	deadline := taskDeadline(job)
 	n := len(manifest.Segments)
-	tasks := make([]pipeline.Task, n)
+	tasks := make([]j.Task, n)
 	for i, seg := range manifest.Segments {
 		cfg := cloneConfig(job.Config)
 
@@ -378,10 +378,10 @@ func (o *Orchestrator) materializeFanoutDynamic(ctx context.Context, job *pipeli
 
 		// Rewrite the first input to a concat-demuxer entry for this segment.
 		if len(cfg.Inputs) > 0 {
-			cfg.Inputs[0] = pipeline.Input{
+			cfg.Inputs[0] = j.Input{
 				ID:   cfg.Inputs[0].ID,
 				Kind: "concat",
-				ConcatList: []pipeline.ConcatEntry{
+				ConcatList: []j.ConcatEntry{
 					{File: srcURI, InPoint: seg.InPoint, OutPoint: seg.OutPoint},
 				},
 			}
@@ -392,7 +392,7 @@ func (o *Orchestrator) materializeFanoutDynamic(ctx context.Context, job *pipeli
 			cfg.Outputs[0].URL = segmentOutputURI(job, stage.ID, i)
 		}
 
-		tasks[i] = pipeline.Task{
+		tasks[i] = j.Task{
 			ID:         newID(),
 			JobID:      job.ID,
 			StageID:    stage.ID,
@@ -412,7 +412,7 @@ func (o *Orchestrator) materializeFanoutDynamic(ctx context.Context, job *pipeli
 // source stage (named by stage.Strategy.Params["source_stage"], or
 // stage.DependsOn[0] as a fallback) and materialises a single stitch task
 // whose first input uses the concat demuxer.
-func (o *Orchestrator) materializeGather(ctx context.Context, job *pipeline.Job, stage *pipeline.Stage) ([]pipeline.Task, error) {
+func (o *Orchestrator) materializeGather(ctx context.Context, job *j.Job, stage *j.Stage) ([]j.Task, error) {
 	srcStageID, _ := stage.Strategy.Params["source_stage"].(string)
 	if srcStageID == "" && len(stage.DependsOn) > 0 {
 		srcStageID = stage.DependsOn[0]
@@ -434,7 +434,7 @@ func (o *Orchestrator) materializeGather(ctx context.Context, job *pipeline.Job,
 		return recs[i].Task.Index < recs[j].Task.Index
 	})
 
-	concatList := make([]pipeline.ConcatEntry, 0, len(recs))
+	concatList := make([]j.ConcatEntry, 0, len(recs))
 	for _, r := range recs {
 		if r.Status != state.TaskStatusSucceeded {
 			continue
@@ -442,7 +442,7 @@ func (o *Orchestrator) materializeGather(ctx context.Context, job *pipeline.Job,
 		if len(r.Task.Config.Outputs) == 0 {
 			continue
 		}
-		concatList = append(concatList, pipeline.ConcatEntry{
+		concatList = append(concatList, j.ConcatEntry{
 			File: r.Task.Config.Outputs[0].URL,
 		})
 	}
@@ -452,7 +452,7 @@ func (o *Orchestrator) materializeGather(ctx context.Context, job *pipeline.Job,
 
 	cfg := cloneConfig(job.Config)
 	if len(cfg.Inputs) > 0 {
-		cfg.Inputs[0] = pipeline.Input{
+		cfg.Inputs[0] = j.Input{
 			ID:         cfg.Inputs[0].ID,
 			Kind:       "concat",
 			ConcatList: concatList,
@@ -461,7 +461,7 @@ func (o *Orchestrator) materializeGather(ctx context.Context, job *pipeline.Job,
 
 	_ = stage.Assembly // Assembly subgraph selection reserved for a future phase.
 
-	return []pipeline.Task{{
+	return []j.Task{{
 		ID:         newID(),
 		JobID:      job.ID,
 		StageID:    stage.ID,
@@ -487,7 +487,7 @@ func readManifestFile(uri string) ([]byte, error) {
 
 // segmentOutputURI constructs a stable, stage-scoped output URI for the i-th
 // segment task. Uses job.Storage.URI as the base; falls back to os.TempDir().
-func segmentOutputURI(job *pipeline.Job, stageID string, index int) string {
+func segmentOutputURI(job *j.Job, stageID string, index int) string {
 	base := strings.TrimRight(job.Storage.URI, "/")
 	if base == "" {
 		base = "file://" + strings.TrimRight(os.TempDir(), "/")
@@ -496,7 +496,7 @@ func segmentOutputURI(job *pipeline.Job, stageID string, index int) string {
 }
 
 // taskDeadline returns the task deadline for a job, honouring job.Policy.
-func taskDeadline(job *pipeline.Job) time.Time {
+func taskDeadline(job *j.Job) time.Time {
 	if job.Policy.TaskTimeoutNS > 0 {
 		return time.Now().Add(time.Duration(job.Policy.TaskTimeoutNS))
 	}
@@ -505,12 +505,12 @@ func taskDeadline(job *pipeline.Job) time.Time {
 
 // materializeSingle creates one task that runs the full job config.
 // stageID may be empty for undistributed single-task jobs.
-func materializeSingle(job *pipeline.Job, stageID string, index, total int) pipeline.Task {
+func materializeSingle(job *j.Job, stageID string, index, total int) j.Task {
 	deadline := time.Now().Add(DefaultTaskDeadline)
 	if job.Policy.TaskTimeoutNS > 0 {
 		deadline = time.Now().Add(time.Duration(job.Policy.TaskTimeoutNS))
 	}
-	return pipeline.Task{
+	return j.Task{
 		ID:         newID(),
 		JobID:      job.ID,
 		StageID:    stageID,
@@ -534,7 +534,7 @@ func materializeSingle(job *pipeline.Job, stageID string, index, total int) pipe
 //	{
 //	  "count": N   // required; number of tasks (int or float64 from JSON)
 //	}
-func materializeFanoutStatic(job *pipeline.Job, stage *pipeline.Stage) ([]pipeline.Task, error) {
+func materializeFanoutStatic(job *j.Job, stage *j.Stage) ([]j.Task, error) {
 	rawCount, ok := stage.Strategy.Params["count"]
 	if !ok {
 		return nil, fmt.Errorf("fanout_static: params.count is required")
@@ -549,14 +549,14 @@ func materializeFanoutStatic(job *pipeline.Job, stage *pipeline.Stage) ([]pipeli
 		deadline = time.Now().Add(time.Duration(job.Policy.TaskTimeoutNS))
 	}
 
-	tasks := make([]pipeline.Task, count)
+	tasks := make([]j.Task, count)
 	for i := 0; i < count; i++ {
 		// Deep-copy the config and inject task_index / task_total into
 		// GlobalOptions so filter graph expressions can branch on them.
 		cfg := cloneConfig(job.Config)
 		cfg.GlobalOptions = injectTaskParams(cfg.GlobalOptions, i, count)
 
-		tasks[i] = pipeline.Task{
+		tasks[i] = j.Task{
 			ID:         newID(),
 			JobID:      job.ID,
 			StageID:    stage.ID,
@@ -580,7 +580,7 @@ func materializeFanoutStatic(job *pipeline.Job, stage *pipeline.Stage) ([]pipeli
 //
 // For now we store them as a custom JSON extension; Phase D will provide a
 // proper template expansion pass.
-func injectTaskParams(opts pipeline.Options, index, total int) pipeline.Options {
+func injectTaskParams(opts j.Options, index, total int) j.Options {
 	// Clone opts (value copy is safe for all value-type fields).
 	// The injected values ride on RealtimeLogPath as a sentinel in Phase B;
 	// they are never meaningful to the pipeline engine (which ignores unknown
@@ -597,14 +597,14 @@ func injectTaskParams(opts pipeline.Options, index, total int) pipeline.Options 
 
 // cloneConfig returns a shallow copy of cfg with its Inputs and Outputs slices
 // deep-copied (so per-task mutations don't alias the original).
-func cloneConfig(cfg pipeline.Config) pipeline.Config {
+func cloneConfig(cfg j.Config) j.Config {
 	out := cfg
 	if cfg.Inputs != nil {
-		out.Inputs = make([]pipeline.Input, len(cfg.Inputs))
+		out.Inputs = make([]j.Input, len(cfg.Inputs))
 		copy(out.Inputs, cfg.Inputs)
 	}
 	if cfg.Outputs != nil {
-		out.Outputs = make([]pipeline.Output, len(cfg.Outputs))
+		out.Outputs = make([]j.Output, len(cfg.Outputs))
 		copy(out.Outputs, cfg.Outputs)
 	}
 	return out
@@ -612,9 +612,9 @@ func cloneConfig(cfg pipeline.Config) pipeline.Config {
 
 // ---- Validation ------------------------------------------------------------
 
-func validateJob(job *pipeline.Job) error {
-	if job.SchemaVersion != pipeline.JobSchemaVersion {
-		return fmt.Errorf("schema_version must be %q, got %q", pipeline.JobSchemaVersion, job.SchemaVersion)
+func validateJob(job *j.Job) error {
+	if job.SchemaVersion != j.JobSchemaVersion {
+		return fmt.Errorf("schema_version must be %q, got %q", j.JobSchemaVersion, job.SchemaVersion)
 	}
 	if job.Distribution == nil {
 		return nil // undistributed jobs are always valid at this level
@@ -647,7 +647,7 @@ func validateJob(job *pipeline.Job) error {
 
 // injectTraceContext stamps t.TraceContext with the W3C traceparent/tracestate
 // extracted from ctx so the worker can re-attach its spans to the job trace.
-func injectTraceContext(ctx context.Context, t *pipeline.Task) {
+func injectTraceContext(ctx context.Context, t *j.Task) {
 	carrier := propagation.MapCarrier{}
 	otel.GetTextMapPropagator().Inject(ctx, carrier)
 	if len(carrier) > 0 {

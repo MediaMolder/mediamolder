@@ -26,7 +26,7 @@ const (
 	SourceInput
 )
 
-// Pipeline is the reference clock for a media processing pipeline.
+// Pipeline is the reference clock for a media processing job.
 // It tracks the pipeline's current time based on processed media PTS values
 // and can optionally pace output to wall-clock time for live sources.
 type Pipeline struct {

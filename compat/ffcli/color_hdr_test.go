@@ -6,7 +6,7 @@ package ffcli
 import (
 	"testing"
 
-	"github.com/MediaMolder/MediaMolder/pipeline"
+	"github.com/MediaMolder/MediaMolder/job"
 )
 
 func TestParseColorFlags(t *testing.T) {
@@ -27,7 +27,7 @@ func TestParseColorFlags(t *testing.T) {
 		t.Fatalf("color not attached to output: %+v", cfg.Outputs)
 	}
 	c := cfg.Outputs[0].Color
-	want := pipeline.ColorMetadata{
+	want := job.ColorMetadata{
 		Range: "tv", Primaries: "bt2020", Transfer: "smpte2084",
 		Space: "bt2020nc", ChromaLocation: "topleft",
 	}
@@ -156,7 +156,7 @@ func TestParseDoViFlags(t *testing.T) {
 
 func TestParseDoViRejectsBadProfile(t *testing.T) {
 	// Parser accepts any uint8; profile-set validation lives in
-	// pipeline.validate. Verify the value lands intact so the
+	// job.validate. Verify the value lands intact so the
 	// pipeline validator can reject it downstream.
 	cfg, err := ParseArgs([]string{
 		"-i", "in.mp4", "-c:v", "libx265",

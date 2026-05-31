@@ -18,7 +18,7 @@ import (
 	"time"
 
 	"github.com/MediaMolder/MediaMolder/internal/storage"
-	"github.com/MediaMolder/MediaMolder/pipeline"
+	"github.com/MediaMolder/MediaMolder/job"
 )
 
 // Options configures the Tier 1 server.
@@ -133,7 +133,7 @@ func (s *Server) handleSubmitJob(w http.ResponseWriter, r *http.Request) {
 
 	// 8 MiB body limit — pipeline configs are never large.
 	r.Body = http.MaxBytesReader(w, r.Body, 8<<20)
-	var cfg pipeline.Config
+	var cfg job.Config
 	if err := json.NewDecoder(r.Body).Decode(&cfg); err != nil {
 		writeJSONError(w, http.StatusBadRequest, fmt.Errorf("decode job config: %w", err))
 		return
@@ -324,7 +324,7 @@ func writeJSONError(w http.ResponseWriter, code int, err error) {
 }
 
 // checkAllowedPaths rejects file:// inputs that fall outside the allowed prefixes.
-func (s *Server) checkAllowedPaths(cfg *pipeline.Config) error {
+func (s *Server) checkAllowedPaths(cfg *job.Config) error {
 	if len(s.opts.AllowPaths) == 0 {
 		// No allow-list → reject all file:// inputs.
 		for _, inp := range cfg.Inputs {

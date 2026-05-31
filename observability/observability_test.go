@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/MediaMolder/MediaMolder/observability"
-	"github.com/MediaMolder/MediaMolder/pipeline"
+	"github.com/MediaMolder/MediaMolder/job"
 )
 
 func TestNewMetrics(t *testing.T) {
@@ -48,10 +48,10 @@ func TestNewMetrics(t *testing.T) {
 func TestMetricsUpdate(t *testing.T) {
 	m := observability.NewMetrics("upd-test")
 
-	snap := pipeline.MetricsSnapshot{
+	snap := job.MetricsSnapshot{
 		State:   "playing",
 		Elapsed: 2 * time.Second,
-		Perf: []pipeline.NodePerfSnapshot{
+		Perf: []job.NodePerfSnapshot{
 			{
 				NodeID:            "enc0",
 				FPS:               28.5,

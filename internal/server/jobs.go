@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"github.com/MediaMolder/MediaMolder/internal/storage"
-	"github.com/MediaMolder/MediaMolder/pipeline"
+	"github.com/MediaMolder/MediaMolder/job"
 )
 
 // jobStatus is the lifecycle state of a managed pipeline job.
@@ -36,7 +36,7 @@ type jobEvent struct {
 // runningJob holds per-job state and SSE fan-out bookkeeping.
 type runningJob struct {
 	id     string
-	pipe   *pipeline.Pipeline
+	pipe   *job.Pipeline
 	cancel context.CancelFunc
 	start  time.Time
 
@@ -71,7 +71,7 @@ type startOptions struct {
 
 // start resolves upload:// and s3:// URIs, creates the pipeline, and begins
 // execution. Returns the assigned job ID.
-func (m *jobManager) start(cfg *pipeline.Config, opts startOptions) (string, error) {
+func (m *jobManager) start(cfg *job.Config, opts startOptions) (string, error) {
 	resolved, err := resolveURIs(cfg, opts)
 	if err != nil {
 		return "", err
@@ -79,7 +79,7 @@ func (m *jobManager) start(cfg *pipeline.Config, opts startOptions) (string, err
 
 	artifacts := collectArtifacts(resolved)
 
-	pipe, err := pipeline.NewPipeline(resolved)
+	pipe, err := job.NewPipeline(resolved)
 	if err != nil {
 		return "", err
 	}
@@ -266,15 +266,15 @@ func (j *runningJob) run(ctx context.Context) {
 	j.mu.Unlock()
 }
 
-// translateEvent converts a pipeline.Event to the wire jobEvent shape.
-func translateEvent(ev pipeline.Event, tMs int64) jobEvent {
+// translateEvent converts a job.Event to the wire jobEvent shape.
+func translateEvent(ev job.Event, tMs int64) jobEvent {
 	switch e := ev.(type) {
-	case pipeline.StateChanged:
+	case job.StateChanged:
 		return jobEvent{Type: "state", Time: tMs, Data: map[string]any{
 			"from": e.From.String(),
 			"to":   e.To.String(),
 		}}
-	case pipeline.ErrorEvent:
+	case job.ErrorEvent:
 		msg := ""
 		if e.Err != nil {
 			msg = e.Err.Error()
@@ -284,11 +284,11 @@ func translateEvent(ev pipeline.Event, tMs int64) jobEvent {
 			"stage":   e.Stage,
 			"error":   msg,
 		}}
-	case pipeline.EOS:
+	case job.EOS:
 		return jobEvent{Type: "log", Time: tMs, Data: map[string]any{"message": "end of stream"}}
-	case pipeline.MetricsSnapshotEvent:
+	case job.MetricsSnapshotEvent:
 		return jobEvent{Type: "metrics", Time: tMs, Data: e.Snapshot}
-	case pipeline.ProcessorMetadata:
+	case job.ProcessorMetadata:
 		return jobEvent{Type: "metadata", Time: tMs, Data: e}
 	default:
 		return jobEvent{Type: "log", Time: tMs, Data: map[string]any{"event": "unknown"}}
@@ -296,11 +296,11 @@ func translateEvent(ev pipeline.Event, tMs int64) jobEvent {
 }
 
 // resolveURIs handles upload:// and s3:// URI substitution.
-func resolveURIs(cfg *pipeline.Config, opts startOptions) (*pipeline.Config, error) {
+func resolveURIs(cfg *job.Config, opts startOptions) (*job.Config, error) {
 	out := *cfg
-	out.Inputs = make([]pipeline.Input, len(cfg.Inputs))
+	out.Inputs = make([]job.Input, len(cfg.Inputs))
 	copy(out.Inputs, cfg.Inputs)
-	out.Outputs = make([]pipeline.Output, len(cfg.Outputs))
+	out.Outputs = make([]job.Output, len(cfg.Outputs))
 	copy(out.Outputs, cfg.Outputs)
 
 	// Resolve upload:// URIs first.
@@ -314,7 +314,7 @@ func resolveURIs(cfg *pipeline.Config, opts startOptions) (*pipeline.Config, err
 				out.Inputs[i].URL = path
 			}
 			if len(inp.ConcatList) > 0 {
-				entries := make([]pipeline.ConcatEntry, len(inp.ConcatList))
+				entries := make([]job.ConcatEntry, len(inp.ConcatList))
 				copy(entries, inp.ConcatList)
 				for j, e := range entries {
 					if strings.HasPrefix(e.File, "upload://") {
@@ -343,7 +343,7 @@ func resolveURIs(cfg *pipeline.Config, opts startOptions) (*pipeline.Config, err
 }
 
 // collectArtifacts records the output URLs from a resolved config.
-func collectArtifacts(cfg *pipeline.Config) []string {
+func collectArtifacts(cfg *job.Config) []string {
 	out := make([]string, 0, len(cfg.Outputs))
 	for _, o := range cfg.Outputs {
 		if o.URL != "" {

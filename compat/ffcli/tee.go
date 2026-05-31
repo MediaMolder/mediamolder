@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/MediaMolder/MediaMolder/pipeline"
+	"github.com/MediaMolder/MediaMolder/job"
 )
 
 // parseTeeSlaves parses the FFmpeg tee muxer slaves grammar
@@ -26,7 +26,7 @@ import (
 //	`fifo_options`  -> FifoOptions
 //
 // Unknown keys land in Options as strings.
-func parseTeeSlaves(s string) ([]pipeline.TeeTarget, error) {
+func parseTeeSlaves(s string) ([]job.TeeTarget, error) {
 	if s == "" {
 		return nil, fmt.Errorf("empty slaves spec")
 	}
@@ -34,7 +34,7 @@ func parseTeeSlaves(s string) ([]pipeline.TeeTarget, error) {
 	if err != nil {
 		return nil, err
 	}
-	out := make([]pipeline.TeeTarget, 0, len(parts))
+	out := make([]job.TeeTarget, 0, len(parts))
 	for i, p := range parts {
 		opts, url, perr := parseTeeSlave(p)
 		if perr != nil {
@@ -43,7 +43,7 @@ func parseTeeSlaves(s string) ([]pipeline.TeeTarget, error) {
 		if url == "" {
 			return nil, fmt.Errorf("slave[%d]: missing url", i)
 		}
-		t := pipeline.TeeTarget{URL: url}
+		t := job.TeeTarget{URL: url}
 		for _, kv := range opts {
 			switch kv[0] {
 			case "f":

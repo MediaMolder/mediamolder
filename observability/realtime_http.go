@@ -11,7 +11,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/MediaMolder/MediaMolder/pipeline/snap"
+	"github.com/MediaMolder/MediaMolder/job/snap"
 )
 
 // RealtimeController is the minimal interface MetricsServer needs from a
@@ -27,7 +27,7 @@ type RealtimeController interface {
 }
 
 // ReadyReporter is the optional sub-interface for Phase 7 per-output
-// preroll readiness. Implemented on *pipeline.Pipeline via Ready() and
+// preroll readiness. Implemented on *job.Pipeline via Ready() and
 // ReadyState() / via RealtimeStatus().Outputs.
 type ReadyReporter interface {
 	Ready() <-chan struct{}

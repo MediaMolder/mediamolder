@@ -10,7 +10,7 @@ import (
 	"strings"
 
 	"github.com/MediaMolder/MediaMolder/compat/ffcli"
-	"github.com/MediaMolder/MediaMolder/pipeline"
+	"github.com/MediaMolder/MediaMolder/job"
 )
 
 // convertCmdRequest is the JSON body accepted by POST /api/convert-cmd. The
@@ -26,7 +26,7 @@ type convertCmdRequest struct {
 // on the client side. Unsupported lists any deprecated, out-of-scope, or
 // Wave 5–7 schema-promoted flags encountered during import.
 type convertCmdResponse struct {
-	Config      *pipeline.Config `json:"config"`
+	Config      *job.Config `json:"config"`
 	Unsupported []string         `json:"unsupported,omitempty"`
 }
 

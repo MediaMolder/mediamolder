@@ -31,7 +31,7 @@ type splitSegment struct {
 }
 
 // SplitManifestWriter is a processor that accumulates frame timing data during
-// a pipeline run and writes a pipeline.SplitManifest JSON file on Close.
+// a pipeline run and writes a job.SplitManifest JSON file on Close.
 // It is designed to run as the sole processor in a producer stage of a
 // fanout_dynamic distribution; the orchestrator reads the output file when
 // materialising the child encode tasks.

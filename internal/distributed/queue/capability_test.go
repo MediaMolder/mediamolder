@@ -7,20 +7,20 @@ import (
 	"testing"
 
 	"github.com/MediaMolder/MediaMolder/internal/distributed/queue"
-	"github.com/MediaMolder/MediaMolder/pipeline"
+	"github.com/MediaMolder/MediaMolder/job"
 )
 
 func TestTaskSatisfiedBy(t *testing.T) {
 	t.Run("empty filter matches task with no requirements", func(t *testing.T) {
 		// A task with no requirements is satisfied by any filter including an empty one.
-		task := pipeline.Task{}
+		task := job.Task{}
 		if !queue.TaskSatisfiedBy(task, queue.ReceiveFilter{}) {
 			t.Fatal("empty filter should match task with no requirements")
 		}
 	})
 
 	t.Run("capability match succeeds", func(t *testing.T) {
-		task := pipeline.Task{Requires: pipeline.WorkerRequirements{
+		task := job.Task{Requires: job.WorkerRequirements{
 			HardwareAccel: []string{"cuda"},
 			Codecs:        []string{"h264_nvenc"},
 		}}
@@ -31,7 +31,7 @@ func TestTaskSatisfiedBy(t *testing.T) {
 	})
 
 	t.Run("missing hardware accel rejects", func(t *testing.T) {
-		task := pipeline.Task{Requires: pipeline.WorkerRequirements{HardwareAccel: []string{"cuda"}}}
+		task := job.Task{Requires: job.WorkerRequirements{HardwareAccel: []string{"cuda"}}}
 		f := queue.ReceiveFilter{Capabilities: []string{"opencl"}}
 		if queue.TaskSatisfiedBy(task, f) {
 			t.Fatal("should not match — worker lacks cuda")
@@ -39,7 +39,7 @@ func TestTaskSatisfiedBy(t *testing.T) {
 	})
 
 	t.Run("missing codec rejects", func(t *testing.T) {
-		task := pipeline.Task{Requires: pipeline.WorkerRequirements{Codecs: []string{"h264_nvenc"}}}
+		task := job.Task{Requires: job.WorkerRequirements{Codecs: []string{"h264_nvenc"}}}
 		f := queue.ReceiveFilter{Capabilities: []string{"cuda"}}
 		if queue.TaskSatisfiedBy(task, f) {
 			t.Fatal("should not match — worker lacks h264_nvenc codec")
@@ -47,7 +47,7 @@ func TestTaskSatisfiedBy(t *testing.T) {
 	})
 
 	t.Run("region match succeeds", func(t *testing.T) {
-		task := pipeline.Task{Requires: pipeline.WorkerRequirements{Region: "us-east-1"}}
+		task := job.Task{Requires: job.WorkerRequirements{Region: "us-east-1"}}
 		f := queue.ReceiveFilter{Region: "us-east-1"}
 		if !queue.TaskSatisfiedBy(task, f) {
 			t.Fatal("region matches — should accept")
@@ -55,7 +55,7 @@ func TestTaskSatisfiedBy(t *testing.T) {
 	})
 
 	t.Run("region mismatch rejects", func(t *testing.T) {
-		task := pipeline.Task{Requires: pipeline.WorkerRequirements{Region: "eu-west-1"}}
+		task := job.Task{Requires: job.WorkerRequirements{Region: "eu-west-1"}}
 		f := queue.ReceiveFilter{Region: "us-east-1"}
 		if queue.TaskSatisfiedBy(task, f) {
 			t.Fatal("region mismatch — should reject")
@@ -63,7 +63,7 @@ func TestTaskSatisfiedBy(t *testing.T) {
 	})
 
 	t.Run("no region requirement accepts any worker region", func(t *testing.T) {
-		task := pipeline.Task{Requires: pipeline.WorkerRequirements{}}
+		task := job.Task{Requires: job.WorkerRequirements{}}
 		f := queue.ReceiveFilter{Region: "ap-southeast-1"}
 		if !queue.TaskSatisfiedBy(task, f) {
 			t.Fatal("task has no region requirement — any worker region should match")
@@ -73,7 +73,7 @@ func TestTaskSatisfiedBy(t *testing.T) {
 	t.Run("worker has no region, task requires one — accepts", func(t *testing.T) {
 		// When filter.Region is empty the worker hasn't advertised a region,
 		// so the region constraint is not enforced.
-		task := pipeline.Task{Requires: pipeline.WorkerRequirements{Region: "us-east-1"}}
+		task := job.Task{Requires: job.WorkerRequirements{Region: "us-east-1"}}
 		f := queue.ReceiveFilter{}
 		if !queue.TaskSatisfiedBy(task, f) {
 			t.Fatal("worker without region should not be blocked by region requirement")

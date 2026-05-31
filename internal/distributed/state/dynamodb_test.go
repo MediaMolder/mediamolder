@@ -16,7 +16,7 @@ import (
 	"time"
 
 	"github.com/MediaMolder/MediaMolder/internal/distributed/state"
-	"github.com/MediaMolder/MediaMolder/pipeline"
+	"github.com/MediaMolder/MediaMolder/job"
 )
 
 // mockDynamo is an in-memory DynamoDB mock that handles PutItem, GetItem,
@@ -203,7 +203,7 @@ func TestDynamoDB_CreateAndGetJob(t *testing.T) {
 	st, cleanup := newDynamoDBStoreForTest(t)
 	defer cleanup()
 
-	job := pipeline.Job{ID: "job-1", Config: pipeline.Config{}}
+	job := job.Job{ID: "job-1", Config: job.Config{}}
 	if err := st.CreateJob(ctx, job); err != nil {
 		t.Fatalf("CreateJob: %v", err)
 	}
@@ -227,7 +227,7 @@ func TestDynamoDB_UpsertAndGetTask(t *testing.T) {
 	st, cleanup := newDynamoDBStoreForTest(t)
 	defer cleanup()
 
-	task := pipeline.Task{
+	task := job.Task{
 		ID:         "task-1",
 		JobID:      "job-1",
 		StageID:    "stage-1",

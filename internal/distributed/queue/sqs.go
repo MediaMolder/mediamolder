@@ -19,7 +19,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/MediaMolder/MediaMolder/pipeline"
+	"github.com/MediaMolder/MediaMolder/job"
 )
 
 // SQSQueue is a task queue backed by Amazon SQS, using the JSON API
@@ -44,7 +44,7 @@ type SQSQueue struct {
 	receipts map[string]string
 
 	// In-flight task payloads for Nack re-enqueue.
-	tasks map[string]pipeline.Task
+	tasks map[string]job.Task
 }
 
 // NewSQSQueue creates an SQSQueue from a sqs:// URI.
@@ -87,12 +87,12 @@ func NewSQSQueue(rawURI string) (*SQSQueue, error) {
 		secretKey:    secret,
 		sessionToken: os.Getenv("AWS_SESSION_TOKEN"),
 		receipts:     make(map[string]string),
-		tasks:        make(map[string]pipeline.Task),
+		tasks:        make(map[string]job.Task),
 	}, nil
 }
 
 // Publish serialises t to JSON and sends it to SQS.
-func (q *SQSQueue) Publish(_ context.Context, t pipeline.Task) error {
+func (q *SQSQueue) Publish(_ context.Context, t job.Task) error {
 	msgBody, err := json.Marshal(t)
 	if err != nil {
 		return fmt.Errorf("sqs: marshal task: %w", err)
@@ -140,7 +140,7 @@ func (q *SQSQueue) Receive(ctx context.Context, _ ReceiveFilter) (Lease, error) 
 		}
 
 		msg := result.Messages[0]
-		var t pipeline.Task
+		var t job.Task
 		if err := json.Unmarshal([]byte(msg.Body), &t); err != nil {
 			// Discard unparseable messages.
 			delBody, _ := json.Marshal(map[string]string{

@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/MediaMolder/MediaMolder/pipeline"
+	"github.com/MediaMolder/MediaMolder/job"
 )
 
 // parseMasteringDisplay parses the canonical x265 / SVT-AV1
@@ -20,12 +20,12 @@ import (
 // in 1/10000 cd/m^2. Order of the chunks is enforced (G, B, R, WP, L)
 // to match x265's parser exactly. Returns a fully-populated
 // MasteringDisplayMetadata struct on success.
-func parseMasteringDisplay(s string) (*pipeline.MasteringDisplayMetadata, error) {
+func parseMasteringDisplay(s string) (*job.MasteringDisplayMetadata, error) {
 	s = strings.TrimSpace(s)
 	if s == "" {
 		return nil, fmt.Errorf("empty mastering display spec")
 	}
-	md := &pipeline.MasteringDisplayMetadata{}
+	md := &job.MasteringDisplayMetadata{}
 	// Tokenise into "TAG(a,b)" chunks.
 	var (
 		i, n = 0, len(s)
@@ -99,7 +99,7 @@ func parseMasteringDisplay(s string) (*pipeline.MasteringDisplayMetadata, error)
 // parseContentLightLevel parses the canonical "MaxCLL,MaxFALL" grammar
 // (also accepts ',' / '|' / whitespace separators). Both fields
 // required; both must be non-negative integers in cd/m^2.
-func parseContentLightLevel(s string) (*pipeline.ContentLightLevelMetadata, error) {
+func parseContentLightLevel(s string) (*job.ContentLightLevelMetadata, error) {
 	s = strings.TrimSpace(s)
 	if s == "" {
 		return nil, fmt.Errorf("empty content_light_level spec")
@@ -117,7 +117,7 @@ func parseContentLightLevel(s string) (*pipeline.ContentLightLevelMetadata, erro
 	if err != nil {
 		return nil, fmt.Errorf("max_fall: %w", err)
 	}
-	return &pipeline.ContentLightLevelMetadata{
+	return &job.ContentLightLevelMetadata{
 		MaxCLL:  uint32(maxCLL),
 		MaxFALL: uint32(maxFALL),
 	}, nil
@@ -125,7 +125,7 @@ func parseContentLightLevel(s string) (*pipeline.ContentLightLevelMetadata, erro
 
 // setDoViField applies a `-dovi_*` flag value to the pending Dolby
 // Vision metadata. Wave 6 #35.
-func setDoViField(dv *pipeline.DoViMetadata, flag, val string) error {
+func setDoViField(dv *job.DoViMetadata, flag, val string) error {
 	switch flag {
 	case "-dovi_profile":
 		n, err := strconv.ParseUint(val, 10, 8)

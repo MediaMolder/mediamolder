@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/MediaMolder/MediaMolder/pipeline"
+	"github.com/MediaMolder/MediaMolder/job"
 )
 
 // parseStreamSpec parses an FFmpeg-style `<type>[:<idx>]` stream
@@ -39,14 +39,14 @@ func parseStreamSpec(spec string) (string, int, error) {
 // the same key return the same draft so that multiple
 // `-metadata:s:...` flags accumulate into one Metadata map and
 // `-disposition:s:...` lands on the same record.
-func (p *parser) streamSpecFor(typ string, idx int) *pipeline.StreamSpec {
+func (p *parser) streamSpecFor(typ string, idx int) *job.StreamSpec {
 	if p.streamSpecs == nil {
-		p.streamSpecs = make(map[string]*pipeline.StreamSpec)
+		p.streamSpecs = make(map[string]*job.StreamSpec)
 	}
 	key := fmt.Sprintf("%s:%d", typ, idx)
 	ss, ok := p.streamSpecs[key]
 	if !ok {
-		ss = &pipeline.StreamSpec{Type: typ, Index: idx}
+		ss = &job.StreamSpec{Type: typ, Index: idx}
 		p.streamSpecs[key] = ss
 	}
 	return ss

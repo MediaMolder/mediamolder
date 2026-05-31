@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/MediaMolder/MediaMolder/pipeline"
+	"github.com/MediaMolder/MediaMolder/job"
 )
 
 // ReceiveFilter lets a worker restrict which tasks it will accept.
@@ -30,7 +30,7 @@ type ReceiveFilter struct {
 // TaskSatisfiedBy reports whether task t can be executed by a worker
 // described by filter f. It is used by queue adapters to skip tasks whose
 // requirements the current worker cannot meet.
-func TaskSatisfiedBy(t pipeline.Task, f ReceiveFilter) bool {
+func TaskSatisfiedBy(t job.Task, f ReceiveFilter) bool {
 	if f.Region != "" && t.Requires.Region != "" && f.Region != t.Requires.Region {
 		return false
 	}
@@ -56,14 +56,14 @@ func TaskSatisfiedBy(t pipeline.Task, f ReceiveFilter) bool {
 // The worker must call Ack or Nack before LeaseUntil; otherwise the task
 // becomes re-deliverable to another worker.
 type Lease struct {
-	Task       pipeline.Task
+	Task       job.Task
 	LeaseUntil time.Time
 }
 
 // Queue is the task-queue abstraction.
 type Queue interface {
 	// Publish enqueues a task for immediate delivery.
-	Publish(ctx context.Context, t pipeline.Task) error
+	Publish(ctx context.Context, t job.Task) error
 
 	// Receive blocks until a task that satisfies filter is available, then
 	// returns a Lease. Blocks until ctx is cancelled when the queue is empty.

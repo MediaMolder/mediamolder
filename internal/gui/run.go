@@ -9,7 +9,7 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/MediaMolder/MediaMolder/pipeline"
+	"github.com/MediaMolder/MediaMolder/job"
 )
 
 // jobConfigBodyLimit caps the request body for POST /api/validate and
@@ -28,18 +28,18 @@ func handleValidate(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, fmt.Errorf("read body: %w", err))
 		return
 	}
-	cfg, err := pipeline.ParseConfig(body)
+	cfg, err := job.ParseConfig(body)
 	if err != nil {
 		// Return a synthetic single-issue report so the frontend always gets a ValidationReport.
 		writeValidationParseError(w, err)
 		return
 	}
 
-	var report *pipeline.ValidationReport
+	var report *job.ValidationReport
 	if r.URL.Query().Get("no_probe") == "1" {
-		report = pipeline.ValidateConfigStatic(cfg, nil)
+		report = job.ValidateConfigStatic(cfg, nil)
 	} else {
-		report, err = pipeline.ValidateConfig(cfg, nil)
+		report, err = job.ValidateConfig(cfg, nil)
 		if err != nil {
 			writeValidationParseError(w, err)
 			return
@@ -48,7 +48,7 @@ func handleValidate(w http.ResponseWriter, r *http.Request) {
 
 	// Ensure Issues is never null in the JSON response.
 	if report.Issues == nil {
-		report.Issues = []pipeline.ValidationIssue{}
+		report.Issues = []job.ValidationIssue{}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -57,9 +57,9 @@ func handleValidate(w http.ResponseWriter, r *http.Request) {
 
 func writeValidationParseError(w http.ResponseWriter, err error) {
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(&pipeline.ValidationReport{
-		Issues: []pipeline.ValidationIssue{{
-			Severity: pipeline.SeverityError,
+	_ = json.NewEncoder(w).Encode(&job.ValidationReport{
+		Issues: []job.ValidationIssue{{
+			Severity: job.SeverityError,
 			Code:     "PARSE_ERROR",
 			Message:  err.Error(),
 		}},
@@ -76,7 +76,7 @@ func makeRunHandler(jm *jobManager) http.HandlerFunc {
 			writeJSONError(w, http.StatusBadRequest, fmt.Errorf("read body: %w", err))
 			return
 		}
-		cfg, err := pipeline.ParseConfig(body)
+		cfg, err := job.ParseConfig(body)
 		if err != nil {
 			writeJSONError(w, http.StatusBadRequest, err)
 			return

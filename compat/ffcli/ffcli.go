@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/MediaMolder/MediaMolder/pipeline"
+	"github.com/MediaMolder/MediaMolder/job"
 )
 
 // ImportResult holds the parsed pipeline configuration and any informational
@@ -23,21 +23,21 @@ import (
 // warning panel.
 type ImportResult struct {
 	// Config is the parsed pipeline configuration.
-	Config *pipeline.Config
+	Config *job.Config
 	// Unsupported lists flags that are deprecated, out-of-scope, or that map
 	// to schema fields added in Waves 5–7.  Each entry is a human-readable
 	// sentence suitable for display in a warning panel.
 	Unsupported []string
 }
 
-// Parse converts an FFmpeg command-line string into a pipeline.Config.
-func Parse(cmdline string) (*pipeline.Config, error) {
+// Parse converts an FFmpeg command-line string into a job.Config.
+func Parse(cmdline string) (*job.Config, error) {
 	r, err := ParseFull(cmdline)
 	return r.Config, err
 }
 
-// ParseArgs converts FFmpeg-style arguments into a pipeline.Config.
-func ParseArgs(args []string) (*pipeline.Config, error) {
+// ParseArgs converts FFmpeg-style arguments into a job.Config.
+func ParseArgs(args []string) (*job.Config, error) {
 	r, err := ParseArgsFull(args)
 	return r.Config, err
 }
@@ -72,10 +72,10 @@ type parser struct {
 	args            []string
 	pos             int
 	warnings        []string // import notes accumulated by warn()
-	inputs          []pipeline.Input
-	outputs         []pipeline.Output
-	nodes           []pipeline.NodeDef
-	edges           []pipeline.EdgeDef
+	inputs          []job.Input
+	outputs         []job.Output
+	nodes           []job.NodeDef
+	edges           []job.EdgeDef
 	codecV          string
 	codecA          string
 	codecS          string
@@ -107,16 +107,16 @@ type parser struct {
 	// next output's HLS / DASH field. Mirrors libavformat/hlsenc.c
 	// + libavformat/dashenc.c AVOption tables; the runtime renders
 	// them back into the AVDictionary before avformat_write_header.
-	pendingHLS  *pipeline.HLSOptions
-	pendingDASH *pipeline.DASHOptions
+	pendingHLS  *job.HLSOptions
+	pendingDASH *job.DASHOptions
 	// pendingColor / pendingHDR collect typed color + HDR10
 	// metadata (`-color_range`, `-color_primaries`, `-color_trc`,
 	// `-colorspace`, `-chroma_sample_location`,
 	// `-mastering_display_metadata`, `-content_light_level`).
 	// Allocated lazily on first matching flag and drained onto the
 	// next output's Color / HDR field.
-	pendingColor *pipeline.ColorMetadata
-	pendingHDR   *pipeline.HDRMetadata
+	pendingColor *job.ColorMetadata
+	pendingHDR   *job.HDRMetadata
 	// pendingSAR / pendingDAR collect the `setsar` / `setdar`
 	// shorthand (and the legacy `-aspect A:B`, which is rewritten
 	// to DAR per §6.8 of docs/ffmpeg-coverage-roadmap.md).
@@ -129,7 +129,7 @@ type parser struct {
 	pendingInterlaced  bool
 	// Wave 6 #31: queued `-attach FILE` entries draining onto the
 	// next output's `Attachments` slice.
-	pendingAttachments []pipeline.Attachment
+	pendingAttachments []job.Attachment
 	// Wave 11 #64: cover art path detected from the
 	// `-attach FILE -metadata:s:v:0 comment=Cover` pattern. When the
 	// parser sees `-attach FILE` followed by (or preceded by)
@@ -142,7 +142,7 @@ type parser struct {
 	// initHWDevices holds entries parsed from -init_hw_device flags.
 	// Each -init_hw_device type[=name][:device] produces one entry.
 	// Drained into Config.HardwareDevices at the end of parse(). (Wave 10 #56)
-	initHWDevices []pipeline.HardwareDevice
+	initHWDevices []job.HardwareDevice
 	globalOpts    map[string]string
 	// Container-level metadata collected from `-metadata key=value`
 	// (no specifier). Latched onto the next output.
@@ -152,11 +152,11 @@ type parser struct {
 	// onto the next output. Keyed by `<type>:<idx>` (e.g. "a:0",
 	// "v:1"); each entry is a draft StreamSpec that gets finalised
 	// when the output URL is seen.
-	streamSpecs map[string]*pipeline.StreamSpec
+	streamSpecs map[string]*job.StreamSpec
 	// Per-stream encoder options (preset, crf, b, g, ...). Populated
 	// from CLI flags like -crf, -preset, -b:v, -tune, -profile:v,
 	// -level, -g, -bf, -maxrate, -minrate, -bufsize. Attached to the
-	// matching pipeline.Output.EncoderParams* field so the implicit
+	// matching job.Output.EncoderParams* field so the implicit
 	// encoder pass picks them up.
 	videoEncOpts map[string]any
 	audioEncOpts map[string]any
@@ -166,7 +166,7 @@ type parser struct {
 	// queued here and drained when the next -i / output URL is seen.
 	pendingFileOpts map[string]any
 	// Pending demuxer-side typed flags collected between -i flags;
-	// drained onto the next pipeline.Input. FFmpeg's options table
+	// drained onto the next job.Input. FFmpeg's options table
 	// marks `-stream_loop`, `-itsoffset`, `-re`,
 	// `-readrate{,_initial_burst,_catchup}` as `OPT_INPUT |
 	// OPT_OFFSET`, which means they latch onto the *next* `-i`,
@@ -227,7 +227,7 @@ func (p *parser) hasMore() bool { return p.pos < len(p.args) }
 
 func (p *parser) warn(msg string) { p.warnings = append(p.warnings, msg) }
 
-func (p *parser) parse() (*pipeline.Config, error) {
+func (p *parser) parse() (*job.Config, error) {
 	p.globalOpts = make(map[string]string)
 	p.videoEncOpts = make(map[string]any)
 	p.audioEncOpts = make(map[string]any)
@@ -240,17 +240,17 @@ func (p *parser) parse() (*pipeline.Config, error) {
 			}
 			url := p.next()
 			id := fmt.Sprintf("input%d", len(p.inputs))
-			streams := []pipeline.StreamSelect{
+			streams := []job.StreamSelect{
 				{InputIndex: 0, Type: "video", Track: 0, Optional: true},
 				{InputIndex: 0, Type: "audio", Track: 0, Optional: true},
 			}
 			// Add subtitle stream unless -sn was specified before -i.
 			if p.codecS != "none" {
-				streams = append(streams, pipeline.StreamSelect{
+				streams = append(streams, job.StreamSelect{
 					InputIndex: 0, Type: "subtitle", Track: 0, Optional: true,
 				})
 			}
-			in := pipeline.Input{ID: id, URL: url, Streams: streams}
+			in := job.Input{ID: id, URL: url, Streams: streams}
 			if len(p.pendingFileOpts) > 0 {
 				in.Options = p.pendingFileOpts
 				p.pendingFileOpts = nil
@@ -494,7 +494,7 @@ func (p *parser) parse() (*pipeline.Config, error) {
 				return nil, fmt.Errorf("-color_range requires an argument")
 			}
 			if p.pendingColor == nil {
-				p.pendingColor = &pipeline.ColorMetadata{}
+				p.pendingColor = &job.ColorMetadata{}
 				p.warn("-color_range/-color_primaries/-color_trc/-colorspace/-chroma_sample_location → Output.Color.* (schema fields since Wave 5; if this command was previously imported, re-import for the typed fields).")
 			}
 			p.pendingColor.Range = p.next()
@@ -503,7 +503,7 @@ func (p *parser) parse() (*pipeline.Config, error) {
 				return nil, fmt.Errorf("-color_primaries requires an argument")
 			}
 			if p.pendingColor == nil {
-				p.pendingColor = &pipeline.ColorMetadata{}
+				p.pendingColor = &job.ColorMetadata{}
 				p.warn("-color_range/-color_primaries/-color_trc/-colorspace/-chroma_sample_location → Output.Color.* (schema fields since Wave 5; if this command was previously imported, re-import for the typed fields).")
 			}
 			p.pendingColor.Primaries = p.next()
@@ -512,7 +512,7 @@ func (p *parser) parse() (*pipeline.Config, error) {
 				return nil, fmt.Errorf("-color_trc requires an argument")
 			}
 			if p.pendingColor == nil {
-				p.pendingColor = &pipeline.ColorMetadata{}
+				p.pendingColor = &job.ColorMetadata{}
 				p.warn("-color_range/-color_primaries/-color_trc/-colorspace/-chroma_sample_location → Output.Color.* (schema fields since Wave 5; if this command was previously imported, re-import for the typed fields).")
 			}
 			p.pendingColor.Transfer = p.next()
@@ -521,7 +521,7 @@ func (p *parser) parse() (*pipeline.Config, error) {
 				return nil, fmt.Errorf("-colorspace requires an argument")
 			}
 			if p.pendingColor == nil {
-				p.pendingColor = &pipeline.ColorMetadata{}
+				p.pendingColor = &job.ColorMetadata{}
 				p.warn("-color_range/-color_primaries/-color_trc/-colorspace/-chroma_sample_location → Output.Color.* (schema fields since Wave 5; if this command was previously imported, re-import for the typed fields).")
 			}
 			p.pendingColor.Space = p.next()
@@ -530,7 +530,7 @@ func (p *parser) parse() (*pipeline.Config, error) {
 				return nil, fmt.Errorf("-chroma_sample_location requires an argument")
 			}
 			if p.pendingColor == nil {
-				p.pendingColor = &pipeline.ColorMetadata{}
+				p.pendingColor = &job.ColorMetadata{}
 				p.warn("-color_range/-color_primaries/-color_trc/-colorspace/-chroma_sample_location → Output.Color.* (schema fields since Wave 5; if this command was previously imported, re-import for the typed fields).")
 			}
 			p.pendingColor.ChromaLocation = p.next()
@@ -548,7 +548,7 @@ func (p *parser) parse() (*pipeline.Config, error) {
 				return nil, fmt.Errorf("%s: %w", arg, err)
 			}
 			if p.pendingHDR == nil {
-				p.pendingHDR = &pipeline.HDRMetadata{}
+				p.pendingHDR = &job.HDRMetadata{}
 				p.warn("-mastering_display_metadata/-master_display/-content_light_level/-max_cll → Output.HDR.MasteringDisplay/ContentLightLevel (schema fields since Wave 5; if this command was previously imported, re-import for the typed fields).")
 			}
 			p.pendingHDR.MasteringDisplay = md
@@ -564,7 +564,7 @@ func (p *parser) parse() (*pipeline.Config, error) {
 				return nil, fmt.Errorf("%s: %w", arg, err)
 			}
 			if p.pendingHDR == nil {
-				p.pendingHDR = &pipeline.HDRMetadata{}
+				p.pendingHDR = &job.HDRMetadata{}
 				p.warn("-mastering_display_metadata/-master_display/-content_light_level/-max_cll → Output.HDR.MasteringDisplay/ContentLightLevel (schema fields since Wave 5; if this command was previously imported, re-import for the typed fields).")
 			}
 			p.pendingHDR.ContentLightLevel = cll
@@ -581,10 +581,10 @@ func (p *parser) parse() (*pipeline.Config, error) {
 			}
 			val := p.next()
 			if p.pendingHDR == nil {
-				p.pendingHDR = &pipeline.HDRMetadata{}
+				p.pendingHDR = &job.HDRMetadata{}
 			}
 			if p.pendingHDR.DoVi == nil {
-				p.pendingHDR.DoVi = &pipeline.DoViMetadata{}
+				p.pendingHDR.DoVi = &job.DoViMetadata{}
 				p.warn("-dovi_profile/-dovi_level/-dovi_bl_compatibility_id/-dovi_rpu_present/-dovi_el_present/-dovi_bl_present → Output.HDR.DoVi.* (schema fields since Wave 6; if this command was previously imported, re-import for the typed fields).")
 			}
 			if err := setDoViField(p.pendingHDR.DoVi, arg, val); err != nil {
@@ -601,7 +601,7 @@ func (p *parser) parse() (*pipeline.Config, error) {
 				return nil, fmt.Errorf("-attach requires a FILE argument")
 			}
 			path := p.next()
-			p.pendingAttachments = append(p.pendingAttachments, pipeline.Attachment{Path: path})
+			p.pendingAttachments = append(p.pendingAttachments, job.Attachment{Path: path})
 			if len(p.pendingAttachments) == 1 {
 				p.warn(fmt.Sprintf("-attach %q → Output.Attachments (schema field since Wave 6; if this command was previously imported, re-import for the typed field).", path))
 			}
@@ -609,7 +609,7 @@ func (p *parser) parse() (*pipeline.Config, error) {
 			// Legacy FFmpeg audio-sync flag. The FFmpeg 8.0 CLI removed
 			// it in favour of `-af aresample=async=N`; we accept it for
 			// import compatibility and route the value through
-			// pipeline.Output.AudioSync, which the runtime turns into
+			// job.Output.AudioSync, which the runtime turns into
 			// an aresample filter splice in front of the audio encoder.
 			// Negative / non-numeric values are rejected.
 			if !p.hasMore() {
@@ -642,7 +642,7 @@ func (p *parser) parse() (*pipeline.Config, error) {
 			p.maxFileSize = n
 		case arg == "-copyts":
 			// FFmpeg `-copyts` is a global bool. We carry it on the
-			// pipeline.Config and use it both to suppress the
+			// job.Config and use it both to suppress the
 			// demuxer-side ts_offset shift and to interpret output-side
 			// -ss/-to as absolute timeline values.
 			p.copyTS = true
@@ -818,7 +818,7 @@ func (p *parser) parse() (*pipeline.Config, error) {
 			}
 			v := p.next()
 			if p.pendingHLS == nil {
-				p.pendingHLS = &pipeline.HLSOptions{}
+				p.pendingHLS = &job.HLSOptions{}
 			}
 			if err := setHLSOption(p.pendingHLS, arg, v); err != nil {
 				return nil, err
@@ -836,7 +836,7 @@ func (p *parser) parse() (*pipeline.Config, error) {
 			}
 			v := p.next()
 			if p.pendingDASH == nil {
-				p.pendingDASH = &pipeline.DASHOptions{}
+				p.pendingDASH = &job.DASHOptions{}
 			}
 			if err := setDASHOption(p.pendingDASH, arg, v); err != nil {
 				return nil, err
@@ -1229,7 +1229,7 @@ func (p *parser) parse() (*pipeline.Config, error) {
 			val := p.next()
 			ss := p.streamSpecFor(spec.typ, spec.idx)
 			if ss.Encoder == nil {
-				ss.Encoder = &pipeline.EncoderOverride{}
+				ss.Encoder = &job.EncoderOverride{}
 			}
 			if ss.Encoder.Options == nil {
 				ss.Encoder.Options = make(map[string]any)
@@ -1251,7 +1251,7 @@ func (p *parser) parse() (*pipeline.Config, error) {
 			val := p.next()
 			ss := p.streamSpecFor(typ, idx)
 			if ss.Encoder == nil {
-				ss.Encoder = &pipeline.EncoderOverride{}
+				ss.Encoder = &job.EncoderOverride{}
 			}
 			ss.Encoder.Codec = val
 		case strings.HasPrefix(arg, "-"):
@@ -1290,7 +1290,7 @@ func (p *parser) parse() (*pipeline.Config, error) {
 			}
 		default:
 			id := fmt.Sprintf("output%d", len(p.outputs))
-			out := pipeline.Output{ID: id, URL: arg}
+			out := job.Output{ID: id, URL: arg}
 			if len(p.pendingFileOpts) > 0 {
 				out.Options = p.pendingFileOpts
 				p.pendingFileOpts = nil
@@ -1444,7 +1444,7 @@ func (p *parser) parse() (*pipeline.Config, error) {
 					keys = append(keys, k)
 				}
 				sort.Strings(keys)
-				out.Streams = make([]pipeline.StreamSpec, 0, len(keys))
+				out.Streams = make([]job.StreamSpec, 0, len(keys))
 				for _, k := range keys {
 					out.Streams = append(out.Streams, *p.streamSpecs[k])
 				}
@@ -1467,7 +1467,7 @@ func (p *parser) parse() (*pipeline.Config, error) {
 			// `-f tee URL` (where URL is `[opt=val]slave|[opt=val]slave`):
 			// promote to typed Output.Kind="tee" + Output.Targets[]. The
 			// pipeline runtime then reconstructs the slaves URL deterministically
-			// via pipeline.buildTeeSlavesURL when it opens the tee muxer.
+			// via job.buildTeeSlavesURL when it opens the tee muxer.
 			if out.Format == "tee" {
 				targets, terr := parseTeeSlaves(out.URL)
 				if terr != nil {
@@ -1536,16 +1536,16 @@ func (p *parser) parse() (*pipeline.Config, error) {
 	p.buildGraph()
 	nodes := p.nodes
 	if nodes == nil {
-		nodes = []pipeline.NodeDef{}
+		nodes = []job.NodeDef{}
 	}
 	edges := p.edges
 	if edges == nil {
-		edges = []pipeline.EdgeDef{}
+		edges = []job.EdgeDef{}
 	}
-	cfg := &pipeline.Config{
+	cfg := &job.Config{
 		SchemaVersion: "1.0",
 		Inputs:        p.inputs,
-		Graph:         pipeline.GraphDef{Nodes: nodes, Edges: edges},
+		Graph:         job.GraphDef{Nodes: nodes, Edges: edges},
 		Outputs:       p.outputs,
 	}
 	if p.copyTS {
@@ -1579,18 +1579,18 @@ func (p *parser) emitMetadataRoute(outputID, inputID, section string) {
 	readerID := fmt.Sprintf("__%s_reader_%s", suffix, outputID)
 	writerID := fmt.Sprintf("__%s_writer_%s", suffix, outputID)
 	p.nodes = append(p.nodes,
-		pipeline.NodeDef{
+		job.NodeDef{
 			ID:     readerID,
 			Type:   "metadata_reader",
 			Params: map[string]any{"source": inputID, "section": section},
 		},
-		pipeline.NodeDef{
+		job.NodeDef{
 			ID:     writerID,
 			Type:   "metadata_writer",
 			Params: map[string]any{"target": outputID, "section": section},
 		},
 	)
-	p.edges = append(p.edges, pipeline.EdgeDef{
+	p.edges = append(p.edges, job.EdgeDef{
 		From: readerID,
 		To:   writerID,
 		Type: "metadata",
@@ -1606,14 +1606,14 @@ func (p *parser) buildGraph() {
 			fn := parseFilterChain(p.videoFilters, "vf")
 			p.nodes = append(p.nodes, fn...)
 			if len(fn) > 0 {
-				p.edges = append(p.edges, pipeline.EdgeDef{From: vs, To: fn[0].ID + ":default", Type: "video"})
+				p.edges = append(p.edges, job.EdgeDef{From: vs, To: fn[0].ID + ":default", Type: "video"})
 				for i := 0; i < len(fn)-1; i++ {
-					p.edges = append(p.edges, pipeline.EdgeDef{From: fn[i].ID + ":default", To: fn[i+1].ID + ":default", Type: "video"})
+					p.edges = append(p.edges, job.EdgeDef{From: fn[i].ID + ":default", To: fn[i+1].ID + ":default", Type: "video"})
 				}
-				p.edges = append(p.edges, pipeline.EdgeDef{From: fn[len(fn)-1].ID + ":default", To: vd, Type: "video"})
+				p.edges = append(p.edges, job.EdgeDef{From: fn[len(fn)-1].ID + ":default", To: vd, Type: "video"})
 			}
 		} else {
-			p.edges = append(p.edges, pipeline.EdgeDef{From: vs, To: vd, Type: "video"})
+			p.edges = append(p.edges, job.EdgeDef{From: vs, To: vd, Type: "video"})
 		}
 	}
 	if p.codecA != "none" {
@@ -1622,31 +1622,31 @@ func (p *parser) buildGraph() {
 			fn := parseFilterChain(p.audioFilters, "af")
 			p.nodes = append(p.nodes, fn...)
 			if len(fn) > 0 {
-				p.edges = append(p.edges, pipeline.EdgeDef{From: as, To: fn[0].ID + ":default", Type: "audio"})
+				p.edges = append(p.edges, job.EdgeDef{From: as, To: fn[0].ID + ":default", Type: "audio"})
 				for i := 0; i < len(fn)-1; i++ {
-					p.edges = append(p.edges, pipeline.EdgeDef{From: fn[i].ID + ":default", To: fn[i+1].ID + ":default", Type: "audio"})
+					p.edges = append(p.edges, job.EdgeDef{From: fn[i].ID + ":default", To: fn[i+1].ID + ":default", Type: "audio"})
 				}
-				p.edges = append(p.edges, pipeline.EdgeDef{From: fn[len(fn)-1].ID + ":default", To: ad, Type: "audio"})
+				p.edges = append(p.edges, job.EdgeDef{From: fn[len(fn)-1].ID + ":default", To: ad, Type: "audio"})
 			}
 		} else {
-			p.edges = append(p.edges, pipeline.EdgeDef{From: as, To: ad, Type: "audio"})
+			p.edges = append(p.edges, job.EdgeDef{From: as, To: ad, Type: "audio"})
 		}
 	}
 	if p.codecS != "none" && p.codecS != "" {
 		ss, sd := inID+":s:0", outID+":s"
-		p.edges = append(p.edges, pipeline.EdgeDef{From: ss, To: sd, Type: "subtitle"})
+		p.edges = append(p.edges, job.EdgeDef{From: ss, To: sd, Type: "subtitle"})
 	}
 }
 
-func parseFilterChain(chain, prefix string) []pipeline.NodeDef {
-	var nodes []pipeline.NodeDef
+func parseFilterChain(chain, prefix string) []job.NodeDef {
+	var nodes []job.NodeDef
 	for i, f := range strings.Split(chain, ",") {
 		f = strings.TrimSpace(f)
 		if f == "" {
 			continue
 		}
 		name, params := parseFilterExpr(f)
-		nodes = append(nodes, pipeline.NodeDef{
+		nodes = append(nodes, job.NodeDef{
 			ID:     fmt.Sprintf("%s_%d_%s", prefix, i, name),
 			Type:   "filter",
 			Filter: name,
@@ -1714,7 +1714,7 @@ func copyAnyMap(m map[string]any) map[string]any {
 }
 
 // parseInitHWDevice parses an -init_hw_device argument string into a
-// pipeline.HardwareDevice. FFmpeg's syntax (fftools/ffmpeg_opt.c::opt_init_hw_device):
+// job.HardwareDevice. FFmpeg's syntax (fftools/ffmpeg_opt.c::opt_init_hw_device):
 //
 //	type[=name][:device[,key=value...]]
 //
@@ -1724,9 +1724,9 @@ func copyAnyMap(m map[string]any) map[string]any {
 //	"cuda=gpu0"                    → {Name:"gpu0",  Type:"cuda",  Device:""}
 //	"cuda=gpu0:0"                  → {Name:"gpu0",  Type:"cuda",  Device:"0"}
 //	"vaapi=va:/dev/dri/renderD128" → {Name:"va",    Type:"vaapi", Device:"/dev/dri/renderD128"}
-func parseInitHWDevice(spec string) (pipeline.HardwareDevice, error) {
+func parseInitHWDevice(spec string) (job.HardwareDevice, error) {
 	if spec == "" {
-		return pipeline.HardwareDevice{}, fmt.Errorf("empty specification")
+		return job.HardwareDevice{}, fmt.Errorf("empty specification")
 	}
 	// Split off device specifier at the first ':'.
 	devicePart := ""
@@ -1748,12 +1748,12 @@ func parseInitHWDevice(spec string) (pipeline.HardwareDevice, error) {
 		hwName = typeAndName[idx+1:]
 	}
 	if hwType == "" {
-		return pipeline.HardwareDevice{}, fmt.Errorf("device type must not be empty")
+		return job.HardwareDevice{}, fmt.Errorf("device type must not be empty")
 	}
 	if hwName == "" {
-		return pipeline.HardwareDevice{}, fmt.Errorf("device name must not be empty")
+		return job.HardwareDevice{}, fmt.Errorf("device name must not be empty")
 	}
-	return pipeline.HardwareDevice{
+	return job.HardwareDevice{
 		Name:   hwName,
 		Type:   hwType,
 		Device: devicePart,

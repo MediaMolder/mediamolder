@@ -11,7 +11,7 @@ import (
 	"github.com/MediaMolder/MediaMolder/internal/distributed/queue"
 	"github.com/MediaMolder/MediaMolder/internal/distributed/reconciler"
 	"github.com/MediaMolder/MediaMolder/internal/distributed/state"
-	"github.com/MediaMolder/MediaMolder/pipeline"
+	"github.com/MediaMolder/MediaMolder/job"
 )
 
 func makeStore(t *testing.T) state.Store {
@@ -24,10 +24,10 @@ func makeStore(t *testing.T) state.Store {
 	return st
 }
 
-func seedJob(t *testing.T, st state.Store, policy pipeline.JobPolicy) string {
+func seedJob(t *testing.T, st state.Store, policy job.JobPolicy) string {
 	t.Helper()
 	ctx := context.Background()
-	job := pipeline.Job{
+	job := job.Job{
 		ID:     "job-1",
 		Policy: policy,
 	}
@@ -40,7 +40,7 @@ func seedJob(t *testing.T, st state.Store, policy pipeline.JobPolicy) string {
 func seedExpiredTask(t *testing.T, st state.Store, jobID, taskID string, attempt int) {
 	t.Helper()
 	ctx := context.Background()
-	task := pipeline.Task{
+	task := job.Task{
 		ID:      taskID,
 		JobID:   jobID,
 		Attempt: attempt,
@@ -62,7 +62,7 @@ func TestReconciler_ReenqueuesExpiredTask(t *testing.T) {
 	q := queue.NewInMemory()
 	ctx := context.Background()
 
-	jobID := seedJob(t, st, pipeline.JobPolicy{MaxAttempts: 3})
+	jobID := seedJob(t, st, job.JobPolicy{MaxAttempts: 3})
 	seedExpiredTask(t, st, jobID, "task-1", 0)
 
 	r := reconciler.New(st, q, time.Hour)
@@ -100,7 +100,7 @@ func TestReconciler_DeadLettersExhaustedTask(t *testing.T) {
 	q := queue.NewInMemory()
 	ctx := context.Background()
 
-	jobID := seedJob(t, st, pipeline.JobPolicy{MaxAttempts: 2})
+	jobID := seedJob(t, st, job.JobPolicy{MaxAttempts: 2})
 	seedExpiredTask(t, st, jobID, "task-2", 1) // attempt=1, maxAttempts=2 → exhausted
 
 	r := reconciler.New(st, q, time.Hour)
@@ -135,8 +135,8 @@ func TestReconciler_IgnoresHealthyTasks(t *testing.T) {
 	q := queue.NewInMemory()
 	ctx := context.Background()
 
-	jobID := seedJob(t, st, pipeline.JobPolicy{MaxAttempts: 3})
-	task := pipeline.Task{ID: "task-live", JobID: jobID}
+	jobID := seedJob(t, st, job.JobPolicy{MaxAttempts: 3})
+	task := job.Task{ID: "task-live", JobID: jobID}
 	if err := st.UpsertTask(ctx, task, state.TaskStatusRunning); err != nil {
 		t.Fatalf("upsert: %v", err)
 	}

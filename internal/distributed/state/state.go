@@ -9,7 +9,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/MediaMolder/MediaMolder/pipeline"
+	"github.com/MediaMolder/MediaMolder/job"
 )
 
 // JobStatus is the lifecycle state of a job.
@@ -42,9 +42,9 @@ type JobStatusRecord struct {
 
 // TaskRecord holds a task together with its current status and optional result.
 type TaskRecord struct {
-	Task       pipeline.Task        `json:"task"`
+	Task       job.Task        `json:"task"`
 	Status     TaskStatus           `json:"status"`
-	Result     *pipeline.TaskResult `json:"result,omitempty"`
+	Result     *job.TaskResult `json:"result,omitempty"`
 	LeaseUntil time.Time            `json:"lease_until,omitempty"`
 	UpdatedAt  time.Time            `json:"updated_at"`
 }
@@ -83,8 +83,8 @@ type JobEvent struct {
 // Store is the state-store abstraction used by orchestrators.
 type Store interface {
 	// Job lifecycle.
-	CreateJob(ctx context.Context, j pipeline.Job) error
-	GetJob(ctx context.Context, id string) (pipeline.Job, JobStatusRecord, error)
+	CreateJob(ctx context.Context, j job.Job) error
+	GetJob(ctx context.Context, id string) (job.Job, JobStatusRecord, error)
 	UpdateJobStatus(ctx context.Context, jobID string, s JobStatusRecord) error
 
 	// Event log (append-only; used to rebuild SSE streams).
@@ -92,8 +92,8 @@ type Store interface {
 	ListEvents(ctx context.Context, jobID string, afterID int64) ([]JobEvent, error)
 
 	// Task management.
-	UpsertTask(ctx context.Context, t pipeline.Task, status TaskStatus) error
-	SetTaskResult(ctx context.Context, taskID string, r pipeline.TaskResult) error
+	UpsertTask(ctx context.Context, t job.Task, status TaskStatus) error
+	SetTaskResult(ctx context.Context, taskID string, r job.TaskResult) error
 	GetTask(ctx context.Context, taskID string) (TaskRecord, error)
 	TasksByStage(ctx context.Context, jobID, stageID string) ([]TaskRecord, error)
 	ListTasks(ctx context.Context, jobID string) ([]TaskRecord, error)

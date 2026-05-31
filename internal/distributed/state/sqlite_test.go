@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/MediaMolder/MediaMolder/internal/distributed/state"
-	"github.com/MediaMolder/MediaMolder/pipeline"
+	"github.com/MediaMolder/MediaMolder/job"
 )
 
 func openTestStore(t *testing.T) state.Store {
@@ -22,19 +22,19 @@ func openTestStore(t *testing.T) state.Store {
 	return st
 }
 
-func sampleJob() pipeline.Job {
-	return pipeline.Job{
-		SchemaVersion: pipeline.JobSchemaVersion,
+func sampleJob() job.Job {
+	return job.Job{
+		SchemaVersion: job.JobSchemaVersion,
 		ID:            "job-1",
 		Name:          "test-job",
-		Config: pipeline.Config{
+		Config: job.Config{
 			SchemaVersion: "1.0",
 		},
 	}
 }
 
-func sampleTask(jobID, stageID, taskID string, index int) pipeline.Task {
-	return pipeline.Task{
+func sampleTask(jobID, stageID, taskID string, index int) job.Task {
+	return job.Task{
 		ID:      taskID,
 		JobID:   jobID,
 		StageID: stageID,
@@ -116,7 +116,7 @@ func TestSQLite_SetTaskResult(t *testing.T) {
 	task := sampleTask("job-1", "stage-a", "task-2", 0)
 	_ = st.UpsertTask(ctx, task, state.TaskStatusPending)
 
-	result := pipeline.TaskResult{
+	result := job.TaskResult{
 		StartedAt:  time.Now().Add(-time.Second),
 		FinishedAt: time.Now(),
 	}

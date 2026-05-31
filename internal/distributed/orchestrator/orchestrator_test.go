@@ -12,7 +12,7 @@ import (
 	"github.com/MediaMolder/MediaMolder/internal/distributed/orchestrator"
 	"github.com/MediaMolder/MediaMolder/internal/distributed/queue"
 	"github.com/MediaMolder/MediaMolder/internal/distributed/state"
-	"github.com/MediaMolder/MediaMolder/pipeline"
+	"github.com/MediaMolder/MediaMolder/job"
 )
 
 func newTestOrch(t *testing.T) (*orchestrator.Orchestrator, queue.Queue, state.Store) {
@@ -27,10 +27,10 @@ func newTestOrch(t *testing.T) (*orchestrator.Orchestrator, queue.Queue, state.S
 	return orch, q, st
 }
 
-func baseJob() *pipeline.Job {
-	return &pipeline.Job{
-		SchemaVersion: pipeline.JobSchemaVersion,
-		Config: pipeline.Config{
+func baseJob() *job.Job {
+	return &job.Job{
+		SchemaVersion: job.JobSchemaVersion,
+		Config: job.Config{
 			SchemaVersion: "1.0",
 		},
 	}
@@ -42,8 +42,8 @@ func TestAcceptJob_NoDistribution_EnqueuesOneTask(t *testing.T) {
 	orch, q, _ := newTestOrch(t)
 	ctx := context.Background()
 
-	job := baseJob()
-	id, err := orch.AcceptJob(ctx, job)
+	jb := baseJob()
+	id, err := orch.AcceptJob(ctx, jb)
 	if err != nil {
 		t.Fatalf("AcceptJob: %v", err)
 	}
@@ -66,15 +66,15 @@ func TestOnTaskCompleted_NoDistribution_MarksJobSucceeded(t *testing.T) {
 	orch, q, st := newTestOrch(t)
 	ctx := context.Background()
 
-	job := baseJob()
-	id, _ := orch.AcceptJob(ctx, job)
+	jb := baseJob()
+	id, _ := orch.AcceptJob(ctx, jb)
 
 	tctx, cancel := context.WithTimeout(ctx, time.Second)
 	defer cancel()
 	lease, _ := q.Receive(tctx, queue.ReceiveFilter{})
 	_ = q.Ack(ctx, lease.Task.ID)
 
-	result := pipeline.TaskResult{
+	result := job.TaskResult{
 		StartedAt:  time.Now().Add(-time.Second),
 		FinishedAt: time.Now(),
 	}
@@ -95,16 +95,16 @@ func TestOnTaskCompleted_TaskError_MarksJobFailed(t *testing.T) {
 	orch, q, st := newTestOrch(t)
 	ctx := context.Background()
 
-	job := baseJob()
-	job.Policy.MaxAttempts = 1 // no retries
-	id, _ := orch.AcceptJob(ctx, job)
+	jb := baseJob()
+	jb.Policy.MaxAttempts = 1 // no retries
+	id, _ := orch.AcceptJob(ctx, jb)
 
 	tctx, cancel := context.WithTimeout(ctx, time.Second)
 	defer cancel()
 	lease, _ := q.Receive(tctx, queue.ReceiveFilter{})
 	_ = q.Nack(ctx, lease.Task.ID, 0)
 
-	result := pipeline.TaskResult{
+	result := job.TaskResult{
 		Error:      "pipeline failed",
 		StartedAt:  time.Now().Add(-time.Second),
 		FinishedAt: time.Now(),
@@ -125,16 +125,16 @@ func TestAcceptJob_SingleStrategy_EnqueuesOneTask(t *testing.T) {
 	orch, q, _ := newTestOrch(t)
 	ctx := context.Background()
 
-	job := baseJob()
-	job.Distribution = &pipeline.DistributionSpec{
-		Stages: []pipeline.Stage{
+	jb := baseJob()
+	jb.Distribution = &job.DistributionSpec{
+		Stages: []job.Stage{
 			{
 				ID:       "encode",
-				Strategy: pipeline.StageStrategy{Kind: "single"},
+				Strategy: job.StageStrategy{Kind: "single"},
 			},
 		},
 	}
-	_, err := orch.AcceptJob(ctx, job)
+	_, err := orch.AcceptJob(ctx, jb)
 	if err != nil {
 		t.Fatalf("AcceptJob: %v", err)
 	}
@@ -159,16 +159,16 @@ func TestAcceptJob_FanoutStatic_EnqueuesNTasks(t *testing.T) {
 	orch, q, _ := newTestOrch(t)
 	ctx := context.Background()
 
-	job := baseJob()
-	job.Distribution = &pipeline.DistributionSpec{
-		Stages: []pipeline.Stage{
+	jb := baseJob()
+	jb.Distribution = &job.DistributionSpec{
+		Stages: []job.Stage{
 			{
 				ID:       "encode",
-				Strategy: pipeline.StageStrategy{Kind: "fanout_static", Params: map[string]any{"count": float64(4)}},
+				Strategy: job.StageStrategy{Kind: "fanout_static", Params: map[string]any{"count": float64(4)}},
 			},
 		},
 	}
-	_, err := orch.AcceptJob(ctx, job)
+	_, err := orch.AcceptJob(ctx, jb)
 	if err != nil {
 		t.Fatalf("AcceptJob: %v", err)
 	}
@@ -190,16 +190,16 @@ func TestAcceptJob_FanoutStatic_MissingCount_Errors(t *testing.T) {
 	orch, _, _ := newTestOrch(t)
 	ctx := context.Background()
 
-	job := baseJob()
-	job.Distribution = &pipeline.DistributionSpec{
-		Stages: []pipeline.Stage{
+	jb := baseJob()
+	jb.Distribution = &job.DistributionSpec{
+		Stages: []job.Stage{
 			{
 				ID:       "encode",
-				Strategy: pipeline.StageStrategy{Kind: "fanout_static"}, // no params.count
+				Strategy: job.StageStrategy{Kind: "fanout_static"}, // no params.count
 			},
 		},
 	}
-	_, err := orch.AcceptJob(ctx, job)
+	_, err := orch.AcceptJob(ctx, jb)
 	if err == nil {
 		t.Fatal("expected error for missing params.count")
 	}
@@ -211,14 +211,14 @@ func TestStageChaining_SecondStageEnqueuedAfterFirst(t *testing.T) {
 	orch, q, st := newTestOrch(t)
 	ctx := context.Background()
 
-	job := baseJob()
-	job.Distribution = &pipeline.DistributionSpec{
-		Stages: []pipeline.Stage{
-			{ID: "a", Strategy: pipeline.StageStrategy{Kind: "single"}},
-			{ID: "b", DependsOn: []string{"a"}, Strategy: pipeline.StageStrategy{Kind: "single"}},
+	jb := baseJob()
+	jb.Distribution = &job.DistributionSpec{
+		Stages: []job.Stage{
+			{ID: "a", Strategy: job.StageStrategy{Kind: "single"}},
+			{ID: "b", DependsOn: []string{"a"}, Strategy: job.StageStrategy{Kind: "single"}},
 		},
 	}
-	id, _ := orch.AcceptJob(ctx, job)
+	id, _ := orch.AcceptJob(ctx, jb)
 
 	// Only stage a should be enqueued initially.
 	n, _ := q.Len(ctx)
@@ -231,7 +231,7 @@ func TestStageChaining_SecondStageEnqueuedAfterFirst(t *testing.T) {
 	leaseA, _ := q.Receive(tctx, queue.ReceiveFilter{})
 	cancel()
 	_ = q.Ack(ctx, leaseA.Task.ID)
-	_ = orch.OnTaskCompleted(ctx, leaseA.Task.ID, pipeline.TaskResult{
+	_ = orch.OnTaskCompleted(ctx, leaseA.Task.ID, job.TaskResult{
 		StartedAt: time.Now(), FinishedAt: time.Now(),
 	})
 
@@ -248,7 +248,7 @@ func TestStageChaining_SecondStageEnqueuedAfterFirst(t *testing.T) {
 
 	// Complete stage b.
 	_ = q.Ack(ctx, leaseB.Task.ID)
-	_ = orch.OnTaskCompleted(ctx, leaseB.Task.ID, pipeline.TaskResult{
+	_ = orch.OnTaskCompleted(ctx, leaseB.Task.ID, job.TaskResult{
 		StartedAt: time.Now(), FinishedAt: time.Now(),
 	})
 
@@ -264,9 +264,9 @@ func TestAcceptJob_InvalidSchemaVersion(t *testing.T) {
 	orch, _, _ := newTestOrch(t)
 	ctx := context.Background()
 
-	job := baseJob()
-	job.SchemaVersion = "1.0"
-	_, err := orch.AcceptJob(ctx, job)
+	jb := baseJob()
+	jb.SchemaVersion = "1.0"
+	_, err := orch.AcceptJob(ctx, jb)
 	if err == nil {
 		t.Fatal("expected validation error for wrong schema_version")
 	}
@@ -276,13 +276,13 @@ func TestAcceptJob_UnknownDependsOn_Errors(t *testing.T) {
 	orch, _, _ := newTestOrch(t)
 	ctx := context.Background()
 
-	job := baseJob()
-	job.Distribution = &pipeline.DistributionSpec{
-		Stages: []pipeline.Stage{
-			{ID: "a", DependsOn: []string{"nonexistent"}, Strategy: pipeline.StageStrategy{Kind: "single"}},
+	jb := baseJob()
+	jb.Distribution = &job.DistributionSpec{
+		Stages: []job.Stage{
+			{ID: "a", DependsOn: []string{"nonexistent"}, Strategy: job.StageStrategy{Kind: "single"}},
 		},
 	}
-	_, err := orch.AcceptJob(ctx, job)
+	_, err := orch.AcceptJob(ctx, jb)
 	if err == nil {
 		t.Fatal("expected error for unknown depends_on")
 	}
@@ -294,8 +294,8 @@ func TestCancelJob(t *testing.T) {
 	orch, _, st := newTestOrch(t)
 	ctx := context.Background()
 
-	job := baseJob()
-	id, _ := orch.AcceptJob(ctx, job)
+	jb := baseJob()
+	id, _ := orch.AcceptJob(ctx, jb)
 
 	if err := orch.CancelJob(ctx, id); err != nil {
 		t.Fatal(err)
@@ -318,21 +318,21 @@ func TestFanoutDynamic_WaitsForProducer(t *testing.T) {
 
 	manifestPath := t.TempDir() + "/manifest.json"
 
-	job := baseJob()
-	job.Distribution = &pipeline.DistributionSpec{
-		Stages: []pipeline.Stage{
-			{ID: "detect", Strategy: pipeline.StageStrategy{Kind: "single"}},
+	jb := baseJob()
+	jb.Distribution = &job.DistributionSpec{
+		Stages: []job.Stage{
+			{ID: "detect", Strategy: job.StageStrategy{Kind: "single"}},
 			{
 				ID:        "encode",
 				DependsOn: []string{"detect"},
-				Strategy: pipeline.StageStrategy{
+				Strategy: job.StageStrategy{
 					Kind:   "fanout_dynamic",
 					Params: map[string]any{"manifest_uri": "file://" + manifestPath},
 				},
 			},
 		},
 	}
-	_, err := orch.AcceptJob(ctx, job)
+	_, err := orch.AcceptJob(ctx, jb)
 	if err != nil {
 		t.Fatalf("AcceptJob: %v", err)
 	}
@@ -364,23 +364,23 @@ func TestFanoutDynamic_SpawnsChildTasksFromManifest(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	job := baseJob()
-	job.Config.Inputs = []pipeline.Input{{ID: "src", URL: "file:///src.mp4"}}
-	job.Config.Outputs = []pipeline.Output{{ID: "out", URL: "file:///out.mp4"}}
-	job.Distribution = &pipeline.DistributionSpec{
-		Stages: []pipeline.Stage{
-			{ID: "detect", Strategy: pipeline.StageStrategy{Kind: "single"}},
+	jb := baseJob()
+	jb.Config.Inputs = []job.Input{{ID: "src", URL: "file:///src.mp4"}}
+	jb.Config.Outputs = []job.Output{{ID: "out", URL: "file:///out.mp4"}}
+	jb.Distribution = &job.DistributionSpec{
+		Stages: []job.Stage{
+			{ID: "detect", Strategy: job.StageStrategy{Kind: "single"}},
 			{
 				ID:        "encode",
 				DependsOn: []string{"detect"},
-				Strategy: pipeline.StageStrategy{
+				Strategy: job.StageStrategy{
 					Kind:   "fanout_dynamic",
 					Params: map[string]any{"manifest_uri": "file://" + manifestPath},
 				},
 			},
 		},
 	}
-	_, err := orch.AcceptJob(ctx, job)
+	_, err := orch.AcceptJob(ctx, jb)
 	if err != nil {
 		t.Fatalf("AcceptJob: %v", err)
 	}
@@ -390,7 +390,7 @@ func TestFanoutDynamic_SpawnsChildTasksFromManifest(t *testing.T) {
 	detectLease, _ := q.Receive(tctx, queue.ReceiveFilter{})
 	cancel()
 	_ = q.Ack(ctx, detectLease.Task.ID)
-	if err := orch.OnTaskCompleted(ctx, detectLease.Task.ID, pipeline.TaskResult{
+	if err := orch.OnTaskCompleted(ctx, detectLease.Task.ID, job.TaskResult{
 		StartedAt: time.Now(), FinishedAt: time.Now(),
 	}); err != nil {
 		t.Fatalf("OnTaskCompleted detect: %v", err)
@@ -405,7 +405,7 @@ func TestFanoutDynamic_SpawnsChildTasksFromManifest(t *testing.T) {
 	// Verify concat-demuxer inputs have correct InPoint/OutPoint.
 	wantIn := []float64{0.0, 12.5}
 	wantOut := []float64{12.5, 0.0}
-	received := make([]*pipeline.Task, 2)
+	received := make([]*job.Task, 2)
 	for i := 0; i < 2; i++ {
 		tctx2, cancel2 := context.WithTimeout(ctx, time.Second)
 		l, _ := q.Receive(tctx2, queue.ReceiveFilter{})
@@ -453,17 +453,17 @@ func TestGather_BuildsConcatConfigFromFanoutOutputs(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	job := baseJob()
-	job.Storage = pipeline.StorageRef{URI: "file://" + tmpDir}
-	job.Config.Inputs = []pipeline.Input{{ID: "src", URL: "file:///src.mp4"}}
-	job.Config.Outputs = []pipeline.Output{{ID: "out", URL: "file:///out.mp4"}}
-	job.Distribution = &pipeline.DistributionSpec{
-		Stages: []pipeline.Stage{
-			{ID: "detect", Strategy: pipeline.StageStrategy{Kind: "single"}},
+	jb := baseJob()
+	jb.Storage = job.StorageRef{URI: "file://" + tmpDir}
+	jb.Config.Inputs = []job.Input{{ID: "src", URL: "file:///src.mp4"}}
+	jb.Config.Outputs = []job.Output{{ID: "out", URL: "file:///out.mp4"}}
+	jb.Distribution = &job.DistributionSpec{
+		Stages: []job.Stage{
+			{ID: "detect", Strategy: job.StageStrategy{Kind: "single"}},
 			{
 				ID:        "encode",
 				DependsOn: []string{"detect"},
-				Strategy: pipeline.StageStrategy{
+				Strategy: job.StageStrategy{
 					Kind:   "fanout_dynamic",
 					Params: map[string]any{"manifest_uri": "file://" + manifestPath},
 				},
@@ -471,11 +471,11 @@ func TestGather_BuildsConcatConfigFromFanoutOutputs(t *testing.T) {
 			{
 				ID:        "stitch",
 				DependsOn: []string{"encode"},
-				Strategy:  pipeline.StageStrategy{Kind: "gather"},
+				Strategy:  job.StageStrategy{Kind: "gather"},
 			},
 		},
 	}
-	_, err := orch.AcceptJob(ctx, job)
+	_, err := orch.AcceptJob(ctx, jb)
 	if err != nil {
 		t.Fatalf("AcceptJob: %v", err)
 	}
@@ -485,7 +485,7 @@ func TestGather_BuildsConcatConfigFromFanoutOutputs(t *testing.T) {
 	detectLease, _ := q.Receive(tctx, queue.ReceiveFilter{})
 	cancel()
 	_ = q.Ack(ctx, detectLease.Task.ID)
-	if err := orch.OnTaskCompleted(ctx, detectLease.Task.ID, pipeline.TaskResult{
+	if err := orch.OnTaskCompleted(ctx, detectLease.Task.ID, job.TaskResult{
 		StartedAt: time.Now(), FinishedAt: time.Now(),
 	}); err != nil {
 		t.Fatalf("complete detect: %v", err)
@@ -504,7 +504,7 @@ func TestGather_BuildsConcatConfigFromFanoutOutputs(t *testing.T) {
 	}
 	for _, enc := range encodeLeases {
 		_ = q.Ack(ctx, enc.Task.ID)
-		if err := orch.OnTaskCompleted(ctx, enc.Task.ID, pipeline.TaskResult{
+		if err := orch.OnTaskCompleted(ctx, enc.Task.ID, job.TaskResult{
 			StartedAt: time.Now(), FinishedAt: time.Now(),
 		}); err != nil {
 			t.Fatalf("complete encode task: %v", err)

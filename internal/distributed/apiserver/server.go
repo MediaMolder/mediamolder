@@ -23,7 +23,7 @@ import (
 
 	"github.com/MediaMolder/MediaMolder/internal/auth"
 	"github.com/MediaMolder/MediaMolder/internal/distributed/orchestrator"
-	"github.com/MediaMolder/MediaMolder/pipeline"
+	j "github.com/MediaMolder/MediaMolder/job"
 )
 
 // Options configures the Tier 2 API server.
@@ -162,7 +162,7 @@ func (s *Server) handleSubmitJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var job pipeline.Job
+	var job j.Job
 	if isJobDocument(raw) {
 		if err := json.Unmarshal(raw, &job); err != nil {
 			writeJSONError(w, http.StatusBadRequest, fmt.Errorf("decode job: %w", err))
@@ -170,13 +170,13 @@ func (s *Server) handleSubmitJob(w http.ResponseWriter, r *http.Request) {
 		}
 	} else {
 		// Back-compat: treat as bare Config.
-		var cfg pipeline.Config
+		var cfg j.Config
 		if err := json.Unmarshal(raw, &cfg); err != nil {
 			writeJSONError(w, http.StatusBadRequest, fmt.Errorf("decode config: %w", err))
 			return
 		}
-		job = pipeline.Job{
-			SchemaVersion: pipeline.JobSchemaVersion,
+		job = j.Job{
+			SchemaVersion: j.JobSchemaVersion,
 			Config:        cfg,
 		}
 	}
@@ -281,14 +281,14 @@ func (s *Server) handleJobArtifacts(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusNotFound, err)
 		return
 	}
-	var artifacts []pipeline.ArtifactRef
+	var artifacts []j.ArtifactRef
 	for _, rec := range recs {
 		if rec.Result != nil {
 			artifacts = append(artifacts, rec.Result.Outputs...)
 		}
 	}
 	if artifacts == nil {
-		artifacts = []pipeline.ArtifactRef{} // return [] not null
+		artifacts = []j.ArtifactRef{} // return [] not null
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(artifacts)
@@ -360,7 +360,7 @@ func isJobDocument(raw json.RawMessage) bool {
 	if err := json.Unmarshal(raw, &probe); err != nil {
 		return false
 	}
-	return probe.SchemaVersion == pipeline.JobSchemaVersion
+	return probe.SchemaVersion == j.JobSchemaVersion
 }
 
 // serverBase returns the scheme+host of the request (for building URLs in
