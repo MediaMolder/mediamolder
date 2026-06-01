@@ -344,8 +344,11 @@ func (p *OutputBuffer) TakePaced(ctx context.Context) (bufferedPacket, bool) {
 			item := p.popMinPTSLocked()
 			p.mu.Unlock()
 
-			// Establish PTS/wall origin on first consumption.
-			ptsUS := ptsToUS(item.pkt, p.tbFor(item.chanIdx))
+			// Establish DTS/wall origin on first consumption. We use DTS
+			// (falling back to PTS) so the sleep target is always
+			// monotonically non-decreasing — PTS is non-monotonic for
+			// B-frame video, which can produce negative sleep durations.
+			ptsUS := dtsOrPtsToUS(item.pkt, p.tbFor(item.chanIdx))
 			if ptsUS != notSetUS {
 				if p.wallOriginNs.CompareAndSwap(0, time.Now().UnixNano()) {
 					p.ptsOriginUs.Store(ptsUS)
@@ -398,16 +401,19 @@ func (p *OutputBuffer) AheadNs() int64 {
 	return ahead
 }
 
-// popMinPTSLocked removes and returns the packet with the smallest PTS from
-// buf. Must be called with p.mu held.
+// popMinPTSLocked removes and returns the packet with the smallest
+// DTS-or-PTS from buf. DTS is preferred over PTS so that B-frame video
+// streams are delivered in decode order; av_interleaved_write_frame
+// requires monotonically non-decreasing DTS within each stream.
+// Must be called with p.mu held.
 func (p *OutputBuffer) popMinPTSLocked() bufferedPacket {
 	minIdx := 0
-	minPTS := ptsToUS(p.buf[0].pkt, p.tbFor(p.buf[0].chanIdx))
+	minTS := dtsOrPtsToUS(p.buf[0].pkt, p.tbFor(p.buf[0].chanIdx))
 	for i := 1; i < len(p.buf); i++ {
-		pts := ptsToUS(p.buf[i].pkt, p.tbFor(p.buf[i].chanIdx))
-		if pts != notSetUS && (minPTS == notSetUS || pts < minPTS) {
+		ts := dtsOrPtsToUS(p.buf[i].pkt, p.tbFor(p.buf[i].chanIdx))
+		if ts != notSetUS && (minTS == notSetUS || ts < minTS) {
 			minIdx = i
-			minPTS = pts
+			minTS = ts
 		}
 	}
 	item := p.buf[minIdx]
@@ -455,6 +461,21 @@ func ptsToUS(pkt *av.Packet, tb [2]int) int64 {
 		return notSetUS
 	}
 	return pts * int64(tb[0]) * 1_000_000 / int64(tb[1])
+}
+
+// dtsOrPtsToUS converts a packet timestamp to microseconds, preferring DTS
+// over PTS. For streams without B-frames (e.g. audio) DTS == PTS; for
+// B-frame video, DTS is monotonically non-decreasing while PTS is not.
+// Falls back to ptsToUS when DTS is AV_NOPTS_VALUE.
+func dtsOrPtsToUS(pkt *av.Packet, tb [2]int) int64 {
+	dts := pkt.DTS()
+	if dts == int64(av.NoPTSValue) {
+		return ptsToUS(pkt, tb)
+	}
+	if tb[0] <= 0 || tb[1] <= 0 {
+		return notSetUS
+	}
+	return dts * int64(tb[0]) * 1_000_000 / int64(tb[1])
 }
 
 // graphReady tracks the conjunction of every output's preroll readiness
