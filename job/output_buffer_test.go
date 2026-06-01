@@ -155,3 +155,71 @@ func TestGraphReady_ANDCombinesOutputs(t *testing.T) {
 		t.Fatalf("graphReady.State().outputs = %d, want 2", len(outs))
 	}
 }
+
+// newTestPktDTSPTS allocates a packet with distinct DTS and PTS to simulate
+// B-frame video packets.
+func newTestPktDTSPTS(t *testing.T, dts, pts int64) *av.Packet {
+	t.Helper()
+	pkt, err := av.AllocPacket()
+	if err != nil {
+		t.Fatalf("AllocPacket: %v", err)
+	}
+	pkt.SetDTS(dts)
+	pkt.SetPTS(pts)
+	return pkt
+}
+
+// TestTakePaced_DTSOrderingForBFrames verifies that TakePaced delivers
+// packets in DTS order when DTS != PTS (B-frame video). Without the fix,
+// PTS-based sorting causes a DTS regression that av_interleaved_write_frame
+// rejects with AVERROR(EINVAL): "non monotonically increasing dts".
+//
+// Packet pattern (3 B-frames, one GOP, µs time-base so values are direct):
+//
+//	DTS=0  PTS=0  I-frame
+//	DTS=1  PTS=4  P-frame  (encode-2nd, display-5th)
+//	DTS=2  PTS=1  B-frame  (encode-3rd, display-2nd)
+//	DTS=3  PTS=2  B-frame  (encode-4th, display-3rd)
+//	DTS=4  PTS=3  B-frame  (encode-5th, display-4th)
+func TestTakePaced_DTSOrderingForBFrames(t *testing.T) {
+	tbs := [][2]int{{1, 1_000_000}}
+	p := NewOutputBuffer("v", 10*time.Millisecond, 0, tbs)
+	p.SetProducerCount(1)
+
+	type frame struct{ dts, pts int64 }
+	// Packets arrive in DTS (encode) order, as the encoder produces them.
+	in := []frame{
+		{0, 0},
+		{1, 4},
+		{2, 1},
+		{3, 2},
+		{4, 3},
+	}
+	for _, f := range in {
+		p.Enqueue(0, newTestPktDTSPTS(t, f.dts, f.pts))
+	}
+	p.EnqueueEOS()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	var gotDTS []int64
+	for {
+		item, ok := p.TakePaced(ctx)
+		if !ok {
+			break
+		}
+		gotDTS = append(gotDTS, item.pkt.DTS())
+		_ = item.pkt.Close()
+	}
+
+	if len(gotDTS) != len(in) {
+		t.Fatalf("got %d packets, want %d; dts sequence: %v", len(gotDTS), len(in), gotDTS)
+	}
+	for i := 1; i < len(gotDTS); i++ {
+		if gotDTS[i] < gotDTS[i-1] {
+			t.Errorf("DTS regression at index %d: got %d < prev %d; full sequence: %v",
+				i, gotDTS[i], gotDTS[i-1], gotDTS)
+		}
+	}
+}
