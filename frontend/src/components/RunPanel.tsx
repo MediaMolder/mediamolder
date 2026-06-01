@@ -157,7 +157,7 @@ export function RunPanel({ run, nodeKinds, onClose }: Props) {
     <div className="run-panel">
       <div className="run-panel-header">
         <span className={`run-status run-status-${run.status}`}>{run.status}</span>
-        {run.pipelineState && <span className="run-pipeline-state">{run.pipelineState}</span>}
+        {run.status === 'running' && run.pipelineState && <span className="run-pipeline-state">{run.pipelineState}</span>}
         <span style={{ color: 'var(--text-dim)' }}>
           packets: {totalPackets} · errors: {totalErrors}
         </span>
