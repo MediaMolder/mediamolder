@@ -19,6 +19,7 @@ jobs from the GUI on your laptop or from the `mediamolder job` CLI.
    - [File uploads from the client](#36-file-uploads-from-the-client)
    - [Connecting the GUI](#37-connecting-the-gui)
    - [Connecting the CLI](#38-connecting-the-cli)
+   - [Tier 1 server flags](#39-tier-1-server-flags)
 4. [Tier 2 — distributed cluster](#4-tier-2--distributed-cluster)
    - [Requirements](#41-requirements)
    - [Architecture overview](#42-architecture-overview)
@@ -30,8 +31,14 @@ jobs from the GUI on your laptop or from the `mediamolder job` CLI.
    - [Capability-aware routing](#48-capability-aware-routing)
    - [OTEL distributed tracing](#49-otel-distributed-tracing)
    - [Dead-letter queue](#410-dead-letter-queue)
-5. [Security checklist](#5-security-checklist)
-6. [Troubleshooting](#6-troubleshooting)
+   - [Tier 2 flags reference](#411-tier-2-flags-reference)
+5. [REST API reference](#5-rest-api-reference)
+   - [Tier 1 endpoints](#51-tier-1-endpoints)
+   - [Job submission example](#52-job-submission-example)
+   - [SSE event stream](#53-sse-event-stream)
+   - [Tier 2 additional endpoints](#54-tier-2-additional-endpoints)
+6. [Security checklist](#6-security-checklist)
+7. [Troubleshooting](#7-troubleshooting)
 
 ---
 
@@ -224,6 +231,21 @@ mediamolder job status <job-id>
 mediamolder job events  <job-id>   # SSE stream printed to stdout
 mediamolder job cancel  <job-id>
 ```
+
+### 3.9 Tier 1 server flags
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--addr` | `:8443` | TCP listen address |
+| `--tls-cert` | _(none)_ | PEM certificate; omit for plain HTTP |
+| `--tls-key` | _(none)_ | PEM private key |
+| `--auth-token-file` | _(none)_ | File containing the Bearer token (must be `chmod 600`) |
+| `--max-jobs` | `0` (unlimited) | Maximum number of concurrently running jobs |
+| `--workdir` | OS temp dir | Directory for upload temp files |
+| `--s3-presign-credentials` | _(none)_ | Path to S3 credentials JSON (must be `chmod 600`) |
+| `--s3-presign-ttl` | `24h` | Presigned URL validity window |
+| `--enable-uploads` | `false` | Enable `PUT /v1/uploads/{token}` for local file inputs |
+| `--allow-path` | _(none)_ | Permit `file://` inputs under this path prefix (repeatable) |
 
 ---
 
@@ -531,9 +553,122 @@ curl -H "Authorization: Bearer $TOKEN" \
 Response is a JSON array of objects with `task_id`, `stage_id`, `reason`,
 `attempt`, and `created_at`.
 
+### 4.11 Tier 2 flags reference
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--mode` | `server` | Operating mode: `server` \| `api` \| `worker` |
+| `--queue` | `inmemory://` | Queue URI: `inmemory://`, `nats://[user:pass@]host:port[/stream]`, `sqs://sqs.{region}.amazonaws.com/{account}/{queue}` |
+| `--state` | `sqlite:///tmp/mediamolder-state.sqlite3` | State-store URI: `sqlite:///path`, `postgres://[user:pass@]host/db[?opts]`, `dynamodb://dynamodb.{region}.amazonaws.com/{table}` |
+| `--workers` | `1` | Embedded worker goroutines (`api` mode only) |
+| `--reconcile-interval` | `30s` | How often the reconciler scans for expired leases; `0` to disable |
+| `--capabilities` | _(none)_ | Comma-separated capability list advertised by this worker (e.g. `cuda,h264_nvenc`) |
+| `--region` | _(none)_ | Deployment region advertised by this worker (e.g. `us-east-1`) |
+| `--oidc-issuer` | _(none)_ | OIDC issuer URL for JWT validation; mutually exclusive with `--auth-token-file` |
+| `--oidc-client-id` | _(none)_ | Expected OIDC audience / client ID |
+| `--mtls-ca` | _(none)_ | PEM CA bundle for mTLS client cert verification; requires `--tls-cert`/`--tls-key` |
+
 ---
 
-## 5. Security checklist
+## 5. REST API reference
+
+All `/v1/` endpoints require `Authorization: Bearer <token>` except `/healthz`
+and `/readyz`. The SSE events endpoint also accepts `?token=<token>` as a query
+parameter because the browser `EventSource` API cannot set custom headers.
+
+### 5.1 Tier 1 endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/v1/jobs` | Submit a job (JSON body = pipeline config) |
+| `GET` | `/v1/jobs/{id}` | Get job status |
+| `GET` | `/v1/jobs/{id}/events` | SSE stream of job events |
+| `GET` | `/v1/jobs/{id}/artifacts` | List output artifacts |
+| `DELETE` | `/v1/jobs/{id}` | Cancel a running job |
+| `POST` | `/v1/uploads` | Allocate an upload token |
+| `PUT` | `/v1/uploads/{token}` | Upload a file (requires `--enable-uploads`) |
+| `GET` | `/healthz` | Liveness probe |
+| `GET` | `/readyz` | Readiness probe |
+
+### 5.2 Job submission example
+
+```http
+POST /v1/jobs HTTP/1.1
+Content-Type: application/json
+Authorization: Bearer <token>
+
+{ ... pipeline config ... }
+```
+
+Response `202 Accepted`:
+
+```json
+{
+  "id":         "a1b2c3d4",
+  "status_url": "https://server:8443/v1/jobs/a1b2c3d4",
+  "events_url": "https://server:8443/v1/jobs/a1b2c3d4/events"
+}
+```
+
+For Tier 2 distributed jobs (schema_version `"1.4"`), include a `distribution`
+block with one or more stages:
+
+```json
+{
+  "schema_version": "1.4",
+  "name": "encode-4-segments",
+  "config": {
+    "schema_version": "1.0",
+    "inputs": [...],
+    "graph": {...},
+    "outputs": [...]
+  },
+  "distribution": {
+    "stages": [
+      {
+        "id": "encode",
+        "strategy": { "kind": "fanout_static", "params": { "count": 4 } }
+      }
+    ]
+  }
+}
+```
+
+Schema versions `"1.0"`–`"1.2"` (bare graph definitions) are accepted and
+wrapped in a single-task job automatically for backward compatibility.
+
+### 5.3 SSE event stream
+
+```bash
+curl --no-buffer \
+  -H "Authorization: Bearer $TOKEN" \
+  "https://server:8443/v1/jobs/a1b2c3d4/events"
+```
+
+Each event has the form `event: <type>\ndata: <JSON>\n\n` where `<type>` is one
+of:
+
+| Event type | Description |
+|------------|-------------|
+| `state` | Job or task state transition |
+| `metrics` | Encoding progress metrics (fps, bitrate, etc.) |
+| `error` | Non-fatal or fatal error detail |
+| `log` | Informational log line from the encoder |
+| `metadata` | Output file metadata written after completion |
+| `done` | Final event; no further events will be sent |
+
+### 5.4 Tier 2 additional endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/v1/jobs/{id}/tasks` | List all tasks with their status and results |
+| `GET` | `/v1/jobs/{id}/events` | SSE event log replayed from state store; cursor via `?after=<id>` |
+| `GET` | `/v1/jobs/{id}/artifacts` | Aggregate `ArtifactRef` list from all completed tasks |
+| `GET` | `/v1/jobs/{id}/dlq` | Dead-lettered tasks for this job (see §4.10) |
+
+---
+
+## 6. Security checklist
 
 Before exposing a MediaMolder server to the network, review each item:
 
@@ -563,7 +698,7 @@ Before exposing a MediaMolder server to the network, review each item:
 
 ---
 
-## 6. Troubleshooting
+## 7. Troubleshooting
 
 ### `connection refused` when submitting a job
 
