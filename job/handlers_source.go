@@ -787,6 +787,14 @@ func (r *graphRunner) openSource(cfg Input, srcNode *graph.Node, decOpts av.Deco
 			// Attachment data lives in codecpar->extradata and is written
 			// by WriteHeader; no packet decoding is needed.
 		case typ == "subtitle":
+			if si.CodecID == 0 {
+				// AV_CODEC_ID_NONE: codec is unidentified (e.g. QuickTime CEA-708
+				// CC tracks appear as subtitle type with codec_id=0 when the tag
+				// isn't recognised). avcodec_find_decoder(0) always returns NULL,
+				// so attempting to open a decoder would always fail. Mirror
+				// FFmpeg's behaviour: skip decoder open and treat as stream-copy.
+				break
+			}
 			subDec, err := av.OpenSubtitleDecoderWithOptions(input, si.Index, av.SubtitleDecoderOptions{
 				Charenc: cfg.SubtitleCharenc,
 			})
