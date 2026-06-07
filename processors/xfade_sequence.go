@@ -80,6 +80,10 @@ func (xs *XfadeSequence) Init(params map[string]any) error {
 				c.out = v
 			}
 			xs.clips = append(xs.clips, c)
+		} else if _, hasInputID := m["input_id"]; hasInputID {
+			// input_id should have been resolved to url by the engine before
+			// Init() is called.  Reaching here means a bug in the caller.
+			return fmt.Errorf("xfade_sequence: clip entry still has 'input_id' — engine must resolve input references before calling Init")
 		} else if transRaw, hasTrans := m["transition"]; hasTrans {
 			name, _ := transRaw.(string)
 			if name == "" {

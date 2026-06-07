@@ -129,6 +129,7 @@ export function Inspector({ node, nodes, edges, onChange, onDelete, onSelectNode
           def={ref.def}
           padHints={resolveUpstreamPad(nodes, edges, node.id)}
           hwDevices={hwDevices}
+          inputIds={nodes.filter((n) => n.data.kind === 'input').map((n) => n.data.label)}
           onChange={(def) =>
             onChange(updateRef(node, { kind: 'node', def }, nodeDisplayLabel(def), nodeDisplaySublabel(def)))
           }
@@ -1691,7 +1692,7 @@ function TagField({
 }
 
 /* ---------- Graph node form ---------- */
-function NodeForm({ def, onChange, padHints, hwDevices = [] }: { def: NodeDef; onChange: (next: NodeDef) => void; padHints?: Record<string, number>; hwDevices?: HardwareDevice[] }) {
+function NodeForm({ def, onChange, padHints, hwDevices = [], inputIds = [] }: { def: NodeDef; onChange: (next: NodeDef) => void; padHints?: Record<string, number>; hwDevices?: HardwareDevice[]; inputIds?: string[] }) {
   const isFilter =
     def.type === 'filter' || def.type === 'filter_source' || def.type === 'filter_sink';
   // Show the device picker only for hardware-accelerated filters (scale_cuda,
@@ -1771,7 +1772,7 @@ function NodeForm({ def, onChange, padHints, hwDevices = [] }: { def: NodeDef; o
       {def.type === 'encoder' && <EncoderForm def={def} onChange={onChange} />}
       {isFilter && <FilterForm def={def} onChange={onChange} padHints={padHints} />}
       {def.type !== 'encoder' && !isFilter && def.type === 'go_processor' && (
-        <GoProcessorParams processorName={def.processor} params={def.params ?? {}} onChange={(p) => onChange({ ...def, params: p })} />
+        <GoProcessorParams processorName={def.processor} params={def.params ?? {}} inputIds={inputIds} onChange={(p) => onChange({ ...def, params: p })} />
       )}
       {def.type !== 'encoder' && !isFilter && def.type !== 'go_processor' && (
         <ParamsEditor params={def.params ?? {}} onChange={(p) => onChange({ ...def, params: p })} />
@@ -1853,10 +1854,12 @@ function FilterAdvanced({
 function GoProcessorParams({
   processorName,
   params,
+  inputIds = [],
   onChange,
 }: {
   processorName?: string;
   params: Record<string, unknown>;
+  inputIds?: string[];
   onChange: (next: Record<string, unknown>) => void;
 }) {
   const isSceneChange = processorName === 'scene_change' ||
@@ -1871,7 +1874,7 @@ function GoProcessorParams({
   }
 
   if (processorName === 'xfade_sequence') {
-    return <XfadeSequenceParams params={params} onChange={onChange} />;
+    return <XfadeSequenceParams params={params} inputIds={inputIds} onChange={onChange} />;
   }
 
   if (processorName === 'metadata_file_writer') {
@@ -1944,14 +1947,18 @@ type XfsEntry = Record<string, unknown>;
 
 function XfadeSequenceParams({
   params,
+  inputIds = [],
   onChange,
 }: {
   params: Record<string, unknown>;
+  inputIds?: string[];
   onChange: (next: Record<string, unknown>) => void;
 }) {
   const entries: XfsEntry[] = Array.isArray(params['clips'])
     ? (params['clips'] as XfsEntry[])
     : [];
+
+  const useInputRefs = inputIds.length > 0;
 
   const setEntries = (next: XfsEntry[]) => onChange({ ...params, clips: next });
 
@@ -1974,10 +1981,11 @@ function XfadeSequenceParams({
   };
 
   const addClip = () => {
+    const newClip: XfsEntry = useInputRefs ? { input_id: inputIds[0] ?? '' } : { url: '' };
     if (entries.length === 0) {
-      setEntries([{ url: '' }]);
+      setEntries([newClip]);
     } else {
-      setEntries([...entries, { transition: 'dissolve', duration: 1.0 }, { url: '' }]);
+      setEntries([...entries, { transition: 'dissolve', duration: 1.0 }, newClip]);
     }
   };
 
@@ -1986,12 +1994,18 @@ function XfadeSequenceParams({
   return (
     <div style={{ marginTop: 8 }}>
       <label style={{ marginBottom: 6 }}>Clips &amp; Transitions</label>
+      {useInputRefs && (
+        <div style={{ fontSize: 10, color: 'var(--text-dim)', marginBottom: 6 }}>
+          Clips reference input nodes defined in this job.
+        </div>
+      )}
       {entries.length === 0 && (
         <div className="empty" style={{ marginTop: 4, marginBottom: 8 }}>No clips. Add one below.</div>
       )}
       {entries.map((entry, i) => {
-        if ('url' in entry) {
+        if ('input_id' in entry || 'url' in entry) {
           clipNum++;
+          const inputId = typeof entry['input_id'] === 'string' ? entry['input_id'] : '';
           const url = typeof entry['url'] === 'string' ? entry['url'] : '';
           const inSec = entry['in'] !== undefined ? String(entry['in']) : '';
           const outSec = entry['out'] !== undefined ? String(entry['out']) : '';
@@ -2013,30 +2027,59 @@ function XfadeSequenceParams({
                   onClick={() => removeClipAt(i)}
                 >✕</button>
               </div>
-              <FileField
-                label="url"
-                value={url}
-                mode="open"
-                onChange={(v) => updateEntry(i, { url: v })}
-              />
+              {useInputRefs ? (
+                <div>
+                  <label style={{ fontSize: 10 }}>input node</label>
+                  <select
+                    value={inputId}
+                    onChange={(e) => {
+                      const patch: XfsEntry = { ...entry };
+                      delete patch['url'];
+                      patch['input_id'] = e.target.value;
+                      const next = [...entries];
+                      next[i] = patch;
+                      setEntries(next);
+                    }}
+                    style={{ width: '100%' }}
+                  >
+                    {inputId && !inputIds.includes(inputId) && (
+                      <option value={inputId}>{inputId} (missing)</option>
+                    )}
+                    {inputIds.map((id) => (
+                      <option key={id} value={id}>{id}</option>
+                    ))}
+                  </select>
+                </div>
+              ) : (
+                <FileField
+                  label="url"
+                  value={url}
+                  mode="open"
+                  onChange={(v) => updateEntry(i, { url: v })}
+                />
+              )}
               <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
                 <div style={{ flex: 1 }}>
-                  <label style={{ fontSize: 10 }}>in (s)</label>
+                  <label style={{ fontSize: 10 }}>in (s, override)</label>
                   <input
                     type="number"
                     min={0}
                     step={0.001}
                     value={inSec}
-                    placeholder="0"
+                    placeholder={useInputRefs ? 'from input' : '0'}
                     onChange={(e) => {
                       const v = e.target.value === '' ? undefined : parseFloat(e.target.value);
-                      updateEntry(i, v === undefined ? { url } : { in: v });
+                      const patch: XfsEntry = { ...entry };
+                      if (v === undefined) delete patch['in']; else patch['in'] = v;
+                      const next = [...entries];
+                      next[i] = patch;
+                      setEntries(next);
                     }}
                     style={{ width: '100%' }}
                   />
                 </div>
                 <div style={{ flex: 1 }}>
-                  <label style={{ fontSize: 10 }}>out (s, optional)</label>
+                  <label style={{ fontSize: 10 }}>out (s)</label>
                   <input
                     type="number"
                     min={0}
@@ -2116,7 +2159,7 @@ function XfadeSequenceParams({
       {entries.length > 0 && (
         <div style={{ fontSize: 10, color: 'var(--text-dim)', marginTop: 6 }}>
           Clips and transitions must alternate. Each non-last clip requires an <strong>out</strong> time.
-          The xfade_sequence processor opens ≤2 decoders at a time.
+          {useInputRefs && <> The <strong>in</strong> field overrides the input node&apos;s ss seek.</>}
         </div>
       )}
     </div>

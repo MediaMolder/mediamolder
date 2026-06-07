@@ -816,6 +816,117 @@ func configHasFilterSource(cfg *Config) bool {
 	return false
 }
 
+// resolveClipInputIDs replaces "input_id" references in a FrameSource
+// processor's "clips" params array with the concrete "url" (and optionally
+// an "in" seek derived from the input's options.ss) sourced from the job's
+// inputs slice.  Returns a shallow-copied params map with the resolved clips
+// when any input_id was found, or nil when nothing needed resolving.
+// Returns an error when an input_id has no matching entry in inputs.
+func resolveClipInputIDs(params map[string]any, inputs []Input) (map[string]any, error) {
+	clipsRaw, ok := params["clips"].([]any)
+	if !ok {
+		return nil, nil
+	}
+	// Build a lookup: input ID → Input definition.
+	byID := make(map[string]Input, len(inputs))
+	for _, inp := range inputs {
+		byID[inp.ID] = inp
+	}
+	needsResolve := false
+	for _, item := range clipsRaw {
+		if m, ok := item.(map[string]any); ok {
+			if _, has := m["input_id"]; has {
+				needsResolve = true
+				break
+			}
+		}
+	}
+	if !needsResolve {
+		return nil, nil
+	}
+	resolvedClips := make([]any, len(clipsRaw))
+	for i, item := range clipsRaw {
+		m, ok := item.(map[string]any)
+		if !ok {
+			resolvedClips[i] = item
+			continue
+		}
+		inputID, hasInputID := m["input_id"].(string)
+		if !hasInputID {
+			resolvedClips[i] = item
+			continue
+		}
+		inp, found := byID[inputID]
+		if !found {
+			return nil, fmt.Errorf("clips[%d]: input_id %q not found in job inputs", i, inputID)
+		}
+		// Copy existing clip fields, replace input_id with url.
+		clip := make(map[string]any, len(m))
+		for k, v := range m {
+			if k != "input_id" {
+				clip[k] = v
+			}
+		}
+		clip["url"] = inp.URL
+		// If no "in" is specified and the input has an ss option, use it.
+		if _, hasIn := clip["in"]; !hasIn {
+			if ssRaw, hasSS := inp.Options["ss"]; hasSS {
+				ss, _ := ssRaw.(string)
+				if ss == "" {
+					if f, ok := ssRaw.(float64); ok {
+						clip["in"] = f
+					}
+				} else if secVal, err := parseSS(ss); err == nil {
+					clip["in"] = secVal
+				}
+			}
+		}
+		resolvedClips[i] = clip
+	}
+	cp := make(map[string]any, len(params))
+	for k, v := range params {
+		cp[k] = v
+	}
+	cp["clips"] = resolvedClips
+	return cp, nil
+}
+
+// parseSS parses an FFmpeg-style -ss value (seconds as float or HH:MM:SS.mmm)
+// into a float64 number of seconds.  Used when resolving input_id options.ss.
+func parseSS(s string) (float64, error) {
+	// Try plain float first.
+	var sec float64
+	if _, err := fmt.Sscanf(s, "%g", &sec); err == nil {
+		return sec, nil
+	}
+	// Try HH:MM:SS or MM:SS.
+	parts := strings.SplitN(s, ":", 3)
+	switch len(parts) {
+	case 2: // MM:SS
+		var m, sv float64
+		if _, err := fmt.Sscanf(parts[0], "%g", &m); err != nil {
+			return 0, err
+		}
+		if _, err := fmt.Sscanf(parts[1], "%g", &sv); err != nil {
+			return 0, err
+		}
+		return m*60 + sv, nil
+	case 3: // HH:MM:SS
+		var h, m, sv float64
+		if _, err := fmt.Sscanf(parts[0], "%g", &h); err != nil {
+			return 0, err
+		}
+		if _, err := fmt.Sscanf(parts[1], "%g", &m); err != nil {
+			return 0, err
+		}
+		if _, err := fmt.Sscanf(parts[2], "%g", &sv); err != nil {
+			return 0, err
+		}
+		return h*3600 + m*60 + sv, nil
+	}
+	return 0, fmt.Errorf("unparseable ss value %q", s)
+}
+
 // configHasFilterSink reports whether cfg.Graph contains at least one
 // node of type "filter_sink" (Wave 7 #36d). Lets the engine accept a
 // pipeline whose terminal nodes are all libavfilter sinks (nullsink,
@@ -1197,6 +1308,17 @@ func (p *Pipeline) runGraph(ctx context.Context) (runErr error) {
 					}
 					cp["frame_rate"] = float64(si.FrameRate[0]) / float64(si.FrameRate[1])
 					initParams = cp
+				}
+			}
+			// Resolve "input_id" references in clips params for FrameSource
+			// processors (e.g. xfade_sequence). Each clip entry may carry
+			// "input_id" instead of "url"; we replace it with the URL (and
+			// optionally the "in" seek from options.ss) from cfg.Inputs.
+			if _, ok := proc.(processors.FrameSource); ok {
+				if resolved, err := resolveClipInputIDs(initParams, cfg.Inputs); err != nil {
+					return fmt.Errorf("go_processor %q: %w", node.ID, err)
+				} else if resolved != nil {
+					initParams = resolved
 				}
 			}
 			if err := proc.Init(initParams); err != nil {

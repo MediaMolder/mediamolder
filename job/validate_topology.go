@@ -64,6 +64,27 @@ func sourceIDsWithEventsEdges(cfg *Config) map[string]bool {
 			m[base] = true
 		}
 	}
+	// Also exempt inputs that are referenced by input_id in a FrameSource
+	// go_processor's clips params (e.g. xfade_sequence). Those inputs have
+	// no outbound AV edges by design — the processor opens them directly.
+	for _, node := range cfg.Graph.Nodes {
+		if node.Type != "go_processor" {
+			continue
+		}
+		clipsRaw, ok := node.Params["clips"].([]any)
+		if !ok {
+			continue
+		}
+		for _, item := range clipsRaw {
+			entry, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+			if id, ok := entry["input_id"].(string); ok && id != "" {
+				m[id] = true
+			}
+		}
+	}
 	return m
 }
 

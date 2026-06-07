@@ -1738,6 +1738,12 @@ func validate(cfg *Config) error {
 		if node.Type == "go_processor" && node.Processor == "" {
 			return fmt.Errorf("node[%d] %q: go_processor requires a \"processor\" field", i, node.ID)
 		}
+		// Validate input_id references in FrameSource processor clips params.
+		if node.Type == "go_processor" {
+			if err := validateClipInputIDs(node, cfg); err != nil {
+				return fmt.Errorf("node[%d] %q: %w", i, node.ID, err)
+			}
+		}
 	}
 	// Wave 7 #42: reject filters whose libavfilter implementation is
 	// not compiled into this build (e.g. zscale without --enable-libzimg).
@@ -1905,4 +1911,32 @@ func joinedKeys(m map[string]string) string {
 	}
 	sort.Strings(keys)
 	return strings.Join(keys, ", ")
+}
+
+// validateClipInputIDs checks that every "input_id" reference in a
+// go_processor node's clips params resolves to a known cfg.Inputs entry.
+// Returns nil when the node has no clips params or no input_id entries.
+func validateClipInputIDs(node NodeDef, cfg *Config) error {
+	clipsRaw, ok := node.Params["clips"].([]any)
+	if !ok {
+		return nil
+	}
+	inputIDs := make(map[string]bool, len(cfg.Inputs))
+	for _, inp := range cfg.Inputs {
+		inputIDs[inp.ID] = true
+	}
+	for i, item := range clipsRaw {
+		m, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		id, hasID := m["input_id"].(string)
+		if !hasID {
+			continue
+		}
+		if !inputIDs[id] {
+			return fmt.Errorf("clips[%d]: input_id %q not found in job inputs", i, id)
+		}
+	}
+	return nil
 }
