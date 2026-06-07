@@ -23,6 +23,16 @@ type FrameLookahead interface {
 	LookbackFrames() int
 }
 
+// FrameSource is an optional interface a Processor may implement to indicate
+// that it generates its own frames rather than processing incoming ones.
+// When a go_processor node implementing FrameSource has no inbound AV edges,
+// the runtime calls Run() instead of the normal Process() loop.
+// The send callback takes ownership of each frame; Run must not close frames
+// it has successfully sent.
+type FrameSource interface {
+	Run(ctx context.Context, send func(*av.Frame) error) error
+}
+
 // Processor is the interface every go_processor node must implement.
 type Processor interface {
 	// Init is called once during graph construction, before the first frame.

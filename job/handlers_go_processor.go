@@ -33,6 +33,23 @@ func (r *graphRunner) handleGoProcessor(ctx context.Context, node *graph.Node, i
 		if _, ok := r.eventDrivenGoProcessors[node.ID]; ok {
 			return nil
 		}
+		// FrameSource processors generate their own frames and require no
+		// inbound AV edge.  Dispatch via Run() and forward each produced
+		// frame to all downstream channels.
+		if src, ok := proc.(processors.FrameSource); ok {
+			sendFrame := func(f *av.Frame) error {
+				for _, ch := range outs {
+					select {
+					case ch <- f:
+					case <-ctx.Done():
+						f.Close()
+						return ctx.Err()
+					}
+				}
+				return nil
+			}
+			return src.Run(ctx, sendFrame)
+		}
 	}
 	if len(ins) != 1 {
 		return fmt.Errorf("go_processor node %q: expected 1 input, got %d", node.ID, len(ins))
