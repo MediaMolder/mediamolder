@@ -31,6 +31,7 @@ Everything runs in-process: no subprocesses, no network calls, no Python. Your p
 		- [`twelvelabs_analyzer`](#twelvelabs_analyzer)
 		- [`twelvelabs_searcher`](#twelvelabs_searcher)
 		- [`twelvelabs_embedder`](#twelvelabs_embedder)
+		- [`xfade_sequence`](#xfade_sequence)
 	- [Helper functions](#helper-functions)
 		- [Letterbox](#letterbox)
 		- [ImageToFloat32Tensor](#imagetofloat32tensor)
@@ -552,6 +553,87 @@ Runs a Marengo natural-language search against an index — on a timer or per se
 Generates Marengo video embeddings per clip (and optionally per fixed window), inline on the event bus or to per-segment `json` / `jsonl` files.
 
 All four nodes share an API-key resolution chain (`api_key` param → `TWELVELABS_API_KEY` env → `~/.config/mediamolder/twelvelabs.json`) and emit to `Metadata.Custom["twelvelabs"]`. See the full [TwelveLabs Guide](twelvelabs.md) for parameters, graph examples, and the CLI / HTTP surface.
+
+---
+
+### `xfade_sequence`
+
+Composes a sequential clip timeline with libavfilter `xfade` transitions.  Unlike chaining multiple `xfade` filter nodes in the graph — which requires all decoders to run concurrently and can OOM on long timelines — `xfade_sequence` is a **FrameSource**: it opens source files one at a time, keeping at most two decoders open simultaneously (one for the outgoing clip and one for the incoming clip, only during the overlap window).
+
+#### When to use `xfade_sequence`
+
+- Generating test media with many dissolves, fades, or other timed transitions
+- Any timeline assembly where opening all clips in parallel would exhaust memory
+- Dissolve timelines longer than a few clips where the chain-xfade approach OOMs
+
+#### Params
+
+```json
+{
+  "clips": [
+    { "url": "/path/to/clip_a.mp4", "in": 0, "out": 15.125 },
+    { "transition": "dissolve", "duration": 0.125 },
+    { "url": "/path/to/clip_b.mp4", "in": 0, "out": 15.208 },
+    { "transition": "fade",     "duration": 0.5   },
+    { "url": "/path/to/clip_c.mp4", "in": 5  }
+  ]
+}
+```
+
+`clips` is an ordered array that **alternates** clip objects and transition objects.  There must be exactly N−1 transition objects for N clips.
+
+| Field        | Type   | Clip or Trans | Description |
+|---|---|---|---|
+| `url`        | string | clip          | Path or URL to the source file. |
+| `in`         | number | clip          | Seek point in seconds (default `0`). |
+| `out`        | number | clip          | Stop time in seconds **including the transition window**.  Must be set for every clip except the last. |
+| `transition` | string | transition    | libavfilter `xfade` transition name (e.g. `dissolve`, `fade`, `wipeleft`). |
+| `duration`   | number | transition    | Transition duration in seconds. Must be ≤ `out − in` of the preceding clip. |
+
+**Timing rule**: `out − in − duration` gives the amount of unique content contributed by a clip before the next transition starts.  Example: `in=0, out=15.125` with `duration=0.125` → 15.000 s of unique content, 0.125 s overlap.
+
+#### Supported transition names
+
+Any `xfade` transition compiled into the running libavfilter build.  Common values: `dissolve`, `fade`, `fadeblack`, `fadewhite`, `fadegrays`, `smoothleft`, `smoothright`, `smoothup`, `smoothdown`, `wipeleft`, `wiperight`, `wipeup`, `wipedown`, `slideleft`, `slideright`, `slideup`, `slidedown`, `circlecrop`, `rectcrop`, `distance`, `hblur`, `pixelize`, `radial`, `zoomin`.
+
+#### JSON example (3 clips, 2 dissolves)
+
+```json
+{
+  "schema_version": "1.2",
+  "inputs": [],
+  "graph": {
+    "nodes": [
+      {
+        "id": "seq",
+        "type": "go_processor",
+        "processor": "xfade_sequence",
+        "params": {
+          "clips": [
+            { "url": "/media/clip_a.mp4", "in": 0, "out": 15.5  },
+            { "transition": "dissolve", "duration": 0.5 },
+            { "url": "/media/clip_b.mp4", "in": 0, "out": 15.5  },
+            { "transition": "dissolve", "duration": 0.5 },
+            { "url": "/media/clip_c.mp4", "in": 0 }
+          ]
+        }
+      },
+      { "id": "enc", "type": "encoder", "params": { "codec": "libx264" } }
+    ],
+    "edges": [
+      { "from": "seq", "to": "enc",    "type": "video" },
+      { "from": "enc", "to": "out0:v", "type": "video" }
+    ]
+  },
+  "outputs": [{ "id": "out0", "url": "/tmp/timeline.mp4" }]
+}
+```
+
+**Note**: `xfade_sequence` is a FrameSource processor — it generates its own frames and does **not** require an inbound video edge.  In the GUI, the node's video input handle is hidden.  Scale/format normalisation should be applied to the output edge if your clips have mixed resolutions.
+
+#### Format constraints
+
+The two clips involved in each transition must have the same pixel format and resolution; the transition filtergraph is constructed from the first clip's stream info.  If your clips differ, insert a `scale` filter downstream to normalise the output, or pre-scale your source files.
 
 ---
 

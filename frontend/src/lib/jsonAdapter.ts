@@ -121,6 +121,13 @@ export interface FlowNodeData extends Record<string, unknown> {
    */
   friendlyName?: string;
   /**
+   * True when this go_processor implements FrameSource — it generates its
+   * own frames and has no inbound AV edge. MMNode suppresses the
+   * video/audio target handles on such nodes. Editor-only; set from the
+   * /api/nodes catalog on spawn and on catalog update after load.
+   */
+  sourceOnly?: boolean;
+  /**
    * Hardware device name when this node runs on a named accelerator
    * (NodeDef.device). Injected by app.tsx decoratedNodes; drives the
    * GPU badge in MMNode. Editor-only. (Wave 10 #60)

@@ -6,6 +6,21 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 ## [Unreleased]
 
 ### Added
+
+- **`xfade_sequence` go_processor (FrameSource).** New processor that composes
+  a sequential clip timeline with libavfilter `xfade` transitions while keeping
+  memory usage O(1 frame), regardless of timeline length.  At most two decoders
+  are open at once (one per side of each transition window).  Replaces the
+  chain-xfade graph approach which OOMs on long timelines by requiring all
+  decoders to run concurrently.  Params: `clips` array of alternating clip
+  (`url`, `in`, `out`) and transition (`transition`, `duration`) objects.  The
+  new `FrameSource` optional interface (`processors.FrameSource`) allows any
+  `go_processor` with no inbound AV edge to call `Run(ctx, send)` instead of
+  the per-frame `Process()` loop; `handleGoProcessor` dispatches accordingly.
+  GUI: Inspector shows a structured clips/transitions editor; the node's video
+  input handle is hidden because the processor opens files internally.
+  See `docs/go-processor-nodes.md#xfade_sequence`.
+
 - **Remote backend user guide** (`docs/remote-backend-guide.md`): step-by-step
   guide for Tier 1 (single-machine `--mode=server`) and Tier 2 (distributed
   cluster) deployments; covers TLS, static token and OIDC auth, mTLS, S3

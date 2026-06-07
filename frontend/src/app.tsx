@@ -211,6 +211,7 @@ function Editor() {
     fetchCatalog()
       .then((catalog) => {
         const idx = indexStreams(catalog);
+        const srcOnly = new Set(catalog.filter((e) => e.source_only).map((e) => `${e.type}/${e.name}`));
         setNodes((cur) =>
           cur.map((node) => {
             if (node.data.ref.kind !== 'node') return node;
@@ -223,9 +224,13 @@ function Editor() {
                   : def.type === 'go_processor'
                     ? (def.processor ?? '')
                     : '';
-            const streams = idx.get(`${def.type}/${lookupName}`);
-            if (!streams) return node;
-            return { ...node, data: { ...node.data, streams } };
+            const key = `${def.type}/${lookupName}`;
+            const streams = idx.get(key);
+            const updates: Record<string, unknown> = {};
+            if (streams) updates.streams = streams;
+            if (srcOnly.has(key)) updates.sourceOnly = true;
+            if (Object.keys(updates).length === 0) return node;
+            return { ...node, data: { ...node.data, ...updates } };
           }),
         );
       })

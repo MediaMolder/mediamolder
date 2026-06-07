@@ -22,6 +22,12 @@ export interface PaletteEntry {
   common?: boolean;
   friendly_name?: string;
   aliases?: string[];
+  /**
+   * Set for go_processor nodes that implement FrameSource — they generate
+   * their own frames and require no inbound AV edge. MMNode suppresses
+   * the video/audio target (input) handles for such nodes.
+   */
+  source_only?: boolean;
 }
 
 export interface SpawnResult {
@@ -154,6 +160,7 @@ export function spawnNodeFrom(
         ref: { kind: 'node', def },
         streams: entry.streams,
         friendlyName: entry.friendly_name,
+        ...(entry.source_only ? { sourceOnly: true } : {}),
       },
     },
   };

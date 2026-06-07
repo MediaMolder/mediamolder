@@ -1870,6 +1870,10 @@ function GoProcessorParams({
     return <TwelveLabsParams processorName={processorName} params={params} onChange={onChange} />;
   }
 
+  if (processorName === 'xfade_sequence') {
+    return <XfadeSequenceParams params={params} onChange={onChange} />;
+  }
+
   if (processorName === 'metadata_file_writer') {
     const outputFile = typeof params['output_file'] === 'string' ? params['output_file'] : '';
     // inner_processor is preserved for backward-compat round-trip if present,
@@ -1919,6 +1923,203 @@ function GoProcessorParams({
       ))}
       <ParamsEditor params={restParams} onChange={(next) => onChange({ ...fileEntries.reduce<Record<string, unknown>>((acc, [k, v]) => { acc[k] = v; return acc; }, {}), ...next })} />
     </>
+  );
+}
+
+/* ---------- XfadeSequenceParams ----------
+ * Structured Inspector for the xfade_sequence go_processor.
+ * Renders an ordered list of alternating clip/transition rows with
+ * inline add / remove controls. */
+
+const XFADE_TRANSITIONS = [
+  'dissolve', 'fade', 'fadeblack', 'fadewhite', 'fadegrays',
+  'smoothleft', 'smoothright', 'smoothup', 'smoothdown',
+  'slideup', 'slidedown', 'slideleft', 'slideright',
+  'wipeleft', 'wiperight', 'wipeup', 'wipedown',
+  'circlecrop', 'rectcrop', 'distance', 'hblur',
+  'pixelize', 'radial', 'zoomin',
+] as const;
+
+type XfsEntry = Record<string, unknown>;
+
+function XfadeSequenceParams({
+  params,
+  onChange,
+}: {
+  params: Record<string, unknown>;
+  onChange: (next: Record<string, unknown>) => void;
+}) {
+  const entries: XfsEntry[] = Array.isArray(params['clips'])
+    ? (params['clips'] as XfsEntry[])
+    : [];
+
+  const setEntries = (next: XfsEntry[]) => onChange({ ...params, clips: next });
+
+  const updateEntry = (idx: number, patch: XfsEntry) => {
+    const next = [...entries];
+    next[idx] = { ...next[idx], ...patch };
+    setEntries(next);
+  };
+
+  const removeClipAt = (idx: number) => {
+    const next = [...entries];
+    if (idx > 0 && 'transition' in next[idx - 1]) {
+      next.splice(idx - 1, 2);
+    } else if (idx < next.length - 1 && 'transition' in next[idx + 1]) {
+      next.splice(idx, 2);
+    } else {
+      next.splice(idx, 1);
+    }
+    setEntries(next);
+  };
+
+  const addClip = () => {
+    if (entries.length === 0) {
+      setEntries([{ url: '' }]);
+    } else {
+      setEntries([...entries, { transition: 'dissolve', duration: 1.0 }, { url: '' }]);
+    }
+  };
+
+  let clipNum = 0;
+
+  return (
+    <div style={{ marginTop: 8 }}>
+      <label style={{ marginBottom: 6 }}>Clips &amp; Transitions</label>
+      {entries.length === 0 && (
+        <div className="empty" style={{ marginTop: 4, marginBottom: 8 }}>No clips. Add one below.</div>
+      )}
+      {entries.map((entry, i) => {
+        if ('url' in entry) {
+          clipNum++;
+          const url = typeof entry['url'] === 'string' ? entry['url'] : '';
+          const inSec = entry['in'] !== undefined ? String(entry['in']) : '';
+          const outSec = entry['out'] !== undefined ? String(entry['out']) : '';
+          return (
+            <div
+              key={i}
+              style={{
+                border: '1px solid var(--border)',
+                borderRadius: 4,
+                padding: '8px 10px',
+                marginBottom: 6,
+              }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                <strong style={{ fontSize: 11 }}>Clip {clipNum}</strong>
+                <button
+                  className="mini-btn"
+                  title="Remove clip"
+                  onClick={() => removeClipAt(i)}
+                >✕</button>
+              </div>
+              <FileField
+                label="url"
+                value={url}
+                mode="open"
+                onChange={(v) => updateEntry(i, { url: v })}
+              />
+              <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
+                <div style={{ flex: 1 }}>
+                  <label style={{ fontSize: 10 }}>in (s)</label>
+                  <input
+                    type="number"
+                    min={0}
+                    step={0.001}
+                    value={inSec}
+                    placeholder="0"
+                    onChange={(e) => {
+                      const v = e.target.value === '' ? undefined : parseFloat(e.target.value);
+                      updateEntry(i, v === undefined ? { url } : { in: v });
+                    }}
+                    style={{ width: '100%' }}
+                  />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <label style={{ fontSize: 10 }}>out (s, optional)</label>
+                  <input
+                    type="number"
+                    min={0}
+                    step={0.001}
+                    value={outSec}
+                    placeholder="EOF"
+                    onChange={(e) => {
+                      const v = e.target.value === '' ? undefined : parseFloat(e.target.value);
+                      const patch: XfsEntry = { ...entry };
+                      if (v === undefined) delete patch['out']; else patch['out'] = v;
+                      const next = [...entries];
+                      next[i] = patch;
+                      setEntries(next);
+                    }}
+                    style={{ width: '100%' }}
+                  />
+                </div>
+              </div>
+            </div>
+          );
+        } else {
+          // Transition entry
+          const name = typeof entry['transition'] === 'string' ? entry['transition'] : 'dissolve';
+          const dur = entry['duration'] !== undefined ? String(entry['duration']) : '';
+          return (
+            <div
+              key={i}
+              style={{
+                display: 'flex',
+                gap: 8,
+                alignItems: 'center',
+                padding: '4px 10px',
+                marginBottom: 6,
+                background: 'var(--surface-raised, rgba(255,255,255,0.04))',
+                borderRadius: 4,
+                fontSize: 11,
+              }}
+            >
+              <span style={{ color: 'var(--text-dim)', flex: '0 0 auto' }}>↓</span>
+              <div style={{ flex: 2 }}>
+                <label style={{ fontSize: 10 }}>transition</label>
+                <select
+                  value={name}
+                  onChange={(e) => updateEntry(i, { transition: e.target.value })}
+                  style={{ width: '100%' }}
+                >
+                  {XFADE_TRANSITIONS.map((t) => (
+                    <option key={t} value={t}>{t}</option>
+                  ))}
+                </select>
+              </div>
+              <div style={{ flex: 1 }}>
+                <label style={{ fontSize: 10 }}>duration (s)</label>
+                <input
+                  type="number"
+                  min={0.001}
+                  step={0.001}
+                  value={dur}
+                  placeholder="1.0"
+                  onChange={(e) => {
+                    const v = e.target.value === '' ? 1.0 : parseFloat(e.target.value);
+                    updateEntry(i, { duration: v });
+                  }}
+                  style={{ width: '100%' }}
+                />
+              </div>
+            </div>
+          );
+        }
+      })}
+      <button
+        style={{ marginTop: 4, width: '100%' }}
+        onClick={addClip}
+      >
+        + Add Clip
+      </button>
+      {entries.length > 0 && (
+        <div style={{ fontSize: 10, color: 'var(--text-dim)', marginTop: 6 }}>
+          Clips and transitions must alternate. Each non-last clip requires an <strong>out</strong> time.
+          The xfade_sequence processor opens ≤2 decoders at a time.
+        </div>
+      )}
+    </div>
   );
 }
 

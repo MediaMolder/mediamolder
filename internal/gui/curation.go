@@ -185,6 +185,12 @@ var curatedNodes = map[string]NodeMeta{
 		Friendly: "TwelveLabs embeddings (Marengo)",
 		Aliases:  []string{"twelvelabs", "ai", "marengo", "embedding", "vector", "clip"},
 	},
+
+	// ── Timeline composition ─────────────────────────────────────────
+	"xfade_sequence": {
+		Friendly: "Xfade sequence (timeline)",
+		Aliases:  []string{"dissolve", "fade", "transition", "timeline", "sequence", "xfade"},
+	},
 }
 
 // NodeMeta is the per-node curation entry.
