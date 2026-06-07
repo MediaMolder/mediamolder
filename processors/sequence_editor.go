@@ -66,10 +66,18 @@ type seqFormat struct {
 
 // seqClip describes one placement of source material onto the timeline.
 type seqClip struct {
-	URL      string  // resolved url (input_id is rewritten by engine before Init)
-	SeqIn    float64 // sequence time (seconds) at which this clip starts
-	SourceIn float64 // source time (seconds) that maps to SeqIn
-	Duration float64 // length of this placement in sequence time (and source material consumed)
+	URL        string  // resolved url (input_id is rewritten by engine before Init)
+	SeqIn      float64 // sequence time (seconds) at which this clip starts
+	SourceIn   float64 // source time (seconds) that maps to SeqIn
+	Duration   float64 // length of this placement in sequence time (and source material consumed)
+	Transition *seqTransition
+}
+
+// seqTransition holds dissolve (or other) transition info attached to a clip
+// (the outgoing clip in a pair).
+type seqTransition struct {
+	Type     string
+	Duration float64
 }
 
 // seqTrack is one layer in the timeline. Higher-index tracks have priority
@@ -86,7 +94,7 @@ type seqTrack struct {
 type seqLogLayer struct {
 	TrackIdx   int     `json:"track_idx,omitempty"`
 	TrackID    string  `json:"track_id,omitempty"`
-	ClipIdx    int     `json:"clip_idx,omitempty"`
+	ClipIdx    int     `json:"clip_idx"`
 	URL        string  `json:"url"`
 	SourceIn   float64 `json:"source_in"`
 	SourceT    float64 `json:"source_t"` // the exact source time we requested from the reader
@@ -132,6 +140,12 @@ type SequenceEditor struct {
 	converter *av.FilterGraph // single-input scale+format converter (input = source native, output = sequence format)
 	converterInputSI av.StreamInfo
 	lastFrame *av.Frame // last successfully sent frame (used for hold/freeze on timeline gaps)
+
+	// blendGraph is a reusable two-input blend graph for dissolve transitions.
+	// Created lazily on first use during a dissolve window. Reusing it avoids
+	// the cost of repeated NewComplexFilterGraph / parse / config for every
+	// blended frame (which was contributing to the observed slowdown).
+	blendGraph *av.FilterGraph
 
 	// lastContentI remembers the output frame index (i) of the last real content
 	// frame we produced (not a hold). Used by the optional sequence log.
@@ -242,6 +256,16 @@ func (se *SequenceEditor) Init(params map[string]any) error {
 			if c.Duration <= 0 {
 				return fmt.Errorf("sequence_editor: clip duration must be > 0 (sequence_in=%v source_in=%v)", c.SeqIn, c.SourceIn)
 			}
+			if transm, ok := cm["transition"].(map[string]any); ok {
+				st := &seqTransition{}
+				if typ, ok := transm["type"].(string); ok {
+					st.Type = typ
+				}
+				if dur, ok := transm["duration"].(float64); ok && dur > 0 {
+					st.Duration = dur
+				}
+				c.Transition = st
+			}
 			track.Clips = append(track.Clips, c)
 		}
 		se.tracks = append(se.tracks, track)
@@ -300,6 +324,10 @@ func (se *SequenceEditor) Close() error {
 	if se.converter != nil {
 		se.converter.Close()
 		se.converter = nil
+	}
+	if se.blendGraph != nil {
+		se.blendGraph.Close()
+		se.blendGraph = nil
 	}
 	if se.lastFrame != nil {
 		se.lastFrame.Close()
@@ -367,9 +395,69 @@ func (se *SequenceEditor) Run(ctx context.Context, send func(*av.Frame) error) e
 		}
 		t := float64(i) * frameInterval // sequence time for this output frame
 
-		// Find the winning (highest priority) clip that covers t.
-		// We capture track/clip indices so the sequence log can show exactly
-		// which layer won.
+		// activeLayer represents one contributing source (clip) for the current t,
+		// with computed opacity for blending during transitions.
+		type activeLayer struct {
+			trackIdx int
+			trackID  string
+			clipIdx  int
+			clip     *seqClip
+			srcT     float64
+			opacity  float64
+		}
+
+		var activeLayers []activeLayer
+		for ti := len(se.tracks) - 1; ti >= 0; ti-- {
+			tr := &se.tracks[ti]
+			var trackCovers []activeLayer
+			for ci := range tr.Clips {
+				c := &tr.Clips[ci]
+				if t >= c.SeqIn && t < c.SeqIn+c.Duration {
+					srcT := c.SourceIn + (t - c.SeqIn)
+					trackCovers = append(trackCovers, activeLayer{
+						trackIdx: ti,
+						trackID:  tr.ID,
+						clipIdx:  ci,
+						clip:     c,
+						srcT:     srcT,
+						opacity:  1.0,
+					})
+				}
+			}
+			if len(trackCovers) > 0 {
+				// Detect transition (dissolve) windows on this track.
+				// We look for consecutive clips where the earlier one declares a
+				// dissolve transition whose window overlaps the current t.
+				// The extra duration padding in the JSON (e.g. 10.125 instead of 10)
+				// makes the coverage of outgoing and incoming overlap exactly during
+				// the dissolve.
+				if len(trackCovers) >= 2 {
+					// trackCovers appended in clip-list order; assume earlier SeqIn first
+					outL := &trackCovers[0]
+					inL := &trackCovers[len(trackCovers)-1]
+					if outL.clip.Transition != nil && outL.clip.Transition.Type == "dissolve" && outL.clip.Transition.Duration > 0 {
+						dDur := outL.clip.Transition.Duration
+						dStart := outL.clip.SeqIn + outL.clip.Duration - dDur
+						if t >= dStart {
+							prog := (t - dStart) / dDur
+							if prog < 0 {
+								prog = 0
+							}
+							if prog > 1 {
+								prog = 1
+							}
+							outL.opacity = 1 - prog
+							inL.opacity = prog
+						}
+					}
+				}
+				activeLayers = trackCovers
+				break
+			}
+		}
+
+		// For compatibility with the existing hold/force fallback code we still
+		// synthesize a "chosen" from the dominant (highest-opacity) active layer.
 		type winner struct {
 			trackIdx int
 			trackID  string
@@ -378,79 +466,117 @@ func (se *SequenceEditor) Run(ctx context.Context, send func(*av.Frame) error) e
 			srcT     float64
 		}
 		var chosen *winner
-		for ti := len(se.tracks) - 1; ti >= 0; ti-- {
-			tr := &se.tracks[ti]
-			for ci := range tr.Clips {
-				c := &tr.Clips[ci]
-				if t >= c.SeqIn && t < c.SeqIn+c.Duration {
-					srcT := c.SourceIn + (t - c.SeqIn)
-					chosen = &winner{
-						trackIdx: ti,
-						trackID:  tr.ID,
-						clipIdx:  ci,
-						clip:     c,
-						srcT:     srcT,
-					}
-					break
+		if len(activeLayers) > 0 {
+			main := activeLayers[0]
+			for _, al := range activeLayers {
+				if al.opacity > main.opacity {
+					main = al
 				}
 			}
-			if chosen != nil {
-				break
+			chosen = &winner{
+				trackIdx: main.trackIdx,
+				trackID:  main.trackID,
+				clipIdx:  main.clipIdx,
+				clip:     main.clip,
+				srcT:     main.srcT,
 			}
 		}
 
 		var outFrame *av.Frame
-		var chosenSrcT float64
-		var chosenURL string
-		contentThisFrame := false // set true only when we actually obtained pixels from a chosen clip (not a hold)
-		if chosen != nil {
-			chosenSrcT = chosen.srcT
-			chosenURL = chosen.clip.URL
-			reader := se.getOrOpenReader(chosenURL)
-			if reader == nil {
-				// fallback to black/hold for this frame (reader open failed)
-			} else {
-				native, err := reader.getFrameAtSeconds(chosenSrcT)
-				if err != nil {
-					if !av.IsEOF(err) {
-						return fmt.Errorf("sequence_editor: source %q at %.3fs: %w", chosenURL, chosenSrcT, err)
+		contentThisFrame := false // set true only when we actually obtained pixels from active layer(s)
+		if len(activeLayers) > 0 {
+			if len(activeLayers) == 1 {
+				l := activeLayers[0]
+				reader := se.getOrOpenReader(l.clip.URL)
+				if reader == nil {
+					// fallback to black/hold for this frame (reader open failed)
+				} else {
+					native, err := reader.getFrameAtSeconds(l.srcT)
+					if err != nil {
+						if !av.IsEOF(err) {
+							return fmt.Errorf("sequence_editor: source %q at %.3fs: %w", l.clip.URL, l.srcT, err)
+						}
+						// source ended — fall through to black
+					} else if native != nil {
+						outFrame = se.convertFrame(native, reader.si)
+						contentThisFrame = true
 					}
-					// source ended — fall through to black
-				} else if native != nil {
-					outFrame = se.convertFrame(native, reader.si)
+				}
+			} else {
+				// Transition window: fetch natives for all (typically 2) active layers,
+				// convert each to target format, then composite with the per-layer opacities.
+				var cframes []*av.Frame
+				for _, l := range activeLayers {
+					reader := se.getOrOpenReader(l.clip.URL)
+					if reader != nil {
+						native, err := reader.getFrameAtSeconds(l.srcT)
+						if err == nil && native != nil {
+							cf := se.convertFrame(native, reader.si)
+							if cf != nil {
+								cframes = append(cframes, cf)
+							}
+						}
+					}
+				}
+				if len(cframes) >= 2 {
+					// To achieve the correct cross-fade direction with the blend filter
+					// (which appears to implement A*X + B*(1-X) when all_opacity=X),
+					// we pass X = 1 - prog (i.e. outgoing's opacity) as the all_opacity
+					// value. This gives A*(1-prog) + B*prog where A=outgoing, B=incoming.
+					// Clear PTS on the inputs to the blend graph (we set the correct
+					// sequence PTS on the blended result later). This avoids timebase
+					// mismatch errors when pushing to buffers declared with the seq TB.
+					for _, cf := range cframes[:2] {
+						if cf != nil {
+							cf.SetPTS(0)
+						}
+					}
+					blendAllOpacity := activeLayers[0].opacity  // 1 - prog
+					fg := se.getBlendGraph()
+					if fg == nil {
+						// Fallback to old per-frame creation (slower, and may fail
+						// if graph wiring has issues).
+						outFrame = se.blendTwoFrames(cframes[0], cframes[1], blendAllOpacity)
+					} else {
+						// Update opacity for *this* frame (cheap, no re-config).
+						if err := fg.SendCommand("blender", "all_opacity", fmt.Sprintf("%f", blendAllOpacity)); err != nil {
+							fmt.Printf("sequence_editor: blend SendCommand failed for op=%.3f: %v\n", blendAllOpacity, err)
+							outFrame = se.blendTwoFrames(cframes[0], cframes[1], blendAllOpacity) // fallback
+						} else {
+							// Push the already-converted target-format frames.
+							// The graph stays alive for the next blended frame.
+							if err := fg.PushFrameAt(0, cframes[0]); err != nil {
+								fmt.Printf("sequence_editor: blend push bottom failed: %v\n", err)
+								cframes[0].Close()
+								cframes[1].Close()
+								outFrame = nil
+							} else {
+								cframes[0].Close()
+								if err := fg.PushFrameAt(1, cframes[1]); err != nil {
+									fmt.Printf("sequence_editor: blend push top failed: %v\n", err)
+									cframes[1].Close()
+									outFrame = nil
+								} else {
+									cframes[1].Close()
+									blended, aerr := av.AllocFrame()
+									if aerr != nil {
+										outFrame = nil
+									} else if perr := fg.PullFrameAt(0, blended); perr != nil {
+										blended.Close()
+										if !av.IsEAgain(perr) && !av.IsEOF(perr) {
+											fmt.Printf("sequence_editor: blend pull failed: %v\n", perr)
+										}
+										outFrame = nil
+									} else {
+										outFrame = blended
+									}
+								}
+							}
+						}
+					}
 					contentThisFrame = true
-				}
-			}
-		}
-
-		if outFrame == nil {
-			// No clip covers this time on any track — hold the previous frame
-			// (common "freeze" behaviour in a basic timeline editor). We keep
-			// a clone of the last successfully sent frame for this purpose.
-			if se.lastFrame != nil {
-				cl, cerr := se.lastFrame.Clone()
-				if cerr == nil {
-					outFrame = cl
-				}
-			}
-		}
-
-		if outFrame == nil && chosen != nil {
-			// Force send a native frame for the current t/clip to guarantee
-			// progression through the timeline (bypass any converter/pull issues
-			// that leave outFrame nil even when chosen). With the conditional-seek
-			// fix, repeated calls within a clip will now return *different*
-			// advancing source frames instead of always the first.
-			reader2 := se.getOrOpenReader(chosenURL)
-			if reader2 != nil {
-				srcT2 := chosenSrcT
-				native2, err2 := reader2.getFrameAtSeconds(srcT2)
-				if err2 != nil {
-					// Only log force errs (rare now that seek logic is fixed); keeps
-					// normal runs quiet while still surfacing problems.
-					fmt.Printf("sequence_editor: force get err for t=%.3f: %v\n", t, err2)
-				} else if native2 != nil {
-					outFrame = se.convertFrame(native2, reader2.si)
+				} else if len(cframes) > 0 {
+					outFrame = cframes[0]
 					contentThisFrame = true
 				}
 			}
@@ -466,35 +592,27 @@ func (se *SequenceEditor) Run(ctx context.Context, send func(*av.Frame) error) e
 		logNotes := ""
 		logHeldFrom := (*int)(nil)
 
-		if chosen != nil {
+		for _, al := range activeLayers {
 			logLayers = append(logLayers, seqLogLayer{
-				TrackIdx:   chosen.trackIdx,
-				TrackID:    chosen.trackID,
-				ClipIdx:    chosen.clipIdx,
-				URL:        chosen.clip.URL,
-				SourceIn:   chosen.clip.SourceIn,
-				SourceT:    chosen.srcT,
-				TimelineIn: chosen.clip.SeqIn,
-				Opacity:    1.0,
+				TrackIdx:   al.trackIdx,
+				TrackID:    al.trackID,
+				ClipIdx:    al.clipIdx,
+				URL:        al.clip.URL,
+				SourceIn:   al.clip.SourceIn,
+				SourceT:    al.srcT,
+				TimelineIn: al.clip.SeqIn,
+				Opacity:    al.opacity,
 			})
 		}
 
 		// Determine action based on how outFrame was obtained.
-		// The hold block runs before force; force tries to get real content.
-		// We treat "outFrame came from a chosen clip path" as content.
-		if chosen != nil {
-			// We had a covering clip. If we still have outFrame after all paths,
-			// and it wasn't purely the result of a hold (i.e. the content or force
-			// path contributed), we call it content. Otherwise it became a hold.
+		if len(activeLayers) > 0 {
 			if outFrame != nil {
-				// Heuristic: if lastContentI changed or we will update it below,
-				// it was content. Simpler: presence of chosen + successful outFrame
-				// after the chosen paths means we tried to use real source material.
 				logAction = "content"
 				contentThisFrame = true
 			} else {
 				logAction = "hold"
-				logNotes = "chosen clip(s) produced no usable frame; holding previous"
+				logNotes = "active layer(s) produced no usable frame; holding previous"
 			}
 		} else if outFrame != nil {
 			logAction = "hold"
@@ -573,6 +691,172 @@ func (se *SequenceEditor) emitSequenceLog(i int, t float64, pts int64, action st
 	// One object per line (JSON Lines / .jsonl). SetEscapeHTML false is nicer for paths.
 	enc.SetEscapeHTML(false)
 	_ = enc.Encode(rec) // best effort; debug log failure should not kill the render
+}
+
+// blendTwoFrames composites frameA (bottom/outgoing) and frameB (top/incoming)
+// using the passed value as all_opacity for the blend filter (see call site for
+// why we pass out.opacity = 1-prog instead of in.opacity = prog).
+// The input frames are assumed to already be in the sequence's target format/size.
+func (se *SequenceEditor) blendTwoFrames(frameA, frameB *av.Frame, opacityB float64) *av.Frame {
+	if frameA == nil {
+		if frameB != nil {
+			return frameB
+		}
+		return nil
+	}
+	// Note: the passed 'opacityB' here is actually the value for the blend
+	// filter's all_opacity that achieves the desired crossfade (see call site).
+	// With the filter's apparent formula A*X + B*(1-X), we pass X = out.opacity
+	// (1-prog) to get the correct A fading out, B fading in.
+	if frameB == nil || opacityB >= 1 {
+		return frameA
+	}
+	if opacityB <= 0 {
+		return frameB
+	}
+
+	// Clear PTS on inputs (we overwrite on the output). Avoids TB mismatch
+	// with the graph's declared timebase.
+	if frameA != nil {
+		frameA.SetPTS(0)
+	}
+	if frameB != nil {
+		frameB.SetPTS(0)
+	}
+
+	cfg := av.ComplexFilterGraphConfig{
+		Inputs: []av.FilterPadConfig{
+			{
+				Label:     "bottom",
+				MediaType: av.MediaTypeVideo,
+				Width:     se.format.Width,
+				Height:    se.format.Height,
+				PixFmt:    se.format.PixFmtInt,
+				TBNum:     se.format.TimeBase[0],
+				TBDen:     se.format.TimeBase[1],
+				SARNum:    1,
+				SARDen:    1,
+			},
+			{
+				Label:     "top",
+				MediaType: av.MediaTypeVideo,
+				Width:     se.format.Width,
+				Height:    se.format.Height,
+				PixFmt:    se.format.PixFmtInt,
+				TBNum:     se.format.TimeBase[0],
+				TBDen:     se.format.TimeBase[1],
+				SARNum:    1,
+				SARDen:    1,
+			},
+		},
+		Outputs: []av.FilterOutputConfig{
+			{
+				Label:     "out",
+				MediaType: av.MediaTypeVideo,
+			},
+		},
+		// The FilterSpec must explicitly connect the labeled buffer sources
+		// created from Inputs to the blend filter and then to the output pad.
+		// Without the [bottom][top]...[out] syntax, the graph config fails with
+		// "output pad ... not connected".
+		// We also force format+range right after each buffer to normalize any
+		// lingering range/csp differences from the source clips (GoPro yuvj vs
+		// our target yuv420p). This reduces "Changing video frame properties
+		// on the fly" warnings on the [bottom] and [top] buffer instances.
+		FilterSpec: fmt.Sprintf(
+			"[bottom]setrange=range=tv,format=%s[b]; [top]setrange=range=tv,format=%s[t]; [b][t]blend=all_opacity=%.6f[out]",
+			se.format.PixFmt, se.format.PixFmt, opacityB,
+		),
+	}
+
+	fg, err := av.NewComplexFilterGraph(cfg)
+	if err != nil {
+		fmt.Printf("sequence_editor: failed to build blend graph (opacity=%.3f): %v\n", opacityB, err)
+		return frameA
+	}
+	defer fg.Close()
+
+	if err := fg.PushFrameAt(0, frameA); err != nil {
+		fmt.Printf("sequence_editor: blend push bottom failed: %v\n", err)
+		frameA.Close()
+		frameB.Close()
+		return nil
+	}
+	frameA.Close()
+
+	if err := fg.PushFrameAt(1, frameB); err != nil {
+		fmt.Printf("sequence_editor: blend push top failed: %v\n", err)
+		frameB.Close()
+		return nil
+	}
+	frameB.Close()
+
+	blended, err := av.AllocFrame()
+	if err != nil {
+		return nil
+	}
+	if perr := fg.PullFrameAt(0, blended); perr != nil {
+		blended.Close()
+		if !av.IsEAgain(perr) && !av.IsEOF(perr) {
+			fmt.Printf("sequence_editor: blend pull failed: %v\n", perr)
+		}
+		return nil
+	}
+	return blended
+}
+
+// getBlendGraph returns a reusable two-input blend graph for dissolves.
+// It is created on first use (with a named "blender" filter) and kept for the
+// lifetime of the SequenceEditor. Reusing avoids the expensive
+// NewComplexFilterGraph/parse/config on every blended frame during dissolve
+// windows (the main cause of the observed slowdown when dissolve support
+// was added). The all_opacity is updated per frame via SendCommand.
+func (se *SequenceEditor) getBlendGraph() *av.FilterGraph {
+	if se.blendGraph != nil {
+		return se.blendGraph
+	}
+	cfg := av.ComplexFilterGraphConfig{
+		Inputs: []av.FilterPadConfig{
+			{
+				Label:     "bottom",
+				MediaType: av.MediaTypeVideo,
+				Width:     se.format.Width,
+				Height:    se.format.Height,
+				PixFmt:    se.format.PixFmtInt,
+				TBNum:     se.format.TimeBase[0],
+				TBDen:     se.format.TimeBase[1],
+				SARNum:    1,
+				SARDen:    1,
+			},
+			{
+				Label:     "top",
+				MediaType: av.MediaTypeVideo,
+				Width:     se.format.Width,
+				Height:    se.format.Height,
+				PixFmt:    se.format.PixFmtInt,
+				TBNum:     se.format.TimeBase[0],
+				TBDen:     se.format.TimeBase[1],
+				SARNum:    1,
+				SARDen:    1,
+			},
+		},
+		Outputs: []av.FilterOutputConfig{
+			{
+				Label:     "out",
+				MediaType: av.MediaTypeVideo,
+			},
+		},
+		// Name the blend filter so we can SendCommand to it to change
+		// all_opacity cheaply on each use without recreating the graph.
+		FilterSpec: "[bottom][top]blend@blender=all_opacity=0.5[out]",
+	}
+	fg, err := av.NewComplexFilterGraph(cfg)
+	if err != nil {
+		fmt.Printf("sequence_editor: failed to create reusable blend graph: %v\n", err)
+		return nil
+	}
+	se.blendGraph = fg
+	return fg
 }
 
 // ---------- helpers ----------
@@ -960,7 +1244,13 @@ func (se *SequenceEditor) ensureConverter(srcSI av.StreamInfo) {
 		se.converter.Close()
 		se.converter = nil
 	}
-	spec := fmt.Sprintf("scale=%d:%d:flags=bicubic,format=%s",
+	// Use scale's out_range=tv (limited range) + format to produce frames
+	// with the conventional properties of yuv420p (instead of inheriting
+	// full-range "pc" / yuvj from camera sources). This avoids "changing
+	// video frame properties on the fly" warnings when the same converter
+	// instance receives frames from different sources, and ensures the
+	// frames passed to our dissolve blend graphs have consistent metadata.
+	spec := fmt.Sprintf("scale=%d:%d:flags=bicubic:out_range=tv,format=%s",
 		se.format.Width, se.format.Height, se.format.PixFmt)
 	fg, err := av.NewVideoFilterGraph(av.VideoFilterGraphConfig{
 		Width:   srcSI.Width,

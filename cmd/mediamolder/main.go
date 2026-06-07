@@ -231,22 +231,53 @@ func cmdRun(args []string) error {
 			case <-ticker.C:
 				snap := eng.GetMetrics()
 				elapsed := time.Since(start).Truncate(time.Millisecond)
+
 				var totalFrames int64
 				for _, n := range snap.Nodes {
 					totalFrames += n.Frames
 				}
+
+				// Prefer "generated" media time from the source side (MediaPTS).
+				// For a sequence_editor / timeline generator this gives the
+				// actual position in the output video timeline very early.
+				// Fall back to OutputPTS (what has actually been committed by
+				// the sinks) when that is the only info we have.
+				// This directly addresses the confusion between wall time
+				// and video timeline position.
+				mediaPart := ""
+				media := snap.MediaPTS
+				dur := snap.MediaDuration
+				if media == 0 {
+					media = snap.OutputPTS
+				}
+				if media > 0 {
+					if dur > 0 {
+						speed := 0.0
+						if elapsed > 0 {
+							speed = media.Seconds() / elapsed.Seconds()
+						}
+						mediaPart = fmt.Sprintf("media %.1fs/%.1fs (%.2fx) ",
+							media.Seconds(), dur.Seconds(), speed)
+					} else {
+						mediaPart = fmt.Sprintf("media %.1fs ", media.Seconds())
+					}
+				}
+
 				if *jsonOut {
 					m := map[string]any{
-						"state":   snap.State,
-						"elapsed": elapsed.String(),
-						"frames":  totalFrames,
-						"nodes":   snap.Nodes,
+						"state":          snap.State,
+						"elapsed":        elapsed.String(),
+						"output_pts":     snap.OutputPTS,
+						"media_pts":      snap.MediaPTS,
+						"media_duration": snap.MediaDuration,
+						"frames":         totalFrames,
+						"nodes":          snap.Nodes,
 					}
 					b, _ := json.Marshal(m)
 					fmt.Fprintf(os.Stderr, "%s\n", b)
 				} else {
-					fmt.Fprintf(os.Stderr, "\r[%s] state=%s frames=%d",
-						elapsed, snap.State, totalFrames)
+					fmt.Fprintf(os.Stderr, "\r[%s] %sstate=%s frames=%d",
+						elapsed, mediaPart, snap.State, totalFrames)
 				}
 			case <-ctx.Done():
 				return
