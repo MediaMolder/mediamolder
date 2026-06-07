@@ -33,6 +33,16 @@ type Config struct {
 	Graph         GraphDef `json:"graph"`
 	Outputs       []Output `json:"outputs"`
 	GlobalOptions Options  `json:"global_options,omitempty"`
+
+	// Mode selects the job representation style.
+	// "graph" (default) uses the traditional nodes/edges DAG.
+	// "timeline" uses the new editor-style timeline with tracks and clips.
+	Mode string `json:"mode,omitempty"`
+
+	// Timeline is the top-level description for timeline/sequence editing jobs.
+	// When Mode == "timeline" (or Timeline is non-nil), the pipeline uses
+	// a TimelineRenderer instead of (or in addition to) the graph scheduler.
+	Timeline *Timeline `json:"timeline,omitempty"`
 	// CopyTS preserves the original demuxer timestamps end-to-end
 	// instead of rebasing every input to start at PTS 0. Mirrors
 	// FFmpeg's global `-copyts` flag, which is global in the FFmpeg
@@ -1939,4 +1949,70 @@ func validateClipInputIDs(node NodeDef, cfg *Config) error {
 		}
 	}
 	return nil
+}
+
+// ============================================================================
+// Timeline mode types (new "editor" / sequence representation, see
+// private_local/timeline_data_model.md for full design).
+// When Config.Mode == "timeline" or Config.Timeline != nil, the pipeline
+// uses a TimelineRenderer (FrameSource) instead of building/executing the
+// traditional Graph DAG for the main content assembly.
+// ============================================================================
+
+// Timeline is the top-level description for a timeline/sequence-editing job.
+type Timeline struct {
+	Sequence  SequenceSpec         `json:"sequence"`
+	MediaPool map[string]MediaRef  `json:"media_pool,omitempty"`
+	Tracks    []Track              `json:"tracks"`
+	Duration  float64              `json:"duration,omitempty"`
+}
+
+// SequenceSpec defines the fixed output format and continuous timebase
+// for the rendered sequence (analogous to "project settings" in an NLE).
+type SequenceSpec struct {
+	Width     int     `json:"width"`
+	Height    int     `json:"height"`
+	PixFmt    string  `json:"pix_fmt"`
+	FrameRate [2]int  `json:"frame_rate"` // {num, den}
+	TimeBase  [2]int  `json:"time_base"`  // continuous TB for output PTS, e.g. {1,90000}
+	// Optional color metadata forwarded to downstream.
+	ColorRange     string `json:"color_range,omitempty"`
+	ColorSpace     string `json:"color_space,omitempty"`
+	ColorTransfer  string `json:"color_transfer,omitempty"`
+	ColorPrimaries string `json:"color_primaries,omitempty"`
+}
+
+// MediaRef is a reference in the media pool (named sources).
+type MediaRef struct {
+	URL  string `json:"url"`
+	Name string `json:"name,omitempty"`
+}
+
+// Track is one layer (video or audio) in the timeline.
+type Track struct {
+	ID    string            `json:"id"`
+	Type  string            `json:"type"` // "video" | "audio"
+	Clips []ClipPlacement   `json:"clips"`
+	Attrs map[string]any    `json:"attributes,omitempty"`
+}
+
+// ClipPlacement places a segment of a source onto the timeline at a specific
+// position, with optional outgoing transition.
+type ClipPlacement struct {
+	MediaID    string       `json:"media_id,omitempty"`
+	URL        string       `json:"url,omitempty"`
+	SourceIn   float64      `json:"source_in"`
+	SourceOut  float64      `json:"source_out,omitempty"`
+	TimelineIn float64      `json:"timeline_in"`
+	Duration   float64      `json:"duration,omitempty"`
+	Transition *Transition  `json:"transition,omitempty"`
+	Attrs      map[string]any `json:"attributes,omitempty"`
+	Label      string       `json:"label,omitempty"`
+}
+
+// Transition for crossfades etc between adjacent clips on the same track.
+type Transition struct {
+	Type     string         `json:"type"`
+	Duration float64        `json:"duration"`
+	Params   map[string]any `json:"params,omitempty"`
 }

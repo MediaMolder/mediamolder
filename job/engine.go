@@ -823,72 +823,56 @@ func configHasFilterSource(cfg *Config) bool {
 // when any input_id was found, or nil when nothing needed resolving.
 // Returns an error when an input_id has no matching entry in inputs.
 func resolveClipInputIDs(params map[string]any, inputs []Input) (map[string]any, error) {
-	clipsRaw, ok := params["clips"].([]any)
-	if !ok {
-		return nil, nil
-	}
-	// Build a lookup: input ID → Input definition.
 	byID := make(map[string]Input, len(inputs))
 	for _, inp := range inputs {
 		byID[inp.ID] = inp
 	}
-	needsResolve := false
-	for _, item := range clipsRaw {
-		if m, ok := item.(map[string]any); ok {
-			if _, has := m["input_id"]; has {
-				needsResolve = true
-				break
-			}
-		}
-	}
-	if !needsResolve {
-		return nil, nil
-	}
-	resolvedClips := make([]any, len(clipsRaw))
-	for i, item := range clipsRaw {
-		m, ok := item.(map[string]any)
-		if !ok {
-			resolvedClips[i] = item
-			continue
-		}
-		inputID, hasInputID := m["input_id"].(string)
-		if !hasInputID {
-			resolvedClips[i] = item
-			continue
-		}
-		inp, found := byID[inputID]
-		if !found {
-			return nil, fmt.Errorf("clips[%d]: input_id %q not found in job inputs", i, inputID)
-		}
-		// Copy existing clip fields, replace input_id with url.
-		clip := make(map[string]any, len(m))
-		for k, v := range m {
-			if k != "input_id" {
-				clip[k] = v
-			}
-		}
-		clip["url"] = inp.URL
-		// If no "in" is specified and the input has an ss option, use it.
-		if _, hasIn := clip["in"]; !hasIn {
-			if ssRaw, hasSS := inp.Options["ss"]; hasSS {
-				ss, _ := ssRaw.(string)
-				if ss == "" {
-					if f, ok := ssRaw.(float64); ok {
-						clip["in"] = f
+	// Handle tracks for sequence_editor new timeline definition (media_id/input_id -> url)
+	if tracksRaw, ok := params["tracks"].([]any); ok {
+		changed := false
+		for _, tr := range tracksRaw {
+			if tm, ok := tr.(map[string]any); ok {
+				if clipsRaw2, ok := tm["clips"].([]any); ok {
+					for _, citem := range clipsRaw2 {
+						cm, ok := citem.(map[string]any)
+						if !ok { continue }
+						id, has := cm["input_id"].(string)
+						if !has {
+							id, has = cm["media_id"].(string)
+						}
+						if !has || id == "" { continue }
+						inp, found := byID[id]
+						if !found {
+							return nil, fmt.Errorf("tracks clips: id %q not found", id)
+						}
+						cm["url"] = inp.URL
+						delete(cm, "input_id")
+						delete(cm, "media_id")
+						if _, hasSI := cm["source_in"]; !hasSI {
+							if ssRaw, hasSS := inp.Options["ss"]; hasSS {
+								if f, ok := ssRaw.(float64); ok {
+									cm["source_in"] = f
+								} else if ss, ok := ssRaw.(string); ok && ss != "" {
+									if sec, err := parseSS(ss); err == nil {
+										cm["source_in"] = sec
+									}
+								}
+							}
+						}
+						changed = true
 					}
-				} else if secVal, err := parseSS(ss); err == nil {
-					clip["in"] = secVal
 				}
 			}
 		}
-		resolvedClips[i] = clip
+		if changed {
+			cp := make(map[string]any, len(params))
+			for k, v := range params {
+				cp[k] = v
+			}
+			return cp, nil
+		}
 	}
-	cp := make(map[string]any, len(params))
-	for k, v := range params {
-		cp[k] = v
-	}
-	cp["clips"] = resolvedClips
-	return cp, nil
+	return nil, nil
 }
 
 // parseSS parses an FFmpeg-style -ss value (seconds as float or HH:MM:SS.mmm)
@@ -1293,6 +1277,7 @@ func (p *Pipeline) runGraph(ctx context.Context) (runErr error) {
 			if err != nil {
 				return fmt.Errorf("go_processor %q: %w", node.ID, err)
 			}
+
 			// Auto-inject "frame_rate" from the probed upstream video stream
 			// so processors like the scene detectors don't require the user
 			// to specify it manually. Only injected when the param is absent
@@ -1321,6 +1306,9 @@ func (p *Pipeline) runGraph(ctx context.Context) (runErr error) {
 					initParams = resolved
 				}
 			}
+
+			// Timeline top-level resolution is handled inside resolveClipInputIDs
+			// (which now walks "tracks" for sequence_editor etc). No separate call needed.
 			if err := proc.Init(initParams); err != nil {
 				return fmt.Errorf("go_processor %q init: %w", node.ID, err)
 			}
