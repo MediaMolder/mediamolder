@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/MediaMolder/MediaMolder/processors"
 )
 
 // Config is the top-level MediaMolder graph/job configuration (JSON schema v1.0).
@@ -1422,14 +1424,26 @@ func validate(cfg *Config) error {
 		// nodes (e.g. testsrc → encoder → file) with no top-level
 		// demuxer inputs. Permit that, but require at least one
 		// filter_source node to make the intent explicit.
+		//
+		// Also permit graphs whose sole frame source is a FrameSource
+		// go_processor (e.g. xfade_sequence) — those open files
+		// internally and emit frames without any graph-level input node.
 		hasFilterSource := false
+		hasFrameSourceProcessor := false
 		for _, n := range cfg.Graph.Nodes {
 			if n.Type == "filter_source" {
 				hasFilterSource = true
 				break
 			}
+			if n.Type == "go_processor" && n.Processor != "" {
+				if p, err := processors.Get(n.Processor); err == nil {
+					if _, ok := p.(processors.FrameSource); ok {
+						hasFrameSourceProcessor = true
+					}
+				}
+			}
 		}
-		if !hasFilterSource {
+		if !hasFilterSource && !hasFrameSourceProcessor {
 			return fmt.Errorf("config must have at least one input")
 		}
 	}
