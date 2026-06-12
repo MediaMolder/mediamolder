@@ -323,3 +323,13 @@ For detailed instructions see [MacOS](docs/build/macos.md), [Windows](docs/build
 - [Project Specification](docs/architecture/specification.md)
 - [Benchmarks](docs/architecture/benchmarks.md) — `mediamolder hwbench` user tool + Go graph CI benchmarks
 - [Licensing](LICENSING.md)
+
+## Star History
+
+<a href="https://www.star-history.com/?repos=MediaMolder%2Fmediamolder&type=date&legend=top-left">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=MediaMolder/mediamolder&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=MediaMolder/mediamolder&type=date&legend=top-left" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=MediaMolder/mediamolder&type=date&legend=top-left" />
+ </picture>
+</a>
