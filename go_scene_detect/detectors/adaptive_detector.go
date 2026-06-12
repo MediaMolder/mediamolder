@@ -126,7 +126,7 @@ func (d *AdaptiveDetector) SetStats(s *psd.StatsManager) {
 func (d *AdaptiveDetector) ProcessFrame(t psd.FrameTimecode, frame *psd.FrameData) ([]psd.FrameTimecode, error) {
 	// Resolve min_scene_len to a frame count on the first call once fps is known.
 	if !d.minFramesReady {
-		n, err := resolveMinSceneLen(d.minSceneLenRaw, t.FrameRate())
+		n, err := ResolveMinSceneLen(d.minSceneLenRaw, t.FrameRate())
 		if err != nil {
 			return nil, fmt.Errorf("adaptive_detector: min_scene_len: %w", err)
 		}
@@ -236,9 +236,9 @@ func (d *AdaptiveDetector) EventBufferLength() int64 {
 	return int64(d.windowWidth)
 }
 
-// resolveMinSceneLen converts a TimecodeLike value to a frame count given the
+// ResolveMinSceneLen converts a TimecodeLike value to a frame count given the
 // stream's frame rate. Mirrors the parsing logic in goscenedetect.NewFlashFilter.
-func resolveMinSceneLen(v any, fps float64) (int64, error) {
+func ResolveMinSceneLen(v any, fps float64) (int64, error) {
 	switch n := v.(type) {
 	case nil:
 		return 0, nil

@@ -74,6 +74,11 @@ type Metadata struct {
 	// SegmentEventConsumer nodes, preventing downstream processors from
 	// acting on a failed upstream result.
 	Failed bool `json:"failed,omitempty"`
+	// LogMessage, when non-empty, is surfaced in the GUI log panel as a
+	// one-line human-readable summary of the detection event.  The backend
+	// translates the enclosing ProcessorMetadata event to a "log" SSE event
+	// (rather than "metadata") when this field is set.
+	LogMessage string `json:"log_message,omitempty"`
 }
 
 // Detection represents a single detected object in a video frame.

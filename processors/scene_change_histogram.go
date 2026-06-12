@@ -108,15 +108,18 @@ func (p *SceneChangeHistogram) Process(frame *av.Frame, ctx ProcessorContext) (*
 	// a score = 1 - correlation so that higher score means more scene change.
 	corr := math.Round(p.detector.LastHistDiff()*1000) / 1000
 	score := math.Round((1.0-p.detector.LastHistDiff())*1000) / 1000
-	md := &Metadata{Custom: map[string]any{
-		"scene_change": true,
-		"detector":     "histogram",
-		"frame_index":  cuts[0].FrameNum(),
-		"timecode":     cuts[0].Timecode(),
-		"pts":          ctx.PTS,
-		"score":        score,
-		"hist_diff":    corr,
-	}}
+	md := &Metadata{
+		Custom: map[string]any{
+			"scene_change": true,
+			"detector":     "histogram",
+			"frame_index":  cuts[0].FrameNum(),
+			"timecode":     cuts[0].Timecode(),
+			"pts":          ctx.PTS,
+			"score":        score,
+			"hist_diff":    corr,
+		},
+		LogMessage: fmt.Sprintf("%s scene cut (score %.2f)", cuts[0].Timecode(), score),
+	}
 	p.hook.write(ctx, md)
 	return frame, md, nil
 }

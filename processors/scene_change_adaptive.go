@@ -149,15 +149,18 @@ func (p *SceneChangeAdaptive) Process(frame *av.Frame, ctx ProcessorContext) (*a
 	}
 
 	score := math.Round(p.detector.Score()*1000) / 1000
-	md := &Metadata{Custom: map[string]any{
-		"scene_change": true,
-		"detector":     "adaptive",
-		"frame_index":  cuts[0].FrameNum(),
-		"timecode":     cuts[0].Timecode(),
-		"pts":          ctx.PTS,
-		"score":        score,
-		"content_val":  score,
-	}}
+	md := &Metadata{
+		Custom: map[string]any{
+			"scene_change": true,
+			"detector":     "adaptive",
+			"frame_index":  cuts[0].FrameNum(),
+			"timecode":     cuts[0].Timecode(),
+			"pts":          ctx.PTS,
+			"score":        score,
+			"content_val":  score,
+		},
+		LogMessage: fmt.Sprintf("%s scene cut (score %.2f)", cuts[0].Timecode(), score),
+	}
 	p.hook.write(ctx, md)
 	return frame, md, nil
 }

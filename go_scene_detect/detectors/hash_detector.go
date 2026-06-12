@@ -99,7 +99,7 @@ func (d *HashDetector) LastHashDist() float64 { return d.lastHashDist }
 // ProcessFrame implements psd.SceneDetector.
 func (d *HashDetector) ProcessFrame(t psd.FrameTimecode, frame *psd.FrameData) ([]psd.FrameTimecode, error) {
 	if !d.minFramesReady {
-		n, err := resolveMinSceneLen(d.minSceneLenRaw, t.FrameRate())
+		n, err := ResolveMinSceneLen(d.minSceneLenRaw, t.FrameRate())
 		if err != nil {
 			return nil, fmt.Errorf("hash_detector: min_scene_len: %w", err)
 		}

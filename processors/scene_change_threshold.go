@@ -129,15 +129,18 @@ func (p *SceneChangeThreshold) Process(frame *av.Frame, ctx ProcessorContext) (*
 
 	// average_rgb score is the content_val for this detector.
 	score := math.Round(p.detector.LastAvgRGB()*1000) / 1000
-	md := &Metadata{Custom: map[string]any{
-		"scene_change": true,
-		"detector":     "threshold",
-		"frame_index":  cuts[0].FrameNum(),
-		"timecode":     cuts[0].Timecode(),
-		"pts":          ctx.PTS,
-		"score":        score,
-		"average_rgb":  score,
-	}}
+	md := &Metadata{
+		Custom: map[string]any{
+			"scene_change": true,
+			"detector":     "threshold",
+			"frame_index":  cuts[0].FrameNum(),
+			"timecode":     cuts[0].Timecode(),
+			"pts":          ctx.PTS,
+			"score":        score,
+			"average_rgb":  score,
+		},
+		LogMessage: fmt.Sprintf("%s scene cut (score %.2f)", cuts[0].Timecode(), score),
+	}
 	p.hook.write(ctx, md)
 	return frame, md, nil
 }
