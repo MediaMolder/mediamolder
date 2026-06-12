@@ -42,7 +42,8 @@ This guide covers every feature available in MediaMolder, from installing the bi
    - [Scene detection in a pipeline](#511-scene-detection-in-a-pipeline)
    - [TwelveLabs cloud analysis in a pipeline](#512-twelvelabs-cloud-analysis-in-a-pipeline)
    - [Real-time mode](#513-real-time-mode)
-   - [TwelveLabs cloud analysis in a pipeline](#512-twelvelabs-cloud-analysis-in-a-pipeline)
+   - [Remote server (`serve` + `job`)](#514-remote-server-serve--job)
+   - [Timeline assembly with xfade_sequence](#515-timeline-assembly-with-xfade_sequence)
 6. [Validation](#6-validation)
 7. [Graphical user interface](#7-graphical-user-interface)
 8. [Tips and troubleshooting](#8-tips-and-troubleshooting)
@@ -1467,6 +1468,96 @@ For the full flag reference, S3 presigning setup, and API specification see
 
 ---
 
+### 5.15 Timeline assembly with xfade_sequence
+
+`xfade_sequence` is a **FrameSource** `go_processor` that assembles a sequential clip timeline with libavfilter `xfade` transitions.  Unlike chaining multiple `xfade` filter nodes — which requires all decoders to run concurrently and can exhaust memory on long timelines — `xfade_sequence` opens source files one at a time, keeping at most two decoders open simultaneously.  Memory usage is O(1 frame) regardless of timeline length.
+
+#### JSON structure
+
+```json
+{
+  "schema_version": "1.2",
+  "inputs": [
+    {
+      "id": "video_a",
+      "url": "/media/clip_a.mp4",
+      "streams": [{ "input_index": 0, "type": "video", "track": 0 }]
+    },
+    {
+      "id": "video_b",
+      "url": "/media/clip_b.mp4",
+      "streams": [{ "input_index": 0, "type": "video", "track": 0 }]
+    }
+  ],
+  "graph": {
+    "nodes": [
+      {
+        "id": "seq",
+        "type": "go_processor",
+        "processor": "xfade_sequence",
+        "params": {
+          "clips": [
+            { "input_id": "video_a", "out": 15.5  },
+            { "transition": "dissolve", "duration": 0.5 },
+            { "input_id": "video_b", "out": 20.0  },
+            { "transition": "fade",    "duration": 1.0 },
+            { "input_id": "video_a",  "in": 30 }
+          ]
+        }
+      },
+      { "id": "enc", "type": "encoder", "params": { "codec": "libx264" } }
+    ],
+    "edges": [
+      { "from": "seq", "to": "enc",    "type": "video" },
+      { "from": "enc", "to": "out0:v", "type": "video" }
+    ]
+  },
+  "outputs": [{ "id": "out0", "url": "/tmp/timeline.mp4" }]
+}
+```
+
+Key points:
+
+- **`"inputs"`** — one entry per source file, each with a unique `id`.  These appear as named Input nodes in the GUI canvas.
+- **`"input_id"`** — references an input node by its `id`.  The engine resolves the `id` to a URL before calling `Init()`.  An explicit `"in"` overrides any `options.ss` set on the input node; omitting `"in"` inherits `options.ss` (or defaults to 0).
+- **`"out"`** — end time in seconds within the source file.  Required for all clips except the last.
+- **Transition entries** alternate with clip entries.  A `"transition"` object must appear between every pair of adjacent clips.
+- **No inbound AV edges** — `xfade_sequence` has no video input handle and must not receive AV edges from other nodes.
+
+#### Timing rule
+
+For every clip except the last, the play window must be longer than the surrounding transition durations:
+
+```
+(out - in) > transition.duration
+```
+
+The engine enforces this during the validation phase and the GUI highlights the violating field.
+
+#### Using `options.ss` as a seek shortcut
+
+If a clip should start at a fixed offset inside a source file, set `options.ss` on the input node rather than repeating the `"in"` value on every clip reference:
+
+```json
+{ "id": "video_b", "url": "/media/clip_b.mp4", "options": { "ss": "00:01:30" }, "streams": [...] }
+```
+
+Any clip that references `video_b` without an explicit `"in"` will start at 1:30.
+
+#### Supported transitions
+
+Any libavfilter `xfade` transition name is accepted: `dissolve`, `fade`, `wipeleft`, `wiperight`, `slideleft`, `slideright`, `circlecrop`, `rectcrop`, `distance`, `fadeblack`, `fadewhite`, `radial`, `smoothleft`, `smoothright`, `smoothup`, `smoothdown`, `circleopen`, `circleclose`, `vertopen`, `vertclose`, `horzopen`, `horzclose`, `zoomin`, `squeezev`, `squeezeh`, `hlslice`, `hrslice`, `vuslice`, `vdslice`, `hblur`, `fadegrays`, `wipetl`, `wipetr`, `wipebl`, `wipebr`.
+
+#### Mixed-resolution clips
+
+All clips must share the same pixel format, frame rate, and resolution.  For mixed sources, insert a `scale` filter node between `seq` and the encoder and set it to the target resolution.
+
+#### GUI usage
+
+See **[§ Xfade sequence](gui.md#xfade-sequence-timeline-assembly)** in the GUI reference for the Inspector walkthrough, including the input-node dropdown, clip/transition editor, and canvas layout.
+
+---
+
 ## 6. Validation
 
 Validation is built into both the CLI and the GUI. It runs in two phases:
@@ -1568,6 +1659,7 @@ mediamolder version
 | [architecture/observability.md](architecture/observability.md) | Event bus, metrics, SSE API |
 | [scene-detection.md](scene-detection.md) | Scene detector algorithms, CLI usage, pipeline JSON, events |
 | [twelvelabs.md](twelvelabs.md) | TwelveLabs Video Understanding API — quick-start, graph recipes, processor reference |
+| [go-processor-nodes.md](go-processor-nodes.md) | Go processor interface, FrameSource, built-in processors including `xfade_sequence` |
 | [architecture/graph-state-machine.md](architecture/graph-state-machine.md) | Graph lifecycle, pause/resume, seek |
 | [build-and-packaging.md](build-and-packaging.md) | Static linking, cross-compilation, packaging |
 | [architecture/graph_validation_design.md](architecture/graph_validation_design.md) | Validation architecture and issue code catalogue |

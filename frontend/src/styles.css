@@ -664,6 +664,12 @@ button.danger:hover { background: rgba(185, 74, 74, 0.15); }
 .react-flow__handle.handle-data     { background: var(--data); }
 .react-flow__handle.handle-events   { background: var(--events); }
 .react-flow__handle.handle-file     { background: var(--file); }
+/* Clips-reference handle: visual-only anchor for FrameSource input wiring */
+.react-flow__handle.handle-clips_ref {
+  background: transparent;
+  border: 1.5px dashed rgba(255,255,255,0.2);
+  pointer-events: none;
+}
 
 /* Per-track / per-slot handle labels (source side: right of node; target side: left) */
 .handle-track-label {
@@ -694,6 +700,8 @@ button.danger:hover { background: rgba(185, 74, 74, 0.15); }
 .react-flow__edge.edge-data     .react-flow__edge-path { stroke: var(--data);     stroke-width: 2; }
 .react-flow__edge.edge-events   .react-flow__edge-path { stroke: var(--events);   stroke-width: 2; stroke-dasharray: 6 3; }
 .react-flow__edge.edge-file     .react-flow__edge-path { stroke: var(--file);     stroke-width: 2; }
+.react-flow__edge.edge-clips_ref .react-flow__edge-path { stroke: rgba(255,255,255,0.25); stroke-width: 1.5; stroke-dasharray: 5 4; }
+.react-flow__edge.edge-clips_ref { pointer-events: none; }
 .react-flow__edge.edge-implicit .react-flow__edge-path { stroke-dasharray: 4 3; opacity: 0.7; }
 
 /* Edge attribute popover rendered by MMEdge — opens on hover or click,

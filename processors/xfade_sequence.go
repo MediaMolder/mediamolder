@@ -117,6 +117,22 @@ func (xs *XfadeSequence) Process(*av.Frame, ProcessorContext) (*av.Frame, *Metad
 // Close is a no-op; resources are managed within Run().
 func (xs *XfadeSequence) Close() error { return nil }
 
+// OutputStreamInfo implements processors.FrameSourceInfo.
+// Opens the first clip (demux + stream header only, no decoding) to return
+// its video StreamInfo so downstream filters can be sized correctly.
+func (xs *XfadeSequence) OutputStreamInfo() (av.StreamInfo, error) {
+	if len(xs.clips) == 0 {
+		return av.StreamInfo{}, fmt.Errorf("xfade_sequence: no clips initialised")
+	}
+	cd, err := xfsOpenClip(xs.clips[0])
+	if err != nil {
+		return av.StreamInfo{}, fmt.Errorf("xfade_sequence: probe first clip: %w", err)
+	}
+	si := cd.si
+	cd.close()
+	return si, nil
+}
+
 // Run implements FrameSource.
 // It opens clips sequentially, sends direct frames for the non-overlap portion
 // of each clip, and runs an xfade filter graph for each transition window.
@@ -277,15 +293,15 @@ func (xs *XfadeSequence) Run(ctx context.Context, send func(*av.Frame) error) er
 // ---- clip decoder ----
 
 type xfsClipDecoder struct {
-	demux         *av.InputFormatContext
-	dec           *av.DecoderContext
-	pkt           *av.Packet
-	si            av.StreamInfo
-	vidIdx        int
-	firstPTS      int64
-	firstPTSSet   bool
+	demux          *av.InputFormatContext
+	dec            *av.DecoderContext
+	pkt            *av.Packet
+	si             av.StreamInfo
+	vidIdx         int
+	firstPTS       int64
+	firstPTSSet    bool
 	clipBasePTSSet bool // set by Run() loop, not nextFrame()
-	flushed       bool
+	flushed        bool
 }
 
 func xfsOpenClip(spec xfsClipSpec) (*xfsClipDecoder, error) {

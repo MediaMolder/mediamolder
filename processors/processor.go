@@ -33,6 +33,15 @@ type FrameSource interface {
 	Run(ctx context.Context, send func(*av.Frame) error) error
 }
 
+// FrameSourceInfo is an optional interface a FrameSource may implement to
+// report the StreamInfo of its output before Run() is called.  This allows
+// downstream filter nodes (scale, fps, format, …) to be configured with the
+// correct frame dimensions and pixel format without waiting for the first
+// frame produced by Run().
+type FrameSourceInfo interface {
+	OutputStreamInfo() (av.StreamInfo, error)
+}
+
 // Processor is the interface every go_processor node must implement.
 type Processor interface {
 	// Init is called once during graph construction, before the first frame.

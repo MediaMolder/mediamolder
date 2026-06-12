@@ -40,6 +40,7 @@ Everything runs in-process: no subprocesses, no network calls, no Python. Your p
 		- [When to use what](#when-to-use-what)
 		- [Example](#example)
 	- [Writing a custom processor](#writing-a-custom-processor)
+	- [Writing a FrameSource processor](#writing-a-framesource-processor)
 		- [Step 1: Implement the interface](#step-1-implement-the-interface)
 		- [Step 2: Register it](#step-2-register-it)
 		- [Step 3: Use it in JSON](#step-3-use-it-in-json)
@@ -129,6 +130,10 @@ type Processor interface {
 type FrameLookahead interface {
   LookbackFrames() int
 }
+
+type FrameSource interface {
+  Run(ctx context.Context, send func(*av.Frame) error) error
+}
 ```
 
 | Method | When it runs | What to do |
@@ -141,6 +146,8 @@ type FrameLookahead interface {
 for an earlier frame after seeing future frames. The runtime delays downstream
 delivery by `LookbackFrames()` frames so metadata routing and forced-IDR marks
 can target the event frame instead of the confirmation frame.
+
+`FrameSource` is optional. Implement it when a processor **generates its own frames** rather than processing inbound ones.  A `go_processor` that also implements `FrameSource` may have **zero inbound AV edges** in the graph; the runtime calls `Run()` instead of the `Process()` loop and feeds the produced frames to all downstream channels.  The `send` callback takes ownership of each frame — do not close frames you have sent.  `xfade_sequence` is the built-in example.  See [Writing a FrameSource processor](#writing-a-framesource-processor) for implementation notes.
 
 ### ProcessorContext
 
@@ -566,7 +573,7 @@ Composes a sequential clip timeline with libavfilter `xfade` transitions.  Unlik
 - Any timeline assembly where opening all clips in parallel would exhaust memory
 - Dissolve timelines longer than a few clips where the chain-xfade approach OOMs
 
-#### Params
+#### Params — `url` form (no graph inputs)
 
 ```json
 {
@@ -579,6 +586,24 @@ Composes a sequential clip timeline with libavfilter `xfade` transitions.  Unlik
   ]
 }
 ```
+
+#### Params — `input_id` form (graph input nodes)
+
+Prefer this form in the GUI.  Define standard Input nodes on the canvas and reference them by id in the clips array.  The engine resolves `input_id` → `url` before calling `Init()`, and uses the input's `options.ss` value as the clip `in` point when no explicit `in` is given.
+
+```json
+{
+  "clips": [
+    { "input_id": "video_a", "out": 15.125 },
+    { "transition": "dissolve", "duration": 0.125 },
+    { "input_id": "video_b", "out": 15.208 },
+    { "transition": "dissolve", "duration": 0.5 },
+    { "input_id": "video_a", "in": 30 }
+  ]
+}
+```
+
+In the GUI the Inspector shows a **dropdown per clip** populated from the input nodes on the canvas, rather than raw file-path fields.
 
 `clips` is an ordered array that **alternates** clip objects and transition objects.  There must be exactly N−1 transition objects for N clips.
 
@@ -601,7 +626,10 @@ Any `xfade` transition compiled into the running libavfilter build.  Common valu
 ```json
 {
   "schema_version": "1.2",
-  "inputs": [],
+  "inputs": [
+    { "id": "video_a", "url": "/media/clip_a.mp4", "streams": [{"input_index": 0, "type": "video", "track": 0}] },
+    { "id": "video_b", "url": "/media/clip_b.mp4", "streams": [{"input_index": 0, "type": "video", "track": 0}] }
+  ],
   "graph": {
     "nodes": [
       {
@@ -610,11 +638,11 @@ Any `xfade` transition compiled into the running libavfilter build.  Common valu
         "processor": "xfade_sequence",
         "params": {
           "clips": [
-            { "url": "/media/clip_a.mp4", "in": 0, "out": 15.5  },
+            { "input_id": "video_a", "out": 15.5  },
             { "transition": "dissolve", "duration": 0.5 },
-            { "url": "/media/clip_b.mp4", "in": 0, "out": 15.5  },
+            { "input_id": "video_b", "out": 15.5  },
             { "transition": "dissolve", "duration": 0.5 },
-            { "url": "/media/clip_c.mp4", "in": 0 }
+            { "input_id": "video_a", "in": 15 }
           ]
         }
       },
@@ -629,7 +657,7 @@ Any `xfade` transition compiled into the running libavfilter build.  Common valu
 }
 ```
 
-**Note**: `xfade_sequence` is a FrameSource processor — it generates its own frames and does **not** require an inbound video edge.  In the GUI, the node's video input handle is hidden.  Scale/format normalisation should be applied to the output edge if your clips have mixed resolutions.
+**Note**: `xfade_sequence` is a **FrameSource** processor — it generates its own frames and does **not** require an inbound video edge.  In the GUI, the node's video input handle is hidden.  The input nodes (`video_a`, `video_b` above) appear on the canvas for user-friendliness but have no graph-level AV edges into `seq`; the engine resolves their URLs at runtime.  Scale/format normalisation should be applied on the output edge if your clips have mixed resolutions.
 
 #### Format constraints
 
@@ -810,6 +838,70 @@ func init() {
   ]
 }
 ```
+
+---
+
+## Writing a FrameSource processor
+
+A `FrameSource` processor generates its own frames instead of processing inbound ones.  This pattern is ideal for anything that reads files directly (clip assemblers, test-pattern generators, deck-ingest adapters) and must keep memory proportional to the working set rather than the full timeline.
+
+### When to use FrameSource vs Processor
+
+| Use `Processor` when… | Use `FrameSource` when… |
+|---|---|
+| Frames arrive from a graph input node | The node opens its own files |
+| You transform, analyse, or annotate each frame | You emit frames from scratch or from a controlled read |
+| You need to consume exactly one inbound AV edge | Zero inbound AV edges make sense for this node |
+
+### Implementation skeleton
+
+```go
+type MySource struct {
+    clips []string
+}
+
+func (s *MySource) Init(params map[string]any) error {
+    // parse params["clips"] etc.
+    return nil
+}
+
+// Process is required by the Processor interface but must never be called.
+func (s *MySource) Process(_ *av.Frame, _ processors.ProcessorContext) (*av.Frame, *processors.Metadata, error) {
+    return nil, nil, fmt.Errorf("MySource: Process() called on a FrameSource — runtime bug")
+}
+
+func (s *MySource) Close() error { return nil }
+
+// Run implements processors.FrameSource.
+func (s *MySource) Run(ctx context.Context, send func(*av.Frame) error) error {
+    for _, clip := range s.clips {
+        if err := ctx.Err(); err != nil {
+            return err
+        }
+        // open clip, decode, send frames ...
+        f, err := decodeOneFrame(clip)
+        if err != nil {
+            return err
+        }
+        if err := send(f); err != nil { // send takes ownership; do not close f after this
+            return err
+        }
+    }
+    return nil
+}
+
+func init() {
+    processors.Register("my_source", func() processors.Processor { return &MySource{} })
+}
+```
+
+### Engine behaviour
+
+- The engine detects `FrameSource` via a Go interface assertion at pipeline initialisation time.
+- `Run()` is called instead of `Process()` when `len(inboundAVEdges) == 0`.
+- Frames produced by `send()` are forwarded to all downstream channels exactly as if they had come from a `Process()` return value.
+- Context cancellation is propagated via `ctx`; check `ctx.Err()` inside your read loop.
+- Input nodes referenced by `input_id` in the processor's params are resolved to URLs before `Init()` is called; the `in` seek point is derived from `options.ss` on the input when no explicit `in` param is given.
 
 ---
 

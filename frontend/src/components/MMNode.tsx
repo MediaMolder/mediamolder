@@ -203,6 +203,20 @@ export function MMNode({ id, data, selected }: NodeProps & { data: FlowNodeData 
   return (
     <div className={classes} style={nodeMinHeight ? { minHeight: nodeMinHeight } : undefined}>
       {/* Target (left) handles */}
+      {/* FrameSource processors: clips_ref target handle where the video
+          input would normally appear. Non-connectable — synthetic edges from
+          configToFlow anchor here purely for visual wiring of input nodes. */}
+      {isSourceOnlyProcessor && (
+        <Handle
+          type="target"
+          position={Position.Left}
+          id="clips_ref"
+          isConnectable={false}
+          className="handle-clips_ref"
+          style={{ top: slotTop('video') }}
+        />
+      )}
+
       {!isInput &&
         supported.flatMap((t) => {
           // file target handles only make sense on go_processor nodes that
@@ -391,6 +405,19 @@ export function MMNode({ id, data, selected }: NodeProps & { data: FlowNodeData 
             />,
           ];
         })}
+
+      {/* Input nodes: clips_ref source handle for visual wiring to FrameSource
+          processors. Non-connectable — managed by configToFlow / flowToConfig. */}
+      {isInput && (
+        <Handle
+          type="source"
+          position={Position.Right}
+          id="clips_ref"
+          isConnectable={false}
+          className="handle-clips_ref"
+          style={{ top: slotTop('video') }}
+        />
+      )}
     </div>
   );
 }

@@ -302,7 +302,8 @@ function Editor() {
               // Events and file edges are routing annotations, not AV streams
               // — never remove them based on probe results.
               const st = (e.data as { streamType?: string } | null)?.streamType;
-              if (st === 'events' || st === 'file') return true;
+              const isSynthetic = (e.data as { synthetic?: boolean } | null)?.synthetic;
+              if (st === 'events' || st === 'file' || isSynthetic) return true;
               return streams.includes(e.sourceHandle.split(':')[0]);
             }),
           );
@@ -816,7 +817,7 @@ function Editor() {
           data: { ...(e.data as FlowEdgeData), rawTo: newId },
         }));
         // Infer stream type from first rerouted edge.
-        const st: StreamType = rerouted[0]?.data?.streamType ?? 'video';
+        const st: StreamType = (rerouted[0]?.data?.streamType as StreamType | undefined) ?? 'video';
         const bridgeEdge: FlowEdge = {
           id: `${newId}_to_${before_node_id}`,
           source: newId,
@@ -1082,6 +1083,7 @@ function Editor() {
   const decoratedEdges = useMemo<FlowEdge[]>(
     () =>
       edges.map((e) => {
+        if ((e.data as { synthetic?: boolean } | null)?.synthetic) return e;
         const attrs = inferEdgeAttributes(nodes, edges, e);
         const summary = summariseAttributes(attrs);
         return {
