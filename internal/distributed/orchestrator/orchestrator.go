@@ -37,6 +37,13 @@ const DefaultTaskDeadline = 4 * time.Hour
 // DefaultMaxAttempts is the default retry ceiling when job.Policy.MaxAttempts == 0.
 const DefaultMaxAttempts = 3
 
+// MaxFanoutTasks bounds the number of tasks a single fanout stage may
+// materialize. Each task deep-copies the full job config, so an unbounded
+// count from a remote job submission (params.count, or a crafted split
+// manifest) would let a client exhaust orchestrator memory. This is a DoS
+// backstop, far above any realistic fanout width, not a usage limit.
+const MaxFanoutTasks = 100_000
+
 // Orchestrator coordinates job submission, task materialisation, and stage
 // progression. It is designed to be stateless across requests: all durable
 // state lives in the Store, and any orchestrator instance can handle any job.
@@ -361,6 +368,9 @@ func (o *Orchestrator) materializeFanoutDynamic(ctx context.Context, job *j.Job,
 	if len(manifest.Segments) == 0 {
 		return nil, fmt.Errorf("fanout_dynamic: manifest contains no segments")
 	}
+	if len(manifest.Segments) > MaxFanoutTasks {
+		return nil, fmt.Errorf("fanout_dynamic: manifest has %d segments, exceeds MaxFanoutTasks %d", len(manifest.Segments), MaxFanoutTasks)
+	}
 
 	deadline := taskDeadline(job)
 	n := len(manifest.Segments)
@@ -542,6 +552,9 @@ func materializeFanoutStatic(job *j.Job, stage *j.Stage) ([]j.Task, error) {
 	count, err := toInt(rawCount)
 	if err != nil || count < 1 {
 		return nil, fmt.Errorf("fanout_static: params.count must be a positive integer, got %v", rawCount)
+	}
+	if count > MaxFanoutTasks {
+		return nil, fmt.Errorf("fanout_static: params.count %d exceeds MaxFanoutTasks %d", count, MaxFanoutTasks)
 	}
 
 	deadline := time.Now().Add(DefaultTaskDeadline)
