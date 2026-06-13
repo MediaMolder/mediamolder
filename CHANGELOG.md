@@ -5,6 +5,79 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Added
+- **Remote backend user guide** (`docs/remote-backend-guide.md`): step-by-step
+  guide for Tier 1 (single-machine `--mode=server`) and Tier 2 (distributed
+  cluster) deployments; covers TLS, static token and OIDC auth, mTLS, S3
+  presigning, capability routing, AWS-native stack, OTEL tracing, security
+  checklist, and troubleshooting. Linked from README and `docs/gui.md`.
+- **Distributed execution engine (Phase E).** Capability-aware routing:
+  `WorkerRequirements.Region`, `WorkerCapabilities.Region`, `queue.TaskSatisfiedBy`,
+  `ReceiveFilter.Region`; workers only dequeue tasks whose `requires.*` they
+  satisfy. OIDC/mTLS auth: `internal/auth/oidc.go` — `OIDCVerifier` (JWKS-backed
+  RS256, pure stdlib), `Middleware`, `NewMTLSTLSConfig`; wired into
+  `apiserver.Options` via `--oidc-issuer`, `--oidc-client-id`, `--mtls-ca`.
+  OTEL trace propagation: `Task.TraceContext map[string]string` injected by
+  orchestrator and extracted by worker via `otel.GetTextMapPropagator()`.
+  DynamoDB state adapter: `internal/distributed/state/dynamodb.go` — single-table
+  design, pure-Go SigV4 (no AWS SDK), URI `dynamodb://host/table`, adds
+  `dynamodb://` to `openState()`. Signed-URL output writers:
+  `internal/storage/httpsink.go` — `HTTPSinkFS` buffers bodies and HTTP PUTs
+  to presigned HTTPS URLs; `RouterFS` dispatches by scheme (`file://`, `https://`,
+  `s3://`). New CLI flags: `--capabilities`, `--region`, `--oidc-issuer`,
+  `--oidc-client-id`, `--mtls-ca`. Tests:
+  `internal/auth/oidc_test.go` (JWT validation, middleware, mTLS config),
+  `internal/distributed/queue/capability_test.go` (routing logic),
+  `internal/distributed/state/dynamodb_test.go` (mock-server lifecycle tests).
+- **Distributed execution engine (Phase D).** `fanout_dynamic` orchestration
+  strategy: reads a `SplitManifest` JSON file (produced by a producer stage)
+  from `params.manifest_uri` and materialises one child encode task per segment,
+  rewiring each task's first input to a concat-demuxer entry with the correct
+  `InPoint`/`OutPoint`. `gather` strategy: collects `Config.Outputs[0].URL` from
+  all succeeded tasks in the source stage (sorted by `Task.Index`) and
+  materialises a single stitch task with a concat-demuxer input listing all
+  segments. `split_manifest_writer` go_processor (`processors/`) wraps the
+  `scene_change` detector (`splitter: "scene_list"`) or divides a media file into
+  equal-duration segments (`splitter: "byte_range"`); writes the manifest JSON to
+  `params.output_file` on `Close()`. Segment output URIs are auto-assigned as
+  `{storage.uri}/segs/{stageID}/{index:04d}.mkv`. End-to-end demo job at
+  `testdata/demo-split-encode-stitch.json`. Three new orchestrator tests cover
+  the fanout_dynamic wait-for-producer, manifest-driven spawn, and gather
+  concat-assembly behaviours.
+- **Distributed execution engine (Phase C).** Postgres state adapter
+  (`internal/distributed/state/postgres.go`) with embedded SQL migrations
+  (`internal/distributed/state/migrations/001_initial.sql`) and advisory-lock
+  based leaderless reconciliation; NATS JetStream queue adapter
+  (`internal/distributed/queue/nats.go`); SQS queue adapter
+  (`internal/distributed/queue/sqs.go`, pure-Go SigV4 — no AWS SDK);
+  `internal/distributed/reconciler` package that re-enqueues expired-lease tasks
+  or moves them to the dead-letter queue; `GET /v1/jobs/{id}/dlq` endpoint;
+  `--reconcile-interval` flag; `--queue` now accepts `nats://` and `sqs://`
+  URIs; `--state` now accepts `postgres://` URIs. CI statelessness harness at
+  `scripts/ci/statelessness/` proves two API instances sharing Postgres + NATS
+  are fully stateless. SQLite compatibility fix: `ALTER TABLE … ADD COLUMN`
+  duplicate-column error silently ignored on SQLite < 3.37.
+- **Distributed execution engine (Phase B).** `pipeline.Job` document model
+  (`schema/v1.4.json`); `internal/distributed/queue` (Queue interface +
+  in-memory adapter); `internal/distributed/state` (Store interface + SQLite
+  adapter via mattn/go-sqlite3); `internal/distributed/orchestrator`
+  (AcceptJob, stage chaining, `single` and `fanout_static` strategies, retry
+  logic); `internal/distributed/worker` (concurrent pipeline execution with
+  lease heartbeating); `internal/distributed/apiserver` (Tier 2 HTTP server
+  with `GET /v1/jobs/{id}/tasks` and SSE event-log replay). `mediamolder serve`
+  gains `--mode=api`, `--mode=worker`, `--queue`, `--state`, and `--workers`
+  flags. Tier 1 (`--mode=server`) is unchanged.
+- **Tier 1 remote server (Phase A).** `mediamolder serve` starts a TLS-capable
+  HTTP server that accepts pipeline job submissions via a REST API (`POST /v1/jobs`)
+  and streams events to clients via Server-Sent Events. Supports bearer-token
+  authentication, concurrent job management (with optional `--max-jobs` limit),
+  transparent S3 presigning (pure-Go SigV4 — no AWS SDK), and opt-in file upload
+  (`--enable-uploads`). Adds `mediamolder job submit|status|cancel|artifacts`
+  CLI for headless submission. The GUI gains a **Backend** toolbar button to
+  point the browser at a remote server. New packages: `internal/storage` (FS
+  interface, file:// and S3 adapters, PresignResolver, UploadStore) and
+  `internal/server`. Docs: `docs/remote-server.md`, `docs/openapi-server.yaml`.
+
 ### Fixed
 - Re-encoding now clears decoded source `pict_type` at the encoder boundary,
   matching FFmpeg's `frame_encode` behavior. Custom graph requests still force

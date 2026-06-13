@@ -3,7 +3,7 @@
 
 package ffcli
 
-// export.go — Convert a pipeline.Config into an FFmpeg command-line string.
+// export.go — Convert a job.Config into an FFmpeg command-line string.
 // This is the inverse of Parse / ParseArgs (ffcli.go). The round-trip is not
 // perfectly lossless — MediaMolder features that have no CLI equivalent are
 // reported in the returned Unsupported slice rather than being dropped silently.
@@ -28,7 +28,7 @@ import (
 	"strings"
 
 	"github.com/MediaMolder/MediaMolder/graph"
-	"github.com/MediaMolder/MediaMolder/pipeline"
+	"github.com/MediaMolder/MediaMolder/job"
 )
 
 // ExportResult holds the exported FFmpeg command and any feature-parity notes.
@@ -43,11 +43,11 @@ type ExportResult struct {
 	Unsupported []string
 }
 
-// Export converts a pipeline.Config into an ffmpeg command-line string.
+// Export converts a job.Config into an ffmpeg command-line string.
 // It returns an ExportResult whose Command field is the generated command
 // and whose Unsupported field lists any mediamolder-only features that were
 // skipped or simplified.
-func Export(cfg *pipeline.Config) ExportResult {
+func Export(cfg *job.Config) ExportResult {
 	e := &exporter{cfg: cfg}
 	e.build()
 	return e.result()
@@ -67,9 +67,9 @@ func Export(cfg *pipeline.Config) ExportResult {
 // graph nodes today, so they are still read directly from cfg.
 //
 // `warnings` (currently unused) is the slice returned by
-// pipeline.NormalizeConfig; reserved so future passes can surface
+// job.NormalizeConfig; reserved so future passes can surface
 // normaliser-side issues alongside formatter-side Unsupported entries.
-func ExportGraph(cfg *pipeline.Config, def *graph.Def, warnings []pipeline.NormalizeWarning) ExportResult {
+func ExportGraph(cfg *job.Config, def *graph.Def, warnings []job.NormalizeWarning) ExportResult {
 	e := &exporter{cfg: cfg, def: def, fromGraph: true}
 	e.build()
 	return e.result()
@@ -79,7 +79,7 @@ func ExportGraph(cfg *pipeline.Config, def *graph.Def, warnings []pipeline.Norma
 // Internal
 
 type exporter struct {
-	cfg       *pipeline.Config
+	cfg       *job.Config
 	def       *graph.Def // populated by ExportGraph; nil for Export(cfg)
 	fromGraph bool       // true when sourcing views from def, not cfg
 	args      []string
@@ -150,7 +150,7 @@ func (e *exporter) buildInputs() {
 	}
 }
 
-func (e *exporter) buildInput(idx int, in pipeline.Input) {
+func (e *exporter) buildInput(idx int, in job.Input) {
 	_ = idx // kept for future error messages
 
 	// Per-input flags must precede -i URL.
@@ -260,7 +260,7 @@ func (e *exporter) buildInput(idx int, in pipeline.Input) {
 
 // ── filter_complex ────────────────────────────────────────────────────────
 
-func hasGraph(cfg *pipeline.Config) bool {
+func hasGraph(cfg *job.Config) bool {
 	for _, n := range cfg.Graph.Nodes {
 		if n.Type == "filter" || n.Type == "filter_source" || n.Type == "filter_sink" {
 			return true
@@ -285,7 +285,7 @@ func (e *exporter) buildFilterComplex() {
 // graphToFilterComplex reconstructs the -filter_complex string from
 // Config.Graph.Nodes + Config.Graph.Edges using the same labelling
 // convention as NormalizeFilterComplex so the round-trip is idempotent.
-func graphToFilterComplex(cfg *pipeline.Config) (string, []string) {
+func graphToFilterComplex(cfg *job.Config) (string, []string) {
 	var unsup []string
 	nodes := cfg.Graph.Nodes
 	edges := cfg.Graph.Edges
@@ -295,8 +295,8 @@ func graphToFilterComplex(cfg *pipeline.Config) (string, []string) {
 	}
 
 	// Build adjacency: which edges feed into each node (by node ID).
-	inEdges := map[string][]pipeline.EdgeDef{}
-	outEdges := map[string][]pipeline.EdgeDef{}
+	inEdges := map[string][]job.EdgeDef{}
+	outEdges := map[string][]job.EdgeDef{}
 	for _, edge := range edges {
 		fromNode := portNode(edge.From)
 		toNode := portNode(edge.To)
@@ -473,7 +473,7 @@ func (e *exporter) buildOutputs() {
 	}
 }
 
-func (e *exporter) buildOutput(out pipeline.Output) {
+func (e *exporter) buildOutput(out job.Output) {
 	// -map flags (only emit when streams are explicitly selected, i.e.
 	// the output's Streams selectors come from an explicitly wired
 	// graph rather than the default implicit map).
@@ -827,7 +827,7 @@ func (e *exporter) buildOutput(out pipeline.Output) {
 // walking graph edges backward from the output node; this is more
 // accurate than Input.Streams selects because the graph edges encode
 // exactly which stream type of which input feeds the output.
-func (e *exporter) buildMaps(out pipeline.Output) {
+func (e *exporter) buildMaps(out job.Output) {
 	// Only emit maps for single-output configs; multi-output mapping is
 	// not recoverable from the Config.
 	if len(e.cfg.Outputs) > 1 {
@@ -899,7 +899,7 @@ func (e *exporter) graphMaps(outID string) []string {
 		inputIdx[in.ID] = i
 	}
 	// Build reverse adjacency: nodeID → edges whose To-node is that ID.
-	reverse := make(map[string][]pipeline.EdgeDef, len(e.cfg.Graph.Edges))
+	reverse := make(map[string][]job.EdgeDef, len(e.cfg.Graph.Edges))
 	for _, edge := range e.cfg.Graph.Edges {
 		toNode := portNode(edge.To)
 		reverse[toNode] = append(reverse[toNode], edge)
@@ -955,11 +955,11 @@ func (e *exporter) graphMaps(outID string) []string {
 // that are wired into out's sink in the graph.  Codec flags are handled
 // separately by graphCodecs / the codec-selection block in buildOutput.
 // Copy nodes have no params to emit, so they are skipped here.
-func (e *exporter) buildEncoderNodes(out pipeline.Output) {
+func (e *exporter) buildEncoderNodes(out job.Output) {
 	if len(e.cfg.Graph.Nodes) == 0 {
 		return
 	}
-	nodeByID := make(map[string]pipeline.NodeDef, len(e.cfg.Graph.Nodes))
+	nodeByID := make(map[string]job.NodeDef, len(e.cfg.Graph.Nodes))
 	for _, n := range e.cfg.Graph.Nodes {
 		nodeByID[n.ID] = n
 	}
@@ -979,7 +979,7 @@ func (e *exporter) buildEncoderNodes(out pipeline.Output) {
 
 // ── tee URL ────────────────────────────────────────────────────────────────
 
-func buildTeeURL(targets []pipeline.TeeTarget) string {
+func buildTeeURL(targets []job.TeeTarget) string {
 	parts := make([]string, 0, len(targets))
 	for _, t := range targets {
 		var opts []string

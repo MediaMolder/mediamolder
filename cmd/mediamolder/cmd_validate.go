@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/MediaMolder/MediaMolder/pipeline"
+	"github.com/MediaMolder/MediaMolder/job"
 )
 
 // cmdValidate implements the `mediamolder validate` subcommand.
@@ -54,16 +54,16 @@ func cmdValidate(args []string) error {
 		return fmt.Errorf("usage: mediamolder validate [--no-probe] [--json] [--strict] <config.json>")
 	}
 
-	cfg, err := pipeline.ParseConfigFile(configPath)
+	cfg, err := job.ParseConfigFile(configPath)
 	if err != nil {
 		return fmt.Errorf("parse config: %w", err)
 	}
 
-	var report *pipeline.ValidationReport
+	var report *job.ValidationReport
 	if noProbe {
-		report = pipeline.ValidateConfigStatic(cfg, nil)
+		report = job.ValidateConfigStatic(cfg, nil)
 	} else {
-		report, err = pipeline.ValidateConfig(cfg, nil)
+		report, err = job.ValidateConfig(cfg, nil)
 		if err != nil {
 			return fmt.Errorf("validation: %w", err)
 		}
@@ -93,7 +93,7 @@ func cmdValidate(args []string) error {
 }
 
 // printReport writes a human-readable summary to stdout/stderr.
-func printReport(report *pipeline.ValidationReport) {
+func printReport(report *job.ValidationReport) {
 	if len(report.Issues) == 0 {
 		fmt.Println("OK: no issues found")
 		return
@@ -114,9 +114,9 @@ func printReport(report *pipeline.ValidationReport) {
 	var errCount, warnCount int
 	for _, iss := range report.Issues {
 		switch iss.Severity {
-		case pipeline.SeverityError:
+		case job.SeverityError:
 			errCount++
-		case pipeline.SeverityWarning:
+		case job.SeverityWarning:
 			warnCount++
 		}
 	}

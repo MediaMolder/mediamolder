@@ -10,8 +10,8 @@ This document applies the **C4 Model** (Context, Containers, Components, Code) �
 > deferred. Drives the normalization boundary work tracked in
 > `private_local/normalization_plan_revised.md`.
 >
-> **Normalization boundary:** `pipeline.NormalizeConfig(cfg) → (*graph.Def, []NormalizeWarning, error)`
-> is the single entry point that lowers an authoring `pipeline.Config`
+> **Normalization boundary:** `job.NormalizeConfig(cfg) → (*graph.Def, []NormalizeWarning, error)`
+> is the single entry point that lowers an authoring `job.Config`
 > into the executable `graph.Def` consumed by `graph.Build` →
 > `graph.Compile` → `runtime.Scheduler`. `runGraph` calls it in
 > `pipeline/engine.go` and surfaces warnings on the existing pipeline

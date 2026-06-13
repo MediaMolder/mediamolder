@@ -337,14 +337,14 @@ if plan, ok := metadata.Custom["edit_plan"].([]any); ok {
 }
 ```
 
-If the service call fails for a batch, `Metadata.Custom["vidi_error"]` contains the error string. The pipeline continues running; no frames are dropped.
+If the service call fails for a batch, `Metadata.Custom["vidi_error"]` contains the error string. The graph continues running; no frames are dropped.
 
 ### Writing results to a file
 
 Use `--metadata-out` to write all `Metadata` events to a JSONL file:
 
 ```bash
-mediamolder run pipeline.json --metadata-out results.jsonl
+mediamolder run job.json --metadata-out results.jsonl
 ```
 
 Or chain a `metadata_file_writer` node in the graph to interleave metadata writing with other processing. See [go-processor-nodes.md](go-processor-nodes.md#persisting-metadata-to-files) for details.

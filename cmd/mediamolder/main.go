@@ -18,7 +18,7 @@ import (
 	"github.com/MediaMolder/MediaMolder/compat/ffcli"
 	"github.com/MediaMolder/MediaMolder/graph"
 	"github.com/MediaMolder/MediaMolder/observability"
-	"github.com/MediaMolder/MediaMolder/pipeline"
+	"github.com/MediaMolder/MediaMolder/job"
 	"github.com/MediaMolder/MediaMolder/processors"
 )
 
@@ -81,6 +81,10 @@ func run(args []string) error {
 		return cmdGoSceneDetect(args[1:])
 	case "twelvelabs":
 		return cmdTwelveLabs(args[1:])
+	case "serve":
+		return cmdServe(args[1:])
+	case "job":
+		return cmdJob(args[1:])
 	case "help", "--help", "-h":
 		usage()
 		return nil
@@ -127,7 +131,7 @@ func cmdRun(args []string) error {
 		}
 		raw = strings.ReplaceAll(raw, "{{"+k+"}}", v)
 	}
-	cfg, err := pipeline.ParseConfig([]byte(raw))
+	cfg, err := job.ParseConfig([]byte(raw))
 	if err != nil {
 		return err
 	}
@@ -140,7 +144,7 @@ func cmdRun(args []string) error {
 	if *prebufferMaxFlag > 0 {
 		cfg.GlobalOptions.PrebufferMaxSeconds = prebufferMaxFlag.Seconds()
 	}
-	eng, err := pipeline.NewPipeline(cfg)
+	eng, err := job.NewPipeline(cfg)
 	if err != nil {
 		return err
 	}
@@ -221,7 +225,7 @@ func cmdRun(args []string) error {
 				if !ok {
 					return
 				}
-				if md, isMetadata := ev.(pipeline.ProcessorMetadata); isMetadata && metaEnc != nil {
+				if md, isMetadata := ev.(job.ProcessorMetadata); isMetadata && metaEnc != nil {
 					metaEnc.Encode(md) //nolint:errcheck // best-effort
 				}
 			case <-ticker.C:
@@ -268,7 +272,7 @@ func cmdInspect(args []string) error {
 	if fs.NArg() < 1 {
 		return fmt.Errorf("usage: mediamolder inspect <config.json>")
 	}
-	cfg, err := pipeline.ParseConfigFile(fs.Arg(0))
+	cfg, err := job.ParseConfigFile(fs.Arg(0))
 	if err != nil {
 		return err
 	}
@@ -320,7 +324,7 @@ func cmdConvertCmd(args []string) error {
 
 // cmdExport renders a JSON config back into an FFmpeg command line
 // (the inverse of `convert-cmd`). With --from-graph the config is
-// first normalised through pipeline.NormalizeConfig and the
+// first normalised through job.NormalizeConfig and the
 // resulting *graph.Def is fed to ExportGraph; otherwise the
 // shorthand-sourced Export(cfg) path is used. NormalizeConfig
 // warnings and ExportResult.Unsupported notes are printed to
@@ -328,20 +332,20 @@ func cmdConvertCmd(args []string) error {
 func cmdExport(args []string) error {
 	fs := flag.NewFlagSet("export", flag.ContinueOnError)
 	fromGraph := fs.Bool("from-graph", false,
-		"normalise the config through pipeline.NormalizeConfig and render via ExportGraph")
+		"normalise the config through job.NormalizeConfig and render via ExportGraph")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if fs.NArg() < 1 {
 		return fmt.Errorf("usage: mediamolder export [--from-graph] <config.json>")
 	}
-	cfg, err := pipeline.ParseConfigFile(fs.Arg(0))
+	cfg, err := job.ParseConfigFile(fs.Arg(0))
 	if err != nil {
 		return fmt.Errorf("read config %q: %w", fs.Arg(0), err)
 	}
 	var res ffcli.ExportResult
 	if *fromGraph {
-		def, warnings, nerr := pipeline.NormalizeConfig(cfg)
+		def, warnings, nerr := job.NormalizeConfig(cfg)
 		if nerr != nil {
 			return fmt.Errorf("normalize: %w", nerr)
 		}
@@ -475,8 +479,8 @@ func cmdListFormats(args []string) error {
 	return nil
 }
 
-// configToGraphDef converts a pipeline.Config to a graph.Def for validation.
-func configToGraphDef(cfg *pipeline.Config) *graph.Def {
+// configToGraphDef converts a job.Config to a graph.Def for validation.
+func configToGraphDef(cfg *job.Config) *graph.Def {
 	def := &graph.Def{}
 	for _, in := range cfg.Inputs {
 		def.Inputs = append(def.Inputs, graph.InputDef{ID: in.ID})
@@ -510,7 +514,7 @@ func cmdMigrate(args []string) error {
 	_ = from // reserved for future multi-version migration
 	_ = to
 
-	cfg, err := pipeline.ParseConfigFile(fs.Arg(0))
+	cfg, err := job.ParseConfigFile(fs.Arg(0))
 	if err != nil {
 		return fmt.Errorf("validation failed: %w", err)
 	}
@@ -554,7 +558,7 @@ Commands:
                          Flags: --json (output as JSON), --strict (exit 1 on WARNING).
   convert-cmd "..."      Convert an FFmpeg command line to JSON config.
   export <config.json>   Render a JSON config back into an FFmpeg command line.
-                         Flags: --from-graph (normalise via pipeline.NormalizeConfig
+                         Flags: --from-graph (normalise via job.NormalizeConfig
                          and render via ExportGraph instead of the shorthand path).
   migrate <config.json>  Validate config and pretty-print (v1.0 migration scaffolding).
   list-codecs            List available codecs.
@@ -578,6 +582,14 @@ Commands:
                          Run 'mediamolder twelvelabs help' for full usage.
   gui                    Launch the browser-based visual job editor.
                          Flags: --port=N, --host=ADDR, --no-open, --dev, --examples=DIR.
+  serve                  Run the Tier 1 remote execution server.
+                         Flags: --addr=:8443, --tls-cert=FILE, --tls-key=FILE,
+                                --auth-token-file=FILE, --max-jobs=N,
+                                --s3-presign-credentials=FILE, --s3-presign-ttl=DURATION,
+                                --enable-uploads, --allow-path=DIR (repeatable).
+  job <subcmd>           Interact with a remote server.
+                         Subcommands: submit, status, cancel, artifacts.
+                         Flags: --backend=URL, --token=TOKEN.
   version                Print library versions.
   help                   Show this help.
 `)

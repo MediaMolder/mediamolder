@@ -85,3 +85,7 @@ Mediamolder is an improved version of the ffmpeg interface and media graph build
 - Keep all responses minimal by default.
 - For new/unrelated tasks, recommend starting fresh with /clear.
 
+# Design Principles
+
+## We will not offer binaries
+- MediaMolder implements patented technologies. We cannot and will not offer binaries, or a Docker image.

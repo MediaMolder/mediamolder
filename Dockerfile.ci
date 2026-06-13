@@ -1,0 +1,30 @@
+# syntax=docker/dockerfile:1
+# CI-only Dockerfile — builds MediaMolder from source using the system FFmpeg
+# libraries available in the base image. Not for distribution.
+
+# ---- build stage ----
+FROM golang:1.25-bookworm AS builder
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libavcodec-dev libavformat-dev libavdevice-dev libavfilter-dev \
+        libavutil-dev libswscale-dev libswresample-dev \
+        pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN go build -o /mediamolder ./cmd/mediamolder
+
+# ---- runtime stage ----
+FROM debian:bookworm-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libavcodec60 libavformat60 libavdevice60 libavfilter9 \
+        libavutil58 libswscale7 libswresample4 \
+        ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /mediamolder /mediamolder
+ENTRYPOINT ["/mediamolder"]

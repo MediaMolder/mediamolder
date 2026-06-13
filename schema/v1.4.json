@@ -1,0 +1,196 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mediamolder.dev/schema/v1.4.json",
+  "title": "MediaMolder Job",
+  "description": "Schema v1.4 — top-level Job document that wraps a pipeline Config and adds distributed execution metadata (Phase B).",
+  "type": "object",
+  "required": ["schema_version", "config"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1.4",
+      "description": "Must be \"1.4\" for Job documents."
+    },
+    "id": {
+      "type": "string",
+      "description": "Job ID. Assigned by the server if absent on submission."
+    },
+    "name": {
+      "type": "string",
+      "description": "Optional human-readable job name."
+    },
+    "owner": {
+      "type": "string",
+      "description": "Optional identifier of the submitting user or service."
+    },
+    "labels": {
+      "type": "object",
+      "description": "Arbitrary key-value labels for filtering and observability.",
+      "additionalProperties": { "type": "string" }
+    },
+    "config": {
+      "$ref": "#/$defs/config",
+      "description": "The pipeline graph. Embedded verbatim in every derived Task."
+    },
+    "distribution": {
+      "$ref": "#/$defs/distribution_spec",
+      "description": "Describes how to split this job into tasks. Omit for single-task (Tier 0/1-compatible) execution."
+    },
+    "storage": {
+      "$ref": "#/$defs/storage_ref",
+      "description": "Shared object-storage root for media and manifests. Required for Tier 2."
+    },
+    "requirements": {
+      "$ref": "#/$defs/worker_requirements",
+      "description": "Capabilities every worker must provide."
+    },
+    "policy": {
+      "$ref": "#/$defs/job_policy",
+      "description": "Retry and timeout policy."
+    }
+  },
+
+  "$defs": {
+    "config": {
+      "type": "object",
+      "description": "A MediaMolder pipeline Config (schema_version 1.0–1.3). The embedded config's own schema_version field identifies the pipeline graph format version.",
+      "required": ["schema_version", "inputs", "graph", "outputs"],
+      "additionalProperties": true
+    },
+
+    "distribution_spec": {
+      "type": "object",
+      "required": ["stages"],
+      "additionalProperties": false,
+      "properties": {
+        "stages": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/stage" }
+        }
+      }
+    },
+
+    "stage": {
+      "type": "object",
+      "required": ["id", "strategy", "subgraph"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "depends_on": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "IDs of stages that must complete before this stage begins."
+        },
+        "strategy": { "$ref": "#/$defs/stage_strategy" },
+        "subgraph": { "$ref": "#/$defs/subgraph_ref" },
+        "assembly": {
+          "$ref": "#/$defs/subgraph_ref",
+          "description": "Subgraph used by the gather stage to assemble task outputs."
+        }
+      }
+    },
+
+    "stage_strategy": {
+      "type": "object",
+      "required": ["kind"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": ["single", "fanout_static", "fanout_dynamic", "gather"],
+          "description": "\"single\" — one task; \"fanout_static\" — N tasks from params.count; \"fanout_dynamic\" — tasks derived from a producer manifest; \"gather\" — assembles outputs of a prior stage."
+        },
+        "params": {
+          "type": "object",
+          "description": "Strategy-specific parameters. fanout_static requires {\"count\": N}.",
+          "additionalProperties": true
+        }
+      }
+    },
+
+    "subgraph_ref": {
+      "type": "object",
+      "required": ["node_ids"],
+      "additionalProperties": false,
+      "properties": {
+        "node_ids": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "IDs of nodes from the master Config. Empty list means all nodes (full graph passthrough)."
+        }
+      }
+    },
+
+    "storage_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "uri": {
+          "type": "string",
+          "description": "Object-storage root URI (e.g. s3://bucket/prefix/)."
+        }
+      }
+    },
+
+    "worker_requirements": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "hardware_accel": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Required hardware acceleration types (e.g. \"cuda\", \"videotoolbox\")."
+        },
+        "codecs": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Codec names the worker must support (e.g. \"h264_nvenc\")."
+        },
+        "min_free_disk_bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Minimum free disk space required on the worker."
+        },
+        "min_free_mem_bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Minimum free memory required on the worker."
+        },
+        "estimated_duration_ns": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Estimated task runtime in nanoseconds, used as a presigned-URL TTL hint."
+        }
+      }
+    },
+
+    "job_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "max_attempts": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Maximum task attempt count. 0 means use the server default (3)."
+        },
+        "retry_backoff_initial_ns": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Initial retry backoff in nanoseconds."
+        },
+        "retry_backoff_max_ns": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Maximum retry backoff in nanoseconds."
+        },
+        "task_timeout_ns": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Per-task execution timeout in nanoseconds. 0 means no timeout."
+        }
+      }
+    }
+  }
+}

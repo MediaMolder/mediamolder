@@ -12,8 +12,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/MediaMolder/MediaMolder/pipeline"
-	"github.com/MediaMolder/MediaMolder/pipeline/snap"
+	"github.com/MediaMolder/MediaMolder/job"
+	"github.com/MediaMolder/MediaMolder/job/snap"
 )
 
 // jobStatus is the lifecycle status of a managed pipeline job.
@@ -37,8 +37,8 @@ type jobEvent struct {
 // runningJob holds per-job state and the broadcast fan-out for SSE clients.
 type runningJob struct {
 	id     string
-	cfg    *pipeline.Config
-	pipe   *pipeline.Pipeline
+	cfg    *job.Config
+	pipe   *job.Pipeline
 	cancel context.CancelFunc
 	start  time.Time
 
@@ -63,8 +63,8 @@ func newJobManager() *jobManager {
 }
 
 // start launches a new pipeline run and returns its job ID.
-func (m *jobManager) start(cfg *pipeline.Config) (string, error) {
-	pipe, err := pipeline.NewPipeline(cfg)
+func (m *jobManager) start(cfg *job.Config) (string, error) {
+	pipe, err := job.NewPipeline(cfg)
 	if err != nil {
 		return "", err
 	}
@@ -110,7 +110,7 @@ func (m *jobManager) cancel(id string) error {
 
 // latestPipeline returns the pipeline of the most recently started running job,
 // or nil when no job is currently active.
-func (m *jobManager) latestPipeline() *pipeline.Pipeline {
+func (m *jobManager) latestPipeline() *job.Pipeline {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var latest *runningJob
@@ -130,16 +130,16 @@ func (m *jobManager) latestPipeline() *pipeline.Pipeline {
 
 // latestMetrics returns a MetricsSnapshot from the most recently started
 // running job, or a zero snapshot when no job is active.
-func (m *jobManager) latestMetrics() pipeline.MetricsSnapshot {
+func (m *jobManager) latestMetrics() job.MetricsSnapshot {
 	p := m.latestPipeline()
 	if p == nil {
-		return pipeline.MetricsSnapshot{}
+		return job.MetricsSnapshot{}
 	}
 	return p.GetMetrics()
 }
 
 // jobManagerRealtimeCtrl implements observability.RealtimeController by
-// delegating to the most recently started running job's pipeline.
+// delegating to the most recently started running job's job.
 type jobManagerRealtimeCtrl struct{ m *jobManager }
 
 func (a *jobManagerRealtimeCtrl) SetPresetOverride(nodeID, preset string) error {
@@ -343,15 +343,15 @@ func (j *runningJob) run(ctx context.Context) {
 	j.mu.Unlock()
 }
 
-// translateEvent converts a pipeline.Event into the wire jobEvent shape.
-func translateEvent(ev pipeline.Event, tMs int64) jobEvent {
+// translateEvent converts a job.Event into the wire jobEvent shape.
+func translateEvent(ev job.Event, tMs int64) jobEvent {
 	switch e := ev.(type) {
-	case pipeline.StateChanged:
+	case job.StateChanged:
 		return jobEvent{Type: "state", Time: tMs, Data: map[string]any{
 			"from": e.From.String(),
 			"to":   e.To.String(),
 		}}
-	case pipeline.ErrorEvent:
+	case job.ErrorEvent:
 		msg := ""
 		if e.Err != nil {
 			msg = e.Err.Error()
@@ -361,11 +361,11 @@ func translateEvent(ev pipeline.Event, tMs int64) jobEvent {
 			"stage":   e.Stage,
 			"error":   msg,
 		}}
-	case pipeline.EOS:
+	case job.EOS:
 		return jobEvent{Type: "log", Time: tMs, Data: map[string]any{"message": "end of stream"}}
-	case pipeline.MetricsSnapshotEvent:
+	case job.MetricsSnapshotEvent:
 		return jobEvent{Type: "metrics", Time: tMs, Data: e.Snapshot}
-	case pipeline.ProcessorMetadata:
+	case job.ProcessorMetadata:
 		return jobEvent{Type: "metadata", Time: tMs, Data: e}
 	default:
 		return jobEvent{Type: "log", Time: tMs, Data: map[string]any{"event": "unknown"}}

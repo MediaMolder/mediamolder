@@ -63,7 +63,7 @@ type ReconfigureComplete struct {
 Add a new output to a running pipeline:
 
 ```go
-ack, err := pipeline.AddOutput(pipeline.Output{
+ack, err := pipeline.AddOutput(job.Output{
     ID:         "hls_out",
     URL:        "/var/media/stream.m3u8",
     Format:     "hls",

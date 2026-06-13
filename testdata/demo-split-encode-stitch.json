@@ -1,0 +1,57 @@
+{
+  "schema_version": "1.4",
+  "name": "split-encode-stitch demo",
+  "storage": {
+    "uri": "file:///tmp/mediamolder-demo"
+  },
+  "config": {
+    "schema_version": "1.2",
+    "inputs": [
+      {
+        "id": "src",
+        "url": "file:///tmp/input.mp4"
+      }
+    ],
+    "outputs": [
+      {
+        "id": "out",
+        "url": "file:///tmp/output_final.mp4",
+        "codec_video": "libx264",
+        "codec_audio": "aac"
+      }
+    ]
+  },
+  "distribution": {
+    "stages": [
+      {
+        "id": "detect",
+        "strategy": {
+          "kind": "single"
+        },
+        "subgraph": {"node_ids": []},
+        "comment": "Producer stage: runs a pipeline containing a split_manifest_writer node configured with splitter=scene_list and output_file=/tmp/mediamolder-demo/manifest.json. The processor detects scene boundaries and writes them as a SplitManifest JSON."
+      },
+      {
+        "id": "encode",
+        "depends_on": ["detect"],
+        "strategy": {
+          "kind": "fanout_dynamic",
+          "params": {
+            "manifest_uri": "file:///tmp/mediamolder-demo/manifest.json"
+          }
+        },
+        "subgraph": {"node_ids": []},
+        "comment": "Fan-out stage: the orchestrator reads manifest.json written by the detect stage, then materialises one encode task per scene segment. Each task's first input is rewired to a concat-demuxer entry with the segment's InPoint/OutPoint. Output URLs are auto-assigned under storage.uri/segs/encode/<index>.mkv."
+      },
+      {
+        "id": "stitch",
+        "depends_on": ["encode"],
+        "strategy": {
+          "kind": "gather"
+        },
+        "subgraph": {"node_ids": []},
+        "comment": "Gather stage: the orchestrator collects the output URLs from all encode tasks (ordered by Index) and builds a single task whose first input uses the concat demuxer, producing the final output_final.mp4."
+      }
+    ]
+  }
+}

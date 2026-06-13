@@ -1167,7 +1167,7 @@ keep working).
 
 `schema/v1.2.json` and `schema/v1.3.json` (new): `global_options.realtime` is
 either a bool (legacy) or an object matching `RealtimeOptions`. The migration
-in `pipeline.Config.Normalize` converts the bool form.
+in `job.Config.Normalize` converts the bool form.
 
 #### GUI
 
@@ -1437,7 +1437,7 @@ type RealtimeOutputOptions struct {
     PrebufferMax      time.Duration
 }
 
-// pipeline.Output gains:
+// job.Output gains:
 type Output struct {
     ...
     Realtime *RealtimeOutputOptions
@@ -1486,7 +1486,7 @@ type OutputReadyState struct {
    per-sink state machine; integration with mux header emission.
 3. `pipeline/engine.go` — `Pipeline.Ready()`, `ReadyState()`,
    `RealTimeReady` event, AND-aggregation across outputs.
-4. `pipeline.Config` / `pipeline.Output` schema additions; schema v1.3 JSON
+4. `job.Config` / `job.Output` schema additions; schema v1.3 JSON
    and `Normalize` migration.
 5. `cmd/mediamolder/main.go` — `--prebuffer`, `--prebuffer-max`, `--ready-fd`
    flags; stdout `ready\n` line on run.

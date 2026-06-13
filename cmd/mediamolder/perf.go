@@ -15,7 +15,7 @@ import (
 	"time"
 )
 
-// perfSnapshot mirrors the JSON encoding of pipeline.MetricsSnapshot.
+// perfSnapshot mirrors the JSON encoding of job.MetricsSnapshot.
 // Defined locally so this binary has no CGO or pipeline dependencies.
 type perfSnapshot struct {
 	State   string     `json:"State"`
@@ -23,7 +23,7 @@ type perfSnapshot struct {
 	Perf    []nodePerf `json:"Perf"`
 }
 
-// nodePerf mirrors the JSON encoding of pipeline.NodePerfSnapshot.
+// nodePerf mirrors the JSON encoding of job.NodePerfSnapshot.
 type nodePerf struct {
 	NodeID            string  `json:"NodeID"`
 	FPS               float64 `json:"FPS"`

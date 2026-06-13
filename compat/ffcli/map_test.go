@@ -7,59 +7,59 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/MediaMolder/MediaMolder/pipeline"
+	"github.com/MediaMolder/MediaMolder/job"
 )
 
 func TestParseMapArg(t *testing.T) {
 	cases := []struct {
 		name string
 		in   string
-		want pipeline.StreamSelect
+		want job.StreamSelect
 	}{
 		{
 			name: "all video",
 			in:   "0:v",
-			want: pipeline.StreamSelect{InputIndex: 0, Type: "video", All: true},
+			want: job.StreamSelect{InputIndex: 0, Type: "video", All: true},
 		},
 		{
 			name: "audio track 1",
 			in:   "0:a:1",
-			want: pipeline.StreamSelect{InputIndex: 0, Type: "audio", Track: 1, All: false},
+			want: job.StreamSelect{InputIndex: 0, Type: "audio", Track: 1, All: false},
 		},
 		{
 			name: "optional subtitle",
 			in:   "0:s?",
-			want: pipeline.StreamSelect{InputIndex: 0, Type: "subtitle", All: true, Optional: true},
+			want: job.StreamSelect{InputIndex: 0, Type: "subtitle", All: true, Optional: true},
 		},
 		{
 			name: "negate subtitle",
 			in:   "-0:s",
-			want: pipeline.StreamSelect{InputIndex: 0, Type: "subtitle", All: true, Negate: true},
+			want: job.StreamSelect{InputIndex: 0, Type: "subtitle", All: true, Negate: true},
 		},
 		{
 			name: "program + type",
 			in:   "0:p:101:v",
-			want: pipeline.StreamSelect{InputIndex: 0, Type: "video", All: true, Program: 101},
+			want: job.StreamSelect{InputIndex: 0, Type: "video", All: true, Program: 101},
 		},
 		{
 			name: "program + type + idx",
 			in:   "1:p:202:a:0",
-			want: pipeline.StreamSelect{InputIndex: 1, Type: "audio", Track: 0, All: false, Program: 202},
+			want: job.StreamSelect{InputIndex: 1, Type: "audio", Track: 0, All: false, Program: 202},
 		},
 		{
 			name: "data type",
 			in:   "0:d",
-			want: pipeline.StreamSelect{InputIndex: 0, Type: "data", All: true},
+			want: job.StreamSelect{InputIndex: 0, Type: "data", All: true},
 		},
 		{
 			name: "all attachments",
 			in:   "0:t",
-			want: pipeline.StreamSelect{InputIndex: 0, Type: "attachment", All: true},
+			want: job.StreamSelect{InputIndex: 0, Type: "attachment", All: true},
 		},
 		{
 			name: "attachment track 0",
 			in:   "0:t:0",
-			want: pipeline.StreamSelect{InputIndex: 0, Type: "attachment", Track: 0, All: false},
+			want: job.StreamSelect{InputIndex: 0, Type: "attachment", Track: 0, All: false},
 		},
 	}
 	for _, c := range cases {
@@ -104,16 +104,16 @@ func TestParseMapArg_Errors(t *testing.T) {
 
 func TestApplyMapSelectors_ReplacesDefaults(t *testing.T) {
 	p := &parser{
-		inputs: []pipeline.Input{
-			{ID: "input0", URL: "a.mp4", Streams: []pipeline.StreamSelect{
+		inputs: []job.Input{
+			{ID: "input0", URL: "a.mp4", Streams: []job.StreamSelect{
 				{InputIndex: 0, Type: "video", Track: 0},
 				{InputIndex: 0, Type: "audio", Track: 0},
 				{InputIndex: 0, Type: "subtitle", Track: 0},
 			}},
 		},
 		mapSpecs: []parsedMap{
-			{inputIdx: 0, sel: pipeline.StreamSelect{InputIndex: 0, Type: "video", All: true}},
-			{inputIdx: 0, sel: pipeline.StreamSelect{InputIndex: 0, Type: "subtitle", All: true, Optional: true}},
+			{inputIdx: 0, sel: job.StreamSelect{InputIndex: 0, Type: "video", All: true}},
+			{inputIdx: 0, sel: job.StreamSelect{InputIndex: 0, Type: "subtitle", All: true, Optional: true}},
 		},
 	}
 	if err := p.applyMapSelectors(); err != nil {
@@ -132,9 +132,9 @@ func TestApplyMapSelectors_ReplacesDefaults(t *testing.T) {
 }
 
 func TestApplyMapSelectors_Noop(t *testing.T) {
-	original := []pipeline.StreamSelect{{InputIndex: 0, Type: "video", Track: 0}}
+	original := []job.StreamSelect{{InputIndex: 0, Type: "video", Track: 0}}
 	p := &parser{
-		inputs: []pipeline.Input{{ID: "input0", URL: "a.mp4", Streams: original}},
+		inputs: []job.Input{{ID: "input0", URL: "a.mp4", Streams: original}},
 	}
 	if err := p.applyMapSelectors(); err != nil {
 		t.Fatalf("unexpected: %v", err)
@@ -146,9 +146,9 @@ func TestApplyMapSelectors_Noop(t *testing.T) {
 
 func TestApplyMapSelectors_OutOfRangeInput(t *testing.T) {
 	p := &parser{
-		inputs: []pipeline.Input{{ID: "input0", URL: "a.mp4"}},
+		inputs: []job.Input{{ID: "input0", URL: "a.mp4"}},
 		mapSpecs: []parsedMap{
-			{inputIdx: 5, sel: pipeline.StreamSelect{InputIndex: 5, Type: "video", All: true}},
+			{inputIdx: 5, sel: job.StreamSelect{InputIndex: 5, Type: "video", All: true}},
 		},
 	}
 	if err := p.applyMapSelectors(); err == nil {

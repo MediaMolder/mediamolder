@@ -6,7 +6,7 @@ exporter (sequencing in
 F1.1 – F1.6).
 
 This page documents the two public entry points that turn a
-`pipeline.Config` (the JSON job format) back into an `ffmpeg ...`
+`job.Config` (the JSON job format) back into an `ffmpeg ...`
 command line, when to use each, and which fields round-trip cleanly
 versus which are reported on `ExportResult.Unsupported` because
 they have no CLI inverse.
@@ -17,14 +17,14 @@ the per-output / per-stream view layer lives in
 
 ## Entry points
 
-### `compat/ffcli.Export(cfg *pipeline.Config) ExportResult`
+### `compat/ffcli.Export(cfg *job.Config) ExportResult`
 
-Source-of-truth: the *authoring* `pipeline.Config`. Reads
+Source-of-truth: the *authoring* `job.Config`. Reads
 `Output.CodecVideo`, `Output.EncoderParamsVideo`, `Output.FPSMode`,
 `Output.AudioSync`, `Output.Pass`/`PassLogFile`,
 `Output.ForceKeyFrames`, `Output.SAR`/`DAR`,
 `Output.EncoderTimeBase`, `Output.FieldOrder`,
-`Output.InterlacedEncode` directly off the `pipeline.Output`
+`Output.InterlacedEncode` directly off the `job.Output`
 shorthand fields. Explicit encoder/copy/filter nodes in
 `cfg.Graph` overlay this view (codec wins, AVOptions emit via
 `buildEncoderNodes`).
@@ -32,10 +32,10 @@ shorthand fields. Explicit encoder/copy/filter nodes in
 Use this when you want a CLI from the JSON the user wrote, without
 running the pipeline normaliser.
 
-### `compat/ffcli.ExportGraph(cfg *pipeline.Config, def *graph.Def, warnings []pipeline.NormalizeWarning) ExportResult`
+### `compat/ffcli.ExportGraph(cfg *job.Config, def *graph.Def, warnings []job.NormalizeWarning) ExportResult`
 
 Source-of-truth: the *normalised* `*graph.Def` produced by
-`pipeline.NormalizeConfig(cfg)`. Reads codec, encoder AVOptions,
+`job.NormalizeConfig(cfg)`. Reads codec, encoder AVOptions,
 encoder shorthand (`FPSMode`, `ForceKeyFrames`, `SAR`/`DAR`,
 `EncoderTimeBase`, `FieldOrder`, `Interlaced`, `Pass`,
 `PassLogFile`) and audio sync from the lowered graph instead of

@@ -4,7 +4,7 @@
 package graph
 
 // Internal carries the typed lowering output produced by
-// pipeline.NormalizeConfig and consumed by the runtime handlers.
+// job.NormalizeConfig and consumed by the runtime handlers.
 // It is the typed replacement for the historical __* sentinel keys
 // that lived in NodeDef.Params (e.g. __fps_mode, __force_key_frames,
 // __pass, __sar, __dar, __enc_time_base, __field_order,

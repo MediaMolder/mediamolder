@@ -9,7 +9,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/MediaMolder/MediaMolder/pipeline/snap"
+	"github.com/MediaMolder/MediaMolder/job/snap"
 )
 
 // activeRT returns the RealtimeControllerSnapshot for the currently running
@@ -29,7 +29,7 @@ func (m *jobManager) activeRT() snap.RTControllerSnapshot {
 	return snap.RTControllerSnapshot{}
 }
 
-// activeSetPreset delegates a preset override to the active running pipeline.
+// activeSetPreset delegates a preset override to the active running job.
 func (m *jobManager) activeSetPreset(nodeID, preset string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -44,7 +44,7 @@ func (m *jobManager) activeSetPreset(nodeID, preset string) error {
 	return fmt.Errorf("no running job")
 }
 
-// activeClearPreset clears a preset override on the active running pipeline.
+// activeClearPreset clears a preset override on the active running job.
 func (m *jobManager) activeClearPreset(nodeID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()

@@ -207,7 +207,7 @@ mediamolder export [--from-graph] <config.json>
 
 | Flag | Default | Description |
 |---|---|---|
-| `--from-graph` | `false` | Normalise through `pipeline.NormalizeConfig` first, then render via `ExportGraph`; produces a more accurate result for graphs that use implicit encoders or shorthand fields |
+| `--from-graph` | `false` | Normalise through `job.NormalizeConfig` first, then render via `ExportGraph`; produces a more accurate result for graphs that use implicit encoders or shorthand fields |
 
 **Examples:**
 
@@ -222,7 +222,7 @@ mediamolder export --from-graph job.json
 mediamolder export job.json | pbcopy
 ```
 
-Not every MediaMolder feature has a direct FFmpeg CLI equivalent (per-node error policies, named assets, etc.). Such features are reported as notes on stderr and omitted from the command. The canonical, lossless representation of a pipeline is always the JSON file.
+Not every MediaMolder feature has a direct FFmpeg CLI equivalent (per-node error policies, named assets, etc.). Such features are reported as notes on stderr and omitted from the command. The canonical, lossless representation of a graph is always the JSON file.
 
 ---
 
@@ -299,7 +299,7 @@ The GUI communicates with the local Go process over HTTP. JSON config files save
 ### 3.9 `perf`
 
 Display a live terminal table of per-node performance data for a running
-pipeline.  Polls the `/perf` JSON endpoint exposed by a metrics server and
+graph.  Polls the `/perf` JSON endpoint exposed by a metrics server and
 redraws the display in place at the configured interval.
 
 ```sh
@@ -308,7 +308,7 @@ mediamolder perf [--url <url>] [--interval <duration>]
 
 | Flag | Default | Description |
 |---|---|---|
-| `--url` | `http://localhost:9090/perf` | URL of the running pipeline's `/perf` endpoint |
+| `--url` | `http://localhost:9090/perf` | URL of the running graph's `/perf` endpoint |
 | `--interval` | `1s` | How often to refresh the display |
 
 The table columns are **NODE**, **FPS**, **TARGET**, **DEFICIT**, **ACTIVE%**,
@@ -372,7 +372,7 @@ Decodes every frame, runs one of five detectors ported from
 (BSD-3-Clause), and writes the scene list to stdout or a file.
 
 The same five detectors are also available as `go_processor` nodes inside a
-pipeline graph (see [§5.11](#511-scene-detection-in-a-pipeline)), letting you
+graph (see [§5.11](#511-scene-detection-in-a-pipeline)), letting you
 detect scenes *during* a transcode in a single pass with no extra decode step.
 Use this subcommand when you need the scene list before building or running a
 graph.
@@ -1291,7 +1291,7 @@ GUI Inspector — use graph wiring instead.
 **CLI output** (alternative to graph wiring):
 
 ```sh
-mediamolder run --metadata-out cuts.jsonl pipeline.json
+mediamolder run --metadata-out cuts.jsonl job.json
 ```
 
 Each detected scene boundary is emitted as a metadata event:
@@ -1388,7 +1388,7 @@ For the complete parameter reference, more graph recipes (whole-file, per-shot e
 
 ### 5.13 Real-time mode
 
-Real-time mode activates an adaptive control loop that runs every 500 ms while the pipeline is playing. It observes per-node performance and attempts to keep every node at or above its configured `fps_target`.
+Real-time mode activates an adaptive control loop that runs every 500 ms while the graph is running. It observes per-node performance and attempts to keep every node at or above its configured `fps_target`.
 
 For a complete guide — control loop mechanics, three-tier intervention (thread scaling → preset stepping → frame-drop), output buffer configuration, GUI inspector, `mediamolder watch`, and HTTP API — see **[docs/realtime-controller.md](realtime-controller.md)**.
 
@@ -1396,7 +1396,7 @@ For a complete guide — control loop mechanics, three-tier intervention (thread
 
 ```sh
 # CLI flag (overrides the JSON without editing it)
-mediamolder run --realtime pipeline.json
+mediamolder run --realtime job.json
 
 # JSON config
 {
@@ -1423,6 +1423,47 @@ In the GUI, check the **Real-time** checkbox in the toolbar before pressing **Ru
 **`fps_target` per node:** set in the Inspector for source and encoder nodes (`fps_target` field). Nodes without a target are excluded from real-time control.
 
 **Observability:** real-time violations are emitted as `RealTimeViolation` events on the event bus and as Prometheus metrics (`mediamolder_node_fps_deficit`, `mediamolder_pipeline_realtime_satisfied`). Use `mediamolder perf` to watch per-node state or `mediamolder watch` to tail the real-time controller's decision loop.
+
+---
+
+### 5.14 Remote server (`serve` + `job`)
+
+Run `mediamolder serve` on a remote machine (e.g. a GPU instance) to accept job
+submissions from the GUI or `mediamolder job` CLI.
+
+```sh
+# Start a server on port 8443 with TLS and bearer-token auth
+mediamolder serve \
+  --addr=:8443 \
+  --tls-cert=/etc/mediamolder/server.crt \
+  --tls-key=/etc/mediamolder/server.key \
+  --auth-token-file=/etc/mediamolder/token
+```
+
+**`mediamolder job` subcommands:**
+
+```sh
+# Submit a graph job and receive a job ID
+mediamolder job submit \
+  --backend=https://my-server.example.com:8443 \
+  --token="$TOKEN" \
+  job.json
+
+# Check job status
+mediamolder job status  --backend=URL --token=TOKEN  <job-id>
+
+# Cancel a running job
+mediamolder job cancel  --backend=URL --token=TOKEN  <job-id>
+
+# List output artifact URLs
+mediamolder job artifacts --backend=URL --token=TOKEN <job-id>
+```
+
+Set `MEDIAMOLDER_TOKEN` in the environment to avoid passing `--token` on every
+invocation.
+
+For the full flag reference, S3 presigning setup, and API specification see
+**[docs/remote-server.md](remote-server.md)**.
 
 ---
 
@@ -1517,6 +1558,7 @@ mediamolder version
 | Document | Contents |
 |---|---|
 | [gui.md](gui.md) | Complete GUI reference — canvas, palette, inspector, hardware, scene detection, keyboard shortcuts |
+| [remote-server.md](remote-server.md) | Tier 1 remote server setup, API reference, S3 presigning |
 | [concepts-and-graph-basics.md](concepts-and-graph-basics.md) | Core concepts, terminology, and design principles |
 | [json-config-reference.md](json-config-reference.md) | Complete field-by-field JSON schema reference |
 | [ffmpeg-migration-guide.md](ffmpeg-migration-guide.md) | FFmpeg command → JSON mapping table with examples |
@@ -1529,3 +1571,4 @@ mediamolder version
 | [architecture/graph-state-machine.md](architecture/graph-state-machine.md) | Graph lifecycle, pause/resume, seek |
 | [build-and-packaging.md](build-and-packaging.md) | Static linking, cross-compilation, packaging |
 | [architecture/graph_validation_design.md](architecture/graph_validation_design.md) | Validation architecture and issue code catalogue |
+| [architecture/distributed_design.md](architecture/distributed_design.md) | Distributed execution design — Tier 0/1/2, S3 presigning |

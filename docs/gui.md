@@ -1544,3 +1544,19 @@ without the GUI never need to include it.
 | [hardware-acceleration.md](hardware-acceleration.md) | Hardware setup, zero-copy paths, GPU encoder options |
 | [ffmpeg-migration-guide.md](ffmpeg-migration-guide.md) | FFmpeg CLI → JSON mapping |
 | [build-and-packaging.md](build-and-packaging.md) | Building the frontend, static linking, packaging |
+
+---
+
+## Remote Backend
+
+By default the GUI connects to the local `mediamolder gui` server. To run jobs
+on a remote machine (e.g. a GPU instance), click **Backend** in the toolbar.
+
+In the dialog:
+- **Server URL** — base URL of the remote server, e.g. `https://my-server.example.com:8443`.
+- **Bearer Token** — authentication token set with `--auth-token-file` when the server was started.
+
+Settings are persisted in `localStorage`. When a remote backend is configured the
+**Backend** button is highlighted. Click it again and choose **Use Local** to revert.
+
+See [remote-backend-guide.md](remote-backend-guide.md) for a step-by-step setup guide covering Tier 1 (single server), Tier 2 (distributed cluster), auth options, and troubleshooting. The full flag reference is in [remote-server.md](remote-server.md).

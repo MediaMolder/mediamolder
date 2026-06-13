@@ -200,7 +200,7 @@ p.Seek(target time.Duration) error   // seek all inputs
 MediaMolder provides a parser that accepts FFmpeg CLI command strings and converts them to MediaMolder's structured JSON pipeline config.
 
 - **Package**: `mediamolder/compat/ffcli`
-- **Function**: `ffcli.Parse(cmdline string) (*pipeline.Config, error)`
+- **Function**: `ffcli.Parse(cmdline string) (*job.Config, error)`
 - **Scope**: Supports the full set of FFmpeg global options, input/output options, codec selection flags, filter graph strings (simple and complex), stream specifiers, and map directives.
 - **Mapping rules**:
   - `-i <url>` → structured `inputs[]` with typed `streams[]` selection

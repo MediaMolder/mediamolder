@@ -29,6 +29,7 @@ import { HardwareDialog } from './components/HardwareDialog';
 import { ImportFFmpegDialog } from './components/ImportFFmpegDialog';
 import { ExportFFmpegDialog } from './components/ExportFFmpegDialog';
 import { AssetManager } from './components/AssetManager';
+import { BackendSettingsDialog } from './components/BackendSettingsDialog';
 import { Legend } from './components/Legend';
 import {
   configToFlow,
@@ -47,6 +48,7 @@ import { MEDIA_FILE_EXTENSIONS } from './lib/mediaExtensions';
 import { autoLayout } from './lib/layout';
 import { spawnNodeFrom, type PaletteEntry } from './lib/spawn';
 import { useJobRun } from './lib/useJobRun';
+import { loadBackendSettings, type BackendSettings } from './lib/backendSettings';
 import { inferEdgeAttributes, summariseAttributes } from './lib/streamAttrs';
 import { fetchCatalog, indexStreams } from './lib/nodeCatalog';
 import { fetchEncoderInfo } from './lib/encoderSchema';
@@ -847,7 +849,9 @@ function Editor() {
       job.assets,
     );
   };
-  const run = useJobRun(() => buildJobRef.current?.() ?? null);
+  const [backend, setBackend] = useState<BackendSettings | null>(loadBackendSettings);
+  const [backendDialogOpen, setBackendDialogOpen] = useState(false);
+  const run = useJobRun(() => buildJobRef.current?.() ?? null, backend);
   const [showRunPanel, setShowRunPanel] = useState(false);
   const isRunning = run.status === 'running' || run.status === 'starting';
   const rtSnapshot = useRTSnapshot(isRunning && !!(job.global_options?.realtime));
@@ -1259,6 +1263,13 @@ function Editor() {
         </button>
         <button onClick={() => setHelpOpen(true)} title="Open help (or press ?)">Help</button>
         <button
+          onClick={() => setBackendDialogOpen(true)}
+          title={backend ? `Remote backend: ${backend.url}` : 'Local execution (click to configure remote backend)'}
+          style={backend ? { outline: '1px solid var(--color-primary, #3b82f6)' } : undefined}
+        >
+          {backend ? 'Remote' : 'Backend'}
+        </button>
+        <button
           onClick={() => setShowAssetManager(true)}
           title="Manage the asset registry (fonts, ML models, LUTs)"
         >
@@ -1372,6 +1383,12 @@ function Editor() {
         />
       </RunDock>
       <HelpDialog open={helpOpen} onClose={() => setHelpOpen(false)} />
+      <BackendSettingsDialog
+        open={backendDialogOpen}
+        current={backend}
+        onClose={() => setBackendDialogOpen(false)}
+        onChange={setBackend}
+      />
       <HardwareDialog open={showHWDialog} probes={availableHWAccels} onClose={() => setShowHWDialog(false)} />
       <ImportFFmpegDialog
         open={importFFmpegOpen}

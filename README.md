@@ -23,6 +23,7 @@
 | **Declarative config**          | **Versioned JSON + GUI round-trip**                  | Command strings            | Pipeline code              |
 | **FFmpeg command migration**    | **One-command `convert-cmd` with round-trip**        | N/A                        | Manual                     |
 | **Production readiness**        | **Pause/resume, real-time controller, embeddable**   | Good for scripts           | Good for pipelines         |
+| **Remote & distributed execution** | **Same JSON runs locally, on a remote GPU server, or across a fault-tolerant cluster** | Separate tool required | Not built-in |
 
 Every codec, filter, container, and hardware backend FFmpeg offers, with significantly better usability, safety, observability, and *real-time reliability*.
 
@@ -155,7 +156,7 @@ identically to built-in nodes. For more details, see [go-processor-nodes.md](doc
 You can add a custom Yolo-v8 object-detection node to a graph and it will 
 run directly inside your media graph. See [Yolo-V8 Guide](docs/yolov8-guide.md)
 
-For multimodal scene understanding — captions, temporal grounding, edit plans, QA — the built-in `vidi_analyzer` node connects any pipeline to a [Vidi 2.5](https://github.com/bytedance/vidi) inference service. See [Vidi 2.5 Guide](docs/vidi-guide.md)
+For multimodal scene understanding — captions, temporal grounding, edit plans, QA — the built-in `vidi_analyzer` node connects any graph to a [Vidi 2.5](https://github.com/bytedance/vidi) inference service. See [Vidi 2.5 Guide](docs/vidi-guide.md)
 
 For cloud-hosted video understanding — index, search, caption, and embed clips via the [TwelveLabs](https://twelvelabs.io) Marengo and Pegasus models — the `twelvelabs_indexer`, `twelvelabs_analyzer`, `twelvelabs_searcher`, and `twelvelabs_embedder` nodes are built in. See [TwelveLabs Guide](docs/twelvelabs.md)
 
@@ -193,6 +194,61 @@ For cloud-hosted video understanding — index, search, caption, and embed clips
 - **Trivially embeddable.** The CLI and GUI are thin consumers of a clean Go
   API. Drop the engine into any service or CI/CD graph with a single import.
 
+
+### Remote and distributed execution
+
+MediaMolder is built from the ground up to run jobs anywhere — on your laptop,
+on a single remote GPU box, or across a horizontally-scaled cluster — without
+changing a line of your graph JSON.
+
+**Three deployment tiers, one binary, one job format:**
+
+| Tier | How to start | Best for |
+|------|-------------|----------|
+| **Local** | `mediamolder run job.json` | Development, single-machine encodes |
+| **Tier 1 — remote server** | `mediamolder serve --mode=server` | Run jobs on a more powerful machine; GUI/CLI stays on your laptop |
+| **Tier 2 — distributed cluster** | `--mode=api` + `--mode=worker` | Scene-parallel encoding, fault tolerance, cloud autoscaling |
+
+**Why this matters for production workloads:**
+
+- **Zero job-format migration.** The same JSON config file that runs locally
+  is submitted verbatim to a remote server or cluster. The `Distribution`
+  block for Tier 2 fan-out is purely additive — existing jobs run unmodified.
+- **Fault-tolerant task execution.** In Tier 2, every encode task is retried
+  automatically up to a configurable `max_attempts` before being moved to an
+  inspectable dead-letter queue. A crashed worker never loses a job.
+- **Scene-parallel encoding.** The `fanout_dynamic` strategy splits a source
+  into segments at scene boundaries, encodes them in parallel across workers,
+  then stitches the outputs with the `gather` strategy — dramatically reducing
+  wall-clock time for long-form content without changing the output.
+- **Capability-aware routing.** Workers advertise their hardware (`cuda`,
+  `h264_nvenc`, `hevc_nvenc`, …) and region. Tasks declare what they require.
+  GPU tasks are automatically routed to GPU workers; CPU-only workers pick up
+  everything else. No manual queue partitioning needed.
+- **S3 presigning at the server boundary.** Submit jobs with `s3://` URIs;
+  the server converts them to short-lived HTTPS presigned URLs before execution
+  starts. Workers never hold AWS credentials, and credentials never travel in
+  job JSON.
+- **Local file upload.** Enable `--enable-uploads` to let GUI users and CLI
+  scripts push local files directly to the server before submitting the job.
+  Files are stored in a scoped `--workdir` and deleted on job completion.
+- **Pluggable state and queue backends.** Run in-memory + SQLite for local
+  development; swap to Postgres + NATS JetStream or DynamoDB + SQS for
+  multi-instance cloud deployments with no code changes.
+- **Strong authentication built in.** Choose a static bearer token
+  (`--auth-token-file`), OIDC JWTs from any standards-compliant provider
+  (`--oidc-issuer`), or mTLS client certificates (`--mtls-ca`). All three
+  compose freely; `/healthz` and `/readyz` remain unauthenticated for
+  load-balancer probes.
+- **Distributed tracing end-to-end.** Tier 2 propagates OpenTelemetry span
+  context through the queue automatically — task spans appear as children of
+  the originating job span in your trace backend, giving full visibility from
+  HTTP request to encoded frame.
+- **GUI-first remote workflow.** Click **Backend** in the toolbar, enter a
+  server URL and token, and every subsequent **Run** is sent to the remote
+  machine. Switch back to local with one click.
+
+For setup instructions see [Remote Backend Guide](docs/remote-backend-guide.md).
 
 ### Drop-in FFmpeg migration
 
@@ -233,6 +289,7 @@ For detailed instructions see [MacOS](docs/build/macos.md), [Windows](docs/build
 
 - [Using MediaMolder (CLI)](docs/using-mediamolder.md)
 - [Visual Editor (GUI)](docs/gui.md)
+- [Remote Backend Guide](docs/remote-backend-guide.md) — run your jobs on a single remote server or a distributed cluster with API + workers
 - [Concepts — Graph Model, Nodes, Edges, Lifecycle](docs/concepts-and-graph-basics.md)
 - [JSON Config Reference](docs/json-config-reference.md)
 - [FFmpeg Migration Guide](docs/ffmpeg-migration-guide.md)
@@ -249,7 +306,7 @@ For detailed instructions see [MacOS](docs/build/macos.md), [Windows](docs/build
 
 - [Architecture](docs/architecture/architecture.md)
 - [Graph State Machine](docs/architecture/graph-state-machine.md)
-- [Graph Instrumentation Roadmap](docs/roadmap/pipeline-instrumentation-roadmap.md)
+- [Graph Instrumentation Roadmap](docs/roadmap/graph-instrumentation-roadmap.md)
 - [Clock & Sync](docs/architecture/clock-and-sync.md)
 - [Event Bus](docs/architecture/event-bus.md)
 - [Error Handling](docs/architecture/error-handling.md)

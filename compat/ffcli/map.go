@@ -8,13 +8,13 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/MediaMolder/MediaMolder/pipeline"
+	"github.com/MediaMolder/MediaMolder/job"
 )
 
 // parsedMap is a single `-map ARG` invocation.
 type parsedMap struct {
 	inputIdx int
-	sel      pipeline.StreamSelect
+	sel      job.StreamSelect
 }
 
 // parseMapArg parses a single FFmpeg `-map` argument.
@@ -64,7 +64,7 @@ func parseMapArg(arg string) (parsedMap, error) {
 	if err != nil || inIdx < 0 {
 		return parsedMap{}, fmt.Errorf("invalid input id %q in -map", parts[0])
 	}
-	sel := pipeline.StreamSelect{
+	sel := job.StreamSelect{
 		InputIndex: inIdx,
 		Optional:   optional,
 		Negate:     negate,
