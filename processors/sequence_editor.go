@@ -20,8 +20,10 @@
 //
 // This gives a simple but powerful "video editor" model: cuts, inserts, multi-cam
 // selects, and layered content via track priority (upper track replaces lower where
-// present). No built-in transitions in v1 (use xfade_sequence for simple dissolves
-// or overlap clips on adjacent tracks + external blending if needed).
+// present). The only built-in transition is a cross-dissolve between adjacent
+// clips on a track (clip.transition = {"type":"dissolve","duration":<sec>});
+// for other styles (wipes, slides, fades) use the xfade_sequence processor,
+// which exposes the full libavfilter xfade transition set.
 //
 // The sequence timebase is continuous and independent of any source timebases.
 // All output frames are generated at a constant frame rate with strictly
@@ -60,7 +62,7 @@ type seqFormat struct {
 	FrameRate float64
 	// TimeBase is the continuous timebase used for all output PTS (num/den).
 	// Recommended: [1, 90000] for high precision or a multiple of the frame rate.
-	TimeBase [2]int
+	TimeBase  [2]int
 	LengthSec float64 // optional, from "length_sec" in format; overrides computed duration
 }
 
@@ -73,17 +75,28 @@ type seqClip struct {
 	Transition *seqTransition
 }
 
-// seqTransition holds dissolve (or other) transition info attached to a clip
-// (the outgoing clip in a pair).
+// seqTransition holds a transition attached to a clip (the outgoing clip in a
+// pair).
 type seqTransition struct {
 	Type     string
 	Duration float64
 }
 
+// seqSupportedTransitions is the set of transition types sequence_editor can
+// actually render. Only a cross-dissolve is implemented today; other styles
+// (wipes, slides, fades) require the xfade_sequence processor, which exposes
+// the full libavfilter xfade set. Unknown types are rejected at Init rather
+// than silently degrading to a hard cut.
+var seqSupportedTransitions = map[string]bool{"dissolve": true}
+
+// seqSupportedTransitionList is the human-readable form of the above for
+// error messages.
+const seqSupportedTransitionList = "dissolve"
+
 // seqTrack is one layer in the timeline. Higher-index tracks have priority
 // (their content replaces lower tracks where they are active).
 type seqTrack struct {
-	ID    string    // original "id" from the JSON (e.g. "V1"), for logging
+	ID    string // original "id" from the JSON (e.g. "V1"), for logging
 	Clips []seqClip
 }
 
@@ -119,7 +132,7 @@ type seqLogFrame struct {
 	Converter string `json:"converter,omitempty"`
 
 	// If this frame was a hold of a previous real content frame
-	HeldFromI *int   `json:"held_from_i,omitempty"`
+	HeldFromI *int `json:"held_from_i,omitempty"`
 
 	// Free-form notes about what actually happened (e.g. "get returned EOF", "convert pull EAGAIN, fell back to native")
 	Notes string `json:"notes,omitempty"`
@@ -136,10 +149,10 @@ type SequenceEditor struct {
 	duration float64 // computed or user-supplied total sequence length in seconds
 
 	// runtime state
-	readers  map[string]*clipReader
-	converter *av.FilterGraph // single-input scale+format converter (input = source native, output = sequence format)
+	readers          map[string]*clipReader
+	converter        *av.FilterGraph // single-input scale+format converter (input = source native, output = sequence format)
 	converterInputSI av.StreamInfo
-	lastFrame *av.Frame // last successfully sent frame (used for hold/freeze on timeline gaps)
+	lastFrame        *av.Frame // last successfully sent frame (used for hold/freeze on timeline gaps)
 
 	// blendGraph is a reusable two-input blend graph for dissolve transitions.
 	// Created lazily on first use during a dissolve window. Reusing it avoids
@@ -257,13 +270,22 @@ func (se *SequenceEditor) Init(params map[string]any) error {
 				return fmt.Errorf("sequence_editor: clip duration must be > 0 (sequence_in=%v source_in=%v)", c.SeqIn, c.SourceIn)
 			}
 			if transm, ok := cm["transition"].(map[string]any); ok {
-				st := &seqTransition{}
-				if typ, ok := transm["type"].(string); ok {
+				// Default an absent/empty type to the only supported one so a
+				// bare {"duration": ...} works; reject any other type loudly
+				// instead of silently rendering a hard cut.
+				st := &seqTransition{Type: "dissolve"}
+				if typ, ok := transm["type"].(string); ok && typ != "" {
 					st.Type = typ
 				}
-				if dur, ok := transm["duration"].(float64); ok && dur > 0 {
-					st.Duration = dur
+				if !seqSupportedTransitions[st.Type] {
+					return fmt.Errorf("sequence_editor: unsupported transition type %q (supported: %s); "+
+						"for wipes, slides, fades and other styles use the xfade_sequence processor", st.Type, seqSupportedTransitionList)
 				}
+				dur, ok := transm["duration"].(float64)
+				if !ok || dur <= 0 {
+					return fmt.Errorf("sequence_editor: transition %q requires a positive 'duration' in seconds", st.Type)
+				}
+				st.Duration = dur
 				c.Transition = st
 			}
 			track.Clips = append(track.Clips, c)
@@ -531,7 +553,7 @@ func (se *SequenceEditor) Run(ctx context.Context, send func(*av.Frame) error) e
 							cf.SetPTS(0)
 						}
 					}
-					blendAllOpacity := activeLayers[0].opacity  // 1 - prog
+					blendAllOpacity := activeLayers[0].opacity // 1 - prog
 					fg := se.getBlendGraph()
 					if fg == nil {
 						// Fallback to old per-frame creation (slower, and may fail
@@ -629,7 +651,7 @@ func (se *SequenceEditor) Run(ctx context.Context, send func(*av.Frame) error) e
 			// high-resolution timebase. Using raw "i" with tbDen/tbNum produced
 			// PTS deltas of 90000 ticks (1 second) per frame instead of ~3003,
 			// causing the encoder/muxer to treat the stream as 1 fps over ~3895 s.
-			pts := int64(t * float64(tbDen) / float64(tbNum) + 0.5)
+			pts := int64(t*float64(tbDen)/float64(tbNum) + 0.5)
 			outFrame.SetPTS(pts)
 			if err := send(outFrame); err != nil {
 				outFrame.Close()
@@ -869,134 +891,134 @@ func pixFmtFromName(name string) int {
 	// subset sufficient for real-world sequence_editor usage. For exotic formats
 	// the user can fall back to the integer value or extend the map.
 	common := map[string]int{
-		"yuv420p":     0,   // AV_PIX_FMT_YUV420P
-		"yuyv422":     1,
-		"rgb24":       2,
-		"bgr24":       3,
-		"yuv422p":     4,
-		"yuv444p":     5,
-		"yuv410p":     6,
-		"yuv411p":     7,
-		"gray":        8,
-		"monowhite":   9,
-		"monoblack":   10,
-		"pal8":        11,
-		"yuvj420p":    12,  // AV_PIX_FMT_YUVJ420P (full range, common on cameras)
-		"yuvj422p":    13,
-		"yuvj444p":    14,
-		"uyvy422":     17,
-		"uyyvyy411":   18,
-		"bgr8":        19,
-		"bgr4":        20,
-		"bgr4_byte":   21,
-		"rgb8":        22,
-		"rgb4":        23,
-		"rgb4_byte":   24,
-		"nv12":        25,
-		"nv21":        26,
-		"argb":        27,
-		"rgba":        28,
-		"abgr":        29,
-		"bgra":        30,
-		"gray16":      31,
-		"yuv440p":     32,
-		"yuvj440p":    33,
-		"yuvA420p":    34,
-		"rgb48":       35,
-		"rgb565":      36,
-		"rgb555":      37,
-		"bgr565":      38,
-		"bgr555":      39,
-		"vaapi_moco":  40,
-		"vaapi_idct":  41,
-		"vaapi_vld":   42,
-		"yuv420p16":   43,
-		"yuv422p16":   44,
-		"yuv444p16":   45,
-		"dxva2_vld":   46,
-		"rgb444":      47,
-		"bgr444":      48,
-		"ya8":         49,
-		"bgr48":       50,
-		"yuv420p9":    51,
-		"yuv420p10":   52,
-		"yuv422p10":   53,
-		"yuv444p9":    54,
-		"yuv444p10":   55,
-		"yuv422p9":    56,
-		"gbrp":        57,
-		"gbrp9":       58,
-		"gbrp10":      59,
-		"gbrp16":      60,
-		"yuva420p":    61,
-		"yuva422p":    62,
-		"yuva444p":    63,
-		"yuva420p9":   64,
-		"yuva422p9":   65,
-		"yuva444p9":   66,
-		"yuva420p10":  67,
-		"yuva422p10":  68,
-		"yuva444p10":  69,
-		"yuva420p16":  70,
-		"yuva422p16":  71,
-		"yuva444p16":  72,
-		"vdpau":       73,
-		"xyz12":       74,
-		"nv16":        75,
-		"nv20":        76,
-		"rgba64":      77,
-		"bgra64":      78,
-		"yvyu422":     79,
-		"ya16":        80,
-		"gbrap":       81,
-		"gbrap16":     82,
-		"qsv":         83,
-		"mmal":        84,
-		"d3d11va_vld": 85,
-		"cuda":        86,
-		"0rgb":        87,
-		"rgb0":        88,
-		"0bgr":        89,
-		"bgr0":        90,
-		"yuv420p12":   91,
-		"yuv420p14":   92,
-		"yuv422p12":   93,
-		"yuv422p14":   94,
-		"yuv444p12":   95,
-		"yuv444p14":   96,
-		"gb rp12":     97,
-		"gbrp14":      98,
-		"yuvj411p":    99,
-		"bayer_bggr8": 100,
-		"bayer_rggb8": 101,
-		"bayer_gbrg8": 102,
-		"bayer_grbg8": 103,
-		"bayer_bggr16":104,
-		"bayer_rggb16":105,
-		"bayer_gbrg16":106,
-		"bayer_grbg16":107,
-		"xv30":        108,
-		"xv36":        109,
-		"xv48":        110,
-		"ayuv64":      111,
+		"yuv420p":          0, // AV_PIX_FMT_YUV420P
+		"yuyv422":          1,
+		"rgb24":            2,
+		"bgr24":            3,
+		"yuv422p":          4,
+		"yuv444p":          5,
+		"yuv410p":          6,
+		"yuv411p":          7,
+		"gray":             8,
+		"monowhite":        9,
+		"monoblack":        10,
+		"pal8":             11,
+		"yuvj420p":         12, // AV_PIX_FMT_YUVJ420P (full range, common on cameras)
+		"yuvj422p":         13,
+		"yuvj444p":         14,
+		"uyvy422":          17,
+		"uyyvyy411":        18,
+		"bgr8":             19,
+		"bgr4":             20,
+		"bgr4_byte":        21,
+		"rgb8":             22,
+		"rgb4":             23,
+		"rgb4_byte":        24,
+		"nv12":             25,
+		"nv21":             26,
+		"argb":             27,
+		"rgba":             28,
+		"abgr":             29,
+		"bgra":             30,
+		"gray16":           31,
+		"yuv440p":          32,
+		"yuvj440p":         33,
+		"yuvA420p":         34,
+		"rgb48":            35,
+		"rgb565":           36,
+		"rgb555":           37,
+		"bgr565":           38,
+		"bgr555":           39,
+		"vaapi_moco":       40,
+		"vaapi_idct":       41,
+		"vaapi_vld":        42,
+		"yuv420p16":        43,
+		"yuv422p16":        44,
+		"yuv444p16":        45,
+		"dxva2_vld":        46,
+		"rgb444":           47,
+		"bgr444":           48,
+		"ya8":              49,
+		"bgr48":            50,
+		"yuv420p9":         51,
+		"yuv420p10":        52,
+		"yuv422p10":        53,
+		"yuv444p9":         54,
+		"yuv444p10":        55,
+		"yuv422p9":         56,
+		"gbrp":             57,
+		"gbrp9":            58,
+		"gbrp10":           59,
+		"gbrp16":           60,
+		"yuva420p":         61,
+		"yuva422p":         62,
+		"yuva444p":         63,
+		"yuva420p9":        64,
+		"yuva422p9":        65,
+		"yuva444p9":        66,
+		"yuva420p10":       67,
+		"yuva422p10":       68,
+		"yuva444p10":       69,
+		"yuva420p16":       70,
+		"yuva422p16":       71,
+		"yuva444p16":       72,
+		"vdpau":            73,
+		"xyz12":            74,
+		"nv16":             75,
+		"nv20":             76,
+		"rgba64":           77,
+		"bgra64":           78,
+		"yvyu422":          79,
+		"ya16":             80,
+		"gbrap":            81,
+		"gbrap16":          82,
+		"qsv":              83,
+		"mmal":             84,
+		"d3d11va_vld":      85,
+		"cuda":             86,
+		"0rgb":             87,
+		"rgb0":             88,
+		"0bgr":             89,
+		"bgr0":             90,
+		"yuv420p12":        91,
+		"yuv420p14":        92,
+		"yuv422p12":        93,
+		"yuv422p14":        94,
+		"yuv444p12":        95,
+		"yuv444p14":        96,
+		"gb rp12":          97,
+		"gbrp14":           98,
+		"yuvj411p":         99,
+		"bayer_bggr8":      100,
+		"bayer_rggb8":      101,
+		"bayer_gbrg8":      102,
+		"bayer_grbg8":      103,
+		"bayer_bggr16":     104,
+		"bayer_rggb16":     105,
+		"bayer_gbrg16":     106,
+		"bayer_grbg16":     107,
+		"xv30":             108,
+		"xv36":             109,
+		"xv48":             110,
+		"ayuv64":           111,
 		"videotoolbox_vld": 112,
-		"p010":        113,
-		"p016":        114,
-		"y210":        115,
-		"y212":        116,
-		"xyuv":        117,
-		"vuya":        118,
-		"vuyx":        119,
-		"y410":        120,
-		"y412":        121,
-		"v30x":        122,
-		"rgb30":       123,
-		"av1":         124,
-		"argb32":      125,
-		"abgr32":      126,
-		"0rgb32":      127,
-		"0bgr32":      128,
-		"yuv420p16le": 129,
+		"p010":             113,
+		"p016":             114,
+		"y210":             115,
+		"y212":             116,
+		"xyuv":             117,
+		"vuya":             118,
+		"vuyx":             119,
+		"y410":             120,
+		"y412":             121,
+		"v30x":             122,
+		"rgb30":            123,
+		"av1":              124,
+		"argb32":           125,
+		"abgr32":           126,
+		"0rgb32":           127,
+		"0bgr32":           128,
+		"yuv420p16le":      129,
 		// add more as needed; the important ones for real media are covered above
 	}
 	if v, ok := common[name]; ok {
@@ -1033,10 +1055,10 @@ func (se *SequenceEditor) getOrOpenReader(url string) *clipReader {
 }
 
 type clipReader struct {
-	url    string
-	demux  *av.InputFormatContext
-	dec    *av.DecoderContext
-	pkt    *av.Packet
+	url        string
+	demux      *av.InputFormatContext
+	dec        *av.DecoderContext
+	pkt        *av.Packet
 	si         av.StreamInfo
 	vidIdx     int
 	lastSrcSec float64
@@ -1253,13 +1275,13 @@ func (se *SequenceEditor) ensureConverter(srcSI av.StreamInfo) {
 	spec := fmt.Sprintf("scale=%d:%d:flags=bicubic:out_range=tv,format=%s",
 		se.format.Width, se.format.Height, se.format.PixFmt)
 	fg, err := av.NewVideoFilterGraph(av.VideoFilterGraphConfig{
-		Width:   srcSI.Width,
-		Height:  srcSI.Height,
-		PixFmt:  srcSI.PixFmt,
-		TBNum:   srcSI.TimeBase[0],
-		TBDen:   srcSI.TimeBase[1],
-		SARNum:  srcSI.SampleAspectRatio[0],
-		SARDen:  srcSI.SampleAspectRatio[1],
+		Width:      srcSI.Width,
+		Height:     srcSI.Height,
+		PixFmt:     srcSI.PixFmt,
+		TBNum:      srcSI.TimeBase[0],
+		TBDen:      srcSI.TimeBase[1],
+		SARNum:     srcSI.SampleAspectRatio[0],
+		SARDen:     srcSI.SampleAspectRatio[1],
 		FilterSpec: spec,
 	})
 	if err != nil {
