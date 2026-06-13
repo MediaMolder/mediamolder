@@ -31,6 +31,8 @@ Everything runs in-process: no subprocesses, no network calls, no Python. Your p
 		- [`twelvelabs_analyzer`](#twelvelabs_analyzer)
 		- [`twelvelabs_searcher`](#twelvelabs_searcher)
 		- [`twelvelabs_embedder`](#twelvelabs_embedder)
+		- [Timeline assembly: `sequence_editor` vs `xfade_sequence`](#timeline-assembly-sequence_editor-vs-xfade_sequence)
+		- [`sequence_editor`](#sequence_editor)
 		- [`xfade_sequence`](#xfade_sequence)
 	- [Helper functions](#helper-functions)
 		- [Letterbox](#letterbox)
@@ -563,7 +565,125 @@ All four nodes share an API-key resolution chain (`api_key` param → `TWELVELAB
 
 ---
 
+### Timeline assembly: `sequence_editor` vs `xfade_sequence`
+
+MediaMolder ships **two** FrameSource processors that stitch clips into a
+timeline. They overlap (both can render a linear A→B→C with dissolves) but
+target different jobs — pick by whether you need *multiple tracks /
+placement* or *the full transition library*:
+
+| | `sequence_editor` | `xfade_sequence` |
+|---|---|---|
+| **Mental model** | NLE-style timeline: place clips at explicit times on one or more **tracks** | Linear montage: clips abut **end-to-end** in one sequence |
+| **Tracks / layering** | **Multiple tracks**, upper track wins where it covers a time; gaps render black; supports cuts, inserts, multi-cam selects | **Single track** only |
+| **Clip placement** | explicit `timeline_in` / `source_in` / `source_out` per clip | implicit — each clip follows the previous; `in` / `out` only |
+| **Transitions** | **`dissolve` only** (internal per-frame blend); other `type` values are currently ignored (hard cut) | **the full libavfilter `xfade` set** — `fade`, `wipe*`, `slide*`, `dissolve`, … |
+| **Output format** | fixed sequence format you declare (`width`/`height`/`pix_fmt`/`frame_rate`/`length_sec`); sources are scaled/retimed to it | inherited from the clips; normalise downstream if they differ |
+| **Params shape** | `format` + `tracks[].clips[]` (clip objects) | flat `clips[]` array alternating clip / transition objects |
+| **Memory** | decodes the winning clip per output frame | O(1 frame); ≤ 2 decoders open during an overlap |
+| **Audio** | video only (today) | video only (today) |
+
+**Rule of thumb:** need **layering, multi-track, or precise placement** →
+`sequence_editor`. Need a **wipe / slide / fade-to-black** (anything beyond a
+cross-dissolve) on a simple linear sequence → `xfade_sequence`. For a plain
+linear dissolve montage either works; `xfade_sequence` keeps memory flat on
+very long timelines.
+
+Both are MediaMolder-native `go_processor` nodes (not FFmpeg filters), and
+both are **FrameSources** — they open their own sources and take **no inbound
+AV edge** (see [Writing a FrameSource processor](#writing-a-framesource-processor)).
+
+---
+
+### `sequence_editor`
+
+A basic NLE-style timeline / sequence generator (a **FrameSource**
+`go_processor`). You declare a fixed output video format and one or more
+**tracks**; each track holds clips placed at explicit sequence times. At any
+output time the clip on the highest-priority (highest-index) track that
+covers that time is decoded, converted to the sequence format, stamped with a
+continuous sequence PTS, and emitted; uncovered times render black. This
+gives cuts, inserts, multi-cam selects, and layered content via track
+priority. The sequence timebase is continuous and independent of the
+sources' timebases, so output PTS is strictly increasing at a constant rate.
+
+For transition variety beyond a cross-dissolve, or a memory-flat linear
+montage, see [`xfade_sequence`](#xfade_sequence) and the
+[comparison above](#timeline-assembly-sequence_editor-vs-xfade_sequence).
+
+#### When to use `sequence_editor`
+
+- Multi-track / layered timelines (upper track replaces lower where present)
+- Precise placement: clips at specific sequence times, with gaps or overlaps
+- A fixed output format that sources are scaled/retimed into
+- Cross-dissolve transitions between adjacent clips on a track
+
+#### Params
+
+```json
+{
+  "format": {
+    "width": 1920,
+    "height": 1080,
+    "pix_fmt": "yuv420p",
+    "frame_rate": 29.97,
+    "time_base": [1, 90000],
+    "length_sec": 130
+  },
+  "tracks": [
+    {
+      "id": "V1",
+      "type": "video",
+      "clips": [
+        { "input_id": "video_a", "source_in": 0,  "source_out": 10.5, "timeline_in": 0,  "transition": { "type": "dissolve", "duration": 0.5 } },
+        { "input_id": "video_b", "source_in": 10, "source_out": 20.5, "timeline_in": 10, "transition": { "type": "dissolve", "duration": 0.5 } },
+        { "input_id": "video_a", "source_in": 20, "source_out": 30,   "timeline_in": 20 }
+      ]
+    }
+  ],
+  "sequence_log": "/tmp/seq.jsonl"
+}
+```
+
+| Field (in `format`) | Type | Description |
+|---|---|---|
+| `width` / `height` | int | Output resolution; sources are scaled to it. |
+| `pix_fmt` | string | Output pixel format (e.g. `yuv420p`). |
+| `frame_rate` | number | Constant output frame rate. |
+| `time_base` | [int,int] | Continuous sequence timebase (e.g. `[1, 90000]`). |
+| `length_sec` | number | Exact sequence length; overrides the computed duration. |
+
+| Field (in `tracks[].clips[]`) | Type | Description |
+|---|---|---|
+| `url` *or* `input_id` / `media_id` | string | Source. `input_id`/`media_id` reference a graph Input node and are resolved to a `url` by the engine before `Init()`. |
+| `source_in` | number | Source time (seconds) mapped to `timeline_in`. |
+| `source_out` | number | Source stop time; clip duration = `source_out − source_in` (must be > 0, and includes any transition overlap). |
+| `timeline_in` | number | Where the clip begins on the output timeline (seconds). |
+| `transition` | object | Optional `{ "type": "dissolve", "duration": <sec> }` cross-fade into the next clip. Only `dissolve` is implemented today; other types are parsed but ignored (hard cut). |
+
+`sequence_log` (optional): a path to write one JSON-Lines record per output
+frame describing what the renderer did (winning track/clip, source time
+fetched, hold vs. fresh content) — useful for debugging timeline math.
+
+A complete, runnable example is
+[`testdata/examples/61_sequence_editor_dissolves.json`](../testdata/examples/61_sequence_editor_dissolves.json).
+
+**Note**: like `xfade_sequence`, `sequence_editor` is a **FrameSource** — it
+opens its sources internally and has **no inbound AV edge**. Reference
+sources via `input_id`/`media_id` on top-level Input nodes (the engine
+resolves them to URLs); those Input nodes need no edges into the sequence
+node.
+
+---
+
 ### `xfade_sequence`
+
+> For multi-track timelines, layering, or precise clip placement, use
+> [`sequence_editor`](#sequence_editor) instead — see the
+> [comparison above](#timeline-assembly-sequence_editor-vs-xfade_sequence).
+> `xfade_sequence` is the right choice for a **single-track linear** sequence
+> that needs the **full `xfade` transition set** (wipes, slides, fades, …) or
+> must stay memory-flat across a very long timeline.
 
 Composes a sequential clip timeline with libavfilter `xfade` transitions.  Unlike chaining multiple `xfade` filter nodes in the graph — which requires all decoders to run concurrently and can OOM on long timelines — `xfade_sequence` is a **FrameSource**: it opens source files one at a time, keeping at most two decoders open simultaneously (one for the outgoing clip and one for the incoming clip, only during the overlap window).
 

@@ -44,6 +44,7 @@ This guide covers every feature available in MediaMolder, from installing the bi
    - [Real-time mode](#513-real-time-mode)
    - [Remote server (`serve` + `job`)](#514-remote-server-serve--job)
    - [Timeline assembly with xfade_sequence](#515-timeline-assembly-with-xfade_sequence)
+   - [Multi-track timelines with sequence_editor](#516-multi-track-timelines-with-sequence_editor)
 6. [Validation](#6-validation)
 7. [Graphical user interface](#7-graphical-user-interface)
 8. [Tips and troubleshooting](#8-tips-and-troubleshooting)
@@ -1470,6 +1471,15 @@ For the full flag reference, S3 presigning setup, and API specification see
 
 ### 5.15 Timeline assembly with xfade_sequence
 
+> **Two timeline tools.** MediaMolder has two FrameSource processors for
+> stitching clips: **`xfade_sequence`** (this section) — a *single-track,
+> linear* sequence with the **full `xfade` transition library** (wipes,
+> slides, fades, dissolve) — and **[`sequence_editor`](#516-multi-track-timelines-with-sequence_editor)** — a *multi-track NLE
+> timeline* with placement and layering but **dissolve-only** transitions.
+> Use `xfade_sequence` for a simple montage with varied transitions; use
+> `sequence_editor` when you need tracks, layering, or precise placement.
+> Full comparison: [go-processor-nodes.md](go-processor-nodes.md#timeline-assembly-sequence_editor-vs-xfade_sequence).
+
 `xfade_sequence` is a **FrameSource** `go_processor` that assembles a sequential clip timeline with libavfilter `xfade` transitions.  Unlike chaining multiple `xfade` filter nodes — which requires all decoders to run concurrently and can exhaust memory on long timelines — `xfade_sequence` opens source files one at a time, keeping at most two decoders open simultaneously.  Memory usage is O(1 frame) regardless of timeline length.
 
 #### JSON structure
@@ -1555,6 +1565,38 @@ All clips must share the same pixel format, frame rate, and resolution.  For mix
 #### GUI usage
 
 See **[§ Xfade sequence](gui.md#xfade-sequence-timeline-assembly)** in the GUI reference for the Inspector walkthrough, including the input-node dropdown, clip/transition editor, and canvas layout.
+
+---
+
+### 5.16 Multi-track timelines with sequence_editor
+
+`sequence_editor` is the other timeline FrameSource (see the note in §5.15): a basic **NLE-style editor**.  You declare a fixed output format and one or more **tracks**, and place clips at explicit sequence times; at each output time the clip on the highest-priority track that covers it wins (upper track replaces lower), uncovered times render black.  This gives cuts, inserts, multi-cam selects, and layering — things `xfade_sequence`'s single linear track cannot express.  Its only transition today is the cross-`dissolve`; for wipes/slides/fades use `xfade_sequence` instead.
+
+Clips are placed with `timeline_in` (where on the output), `source_in`/`source_out` (what part of the source), and an optional `transition`:
+
+```json
+{
+  "id": "seq",
+  "type": "go_processor",
+  "processor": "sequence_editor",
+  "params": {
+    "format": { "width": 1920, "height": 1080, "pix_fmt": "yuv420p", "frame_rate": 29.97, "time_base": [1, 90000], "length_sec": 130 },
+    "tracks": [
+      {
+        "id": "V1",
+        "type": "video",
+        "clips": [
+          { "input_id": "video_a", "source_in": 0,  "source_out": 10.5, "timeline_in": 0,  "transition": { "type": "dissolve", "duration": 0.5 } },
+          { "input_id": "video_b", "source_in": 10, "source_out": 20.5, "timeline_in": 10, "transition": { "type": "dissolve", "duration": 0.5 } },
+          { "input_id": "video_a", "source_in": 20, "source_out": 30,   "timeline_in": 20 }
+        ]
+      }
+    ]
+  }
+}
+```
+
+Like `xfade_sequence`, it is a **FrameSource** with no inbound AV edges — reference sources by `input_id`/`media_id` on Input nodes and the engine resolves them to URLs.  Full field reference: **[go-processor-nodes.md § `sequence_editor`](go-processor-nodes.md#sequence_editor)**; a runnable example is [`testdata/examples/61_sequence_editor_dissolves.json`](../testdata/examples/61_sequence_editor_dissolves.json).
 
 ---
 

@@ -1484,6 +1484,8 @@ See the [TwelveLabs Guide](twelvelabs.md) for full parameter reference, graph re
 
 ## Xfade sequence (timeline assembly)
 
+> **`xfade_sequence` vs `sequence_editor`.** Both are FrameSource timeline nodes. `xfade_sequence` (this section) is a **single-track, linear** sequence with the **full `xfade` transition library** (wipes, slides, fades, dissolve). `sequence_editor` is a **multi-track NLE timeline** with explicit placement and layering but **dissolve-only** transitions — reach for it when you need tracks or precise placement. See the [comparison](go-processor-nodes.md#timeline-assembly-sequence_editor-vs-xfade_sequence).
+
 The `xfade_sequence` processor assembles a sequential clip timeline with libavfilter `xfade` transitions.  Unlike chaining multiple `xfade` filter nodes — which requires all decoders to run concurrently — `xfade_sequence` is a **FrameSource**: it opens source files one at a time and keeps at most two decoders alive simultaneously (one for the outgoing clip, one for the incoming clip, only during the overlap window).  Memory usage is O(1 frame) regardless of timeline length.
 
 ### Placing the node

@@ -21,6 +21,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   input handle is hidden because the processor opens files internally.
   See `docs/go-processor-nodes.md#xfade_sequence`.
 
+- **`sequence_editor` go_processor (FrameSource).** NLE-style timeline /
+  sequence generator: declares a fixed output format and one or more tracks,
+  places clips at explicit sequence times (`timeline_in` / `source_in` /
+  `source_out`), and renders the highest-priority track covering each output
+  time (upper track wins; gaps render black). Supports cuts, inserts,
+  multi-cam selects, layering, and cross-`dissolve` transitions. Complements
+  `xfade_sequence` (single-track, full `xfade` transition library): use
+  `sequence_editor` for multi-track/placement, `xfade_sequence` for varied
+  transitions on a linear sequence. Example
+  `testdata/examples/61_sequence_editor_dissolves.json`; reference and
+  comparison in `docs/go-processor-nodes.md`.
+
 - **Remote backend user guide** (`docs/remote-backend-guide.md`): step-by-step
   guide for Tier 1 (single-machine `--mode=server`) and Tier 2 (distributed
   cluster) deployments; covers TLS, static token and OIDC auth, mTLS, S3

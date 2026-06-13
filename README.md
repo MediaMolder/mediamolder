@@ -153,7 +153,7 @@ first-class node, written as an ordinary Go struct that implements the
 hacks. The engine schedules, monitors, and error-handles custom nodes
 identically to built-in nodes. For more details, see [go-processor-nodes.md](docs/go-processor-nodes.md).
 
-Processors may also implement the optional `FrameSource` sub-interface to **generate their own frames** rather than processing inbound ones.  The built-in `xfade_sequence` processor demonstrates this: it assembles a sequential clip timeline with libavfilter `xfade` transitions, opening source files one at a time so memory stays O(1 frame) regardless of timeline length.  See the [xfade_sequence reference](docs/go-processor-nodes.md#xfade_sequence) and the [timeline assembly workflow](docs/using-mediamolder.md#515-timeline-assembly-with-xfade_sequence).
+Processors may also implement the optional `FrameSource` sub-interface to **generate their own frames** rather than processing inbound ones.  Two built-in FrameSources assemble clip timelines: **`xfade_sequence`** (single-track, the full libavfilter `xfade` transition library, O(1-frame) memory) and **`sequence_editor`** (multi-track NLE timeline with placement and layering, cross-dissolve transitions).  See the [timeline-assembly comparison](docs/go-processor-nodes.md#timeline-assembly-sequence_editor-vs-xfade_sequence) for which to use, and the [workflow guide](docs/using-mediamolder.md#515-timeline-assembly-with-xfade_sequence).
 
 You can add a custom Yolo-v8 object-detection node to a graph and it will 
 run directly inside your media graph. See [Yolo-V8 Guide](docs/yolov8-guide.md)
@@ -297,7 +297,7 @@ For detailed instructions see [MacOS](docs/build/macos.md), [Windows](docs/build
 - [FFmpeg Migration Guide](docs/ffmpeg-migration-guide.md)
 - [Export to FFmpeg CLI](docs/architecture/export.md)
 - [Validation](docs/architecture/graph_validation_design.md)
-- [Go Processor Nodes](docs/go-processor-nodes.md) — `Processor` interface, `FrameSource` interface, built-in processors (`xfade_sequence`, scene detectors, TwelveLabs, Vidi, …), writing custom nodes
+- [Go Processor Nodes](docs/go-processor-nodes.md) — `Processor` interface, `FrameSource` interface, built-in processors (`sequence_editor`, `xfade_sequence`, scene detectors, TwelveLabs, Vidi, …), writing custom nodes
 - [Scene Detection](docs/scene-detection.md) — six detectors: go-scene-detect ports (content, adaptive, threshold, hash, histogram) and FFmpeg scdet
 - [Yolov8 object detection/classification](docs/yolov8-guide.md)
 - [Vidi 2.5 multimodal analysis](docs/vidi-guide.md)
