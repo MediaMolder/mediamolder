@@ -243,7 +243,7 @@ func (q *SQSQueue) Len(_ context.Context) (int, error) {
 		return 0, fmt.Errorf("sqs: parse GetQueueAttributes: %w", err)
 	}
 	var n int
-	fmt.Sscanf(result.Attributes["ApproximateNumberOfMessages"], "%d", &n)
+	_, _ = fmt.Sscanf(result.Attributes["ApproximateNumberOfMessages"], "%d", &n)
 	return n, nil
 }
 

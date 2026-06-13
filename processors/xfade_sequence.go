@@ -153,10 +153,8 @@ func (xs *XfadeSequence) Run(ctx context.Context, send func(*av.Frame) error) er
 	var clipBasePTS int64
 
 	for i, clip := range xs.clips {
-		if i > 0 {
-			// cd was set to nextCD at the end of the previous transition.
-			// clipBasePTS was updated there.
-		}
+		// For i > 0, cd was set to nextCD at the end of the previous
+		// transition and clipBasePTS was updated there.
 
 		tbNum := cd.si.TimeBase[0]
 		tbDen := cd.si.TimeBase[1]

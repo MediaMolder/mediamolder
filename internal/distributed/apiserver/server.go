@@ -17,7 +17,6 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
@@ -371,17 +370,4 @@ func serverBase(r *http.Request) string {
 		scheme = "https"
 	}
 	return scheme + "://" + r.Host
-}
-
-// parseAfterID extracts the optional "after" query param as an int64 cursor.
-func parseAfterID(r *http.Request) int64 {
-	s := r.URL.Query().Get("after")
-	if s == "" {
-		return 0
-	}
-	n, err := strconv.ParseInt(s, 10, 64)
-	if err != nil {
-		return 0
-	}
-	return n
 }

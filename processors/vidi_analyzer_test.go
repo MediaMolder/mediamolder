@@ -238,7 +238,7 @@ func TestVidiAnalyzer_Process_ProcessEverySkipping(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callCount++
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(vidiResponse{Caption: "ok"})
+		_ = json.NewEncoder(w).Encode(vidiResponse{Caption: "ok"})
 	}))
 	defer srv.Close()
 
@@ -260,7 +260,7 @@ func TestVidiAnalyzer_Process_ProcessEverySkipping(t *testing.T) {
 	// Send 6 frames: only frames 3 and 6 (frameCount % 3 == 0) should trigger.
 	for range 6 {
 		frame := av.NewTestFrame(t, 32, 32, 0)
-		p.Process(frame, ctx)
+		_, _, _ = p.Process(frame, ctx)
 		frame.Close()
 	}
 

@@ -55,10 +55,10 @@ func TestSQS_Publish_SigV4Header(t *testing.T) {
 	var captured *http.Request
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		captured = r.Clone(r.Context())
-		io.Copy(io.Discard, r.Body)
+		_, _ = io.Copy(io.Discard, r.Body)
 		w.Header().Set("Content-Type", "application/json")
 		// Minimal SendMessage response
-		json.NewEncoder(w).Encode(map[string]any{"MessageId": "msg-1"})
+		_ = json.NewEncoder(w).Encode(map[string]any{"MessageId": "msg-1"})
 	}))
 	defer srv.Close()
 
@@ -99,9 +99,9 @@ func TestSQS_Publish_Receive_Ack(t *testing.T) {
 		switch target {
 		case "AmazonSQS.SendMessage":
 			receivedSendBody = body
-			json.NewEncoder(w).Encode(map[string]any{"MessageId": "msg-abc"})
+			_ = json.NewEncoder(w).Encode(map[string]any{"MessageId": "msg-abc"})
 		case "AmazonSQS.ReceiveMessage":
-			json.NewEncoder(w).Encode(map[string]any{
+			_ = json.NewEncoder(w).Encode(map[string]any{
 				"Messages": []map[string]any{{
 					"MessageId":     "msg-abc",
 					"ReceiptHandle": "receipt-xyz",
@@ -109,9 +109,9 @@ func TestSQS_Publish_Receive_Ack(t *testing.T) {
 				}},
 			})
 		case "AmazonSQS.DeleteMessage":
-			json.NewEncoder(w).Encode(map[string]any{})
+			_ = json.NewEncoder(w).Encode(map[string]any{})
 		case "AmazonSQS.GetQueueAttributes":
-			json.NewEncoder(w).Encode(map[string]any{
+			_ = json.NewEncoder(w).Encode(map[string]any{
 				"Attributes": map[string]string{
 					"ApproximateNumberOfMessages": "0",
 				},

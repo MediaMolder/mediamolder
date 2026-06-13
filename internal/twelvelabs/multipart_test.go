@@ -30,7 +30,7 @@ func TestUploadMultipart_SendsFields(t *testing.T) {
 			"language": r.FormValue("language"),
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(Task{ID: "task1"})
+		_ = json.NewEncoder(w).Encode(Task{ID: "task1"})
 	}))
 	defer srv.Close()
 
@@ -86,7 +86,7 @@ func TestUploadMultipart_StreamsFileBytes(t *testing.T) {
 			part.Close()
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(Task{ID: "t1"})
+		_ = json.NewEncoder(w).Encode(Task{ID: "t1"})
 	}))
 	defer srv.Close()
 
@@ -130,7 +130,7 @@ func TestUploadMultipart_LargeStream(t *testing.T) {
 			part.Close()
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(Task{ID: "t1"})
+		_ = json.NewEncoder(w).Encode(Task{ID: "t1"})
 	}))
 	defer srv.Close()
 
@@ -156,7 +156,7 @@ func TestUploadMultipart_APIError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(400)
-		json.NewEncoder(w).Encode(map[string]string{
+		_ = json.NewEncoder(w).Encode(map[string]string{
 			"code":    "invalid_index",
 			"message": "index not found",
 		})
@@ -188,7 +188,7 @@ func TestCreateIndexTask_File(t *testing.T) {
 			gotField = "video_file"
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(Task{ID: "t2", Status: TaskStatusPending})
+		_ = json.NewEncoder(w).Encode(Task{ID: "t2", Status: TaskStatusPending})
 	}))
 	defer srv.Close()
 
@@ -196,7 +196,7 @@ func TestCreateIndexTask_File(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tmp.WriteString("fake")
+	_, _ = tmp.WriteString("fake")
 	tmp.Close()
 
 	c := newTestClient(srv)
@@ -215,10 +215,10 @@ func TestCreateIndexTask_File(t *testing.T) {
 func TestCreateIndexTask_URL(t *testing.T) {
 	var gotURL string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		r.ParseMultipartForm(1 << 20)
+		_ = r.ParseMultipartForm(1 << 20)
 		gotURL = r.FormValue("video_url")
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(Task{ID: "t1", Status: TaskStatusPending})
+		_ = json.NewEncoder(w).Encode(Task{ID: "t1", Status: TaskStatusPending})
 	}))
 	defer srv.Close()
 
