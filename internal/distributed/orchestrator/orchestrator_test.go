@@ -186,6 +186,27 @@ func TestAcceptJob_FanoutStatic_EnqueuesNTasks(t *testing.T) {
 	}
 }
 
+// TestAcceptJob_FanoutStatic_RejectsHugeCount guards the DoS backstop: a
+// remote job submission must not be able to drive an unbounded task
+// allocation (each task deep-copies the full config). See orchestrator.MaxFanoutTasks.
+func TestAcceptJob_FanoutStatic_RejectsHugeCount(t *testing.T) {
+	orch, _, _ := newTestOrch(t)
+	ctx := context.Background()
+
+	jb := baseJob()
+	jb.Distribution = &job.DistributionSpec{
+		Stages: []job.Stage{
+			{
+				ID:       "encode",
+				Strategy: job.StageStrategy{Kind: "fanout_static", Params: map[string]any{"count": float64(orchestrator.MaxFanoutTasks + 1)}},
+			},
+		},
+	}
+	if _, err := orch.AcceptJob(ctx, jb); err == nil {
+		t.Fatalf("expected error for count > orchestrator.MaxFanoutTasks (%d)", orchestrator.MaxFanoutTasks)
+	}
+}
+
 func TestAcceptJob_FanoutStatic_MissingCount_Errors(t *testing.T) {
 	orch, _, _ := newTestOrch(t)
 	ctx := context.Background()
