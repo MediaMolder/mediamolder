@@ -26,12 +26,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   places clips at explicit sequence times (`timeline_in` / `source_in` /
   `source_out`), and renders the highest-priority track covering each output
   time (upper track wins; gaps render black). Supports cuts, inserts,
-  multi-cam selects, layering, and cross-`dissolve` transitions. Complements
-  `xfade_sequence` (single-track, full `xfade` transition library): use
-  `sequence_editor` for multi-track/placement, `xfade_sequence` for varied
-  transitions on a linear sequence. Example
-  `testdata/examples/61_sequence_editor_dissolves.json`; reference and
-  comparison in `docs/go-processor-nodes.md`.
+  multi-cam selects, layering, and between-clip transitions: `dissolve` (a
+  linear cross-fade via the `blend` filter) and the **full libavfilter
+  `xfade` set** (wipes, slides, fades, circles, …), composited per
+  transition window by an `xfade` graph driven one frame-pair at a time.
+  Unsupported transition names are rejected at load time. Complements
+  `xfade_sequence` (single-track, O(1)-frame memory): use `sequence_editor`
+  for multi-track/placement, `xfade_sequence` for a memory-flat linear
+  montage. Examples `testdata/examples/61_sequence_editor_dissolves.json`
+  and `62_sequence_editor_wipe.json`; reference and comparison in
+  `docs/go-processor-nodes.md`.
 
 - **Remote backend user guide** (`docs/remote-backend-guide.md`): step-by-step
   guide for Tier 1 (single-machine `--mode=server`) and Tier 2 (distributed

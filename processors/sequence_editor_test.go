@@ -38,14 +38,12 @@ func initWithTransition(t *testing.T, transition string) error {
 // An unsupported transition type must be rejected at Init (not silently
 // rendered as a hard cut), pointing the user at xfade_sequence.
 func TestSequenceEditor_RejectsUnsupportedTransition(t *testing.T) {
-	err := initWithTransition(t, `{ "type": "wipeleft", "duration": 0.5 }`)
+	err := initWithTransition(t, `{ "type": "notarealtransition", "duration": 0.5 }`)
 	if err == nil {
 		t.Fatal("expected error for unsupported transition type")
 	}
-	for _, want := range []string{"wipeleft", "xfade_sequence"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("error %q missing %q", err.Error(), want)
-		}
+	if !strings.Contains(err.Error(), "notarealtransition") {
+		t.Errorf("error %q should name the bad type", err.Error())
 	}
 }
 
@@ -70,5 +68,15 @@ func TestSequenceEditor_AcceptsDissolve(t *testing.T) {
 	// No transition at all is fine (hard cut between clips).
 	if err := initWithTransition(t, ""); err != nil {
 		t.Fatalf("no-transition sequence rejected: %v", err)
+	}
+}
+
+// xfade transition names are now accepted at Init (rendered via the xfade
+// graph path).
+func TestSequenceEditor_AcceptsXfadeTransitions(t *testing.T) {
+	for _, typ := range []string{"fade", "wipeleft", "slideright", "circleopen", "fadeblack", "hblur"} {
+		if err := initWithTransition(t, `{ "type": "`+typ+`", "duration": 0.5 }`); err != nil {
+			t.Errorf("xfade transition %q rejected: %v", typ, err)
+		}
 	}
 }

@@ -577,7 +577,7 @@ placement* or *the full transition library*:
 | **Mental model** | NLE-style timeline: place clips at explicit times on one or more **tracks** | Linear montage: clips abut **end-to-end** in one sequence |
 | **Tracks / layering** | **Multiple tracks**, upper track wins where it covers a time; gaps render black; supports cuts, inserts, multi-cam selects | **Single track** only |
 | **Clip placement** | explicit `timeline_in` / `source_in` / `source_out` per clip | implicit — each clip follows the previous; `in` / `out` only |
-| **Transitions** | **`dissolve` only** (internal per-frame blend); other `type` values are currently ignored (hard cut) | **the full libavfilter `xfade` set** — `fade`, `wipe*`, `slide*`, `dissolve`, … |
+| **Transitions** | `dissolve` (linear blend) **plus the full libavfilter `xfade` set** — `fade`, `wipe*`, `slide*`, `circleopen`, … (within-track, two-clip) | the full libavfilter `xfade` set — `fade`, `wipe*`, `slide*`, `dissolve`, … |
 | **Output format** | fixed sequence format you declare (`width`/`height`/`pix_fmt`/`frame_rate`/`length_sec`); sources are scaled/retimed to it | inherited from the clips; normalise downstream if they differ |
 | **Params shape** | `format` + `tracks[].clips[]` (clip objects) | flat `clips[]` array alternating clip / transition objects |
 | **Memory** | decodes the winning clip per output frame | O(1 frame); ≤ 2 decoders open during an overlap |
@@ -607,8 +607,11 @@ gives cuts, inserts, multi-cam selects, and layered content via track
 priority. The sequence timebase is continuous and independent of the
 sources' timebases, so output PTS is strictly increasing at a constant rate.
 
-For transition variety beyond a cross-dissolve, or a memory-flat linear
-montage, see [`xfade_sequence`](#xfade_sequence) and the
+Transitions between adjacent clips on a track support `dissolve` (a linear
+cross-fade) and the full libavfilter `xfade` set (wipes, slides, fades, …) —
+see the `transition` field below. For a memory-flat *linear* montage, or if
+you prefer xfade_sequence's flat clip/transition array, see
+[`xfade_sequence`](#xfade_sequence) and the
 [comparison above](#timeline-assembly-sequence_editor-vs-xfade_sequence).
 
 #### When to use `sequence_editor`
@@ -616,7 +619,7 @@ montage, see [`xfade_sequence`](#xfade_sequence) and the
 - Multi-track / layered timelines (upper track replaces lower where present)
 - Precise placement: clips at specific sequence times, with gaps or overlaps
 - A fixed output format that sources are scaled/retimed into
-- Cross-dissolve transitions between adjacent clips on a track
+- Dissolve or any `xfade` transition between adjacent clips on a track
 
 #### Params
 
@@ -659,14 +662,17 @@ montage, see [`xfade_sequence`](#xfade_sequence) and the
 | `source_in` | number | Source time (seconds) mapped to `timeline_in`. |
 | `source_out` | number | Source stop time; clip duration = `source_out − source_in` (must be > 0, and includes any transition overlap). |
 | `timeline_in` | number | Where the clip begins on the output timeline (seconds). |
-| `transition` | object | Optional `{ "type": "dissolve", "duration": <sec> }` cross-fade into the next clip. Only `dissolve` is implemented today; other types are parsed but ignored (hard cut). |
+| `transition` | object | Optional `{ "type": "<name>", "duration": <sec> }` transition into the next clip. `dissolve` is a linear cross-fade (the `blend` filter — *not* xfade's dithered dissolve); every other name is a **libavfilter `xfade` transition** (`fade`, `wipeleft/right/up/down`, `slideleft/right/…`, `circleopen/close`, `fadeblack/white/grays`, `radial`, `zoomin`, `hblur`, …) composited per-window via an xfade graph. Transitions are within-track (between two adjacent clips on the same track); they do not compose across track layers. Unsupported names are rejected at load time. |
 
 `sequence_log` (optional): a path to write one JSON-Lines record per output
 frame describing what the renderer did (winning track/clip, source time
 fetched, hold vs. fresh content) — useful for debugging timeline math.
 
-A complete, runnable example is
-[`testdata/examples/61_sequence_editor_dissolves.json`](../testdata/examples/61_sequence_editor_dissolves.json).
+Runnable examples:
+[`61_sequence_editor_dissolves.json`](../testdata/examples/61_sequence_editor_dissolves.json)
+(dissolve) and
+[`62_sequence_editor_wipe.json`](../testdata/examples/62_sequence_editor_wipe.json)
+(xfade `wipeleft` + `slideright`).
 
 **Note**: like `xfade_sequence`, `sequence_editor` is a **FrameSource** — it
 opens its sources internally and has **no inbound AV edge**. Reference

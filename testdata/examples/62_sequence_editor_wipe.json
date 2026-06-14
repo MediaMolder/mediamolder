@@ -1,0 +1,38 @@
+{
+  "schema_version": "1.1",
+  "description": "sequence_editor timeline using libavfilter xfade transitions: three clips on one video track joined by a wipeleft and a slideright, rendered to a fixed 1280x720@30 sequence. Demonstrates that sequence_editor supports the full xfade transition set (not just cross-dissolve). Both inputs point at the same fixture here; in real use they are distinct clips.",
+  "ffmpeg_cmd": "not possible in ffmpeg",
+  "inputs": [
+    { "id": "video_a", "url": "{{input}}", "streams": [{ "input_index": 0, "type": "video", "track": 0 }] },
+    { "id": "video_b", "url": "{{input}}", "streams": [{ "input_index": 0, "type": "video", "track": 0 }] }
+  ],
+  "graph": {
+    "nodes": [
+      {
+        "id": "seq",
+        "type": "go_processor",
+        "processor": "sequence_editor",
+        "params": {
+          "format": { "width": 1280, "height": 720, "pix_fmt": "yuv420p", "frame_rate": 30, "time_base": [1, 90000], "length_sec": 9 },
+          "tracks": [
+            {
+              "id": "V1",
+              "type": "video",
+              "clips": [
+                { "input_id": "video_a", "source_in": 0, "source_out": 3.5, "timeline_in": 0, "transition": { "type": "wipeleft", "duration": 0.5 } },
+                { "input_id": "video_b", "source_in": 3, "source_out": 6.5, "timeline_in": 3, "transition": { "type": "slideright", "duration": 0.5 } },
+                { "input_id": "video_a", "source_in": 6, "source_out": 9, "timeline_in": 6 }
+              ]
+            }
+          ]
+        }
+      },
+      { "id": "enc", "type": "encoder", "params": { "codec": "libx264", "r": "30", "framerate": "30" } }
+    ],
+    "edges": [
+      { "from": "seq", "to": "enc", "type": "video" },
+      { "from": "enc", "to": "out0:v", "type": "video" }
+    ]
+  },
+  "outputs": [ { "id": "out0", "url": "{{output}}" } ]
+}

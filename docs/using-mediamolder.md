@@ -1475,7 +1475,7 @@ For the full flag reference, S3 presigning setup, and API specification see
 > stitching clips: **`xfade_sequence`** (this section) — a *single-track,
 > linear* sequence with the **full `xfade` transition library** (wipes,
 > slides, fades, dissolve) — and **[`sequence_editor`](#516-multi-track-timelines-with-sequence_editor)** — a *multi-track NLE
-> timeline* with placement and layering but **dissolve-only** transitions.
+> timeline* with placement and layering, supporting dissolve **and the full xfade set**.
 > Use `xfade_sequence` for a simple montage with varied transitions; use
 > `sequence_editor` when you need tracks, layering, or precise placement.
 > Full comparison: [go-processor-nodes.md](go-processor-nodes.md#timeline-assembly-sequence_editor-vs-xfade_sequence).
@@ -1570,7 +1570,7 @@ See **[§ Xfade sequence](gui.md#xfade-sequence-timeline-assembly)** in the GUI 
 
 ### 5.16 Multi-track timelines with sequence_editor
 
-`sequence_editor` is the other timeline FrameSource (see the note in §5.15): a basic **NLE-style editor**.  You declare a fixed output format and one or more **tracks**, and place clips at explicit sequence times; at each output time the clip on the highest-priority track that covers it wins (upper track replaces lower), uncovered times render black.  This gives cuts, inserts, multi-cam selects, and layering — things `xfade_sequence`'s single linear track cannot express.  Its only transition today is the cross-`dissolve`; for wipes/slides/fades use `xfade_sequence` instead.
+`sequence_editor` is the other timeline FrameSource (see the note in §5.15): a basic **NLE-style editor**.  You declare a fixed output format and one or more **tracks**, and place clips at explicit sequence times; at each output time the clip on the highest-priority track that covers it wins (upper track replaces lower), uncovered times render black.  This gives cuts, inserts, multi-cam selects, and layering — things `xfade_sequence`'s single linear track cannot express.  Transitions between adjacent clips on a track support `dissolve` (a linear cross-fade) **and the full libavfilter `xfade` set** (wipes, slides, fades, …); `xfade_sequence` remains the choice for a memory-flat *linear* montage.
 
 Clips are placed with `timeline_in` (where on the output), `source_in`/`source_out` (what part of the source), and an optional `transition`:
 

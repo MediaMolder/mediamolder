@@ -83,15 +83,33 @@ type seqTransition struct {
 }
 
 // seqSupportedTransitions is the set of transition types sequence_editor can
-// actually render. Only a cross-dissolve is implemented today; other styles
-// (wipes, slides, fades) require the xfade_sequence processor, which exposes
-// the full libavfilter xfade set. Unknown types are rejected at Init rather
-// than silently degrading to a hard cut.
-var seqSupportedTransitions = map[string]bool{"dissolve": true}
+// render. "dissolve" is a linear cross-fade done with the blend filter (kept
+// for backward compatibility; note this is NOT xfade's dithered "dissolve").
+// Every other name is a libavfilter xfade transition, composited per-window
+// via an xfade graph (see xfadeComposite). Unknown types are rejected at Init
+// rather than silently degrading to a hard cut. The xfade names mirror the
+// documented set in docs/using-mediamolder.md §5.15; a name compiled out of
+// the running libavfilter build will surface as an xfade graph-build error at
+// render time.
+var seqSupportedTransitions = map[string]bool{
+	"dissolve": true, // linear blend (not xfade's dithered dissolve)
+	// libavfilter xfade transitions:
+	"fade": true, "fadeblack": true, "fadewhite": true, "fadegrays": true,
+	"wipeleft": true, "wiperight": true, "wipeup": true, "wipedown": true,
+	"wipetl": true, "wipetr": true, "wipebl": true, "wipebr": true,
+	"slideleft": true, "slideright": true, "slideup": true, "slidedown": true,
+	"smoothleft": true, "smoothright": true, "smoothup": true, "smoothdown": true,
+	"circleopen": true, "circleclose": true, "circlecrop": true, "rectcrop": true,
+	"vertopen": true, "vertclose": true, "horzopen": true, "horzclose": true,
+	"distance": true, "radial": true, "zoomin": true,
+	"squeezeh": true, "squeezev": true,
+	"hlslice": true, "hrslice": true, "vuslice": true, "vdslice": true,
+	"hblur": true,
+}
 
 // seqSupportedTransitionList is the human-readable form of the above for
 // error messages.
-const seqSupportedTransitionList = "dissolve"
+const seqSupportedTransitionList = "dissolve (linear), or any libavfilter xfade transition (fade, wipeleft, slideright, circleopen, …)"
 
 // seqTrack is one layer in the timeline. Higher-index tracks have priority
 // (their content replaces lower tracks where they are active).
@@ -159,6 +177,18 @@ type SequenceEditor struct {
 	// the cost of repeated NewComplexFilterGraph / parse / config for every
 	// blended frame (which was contributing to the observed slowdown).
 	blendGraph *av.FilterGraph
+
+	// xfadeGraph is a two-input libavfilter xfade graph used for non-dissolve
+	// transitions (wipes, slides, fades, …). Unlike blendGraph it is built
+	// PER transition window — xfade derives progress from input PTS over its
+	// configured duration, so a fresh graph (and a reset PTS counter) is
+	// needed for each window. xfadeKey identifies the current window so the
+	// graph is rebuilt when a new one begins; xfadePTS is the continuous
+	// per-window input PTS (the spike confirmed xfade emits exactly one
+	// output per frame-pair at 1:1 cadence when fed monotonic PTS).
+	xfadeGraph *av.FilterGraph
+	xfadeKey   string
+	xfadePTS   int64
 
 	// lastContentI remembers the output frame index (i) of the last real content
 	// frame we produced (not a hold). Used by the optional sequence log.
@@ -351,6 +381,10 @@ func (se *SequenceEditor) Close() error {
 		se.blendGraph.Close()
 		se.blendGraph = nil
 	}
+	if se.xfadeGraph != nil {
+		se.xfadeGraph.Close()
+		se.xfadeGraph = nil
+	}
 	if se.lastFrame != nil {
 		se.lastFrame.Close()
 		se.lastFrame = nil
@@ -429,6 +463,13 @@ func (se *SequenceEditor) Run(ctx context.Context, send func(*av.Frame) error) e
 		}
 
 		var activeLayers []activeLayer
+		// Transition state for this output frame (set during window detection,
+		// read by the compositing branch below). transType is "" outside a
+		// transition window or "dissolve" for the linear blend path; any other
+		// value routes through the libavfilter xfade path. transKey identifies
+		// the window so the xfade graph is rebuilt at each new transition.
+		var transType, transKey string
+		var transDur float64
 		for ti := len(se.tracks) - 1; ti >= 0; ti-- {
 			tr := &se.tracks[ti]
 			var trackCovers []activeLayer
@@ -447,17 +488,18 @@ func (se *SequenceEditor) Run(ctx context.Context, send func(*av.Frame) error) e
 				}
 			}
 			if len(trackCovers) > 0 {
-				// Detect transition (dissolve) windows on this track.
-				// We look for consecutive clips where the earlier one declares a
-				// dissolve transition whose window overlaps the current t.
-				// The extra duration padding in the JSON (e.g. 10.125 instead of 10)
-				// makes the coverage of outgoing and incoming overlap exactly during
-				// the dissolve.
+				// Detect transition windows on this track. We look for
+				// consecutive clips where the earlier one declares a transition
+				// whose window overlaps the current t. The extra duration
+				// padding in the JSON (e.g. 10.125 instead of 10) makes the
+				// coverage of outgoing and incoming overlap exactly during the
+				// transition. Any supported type is handled here; the
+				// compositing branch below picks blend (dissolve) vs xfade.
 				if len(trackCovers) >= 2 {
 					// trackCovers appended in clip-list order; assume earlier SeqIn first
 					outL := &trackCovers[0]
 					inL := &trackCovers[len(trackCovers)-1]
-					if outL.clip.Transition != nil && outL.clip.Transition.Type == "dissolve" && outL.clip.Transition.Duration > 0 {
+					if outL.clip.Transition != nil && outL.clip.Transition.Duration > 0 {
 						dDur := outL.clip.Transition.Duration
 						dStart := outL.clip.SeqIn + outL.clip.Duration - dDur
 						if t >= dStart {
@@ -470,6 +512,9 @@ func (se *SequenceEditor) Run(ctx context.Context, send func(*av.Frame) error) e
 							}
 							outL.opacity = 1 - prog
 							inL.opacity = prog
+							transType = outL.clip.Transition.Type
+							transDur = dDur
+							transKey = fmt.Sprintf("%d:%d:%.3f:%s", ti, outL.clipIdx, dStart, transType)
 						}
 					}
 				}
@@ -540,7 +585,15 @@ func (se *SequenceEditor) Run(ctx context.Context, send func(*av.Frame) error) e
 						}
 					}
 				}
-				if len(cframes) >= 2 {
+				if len(cframes) >= 2 && transType != "" && transType != "dissolve" {
+					// Non-dissolve transition: composite via a libavfilter xfade
+					// graph (wipes, slides, fades, …). xfadeComposite takes
+					// ownership of the two frames and returns one output frame
+					// (or nil → hold). cframes[0] is outgoing, cframes[1]
+					// incoming, matching xfade's [a][b] input order.
+					outFrame = se.xfadeComposite(transType, transKey, transDur, cframes[0], cframes[1])
+					contentThisFrame = true
+				} else if len(cframes) >= 2 {
 					// To achieve the correct cross-fade direction with the blend filter
 					// (which appears to implement A*X + B*(1-X) when all_opacity=X),
 					// we pass X = 1 - prog (i.e. outgoing's opacity) as the all_opacity
@@ -879,6 +932,112 @@ func (se *SequenceEditor) getBlendGraph() *av.FilterGraph {
 	}
 	se.blendGraph = fg
 	return fg
+}
+
+// newXfadeGraph builds a two-input libavfilter xfade graph for a single
+// transition window. Both inputs are declared in the sequence format and
+// timebase (the frames are already converted to it); xfade derives its
+// progress from the input PTS relative to dur, so the caller stamps each
+// pushed pair with the in-window presentation time.
+func (se *SequenceEditor) newXfadeGraph(transType string, dur float64) (*av.FilterGraph, error) {
+	// xfade requires a constant frame rate on its inputs; express the
+	// sequence frame rate as a rational (integer rates → n/1, otherwise
+	// n/1000, e.g. 29.97 → 29970/1000).
+	frNum, frDen := 0, 1
+	if fr := se.format.FrameRate; fr > 0 {
+		if r := math.Round(fr); math.Abs(fr-r) < 1e-6 {
+			frNum, frDen = int(r), 1
+		} else {
+			frNum, frDen = int(math.Round(fr*1000)), 1000
+		}
+	}
+	pad := func(label string) av.FilterPadConfig {
+		return av.FilterPadConfig{
+			Label:     label,
+			MediaType: av.MediaTypeVideo,
+			Width:     se.format.Width,
+			Height:    se.format.Height,
+			PixFmt:    se.format.PixFmtInt,
+			TBNum:     se.format.TimeBase[0],
+			TBDen:     se.format.TimeBase[1],
+			SARNum:    1,
+			SARDen:    1,
+			FRNum:     frNum,
+			FRDen:     frDen,
+		}
+	}
+	cfg := av.ComplexFilterGraphConfig{
+		Inputs:     []av.FilterPadConfig{pad("a"), pad("b")},
+		Outputs:    []av.FilterOutputConfig{{Label: "out", MediaType: av.MediaTypeVideo}},
+		FilterSpec: fmt.Sprintf("[a][b]xfade=transition=%s:duration=%.6f:offset=0[out]", transType, dur),
+	}
+	return av.NewComplexFilterGraph(cfg)
+}
+
+// ticksPerFrame returns the sequence-timebase tick count for one output
+// frame at the configured frame rate (e.g. 90000/29.97 ≈ 3003).
+func (se *SequenceEditor) ticksPerFrame() int64 {
+	if se.format.FrameRate <= 0 || se.format.TimeBase[0] <= 0 {
+		return 1
+	}
+	return int64(float64(se.format.TimeBase[1]) / (float64(se.format.TimeBase[0]) * se.format.FrameRate))
+}
+
+// xfadeComposite renders one output frame of a non-dissolve transition via a
+// per-window xfade graph. transKey identifies the window: when it changes a
+// fresh graph is built and the input-PTS counter reset (xfade is a temporal
+// filter that derives progress from PTS over its duration, so each window
+// needs its own graph). The spike confirmed a clean 1:1 push-pair/pull
+// cadence with monotonic PTS, so one pull follows each pushed pair. Takes
+// ownership of a (outgoing) and b (incoming) — both are closed here — and
+// returns the composited frame, or nil (caller falls back to a hold).
+func (se *SequenceEditor) xfadeComposite(transType, transKey string, dur float64, a, b *av.Frame) *av.Frame {
+	if se.xfadeGraph == nil || se.xfadeKey != transKey {
+		if se.xfadeGraph != nil {
+			se.xfadeGraph.Close()
+			se.xfadeGraph = nil
+		}
+		fg, err := se.newXfadeGraph(transType, dur)
+		if err != nil {
+			fmt.Printf("sequence_editor: build xfade graph (%s): %v\n", transType, err)
+			a.Close()
+			b.Close()
+			return nil
+		}
+		se.xfadeGraph = fg
+		se.xfadeKey = transKey
+		se.xfadePTS = 0
+	}
+	pts := se.xfadePTS * se.ticksPerFrame()
+	se.xfadePTS++
+	a.SetPTS(pts)
+	b.SetPTS(pts)
+	fg := se.xfadeGraph
+	if err := fg.PushFrameAt(0, a); err != nil {
+		fmt.Printf("sequence_editor: xfade push a failed: %v\n", err)
+		a.Close()
+		b.Close()
+		return nil
+	}
+	a.Close()
+	if err := fg.PushFrameAt(1, b); err != nil {
+		fmt.Printf("sequence_editor: xfade push b failed: %v\n", err)
+		b.Close()
+		return nil
+	}
+	b.Close()
+	out, aerr := av.AllocFrame()
+	if aerr != nil {
+		return nil
+	}
+	if perr := fg.PullFrameAt(0, out); perr != nil {
+		out.Close()
+		if !av.IsEAgain(perr) && !av.IsEOF(perr) {
+			fmt.Printf("sequence_editor: xfade pull failed: %v\n", perr)
+		}
+		return nil
+	}
+	return out
 }
 
 // ---------- helpers ----------
