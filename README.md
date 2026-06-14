@@ -153,7 +153,7 @@ first-class node, written as an ordinary Go struct that implements the
 hacks. The engine schedules, monitors, and error-handles custom nodes
 identically to built-in nodes. For more details, see [go-processor-nodes.md](docs/go-processor-nodes.md).
 
-Processors may also implement the optional `FrameSource` sub-interface to **generate their own frames** rather than processing inbound ones.  Two built-in FrameSources assemble clip timelines: **`xfade_sequence`** (single-track, the full libavfilter `xfade` transition library, O(1-frame) memory) and **`sequence_editor`** (multi-track NLE timeline with placement and layering, cross-dissolve transitions).  See the [timeline-assembly comparison](docs/go-processor-nodes.md#timeline-assembly-sequence_editor-vs-xfade_sequence) for which to use, and the [workflow guide](docs/using-mediamolder.md#515-timeline-assembly-with-xfade_sequence).
+Processors may also implement the optional `FrameSource` sub-interface to **generate their own frames** rather than processing inbound ones.  Two built-in FrameSources assemble clip timelines — **`sequence_editor`** (multi-track NLE timeline with placement, layering, and the full libavfilter `xfade` transition set) and **`xfade_sequence`** (single-track linear montage, O(1-frame) memory) — so you can cut, trim, and add wipes/dissolves/slides entirely inside a job graph.  See the [Video Editing Guide](docs/video-editing-guide.md) for the workflow and timing model, or the [timeline-assembly comparison](docs/go-processor-nodes.md#timeline-assembly-sequence_editor-vs-xfade_sequence) for which to use.
 
 You can add a custom Yolo-v8 object-detection node to a graph and it will 
 run directly inside your media graph. See [Yolo-V8 Guide](docs/yolov8-guide.md)
@@ -297,6 +297,7 @@ For detailed instructions see [MacOS](docs/build/macos.md), [Windows](docs/build
 - [FFmpeg Migration Guide](docs/ffmpeg-migration-guide.md)
 - [Export to FFmpeg CLI](docs/architecture/export.md)
 - [Validation](docs/architecture/graph_validation_design.md)
+- [Video Editing Guide](docs/video-editing-guide.md) — assemble clips into a finished video: multi-track timelines, cuts/trims, dissolves and the full xfade transition set (`sequence_editor` / `xfade_sequence`)
 - [Go Processor Nodes](docs/go-processor-nodes.md) — `Processor` interface, `FrameSource` interface, built-in processors (`sequence_editor`, `xfade_sequence`, scene detectors, TwelveLabs, Vidi, …), writing custom nodes
 - [Scene Detection](docs/scene-detection.md) — six detectors: go-scene-detect ports (content, adaptive, threshold, hash, histogram) and FFmpeg scdet
 - [Yolov8 object detection/classification](docs/yolov8-guide.md)

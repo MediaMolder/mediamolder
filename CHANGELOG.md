@@ -7,6 +7,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- **Video Editing Guide** (`docs/video-editing-guide.md`): task-oriented guide
+  to assembling clips into a finished video with the `sequence_editor` and
+  `xfade_sequence` FrameSource processors — choosing between them, the
+  source-vs-timeline timing model, multi-track layering, the full xfade
+  transition set, mixed-resolution handling, and the GUI/CLI workflow. Linked
+  from the README.
+
 - **`xfade_sequence` go_processor (FrameSource).** New processor that composes
   a sequential clip timeline with libavfilter `xfade` transitions while keeping
   memory usage O(1 frame), regardless of timeline length.  At most two decoders
