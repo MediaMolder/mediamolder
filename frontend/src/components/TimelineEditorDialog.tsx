@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 
 import { useEffect, useMemo, useState } from 'react';
-import { fetchTransitions } from '../lib/transitionsCatalog';
+import { fetchTransitions, fetchAudioTransitions } from '../lib/transitionsCatalog';
 
 /* A wide, buffered table editor for the sequence_editor's timeline. Rows map
  * 1:1 to a track's clips[]; columns map to the JSON fields. Edits are made on a
@@ -13,9 +13,18 @@ import { fetchTransitions } from '../lib/transitionsCatalog';
 
 type Json = Record<string, unknown>;
 
+// Audio crossfade override, coupled to the video transition by default. curve ""
+// → the engine default; off → hard-cut the audio; duration overrides the
+// crossfade length (defaults to the video transition's duration).
+interface AudioFade extends Json {
+  curve?: string;
+  duration?: number;
+  off?: boolean;
+}
 interface Transition extends Json {
   type?: string;
   duration?: number;
+  audio?: AudioFade;
 }
 interface Clip extends Json {
   media_id?: string;
@@ -53,9 +62,10 @@ interface Issue {
   msg: string;
 }
 
-function validate(clips: Clip[], inputIds: string[], names: string[]): Issue[] {
+function validate(clips: Clip[], inputIds: string[], names: string[], audioNames: string[]): Issue[] {
   const out: Issue[] = [];
   const known = new Set(names);
+  const knownAudio = new Set(audioNames);
   clips.forEach((c, i) => {
     const row = i + 1;
     const media = c.media_id || c.input_id || c.url;
@@ -78,6 +88,10 @@ function validate(clips: Clip[], inputIds: string[], names: string[]): Issue[] {
       } else if (sp !== undefined && t.duration > sp) {
         out.push({ row, severity: 'warn', msg: `clip ${row}: transition ${t.duration}s is longer than the clip span ${round3(sp)}s` });
       }
+      const af = t.audio;
+      if (af && typeof af.curve === 'string' && af.curve !== '' && audioNames.length > 0 && !knownAudio.has(af.curve)) {
+        out.push({ row, severity: 'error', msg: `clip ${row}: unknown audio crossfade "${af.curve}"` });
+      }
     }
   });
   for (let i = 1; i < clips.length; i++) {
@@ -96,12 +110,21 @@ export function TimelineEditorDialog({ params, inputIds, onApply, onCancel }: Pr
     return t.length > 0 ? t : [{ id: 'V1', type: 'video', clips: [] }];
   });
   const [names, setNames] = useState<string[]>([]);
+  const [audioNames, setAudioNames] = useState<string[]>([]);
   const trackIdx = 0; // Phase 1: first track
+
+  // Audio output is opt-in via the format's sample_rate; when off, the audio
+  // crossfade column is hidden (there is no audio stream to fade).
+  const fmt = (params.format ?? {}) as Json;
+  const audioEnabled = typeof fmt.sample_rate === 'number' && fmt.sample_rate > 0;
 
   useEffect(() => {
     let alive = true;
     fetchTransitions()
       .then((n) => { if (alive) setNames(n); })
+      .catch(() => { /* leave dropdown with raw values */ });
+    fetchAudioTransitions()
+      .then((n) => { if (alive) setAudioNames(n); })
       .catch(() => { /* leave dropdown with raw values */ });
     return () => { alive = false; };
   }, []);
@@ -147,6 +170,29 @@ export function TimelineEditorDialog({ params, inputIds, onApply, onCancel }: Pr
     if (c.transition) c.transition = { ...c.transition, duration: raw === '' ? undefined : Number(raw) };
     return c;
   });
+  // Audio crossfade sentinel for "hard cut" in the curve dropdown (no real curve
+  // is named this).
+  const AUDIO_OFF = '__off__';
+  // Patch transition.audio, dropping the sub-object entirely once it holds only
+  // defaults so the JSON stays clean (absent audio = auto-coupled).
+  const patchAudio = (i: number, patch: (a: AudioFade) => AudioFade) => patchClip(i, (c) => {
+    if (!c.transition) return c;
+    const next = patch({ ...(c.transition.audio ?? {}) });
+    if (!next.curve && next.duration === undefined && !next.off) {
+      const { audio: _omit, ...rest } = c.transition;
+      void _omit;
+      c.transition = rest;
+    } else {
+      c.transition = { ...c.transition, audio: next };
+    }
+    return c;
+  });
+  const setAudioCurve = (i: number, val: string) => patchAudio(i, (a) => {
+    if (val === AUDIO_OFF) return { ...a, off: true, curve: undefined };
+    return { ...a, off: false, curve: val || undefined };
+  });
+  const setAudioDur = (i: number, raw: string) =>
+    patchAudio(i, (a) => ({ ...a, duration: raw === '' ? undefined : Number(raw) }));
 
   const addClip = () => {
     const last = clips[clips.length - 1];
@@ -180,18 +226,18 @@ export function TimelineEditorDialog({ params, inputIds, onApply, onCancel }: Pr
     setClips(next);
   };
 
-  const issues = useMemo(() => validate(clips, inputIds, names), [clips, inputIds, names]);
+  const issues = useMemo(() => validate(clips, inputIds, names, audioNames), [clips, inputIds, names, audioNames]);
   const hasErrors = issues.some((x) => x.severity === 'error');
   const totalDur = useMemo(
     () => clips.reduce((m, c) => Math.max(m, (c.timeline_in ?? 0) + (clipSpan(c) ?? 0)), 0),
     [clips],
   );
 
-  const fmt = (params.format ?? {}) as Json;
   const fmtSummary = [
     fmt.width && fmt.height ? `${fmt.width}×${fmt.height}` : null,
     typeof fmt.frame_rate === 'number' ? `${fmt.frame_rate} fps` : null,
     typeof fmt.pix_fmt === 'string' ? fmt.pix_fmt : null,
+    audioEnabled ? `${fmt.sample_rate} Hz${typeof fmt.channels === 'number' ? `/${fmt.channels}ch` : ''}` : null,
   ].filter(Boolean).join(' · ');
 
   const apply = () => onApply({ ...params, tracks });
@@ -235,13 +281,14 @@ export function TimelineEditorDialog({ params, inputIds, onApply, onCancel }: Pr
                 <th style={cell}>Timeline In</th>
                 <th style={cell}>Transition →</th>
                 <th style={cell}>Dur</th>
+                {audioEnabled && <th style={cell} title="Audio crossfade across the transition (auto-coupled)">Audio Fade</th>}
                 <th style={cell}></th>
               </tr>
             </thead>
             <tbody>
               {clips.length === 0 && (
                 <tr>
-                  <td style={{ ...cell, color: 'var(--text-dim)' }} colSpan={9}>No clips yet — add one below.</td>
+                  <td style={{ ...cell, color: 'var(--text-dim)' }} colSpan={audioEnabled ? 10 : 9}>No clips yet — add one below.</td>
                 </tr>
               )}
               {clips.map((c, i) => {
@@ -297,6 +344,33 @@ export function TimelineEditorDialog({ params, inputIds, onApply, onCancel }: Pr
                         onChange={(e) => setTransDur(i, e.target.value)}
                       />
                     </td>
+                    {audioEnabled && (
+                      <td style={cell}>
+                        {/* Audio fade only applies when the clip has a (video)
+                            transition; otherwise the cut is hard for both. */}
+                        <select
+                          value={c.transition?.audio?.off ? AUDIO_OFF : (c.transition?.audio?.curve ?? '')}
+                          disabled={!c.transition?.type}
+                          onChange={(e) => setAudioCurve(i, e.target.value)}
+                          style={{ width: 104 }}
+                          title="Audio crossfade curve. '(coupled)' uses the engine default across the transition window."
+                        >
+                          <option value="">(coupled)</option>
+                          {audioNames.map((n) => <option key={n} value={n}>{n}</option>)}
+                          <option value={AUDIO_OFF}>off (hard cut)</option>
+                        </select>{' '}
+                        <input
+                          type="number"
+                          step="0.001"
+                          style={{ width: 56 }}
+                          placeholder="=vid"
+                          disabled={!c.transition?.type || c.transition?.audio?.off}
+                          value={numStr(c.transition?.audio?.duration)}
+                          onChange={(e) => setAudioDur(i, e.target.value)}
+                          title="Audio crossfade duration (seconds). Blank = match the video transition."
+                        />
+                      </td>
+                    )}
                     <td style={cell}>
                       <button className="mini-btn" title="Duplicate clip" onClick={() => duplicateClip(i)}>⎘</button>{' '}
                       <button className="mini-btn" title="Remove clip" onClick={() => removeClip(i)}>✕</button>

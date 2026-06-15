@@ -1959,10 +1959,56 @@ function SequenceEditorParams({
     0,
   );
 
+  const sampleRate = typeof fmt.sample_rate === 'number' ? fmt.sample_rate : 0;
+  const audioOn = sampleRate > 0;
+  const channels = typeof fmt.channels === 'number' ? fmt.channels : 2;
+  const setFmt = (patch: Record<string, unknown>) =>
+    onChange({ ...params, format: { ...fmt, ...patch } });
+  const disableAudio = () => {
+    const next = { ...fmt };
+    delete next.sample_rate;
+    delete next.channels;
+    onChange({ ...params, format: next });
+  };
+
   return (
     <>
       <label style={{ marginBottom: 6 }}>Output format</label>
       <ParamsEditor params={fmt} onChange={(next) => onChange({ ...params, format: next })} />
+
+      <label style={{ marginTop: 12, marginBottom: 4 }}>Audio output</label>
+      {audioOn ? (
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <label style={{ fontSize: 11, color: 'var(--text-dim)' }}>
+            Rate{' '}
+            <input
+              type="number"
+              min={8000}
+              step={100}
+              value={sampleRate}
+              onChange={(e) => setFmt({ sample_rate: Number(e.target.value) || 0 })}
+              style={{ width: 84 }}
+            />{' '}Hz
+          </label>
+          <label style={{ fontSize: 11, color: 'var(--text-dim)' }}>
+            Ch{' '}
+            <input
+              type="number"
+              min={1}
+              max={8}
+              step={1}
+              value={channels}
+              onChange={(e) => setFmt({ channels: Number(e.target.value) || 1 })}
+              style={{ width: 52 }}
+            />
+          </label>
+          <button className="mini-btn" onClick={disableAudio} title="Remove the audio output stream">Disable</button>
+        </div>
+      ) : (
+        <button onClick={() => setFmt({ sample_rate: 48000, channels: 2 })} style={{ width: '100%' }}>
+          Enable audio output (mix clips + crossfades)
+        </button>
+      )}
 
       <label style={{ marginTop: 12, marginBottom: 4 }}>Timeline</label>
       <div style={{ fontSize: 11, color: 'var(--text-dim)', marginBottom: 6 }}>
