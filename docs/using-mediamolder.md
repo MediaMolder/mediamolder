@@ -1598,6 +1598,51 @@ Clips are placed with `timeline_in` (where on the output), `source_in`/`source_o
 
 Like `xfade_sequence`, it is a **FrameSource** with no inbound AV edges — reference sources by `input_id`/`media_id` on Input nodes and the engine resolves them to URLs.  Full field reference: **[go-processor-nodes.md § `sequence_editor`](go-processor-nodes.md#sequence_editor)**; a runnable example is [`testdata/examples/61_sequence_editor_dissolves.json`](../testdata/examples/61_sequence_editor_dissolves.json).
 
+#### Audio and crossfades
+
+`sequence_editor` can also **mix an audio stream**, taken from the *same clips* as the picture, and crossfade it across each transition. Audio is **opt-in** and turned on entirely from the job JSON — there are two steps:
+
+1. **Declare audio in the format.** Add `sample_rate` (and optionally `channels`, default `2`) to `params.format`. This makes the node emit a second, audio output stream in addition to video:
+
+   ```json
+   "format": {
+     "width": 1920, "height": 1080, "pix_fmt": "yuv420p", "frame_rate": 29.97,
+     "time_base": [1, 90000], "length_sec": 130,
+     "sample_rate": 48000, "channels": 2
+   }
+   ```
+
+2. **Wire the audio output to an audio encoder.** The node now has both a `video` and an `audio` output; route each to its own encoder, and both encoders to the output:
+
+   ```json
+   "nodes": [
+     { "id": "seq",  "type": "go_processor", "processor": "sequence_editor", "params": { /* …format with sample_rate… */ } },
+     { "id": "venc", "type": "encoder", "params": { "codec": "libx264" } },
+     { "id": "aenc", "type": "encoder", "params": { "codec": "aac", "b": "128000" } }
+   ],
+   "edges": [
+     { "from": "seq",  "to": "venc",   "type": "video" },
+     { "from": "seq",  "to": "aenc",   "type": "audio" },
+     { "from": "venc", "to": "out0:v", "type": "video" },
+     { "from": "aenc", "to": "out0:a", "type": "audio" }
+   ]
+   ```
+
+The audio crossfade is **auto-coupled** to each clip's video `transition`: it fades the outgoing clip out and the incoming clip in across the same window. Override it per clip with a `transition.audio` object:
+
+```json
+"transition": {
+  "type": "wipeleft", "duration": 1.0,
+  "audio": { "curve": "qsin", "duration": 0.3, "off": false }
+}
+```
+
+- **`curve`** — the crossfade curve (`tri` linear default, `qsin` equal-power, `hsin`, `esin`, `qua`, `cub`, `squ`, `par`, `exp`, `log`); empty/omitted uses the default.
+- **`duration`** — shorten the audio fade so it ramps faster but still lands on the cut; omit to match the video transition's duration.
+- **`off`** — hard-cut the audio while the video still transitions.
+
+A clip whose source file has no audio contributes silence. A runnable example is [`testdata/examples/63_sequence_editor_audio.json`](../testdata/examples/63_sequence_editor_audio.json); the engine and curve set are documented in [docs/architecture/transitions.md § Audio crossfades](architecture/transitions.md#audio-crossfades).
+
 ---
 
 ## 6. Validation

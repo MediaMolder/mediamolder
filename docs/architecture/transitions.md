@@ -146,9 +146,30 @@ defensive guard. (The dithered `dissolve` and the few xfade transitions outside
 
 The `sequence_editor` mixes an **audio** stream alongside the video, derived from
 the *same clips* as the picture, and crossfades it across each transition window —
-**auto-coupled** to the clip's video transition by default. Audio is opt-in: a
-sequence emits audio only when its `format` declares a positive `sample_rate`
-(`channels` defaults to 2). Video-only jobs are unchanged.
+**auto-coupled** to the clip's video transition by default. Video-only jobs are
+unchanged.
+
+**Opting in (job JSON).** Audio is off until two things are present:
+
+1. a positive `sample_rate` in `params.format` (plus optional `channels`,
+   default 2) — this makes the node emit a second, audio output stream;
+2. an `audio` edge from the node to an audio encoder (the node now has both a
+   `video` and an `audio` output port).
+
+```json
+"format": { "width": 1920, "height": 1080, "frame_rate": 30,
+            "sample_rate": 48000, "channels": 2, "length_sec": 130 },
+…
+"edges": [
+  { "from": "seq",  "to": "venc", "type": "video" },
+  { "from": "seq",  "to": "aenc", "type": "audio" }
+]
+```
+
+The full step-by-step (encoder nodes, output wiring, `transition.audio`
+override) is in
+[using-mediamolder.md § 5.16 → Audio and crossfades](../using-mediamolder.md#audio-and-crossfades).
+The rest of this section is the *design*.
 
 ### `acrossfade` — the engine
 
