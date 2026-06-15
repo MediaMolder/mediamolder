@@ -42,6 +42,14 @@ type FrameSourceInfo interface {
 	OutputStreamInfo() (av.StreamInfo, error)
 }
 
+// FrameSourceProgress is an optional interface a FrameSource may implement to
+// report the total number of output frames Run() will produce, so the runner
+// can surface render progress (frame X of N) in node metrics and on the event
+// bus. A return of 0 means the total is unknown.
+type FrameSourceProgress interface {
+	OutputFrameCount() int64
+}
+
 // Processor is the interface every go_processor node must implement.
 type Processor interface {
 	// Init is called once during graph construction, before the first frame.

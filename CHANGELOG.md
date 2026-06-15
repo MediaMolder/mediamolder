@@ -7,6 +7,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- **FrameSource render progress.** FrameSource go_processors (`sequence_editor`,
+  `xfade_sequence`) now record node metrics and emit periodic `rendered X / N
+  frames` progress events while producing frames. Previously these source nodes
+  were invisible during a run (no inbound loop ticked their metrics), so a slow
+  render looked like a hang. The progress denominator is now the sequence's own
+  duration rather than the (much longer) source files'. Adds the optional
+  `processors.FrameSourceProgress` interface (`OutputFrameCount`). The GUI shows
+  the per-node frame count/fps and an in-place progress line in the log panel.
+
 - **GUI: sequence_editor timeline table editor.** The `sequence_editor` node's
   Inspector now edits the output format inline and opens its multi-track timeline
   in a wide, spreadsheet-style **Edit Timeline…** dialog (rows = clips; columns =

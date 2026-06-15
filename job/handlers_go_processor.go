@@ -34,9 +34,54 @@ func (r *graphRunner) handleGoProcessor(ctx context.Context, node *graph.Node, i
 			return nil
 		}
 		// FrameSource processors generate their own frames and require no
-		// inbound AV edge.  Dispatch via Run() and forward each produced
-		// frame to all downstream channels.
+		// inbound AV edge.  Dispatch via Run() and forward each produced frame to
+		// all downstream channels, recording node metrics and render progress so
+		// the source node is visible (a FrameSource has no inbound loop that would
+		// otherwise tick the metrics) and the GUI shows frame X of N.
 		if src, ok := proc.(processors.FrameSource); ok {
+			var nm *NodeMetrics
+			if r.pipe != nil {
+				nm = r.pipe.Metrics().Node(node.ID)
+			}
+			var total int64
+			if fp, ok := proc.(processors.FrameSourceProgress); ok {
+				total = fp.OutputFrameCount()
+			}
+			fps := 0.0
+			if fi, ok := proc.(processors.FrameSourceInfo); ok {
+				if si, e := fi.OutputStreamInfo(); e == nil && si.FrameRate[1] > 0 {
+					fps = float64(si.FrameRate[0]) / float64(si.FrameRate[1])
+				}
+			}
+			// The progress denominator is the sequence's own duration, not the
+			// (much longer) source files' durations.
+			if nm != nil && total > 0 && fps > 0 {
+				nm.SetMediaDuration(time.Duration(float64(total) / fps * float64(time.Second)))
+			}
+
+			var produced int64
+			prev := time.Now()
+			lastLog := prev
+			postProgress := func() {
+				if r.pipe == nil {
+					return
+				}
+				custom := map[string]any{"rendered": produced}
+				msg := fmt.Sprintf("rendered %d frames", produced)
+				if total > 0 {
+					pct := 100 * float64(produced) / float64(total)
+					custom["total"] = total
+					custom["fraction"] = float64(produced) / float64(total)
+					msg = fmt.Sprintf("rendered %d / %d frames (%.0f%%)", produced, total, pct)
+				}
+				custom["message"] = msg
+				r.pipe.events.Post(ProcessorMetadata{
+					NodeID:     node.ID,
+					FrameIndex: uint64(produced),
+					Metadata:   &processors.Metadata{Progress: true, Custom: custom},
+				})
+			}
+
 			sendFrame := func(f *av.Frame) error {
 				for _, ch := range outs {
 					select {
@@ -46,9 +91,24 @@ func (r *graphRunner) handleGoProcessor(ctx context.Context, node *graph.Node, i
 						return ctx.Err()
 					}
 				}
+				produced++
+				now := time.Now()
+				if nm != nil {
+					nm.RecordLatency(now.Sub(prev))
+					if fps > 0 {
+						nm.AdvanceMediaPTS(time.Duration(float64(produced) / fps * float64(time.Second)))
+					}
+				}
+				prev = now
+				if now.Sub(lastLog) >= time.Second {
+					lastLog = now
+					postProgress()
+				}
 				return nil
 			}
-			return src.Run(ctx, sendFrame)
+			err := src.Run(ctx, sendFrame)
+			postProgress() // final tally
+			return err
 		}
 	}
 	if len(ins) != 1 {

@@ -83,6 +83,28 @@ func TestSequenceEditor_AcceptsXfadeTransitions(t *testing.T) {
 	}
 }
 
+// OutputFrameCount reports duration × frame rate so the runner can show render
+// progress (frame X of N).
+func TestOutputFrameCount(t *testing.T) {
+	raw := `{
+      "format": { "width": 64, "height": 64, "pix_fmt": "yuv420p", "frame_rate": 30, "time_base": [1, 90000], "length_sec": 5 },
+      "tracks": [ { "id": "V1", "type": "video", "clips": [
+        { "url": "a.mp4", "source_in": 0, "source_out": 5, "timeline_in": 0 }
+      ]}]
+    }`
+	var params map[string]any
+	if err := json.Unmarshal([]byte(raw), &params); err != nil {
+		t.Fatalf("test JSON invalid: %v", err)
+	}
+	se := &SequenceEditor{}
+	if err := se.Init(params); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	if got := se.OutputFrameCount(); got != 150 { // 5 s × 30 fps
+		t.Errorf("OutputFrameCount = %d, want 150", got)
+	}
+}
+
 // SupportedTransitions backs the GUI transition picker, so it must be sorted,
 // non-empty, and contain the names the engine renders.
 func TestSupportedTransitions(t *testing.T) {

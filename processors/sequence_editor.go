@@ -404,6 +404,16 @@ func (se *SequenceEditor) OutputStreamInfo() (av.StreamInfo, error) {
 	}, nil
 }
 
+// OutputFrameCount reports the total number of frames Run() will emit
+// (duration × frame rate), so the runner can show render progress. Implements
+// processors.FrameSourceProgress. Returns 0 when the duration is not yet known.
+func (se *SequenceEditor) OutputFrameCount() int64 {
+	if se.duration > 0 && se.format.FrameRate > 0 {
+		return int64(math.Round(se.duration * se.format.FrameRate))
+	}
+	return 0
+}
+
 // Run renders the timeline at the exact sequence frame rate with a continuous
 // timebase. It is the heart of the FrameSource behaviour.
 func (se *SequenceEditor) Run(ctx context.Context, send func(*av.Frame) error) error {
