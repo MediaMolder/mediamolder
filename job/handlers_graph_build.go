@@ -277,16 +277,16 @@ func spliceAudioAdaptersForEncoders(def *graph.Def) {
 		}
 		// Skip only if the immediate upstream is a synthetic adapter
 		// already inserted by this pass or by spliceAudioSyncForOutputs
-		// (IDs start with "__aspl__" or "__async__"), or a go_processor
-		// that is assumed to own its output format.
+		// (IDs start with "__aspl__" or "__async__").
 		// Do NOT skip for arbitrary user-placed filters (e.g. amerge,
 		// aresample, loudnorm): they do not guarantee the sample format
 		// or frame size the encoder requires, so the adapter must still
 		// be inserted.
 		if srcNode, ok := nodeByID[head(e.From)]; ok {
-			if srcNode.Type == "go_processor" {
-				continue
-			}
+			// A go_processor audio source (e.g. sequence_editor, which emits
+			// planar-float at the sequence sample rate) is NOT skipped: it
+			// does not guarantee the encoder's required sample format or
+			// frame size, so the adapter must run.
 			if srcNode.Type == "filter" &&
 				(strings.HasPrefix(head(e.From), "__aspl__") ||
 					strings.HasPrefix(head(e.From), "__async__")) {

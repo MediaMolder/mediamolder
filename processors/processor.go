@@ -50,6 +50,26 @@ type FrameSourceProgress interface {
 	OutputFrameCount() int64
 }
 
+// MultiStreamSource is an optional interface a FrameSource may implement to emit
+// more than one output stream (e.g. sequence_editor produces a composited video
+// stream and a mixed audio stream). Streams are identified by their index into
+// OutputStreams(); the runtime routes each emitted frame to the downstream edges
+// whose port type matches that stream's StreamInfo.Type.
+//
+// A processor implementing MultiStreamSource is dispatched via RunStreams in
+// preference to FrameSource.Run. The send callback takes ownership of each frame
+// (RunStreams must not close a frame it has successfully sent), exactly like
+// FrameSource.Run.
+type MultiStreamSource interface {
+	// OutputStreams returns one StreamInfo per emitted stream, in a stable
+	// order. Each entry's Type (video/audio/…) is used to route frames and to
+	// configure the matching downstream encoder before the first frame.
+	OutputStreams() []av.StreamInfo
+	// RunStreams produces frames, tagging each with the index into the slice
+	// returned by OutputStreams.
+	RunStreams(ctx context.Context, send func(stream int, f *av.Frame) error) error
+}
+
 // Processor is the interface every go_processor node must implement.
 type Processor interface {
 	// Init is called once during graph construction, before the first frame.

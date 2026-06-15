@@ -34,24 +34,74 @@ func (r *graphRunner) handleGoProcessor(ctx context.Context, node *graph.Node, i
 			return nil
 		}
 		// FrameSource processors generate their own frames and require no
-		// inbound AV edge.  Dispatch via Run() and forward each produced frame to
-		// all downstream channels, recording node metrics and render progress so
-		// the source node is visible (a FrameSource has no inbound loop that would
-		// otherwise tick the metrics) and the GUI shows frame X of N.
+		// inbound AV edge.  Dispatch via Run()/RunStreams() and forward each
+		// produced frame to the matching downstream channels, recording node
+		// metrics and render progress so the source node is visible (a
+		// FrameSource has no inbound loop that would otherwise tick the metrics)
+		// and the GUI shows frame X of N.
 		if src, ok := proc.(processors.FrameSource); ok {
 			var nm *NodeMetrics
 			if r.pipe != nil {
 				nm = r.pipe.Metrics().Node(node.ID)
 			}
+
+			// Determine the output streams this source emits. A
+			// MultiStreamSource declares several (e.g. sequence_editor →
+			// video + audio); a plain FrameSource emits a single stream whose
+			// info comes from FrameSourceInfo (historically video).
+			var streams []av.StreamInfo
+			if ms, ok := proc.(processors.MultiStreamSource); ok {
+				streams = ms.OutputStreams()
+			} else if fi, ok := proc.(processors.FrameSourceInfo); ok {
+				if si, e := fi.OutputStreamInfo(); e == nil {
+					streams = []av.StreamInfo{si}
+				}
+			}
+			if len(streams) == 0 {
+				streams = []av.StreamInfo{{Type: av.MediaTypeVideo}}
+			}
+
+			// Route each declared stream to the outbound channels whose port
+			// type matches its media type. Mirrors handleSource's per-type
+			// routing so a frame reaches only consumers that asked for that
+			// media type.
+			streamToChans := make([][]int, len(streams))
+			anyMatched := false
+			for si := range streams {
+				for j, e := range node.Outbound {
+					if portTypeToAVMediaType(e.Type) == streams[si].Type {
+						streamToChans[si] = append(streamToChans[si], j)
+						anyMatched = true
+					}
+				}
+			}
+			// Fallback: if no edge type matched (e.g. a single untyped
+			// "default" edge), broadcast stream 0 to every channel — the
+			// historical single-stream behaviour.
+			if !anyMatched && len(outs) > 0 {
+				all := make([]int, len(outs))
+				for j := range outs {
+					all[j] = j
+				}
+				streamToChans[0] = all
+			}
+
+			// Master stream drives metrics/progress: the first video stream,
+			// else stream 0.
+			master := 0
+			for si := range streams {
+				if streams[si].Type == av.MediaTypeVideo {
+					master = si
+					break
+				}
+			}
+			fps := 0.0
+			if streams[master].FrameRate[1] > 0 {
+				fps = float64(streams[master].FrameRate[0]) / float64(streams[master].FrameRate[1])
+			}
 			var total int64
 			if fp, ok := proc.(processors.FrameSourceProgress); ok {
 				total = fp.OutputFrameCount()
-			}
-			fps := 0.0
-			if fi, ok := proc.(processors.FrameSourceInfo); ok {
-				if si, e := fi.OutputStreamInfo(); e == nil && si.FrameRate[1] > 0 {
-					fps = float64(si.FrameRate[0]) / float64(si.FrameRate[1])
-				}
 			}
 			// The progress denominator is the sequence's own duration, not the
 			// (much longer) source files' durations.
@@ -59,7 +109,7 @@ func (r *graphRunner) handleGoProcessor(ctx context.Context, node *graph.Node, i
 				nm.SetMediaDuration(time.Duration(float64(total) / fps * float64(time.Second)))
 			}
 
-			var produced int64
+			var produced int64 // master-stream frames produced
 			prev := time.Now()
 			lastLog := prev
 			postProgress := func() {
@@ -82,31 +132,59 @@ func (r *graphRunner) handleGoProcessor(ctx context.Context, node *graph.Node, i
 				})
 			}
 
-			sendFrame := func(f *av.Frame) error {
-				for _, ch := range outs {
+			// sendStream forwards f to the channels mapped to the given stream,
+			// cloning for all but the last recipient so each consumer owns an
+			// independent reference. Closes f when the stream has no consumer.
+			sendStream := func(stream int, f *av.Frame) error {
+				if stream < 0 || stream >= len(streamToChans) || len(streamToChans[stream]) == 0 {
+					f.Close()
+					return nil
+				}
+				chans := streamToChans[stream]
+				for i, idx := range chans {
+					toSend := f
+					if i < len(chans)-1 {
+						cl, err := f.Clone()
+						if err != nil {
+							f.Close()
+							return err
+						}
+						toSend = cl
+					}
 					select {
-					case ch <- f:
+					case outs[idx] <- toSend:
 					case <-ctx.Done():
+						if toSend != f {
+							toSend.Close()
+						}
 						f.Close()
 						return ctx.Err()
 					}
 				}
-				produced++
-				now := time.Now()
-				if nm != nil {
-					nm.RecordLatency(now.Sub(prev))
-					if fps > 0 {
-						nm.AdvanceMediaPTS(time.Duration(float64(produced) / fps * float64(time.Second)))
+				if stream == master {
+					produced++
+					now := time.Now()
+					if nm != nil {
+						nm.RecordLatency(now.Sub(prev))
+						if fps > 0 {
+							nm.AdvanceMediaPTS(time.Duration(float64(produced) / fps * float64(time.Second)))
+						}
 					}
-				}
-				prev = now
-				if now.Sub(lastLog) >= time.Second {
-					lastLog = now
-					postProgress()
+					prev = now
+					if now.Sub(lastLog) >= time.Second {
+						lastLog = now
+						postProgress()
+					}
 				}
 				return nil
 			}
-			err := src.Run(ctx, sendFrame)
+
+			var err error
+			if ms, ok := proc.(processors.MultiStreamSource); ok {
+				err = ms.RunStreams(ctx, sendStream)
+			} else {
+				err = src.Run(ctx, func(f *av.Frame) error { return sendStream(0, f) })
+			}
 			postProgress() // final tally
 			return err
 		}
