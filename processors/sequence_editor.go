@@ -67,6 +67,13 @@ type seqFormat struct {
 	// Recommended: [1, 90000] for high precision or a multiple of the frame rate.
 	TimeBase  [2]int
 	LengthSec float64 // optional, from "length_sec" in format; overrides computed duration
+
+	// Audio output (opt-in). When SampleRate > 0 the sequence emits a second
+	// (audio) output stream mixed from the same clips as the video, in the
+	// working planar-float format. Channels defaults to 2 when audio is
+	// enabled. A format without sample_rate stays video-only.
+	SampleRate int // audio sample rate in Hz, 0 = no audio output
+	Channels   int // audio channel count
 }
 
 // seqClip describes one placement of source material onto the timeline.
@@ -79,10 +86,21 @@ type seqClip struct {
 }
 
 // seqTransition holds a transition attached to a clip (the outgoing clip in a
-// pair).
+// pair). Type/Duration drive the video transition; the audio crossfade is
+// auto-coupled to the same window by default and tuned by the Audio* fields.
 type seqTransition struct {
 	Type     string
 	Duration float64
+
+	// Audio crossfade, coupled to the video transition by default. AudioCurve
+	// selects the gain curve (see package acrossfade; "" → the default "tri").
+	// AudioDuration, when > 0 and shorter than Duration, narrows the crossfade
+	// to the tail of the window (a faster fade that still lands on the cut).
+	// AudioOff hard-cuts the audio instead of crossfading, even though the
+	// video transitions.
+	AudioCurve    string
+	AudioDuration float64
+	AudioOff      bool
 }
 
 // seqSupportedTransitions is the set of transition types sequence_editor can
@@ -188,6 +206,11 @@ type SequenceEditor struct {
 	readers   map[string]*clipReader
 	lastFrame *av.Frame // last successfully sent frame (used for hold/freeze on timeline gaps)
 
+	// audioReaders mirrors readers for the audio half: one independent demuxer
+	// + decoder + resampler per source URL (see sequence_audio.go). A reader
+	// for a file with no audio is kept (marked silent) so we do not retry it.
+	audioReaders map[string]*audioReader
+
 	// warnedTransitions records transition names already logged as "not
 	// implemented in the Go engine; using fade", so the warning fires at most
 	// once per name instead of per frame.
@@ -240,8 +263,14 @@ func (se *SequenceEditor) Init(params map[string]any) error {
 	if v, ok := fm["length_sec"].(float64); ok {
 		se.format.LengthSec = v
 	}
-	if v, ok := fm["length_sec"].(float64); ok {
-		se.format.LengthSec = v
+	// Audio output is opt-in: a positive sample_rate enables a mixed audio
+	// stream; channels defaults to 2.
+	if v, ok := fm["sample_rate"].(float64); ok && v > 0 {
+		se.format.SampleRate = int(v)
+		se.format.Channels = 2
+		if c, ok := fm["channels"].(float64); ok && c > 0 {
+			se.format.Channels = int(c)
+		}
 	}
 	if se.format.Width <= 0 || se.format.Height <= 0 || se.format.FrameRate <= 0 {
 		return fmt.Errorf("sequence_editor: format must include positive width, height and frame_rate")
@@ -319,6 +348,20 @@ func (se *SequenceEditor) Init(params map[string]any) error {
 					return fmt.Errorf("sequence_editor: transition %q requires a positive 'duration' in seconds", st.Type)
 				}
 				st.Duration = dur
+				// Optional audio crossfade override. Absent → audio is
+				// auto-coupled to the video transition with the default curve.
+				// "audio": {"curve": "qsin", "duration": 0.3, "off": false}
+				if am, ok := transm["audio"].(map[string]any); ok {
+					if cv, ok := am["curve"].(string); ok {
+						st.AudioCurve = cv
+					}
+					if ad, ok := am["duration"].(float64); ok && ad > 0 {
+						st.AudioDuration = ad
+					}
+					if off, ok := am["off"].(bool); ok {
+						st.AudioOff = off
+					}
+				}
 				c.Transition = st
 			}
 			track.Clips = append(track.Clips, c)
@@ -376,6 +419,10 @@ func (se *SequenceEditor) Close() error {
 		}
 	}
 	se.readers = nil
+	for _, ar := range se.audioReaders {
+		ar.close()
+	}
+	se.audioReaders = nil
 	if se.lastFrame != nil {
 		se.lastFrame.Close()
 		se.lastFrame = nil
@@ -414,9 +461,30 @@ func (se *SequenceEditor) OutputFrameCount() int64 {
 	return 0
 }
 
-// Run renders the timeline at the exact sequence frame rate with a continuous
-// timebase. It is the heart of the FrameSource behaviour.
+// Run renders the video stream only — the FrameSource single-stream path, used
+// when the node is dispatched without the MultiStreamSource interface. It
+// delegates to render with audio disabled.
 func (se *SequenceEditor) Run(ctx context.Context, send func(*av.Frame) error) error {
+	return se.render(ctx, send, nil)
+}
+
+// RunStreams renders the composited video stream (stream 0) and, when audio is
+// enabled, the mixed audio stream (stream 1), auto-coupling audio crossfades to
+// each clip's video transition. Implements processors.MultiStreamSource.
+func (se *SequenceEditor) RunStreams(ctx context.Context, send func(stream int, f *av.Frame) error) error {
+	emitVideo := func(f *av.Frame) error { return send(seqStreamVideo, f) }
+	var emitAudio func(*av.Frame) error
+	if se.audioEnabled() {
+		emitAudio = func(f *av.Frame) error { return send(seqStreamAudio, f) }
+	}
+	return se.render(ctx, emitVideo, emitAudio)
+}
+
+// render renders the timeline at the exact sequence frame rate with a continuous
+// timebase. emitVideo receives every composited video frame; emitAudio, when
+// non-nil, receives the mixed audio frame for each step. It is the heart of the
+// FrameSource behaviour.
+func (se *SequenceEditor) render(ctx context.Context, emitVideo func(*av.Frame) error, emitAudio func(*av.Frame) error) error {
 	if se.duration <= 0 {
 		return nil
 	}
@@ -446,39 +514,38 @@ func (se *SequenceEditor) Run(ctx context.Context, send func(*av.Frame) error) e
 		numFrames = 1
 	}
 
+	// audioPTS is the cumulative sample count emitted so far (also the PTS, in
+	// 1/sample_rate units, of the next audio chunk). Tracking it against a
+	// rounded per-step target keeps the audio sample count exactly aligned to
+	// the video frame count with no drift.
+	var audioPTS int64
+
 	for i := 0; i < numFrames; i++ {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
 		t := float64(i) * frameInterval // sequence time for this output frame
 
-		// activeLayer represents one contributing source (clip) for the current t,
-		// with computed opacity for blending during transitions.
-		type activeLayer struct {
-			trackIdx int
-			trackID  string
-			clipIdx  int
-			clip     *seqClip
-			srcT     float64
-			opacity  float64
-		}
-
-		var activeLayers []activeLayer
+		var activeLayers []seqActiveLayer
 		// Transition state for this output frame (set during window detection,
 		// read by the compositing branch below). transType is "" outside a
 		// transition window or "dissolve" for the linear blend path; any other
 		// value routes through the native Go transition engine. transProg is the
 		// timeline progress through the window (0 at the start → 1 at the end).
+		// transClip / dStartWin / dDurWin capture the same window for the audio
+		// crossfade (see the audio block at the end of the loop).
 		var transType string
 		var transProg float64
+		var transClip *seqClip
+		var dStartWin, dDurWin float64
 		for ti := len(se.tracks) - 1; ti >= 0; ti-- {
 			tr := &se.tracks[ti]
-			var trackCovers []activeLayer
+			var trackCovers []seqActiveLayer
 			for ci := range tr.Clips {
 				c := &tr.Clips[ci]
 				if t >= c.SeqIn && t < c.SeqIn+c.Duration {
 					srcT := c.SourceIn + (t - c.SeqIn)
-					trackCovers = append(trackCovers, activeLayer{
+					trackCovers = append(trackCovers, seqActiveLayer{
 						trackIdx: ti,
 						trackID:  tr.ID,
 						clipIdx:  ci,
@@ -515,6 +582,9 @@ func (se *SequenceEditor) Run(ctx context.Context, send func(*av.Frame) error) e
 							inL.opacity = prog
 							transType = outL.clip.Transition.Type
 							transProg = prog
+							transClip = outL.clip
+							dStartWin = dStart
+							dDurWin = dDur
 						}
 					}
 				}
@@ -664,7 +734,7 @@ func (se *SequenceEditor) Run(ctx context.Context, send func(*av.Frame) error) e
 			// causing the encoder/muxer to treat the stream as 1 fps over ~3895 s.
 			pts := int64(t*float64(tbDen)/float64(tbNum) + 0.5)
 			outFrame.SetPTS(pts)
-			if err := send(outFrame); err != nil {
+			if err := emitVideo(outFrame); err != nil {
 				outFrame.Close()
 				se.emitSequenceLog(i, t, pts, logAction, logLayers, logHeldFrom, logNotes, false)
 				return err
@@ -685,6 +755,30 @@ func (se *SequenceEditor) Run(ctx context.Context, send func(*av.Frame) error) e
 		} else {
 			// No frame was emitted for this output slot (very early gap, or total failure).
 			se.emitSequenceLog(i, t, 0, logAction, logLayers, logHeldFrom, logNotes, false)
+		}
+
+		// ----- audio: mix and emit this step's audio chunk -----
+		// Driven by the same timeline as the video. The chunk covers the
+		// samples [audioPTS, target); n is the exact count that keeps the audio
+		// sample total aligned to the video frame count. renderAudioStep
+		// crossfades the outgoing/incoming clips across a transition window
+		// (auto-coupled to the video transition) and serves a single clip's
+		// audio — or silence — otherwise.
+		if emitAudio != nil {
+			target := int64(math.Round(float64(i+1) * float64(se.format.SampleRate) / fps))
+			n := int(target - audioPTS)
+			if n < 1 {
+				n = 1
+			}
+			af := se.renderAudioStep(activeLayers, transType, transClip, dStartWin, dDurWin, t, frameInterval, n)
+			if af != nil {
+				af.SetPTS(audioPTS)
+				if err := emitAudio(af); err != nil {
+					af.Close()
+					return err
+				}
+			}
+			audioPTS = target
 		}
 	}
 

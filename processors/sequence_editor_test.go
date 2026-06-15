@@ -5,6 +5,7 @@ package processors
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -102,6 +103,127 @@ func TestOutputFrameCount(t *testing.T) {
 	}
 	if got := se.OutputFrameCount(); got != 150 { // 5 s × 30 fps
 		t.Errorf("OutputFrameCount = %d, want 150", got)
+	}
+}
+
+// Audio is opt-in: without format.sample_rate the sequence emits only video;
+// with it, OutputStreams gains a second (audio) stream carrying the sequence's
+// sample rate / channels / planar-float working format.
+func TestOutputStreamsAudioOptIn(t *testing.T) {
+	base := `{
+      "format": { "width": 64, "height": 64, "pix_fmt": "yuv420p", "frame_rate": 30, "time_base": [1, 90000], "length_sec": 2 %s },
+      "tracks": [ { "id": "V1", "type": "video", "clips": [
+        { "url": "a.mp4", "source_in": 0, "source_out": 2, "timeline_in": 0 }
+      ]}]
+    }`
+	initSeq := func(extra string) *SequenceEditor {
+		var params map[string]any
+		if err := json.Unmarshal([]byte(fmt.Sprintf(base, extra)), &params); err != nil {
+			t.Fatalf("test JSON invalid: %v", err)
+		}
+		se := &SequenceEditor{}
+		if err := se.Init(params); err != nil {
+			t.Fatalf("Init: %v", err)
+		}
+		return se
+	}
+
+	// Video-only: one stream.
+	vo := initSeq("")
+	if vo.audioEnabled() {
+		t.Error("audio should be disabled without sample_rate")
+	}
+	if got := vo.OutputStreams(); len(got) != 1 || got[0].Type != av.MediaTypeVideo {
+		t.Fatalf("video-only OutputStreams=%v, want one video stream", got)
+	}
+
+	// Audio enabled: two streams; audio carries fltp + sample rate + default 2ch.
+	au := initSeq(`, "sample_rate": 48000`)
+	if !au.audioEnabled() {
+		t.Fatal("audio should be enabled with sample_rate")
+	}
+	streams := au.OutputStreams()
+	if len(streams) != 2 {
+		t.Fatalf("OutputStreams len=%d, want 2", len(streams))
+	}
+	a := streams[1]
+	if a.Type != av.MediaTypeAudio || a.SampleRate != 48000 || a.Channels != 2 || a.SampleFmt != av.SampleFmtFLTP {
+		t.Errorf("audio stream = %+v, want audio/48000/2ch/fltp", a)
+	}
+	if a.TimeBase != [2]int{1, 48000} {
+		t.Errorf("audio time_base = %v, want {1,48000}", a.TimeBase)
+	}
+
+	// channels override is honoured.
+	mono := initSeq(`, "sample_rate": 44100, "channels": 1`)
+	if got := mono.OutputStreams()[1]; got.Channels != 1 || got.SampleRate != 44100 {
+		t.Errorf("mono audio stream = %+v, want 1ch/44100", got)
+	}
+}
+
+// The per-clip transition.audio override is parsed into the transition's Audio*
+// fields; absent, audio auto-couples (empty curve, zero duration, not off).
+func TestTransitionAudioOverrideParsing(t *testing.T) {
+	mk := func(audioJSON string) *seqTransition {
+		audio := ""
+		if audioJSON != "" {
+			audio = `, "audio": ` + audioJSON
+		}
+		raw := fmt.Sprintf(`{
+          "format": { "width": 64, "height": 64, "pix_fmt": "yuv420p", "frame_rate": 30, "sample_rate": 48000 },
+          "tracks": [ { "id": "V1", "type": "video", "clips": [
+            { "url": "a.mp4", "source_in": 0, "source_out": 3, "timeline_in": 0,
+              "transition": { "type": "wipeleft", "duration": 1.0%s } },
+            { "url": "b.mp4", "source_in": 0, "source_out": 3, "timeline_in": 2 }
+          ]}]
+        }`, audio)
+		var params map[string]any
+		if err := json.Unmarshal([]byte(raw), &params); err != nil {
+			t.Fatalf("test JSON invalid: %v", err)
+		}
+		se := &SequenceEditor{}
+		if err := se.Init(params); err != nil {
+			t.Fatalf("Init: %v", err)
+		}
+		return se.tracks[0].Clips[0].Transition
+	}
+
+	def := mk("")
+	if def.AudioCurve != "" || def.AudioDuration != 0 || def.AudioOff {
+		t.Errorf("default coupling: got curve=%q dur=%v off=%v", def.AudioCurve, def.AudioDuration, def.AudioOff)
+	}
+
+	ov := mk(`{ "curve": "qsin", "duration": 0.3, "off": false }`)
+	if ov.AudioCurve != "qsin" || ov.AudioDuration != 0.3 || ov.AudioOff {
+		t.Errorf("override: got curve=%q dur=%v off=%v", ov.AudioCurve, ov.AudioDuration, ov.AudioOff)
+	}
+
+	off := mk(`{ "off": true }`)
+	if !off.AudioOff {
+		t.Errorf("audio off override not parsed")
+	}
+}
+
+// SupportedAudioTransitions backs the GUI audio crossfade picker; it must be
+// sorted, non-empty, and include the default curve.
+func TestSupportedAudioTransitions(t *testing.T) {
+	ts := SupportedAudioTransitions()
+	if len(ts) == 0 {
+		t.Fatal("SupportedAudioTransitions returned empty")
+	}
+	for i := 1; i < len(ts); i++ {
+		if ts[i-1] > ts[i] {
+			t.Fatalf("not sorted at %d: %q > %q", i, ts[i-1], ts[i])
+		}
+	}
+	have := map[string]bool{}
+	for _, n := range ts {
+		have[n] = true
+	}
+	for _, n := range []string{"tri", "qsin", "exp", "log"} {
+		if !have[n] {
+			t.Errorf("SupportedAudioTransitions missing %q", n)
+		}
 	}
 }
 

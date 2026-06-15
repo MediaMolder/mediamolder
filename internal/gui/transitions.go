@@ -18,3 +18,11 @@ func handleListTransitions(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(processors.SupportedTransitions())
 }
+
+// handleListAudioTransitions returns the sorted audio crossfade curve names the
+// sequence_editor accepts, as a JSON array of strings. The GUI's timeline editor
+// uses it to populate the per-clip audio crossfade picker for audio tracks.
+func handleListAudioTransitions(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(processors.SupportedAudioTransitions())
+}
