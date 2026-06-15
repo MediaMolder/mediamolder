@@ -316,6 +316,7 @@ For detailed instructions see [MacOS](docs/build/macos.md), [Windows](docs/build
 - [Hardware Acceleration](docs/hardware-acceleration.md)
 - [Observability](docs/architecture/observability.md) — Prometheus metrics, OpenTelemetry tracing, per-node performance monitoring, `mediamolder perf` CLI
 - [Graph Compilation](docs/architecture/graph-compilation.md)
+- [Video Transitions](docs/architecture/transitions.md) — native Go transition engine (wipes, slides, fades, circles, …) that replaces libavfilter `xfade`
 
 ### Project
 
