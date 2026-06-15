@@ -7,6 +7,20 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- **sequence_editor audio + crossfades.** The `sequence_editor` now mixes an
+  audio stream alongside the composited video, derived from the same clips as the
+  picture. Audio is opt-in: set the `format`'s `sample_rate` (and optionally
+  `channels`, default 2). Each clip's `transition` auto-crossfades the audio
+  across the same window (coupled by default), overridable per clip via
+  `transition.audio` (`curve` / `duration` / `off`). Adds a native Go audio
+  crossfade engine ([`acrossfade/`](acrossfade), curves ported from FFmpeg's
+  `af_afade.c`), audio frame primitives in `av` (`NewAudioFrame`, fltp accessors),
+  and the `processors.MultiStreamSource` interface so a FrameSource can emit both
+  a video and an audio stream that route to separate encoders. The GUI's timeline
+  editor gains an audio-output toggle and a per-clip crossfade-curve picker (fed
+  by a new `GET /api/audio-transitions`). Documented in
+  [`docs/architecture/transitions.md`](docs/architecture/transitions.md#audio-crossfades).
+
 - **FrameSource render progress.** FrameSource go_processors (`sequence_editor`,
   `xfade_sequence`) now record node metrics and emit periodic `rendered X / N
   frames` progress events while producing frames. Previously these source nodes

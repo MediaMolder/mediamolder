@@ -142,6 +142,81 @@ defensive guard. (The dithered `dissolve` and the few xfade transitions outside
 `seqSupportedTransitions` — `pixelize`, `diagtl…`, `hwind…`, `cover`/`reveal`,
 `fadefast/slow` — are deliberately not exposed.)
 
+## Audio crossfades
+
+The `sequence_editor` mixes an **audio** stream alongside the video, derived from
+the *same clips* as the picture, and crossfades it across each transition window —
+**auto-coupled** to the clip's video transition by default. Audio is opt-in: a
+sequence emits audio only when its `format` declares a positive `sample_rate`
+(`channels` defaults to 2). Video-only jobs are unchanged.
+
+### `acrossfade` — the engine
+
+The `acrossfade` package is the audio analogue of `transition`: a name→curve
+registry (`Register`/`Lookup`/`Names`) plus a `Mix` helper. A curve is a fade-in
+gain `g(x)` for `x ∈ [0,1]`; the outgoing clip is faded with `g(1-x)`.
+
+```go
+type CurveFunc func(x float64) float64        // 0 → silent, 1 → unity
+func Mix(curve string, out, a, b *av.Frame, p0, p1 float64)
+```
+
+`Mix` blends two planar-float (`fltp`) frames sample-by-sample, ramping the
+fraction linearly from `p0` (first sample) to `p1` (last) so a crossfade is smooth
+within each step rather than stepped per video frame. The curves are ported from
+FFmpeg's `af_afade.c`: `tri` (linear, the default), `qsin` (equal-power —
+`g_in² + g_out² = 1`, no mid-point dip), `hsin`, `esin`, `qua`, `cub`, `squ`,
+`par`, `exp`, `log`. The set is exposed to the GUI at `/api/audio-transitions`.
+
+### Audio path in `sequence_editor`
+
+`sequence_audio.go` adds the audio half:
+
+- An **`audioReader`** per source URL decodes that file's audio with its *own*
+  demuxer + decoder (independent of the video `clipReader`, so the two never
+  contend for one demuxer's read position), resamples it to the sequence's `fltp`
+  working format via `av.Resampler`, and buffers it in a per-channel sample FIFO.
+  A file with no audio track serves silence.
+- On the same per-frame timeline as the video, `renderAudioStep` produces the
+  step's audio: a single covering clip yields that clip's audio; a transition
+  window crossfades the outgoing/incoming clips with `acrossfade.Mix`; a gap
+  yields silence. Sample counts are tracked against a rounded per-step target so
+  the audio total stays exactly aligned to the video frame count.
+
+### Multi-stream output
+
+A `FrameSource` historically emitted one stream. The editor now implements
+`processors.MultiStreamSource` (`OutputStreams` + `RunStreams`); the runner routes
+each emitted frame to the downstream edges whose port type matches that stream's
+media type (video → the video encoder, audio → the audio encoder). The audio
+encoder reads the sequence's sample rate/channels via `resolveEdgeStreamInfo`, and
+the audio-encoder adapter conforms the `fltp` mix to the codec's required sample
+format and frame size.
+
+### Coupling and overrides
+
+A clip's `transition` drives both the video transition and the audio crossfade
+over the **same window**. Override per clip via `transition.audio`:
+
+```json
+"transition": { "type": "wipeleft", "duration": 1.0,
+                "audio": { "curve": "qsin", "duration": 0.3, "off": false } }
+```
+
+- `curve` — crossfade curve (empty → the default `tri`).
+- `duration` — narrows the fade to the tail of the window (a faster fade that
+  still lands on the cut); blank couples it to the video duration.
+- `off` — hard-cut the audio while the video still transitions.
+
+### Adding a curve
+
+Add to `acrossfade/builtin.go`'s `init()` — that is all (the GUI picker and Init
+validation read `Names()` automatically):
+
+```go
+Register("mycurve", func(x float64) float64 { /* g(0)=0, g(1)=1, monotonic */ return x })
+```
+
 ## Performance
 
 Each transition frame is a per-pixel pass over the output (≈ 3.1 M samples for
@@ -149,3 +224,6 @@ Each transition frame is a per-pixel pass over the output (≈ 3.1 M samples for
 relative to decode/encode, but the pointwise path is not vectorized — a hot
 transition can be specialized with a tight per-plane loop (as the slides are)
 instead of the `pixelFunc` closure.
+
+Audio adds a second decode + resample pass per source plus a per-sample mix in
+the crossfade window — negligible next to video decode/encode.
