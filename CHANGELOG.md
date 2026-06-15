@@ -158,6 +158,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   `internal/server`. Docs: `docs/remote-server.md`, `docs/openapi-server.yaml`.
 
 ### Fixed
+- **Progress/ETA used a source clip's length instead of the rendered output.**
+  An input opened directly by a FrameSource (e.g. a `sequence_editor`'s
+  `media_id`/`input_id` clips) is never demuxed in the graph, but the source
+  handler still published its (much longer) file duration, which then dominated
+  the aggregate progress denominator — the GUI showed e.g. `00:30 / 35:14` and a
+  wildly long ETA for a 2:10 sequence. The duration is now published only for
+  inputs that actually have AV consumers, so progress/ETA track the rendered
+  sequence's length.
 - **sequence_editor: chroma corruption (green cast on the incoming clip) during
   wipe/slide/fade transitions.** Pushing pre-converted frames into a libavfilter
   `xfade` graph shifted the second input's chroma; these transitions are now
