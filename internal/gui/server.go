@@ -67,6 +67,7 @@ func NewServer(opts Options) (*Server, error) {
 	mux.HandleFunc("GET /api/health", handleHealth)
 	mux.HandleFunc("GET /api/examples", makeExamplesHandler(opts.ExamplesDir))
 	mux.HandleFunc("GET /api/nodes", handleListNodes)
+	mux.HandleFunc("GET /api/transitions", handleListTransitions)
 	mux.HandleFunc("GET /api/devices", handleListDevices)
 	mux.HandleFunc("GET /api/hwaccel", handleListHWAccel)
 	mux.HandleFunc("GET /api/files", handleListDir)

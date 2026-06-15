@@ -31,6 +31,7 @@ see [using-mediamolder.md](using-mediamolder.md).
 - [File browser](#file-browser)
 - [Scene detection processors](#scene-detection-processors)
 - [TwelveLabs processors](#twelvelabs-processors)
+- [Sequence editor — timeline table editor](#sequence-editor--timeline-table-editor)
 - [Xfade sequence (timeline assembly)](#xfade-sequence-timeline-assembly)
 - [FFmpeg CLI export](#ffmpeg-cli-export)
 - [Performance overlay](#performance-overlay)
@@ -1481,6 +1482,32 @@ The same key is also used by the `mediamolder twelvelabs` CLI subcommand and the
 See the [TwelveLabs Guide](twelvelabs.md) for full parameter reference, graph recipes, and cost notes.
 
 ---
+
+## Sequence editor — timeline table editor
+
+The `sequence_editor` node holds a multi-track timeline of clips, which is too
+wide to edit in the narrow Inspector. Selecting a `sequence_editor` node shows
+its **output format** (resolution, frame rate, pixel format, length) inline, plus
+a **Timeline** summary and an **Edit Timeline…** button.
+
+**Edit Timeline…** opens a wide, spreadsheet-style dialog whose rows map 1:1 to
+the track's clips and whose columns map to the JSON fields:
+
+| Column | JSON field | Notes |
+| --- | --- | --- |
+| Media | `media_id` (or `url`) | dropdown of the job's input nodes |
+| Src In / Src Out | `source_in` / `source_out` | seconds into the source clip |
+| Span | — | derived (`source_out − source_in`), read-only |
+| Timeline In | `timeline_in` | where the clip starts on the output timeline |
+| Transition → / Dur | `transition.type` / `transition.duration` | the transition *into the next clip*; the dropdown is populated from the engine's supported set via `GET /api/transitions`, so it can't offer a transition the processor would reject |
+
+Buttons: **+ Clip** appends a clip chained after the last; the per-row **⎘** / **✕**
+duplicate / delete a clip; and **Chain timeline ⟂** recomputes every `timeline_in`
+back-to-back, including the transition overlap
+(`source_out = source_in + span + transition.duration`). A status strip flags
+missing media, `source_out ≤ source_in`, over-long transitions, and backward
+timing. Edits are **buffered**: **Apply** commits them to the node, **Cancel**
+discards. (This first version edits the first track; multi-track tabs are planned.)
 
 ## Xfade sequence (timeline assembly)
 

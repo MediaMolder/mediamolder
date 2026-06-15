@@ -12,6 +12,7 @@ import { FilterForm } from './FilterForm';
 import { HLSForm } from './HLSForm';
 import { DASHForm } from './DASHForm';
 import { TeeForm } from './TeeForm';
+import { TimelineEditorDialog } from './TimelineEditorDialog';
 import { describeKind } from './MMNode';
 
 interface Props {
@@ -1877,6 +1878,10 @@ function GoProcessorParams({
     return <XfadeSequenceParams params={params} inputIds={inputIds} onChange={onChange} />;
   }
 
+  if (processorName === 'sequence_editor') {
+    return <SequenceEditorParams params={params} inputIds={inputIds} onChange={onChange} />;
+  }
+
   if (processorName === 'metadata_file_writer') {
     const outputFile = typeof params['output_file'] === 'string' ? params['output_file'] : '';
     // inner_processor is preserved for backward-compat round-trip if present,
@@ -1925,6 +1930,54 @@ function GoProcessorParams({
         />
       ))}
       <ParamsEditor params={restParams} onChange={(next) => onChange({ ...fileEntries.reduce<Record<string, unknown>>((acc, [k, v]) => { acc[k] = v; return acc; }, {}), ...next })} />
+    </>
+  );
+}
+
+/* ---------- SequenceEditorParams ----------
+ * Inspector body for the sequence_editor go_processor: the output format is
+ * edited inline; the timeline (tracks/clips) is too wide for the panel, so it
+ * opens in the TimelineEditorDialog table editor. */
+function SequenceEditorParams({
+  params,
+  inputIds = [],
+  onChange,
+}: {
+  params: Record<string, unknown>;
+  inputIds?: string[];
+  onChange: (next: Record<string, unknown>) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const fmt = (params.format && typeof params.format === 'object'
+    ? params.format
+    : {}) as Record<string, unknown>;
+  const tracks = Array.isArray(params.tracks)
+    ? (params.tracks as Array<Record<string, unknown>>)
+    : [];
+  const clipCount = tracks.reduce(
+    (n, t) => n + (Array.isArray(t.clips) ? (t.clips as unknown[]).length : 0),
+    0,
+  );
+
+  return (
+    <>
+      <label style={{ marginBottom: 6 }}>Output format</label>
+      <ParamsEditor params={fmt} onChange={(next) => onChange({ ...params, format: next })} />
+
+      <label style={{ marginTop: 12, marginBottom: 4 }}>Timeline</label>
+      <div style={{ fontSize: 11, color: 'var(--text-dim)', marginBottom: 6 }}>
+        {tracks.length} track{tracks.length === 1 ? '' : 's'} · {clipCount} clip{clipCount === 1 ? '' : 's'}
+      </div>
+      <button onClick={() => setEditing(true)} style={{ width: '100%' }}>Edit Timeline…</button>
+
+      {editing && (
+        <TimelineEditorDialog
+          params={params}
+          inputIds={inputIds}
+          onCancel={() => setEditing(false)}
+          onApply={(next) => { onChange(next); setEditing(false); }}
+        />
+      )}
     </>
   );
 }

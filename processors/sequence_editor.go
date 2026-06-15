@@ -45,6 +45,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"sort"
 
 	"github.com/MediaMolder/MediaMolder/av"
 	"github.com/MediaMolder/MediaMolder/transition"
@@ -111,6 +112,19 @@ var seqSupportedTransitions = map[string]bool{
 // seqSupportedTransitionList is the human-readable form of the above for
 // error messages.
 const seqSupportedTransitionList = "dissolve (linear), or any libavfilter xfade transition (fade, wipeleft, slideright, circleopen, …)"
+
+// SupportedTransitions returns the sorted set of transition type names the
+// sequence_editor accepts (the keys of seqSupportedTransitions). Exposed so the
+// GUI's timeline transition picker stays in lockstep with what the processor
+// will actually accept at Init.
+func SupportedTransitions() []string {
+	out := make([]string, 0, len(seqSupportedTransitions))
+	for name := range seqSupportedTransitions {
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
+}
 
 // seqTrack is one layer in the timeline. Higher-index tracks have priority
 // (their content replaces lower tracks where they are active).

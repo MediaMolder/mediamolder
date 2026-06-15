@@ -83,6 +83,29 @@ func TestSequenceEditor_AcceptsXfadeTransitions(t *testing.T) {
 	}
 }
 
+// SupportedTransitions backs the GUI transition picker, so it must be sorted,
+// non-empty, and contain the names the engine renders.
+func TestSupportedTransitions(t *testing.T) {
+	ts := SupportedTransitions()
+	if len(ts) == 0 {
+		t.Fatal("SupportedTransitions returned empty")
+	}
+	for i := 1; i < len(ts); i++ {
+		if ts[i-1] > ts[i] {
+			t.Fatalf("not sorted at %d: %q > %q", i, ts[i-1], ts[i])
+		}
+	}
+	have := map[string]bool{}
+	for _, n := range ts {
+		have[n] = true
+	}
+	for _, n := range []string{"dissolve", "wipeleft", "zoomin", "circleclose", "hblur", "vuslice"} {
+		if !have[n] {
+			t.Errorf("SupportedTransitions missing %q", n)
+		}
+	}
+}
+
 // Regression: a non-dissolve transition converts two sources to the sequence
 // format in the same timestep, then composites them with xfade. Each clipReader
 // must own an independent scale+format converter. A single SequenceEditor-level

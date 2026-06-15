@@ -7,6 +7,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- **GUI: sequence_editor timeline table editor.** The `sequence_editor` node's
+  Inspector now edits the output format inline and opens its multi-track timeline
+  in a wide, spreadsheet-style **Edit Timeline…** dialog (rows = clips; columns =
+  `media_id`/`source_in`/`source_out`/`timeline_in`/`transition`), with buffered
+  Apply/Cancel, live validation, a "Chain timeline" helper, and a transition
+  picker fed by a new `GET /api/transitions` endpoint
+  (`processors.SupportedTransitions`). Documented in
+  [`docs/gui.md`](docs/gui.md#sequence-editor--timeline-table-editor).
+
 - **Native Go transition engine** (`transition/` package, documented in
   [`docs/architecture/transitions.md`](docs/architecture/transitions.md)): the
   `sequence_editor` now composites non-dissolve transitions (wipes, slides,
