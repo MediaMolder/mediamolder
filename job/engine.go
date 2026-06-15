@@ -835,12 +835,16 @@ func resolveClipInputIDs(params map[string]any, inputs []Input) (map[string]any,
 				if clipsRaw2, ok := tm["clips"].([]any); ok {
 					for _, citem := range clipsRaw2 {
 						cm, ok := citem.(map[string]any)
-						if !ok { continue }
+						if !ok {
+							continue
+						}
 						id, has := cm["input_id"].(string)
 						if !has {
 							id, has = cm["media_id"].(string)
 						}
-						if !has || id == "" { continue }
+						if !has || id == "" {
+							continue
+						}
 						inp, found := byID[id]
 						if !found {
 							return nil, fmt.Errorf("tracks clips: id %q not found", id)
@@ -1115,7 +1119,15 @@ func (p *Pipeline) runGraph(ctx context.Context) (runErr error) {
 	// evLive is computed lazily on the first dead_node warning that might be
 	// suppressed because it is reachable via events/file edges.
 	var evLive map[string]bool
+	// Inputs a FrameSource go_processor consumes by input_id/media_id have no
+	// outbound AV edges by design, so the AV compiler reports them as dead /
+	// disconnected sources; that is a false positive.
+	consumedInputs := frameSourceConsumedInputs(cfg)
 	for _, w := range plan.Warnings {
+		if (w.Code == graph.WarnDeadNode || w.Code == graph.WarnDisconnectedSource) &&
+			consumedInputs[w.NodeID] {
+			continue
+		}
 		// For go_processor-only pipelines, events edges are stripped from the
 		// AV graph before compilation, so dead_node and disconnected_source
 		// warnings are expected and should not be surfaced as errors.

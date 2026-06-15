@@ -64,24 +64,51 @@ func sourceIDsWithEventsEdges(cfg *Config) map[string]bool {
 			m[base] = true
 		}
 	}
-	// Also exempt inputs that are referenced by input_id in a FrameSource
-	// go_processor's clips params (e.g. xfade_sequence). Those inputs have
-	// no outbound AV edges by design — the processor opens them directly.
-	for _, node := range cfg.Graph.Nodes {
-		if node.Type != "go_processor" {
-			continue
-		}
-		clipsRaw, ok := node.Params["clips"].([]any)
+	// Also exempt inputs consumed by a FrameSource go_processor via
+	// input_id/media_id in its clips or tracks params (xfade_sequence,
+	// sequence_editor). Those inputs have no outbound AV edges by design — the
+	// processor opens them directly.
+	for id := range frameSourceConsumedInputs(cfg) {
+		m[id] = true
+	}
+	return m
+}
+
+// frameSourceConsumedInputs returns the set of input IDs referenced by a
+// FrameSource go_processor's params, via "input_id" or "media_id" in either a
+// top-level "clips" list (xfade_sequence) or a "tracks[].clips" timeline
+// (sequence_editor). These inputs are read directly by the processor (by URL,
+// resolved from the id before Init — see resolveClipInputIDs) and carry no
+// outbound graph edges, so they must not be reported as dead/dangling sources.
+func frameSourceConsumedInputs(cfg *Config) map[string]bool {
+	m := make(map[string]bool)
+	addClips := func(clipsRaw any) {
+		clips, ok := clipsRaw.([]any)
 		if !ok {
-			continue
+			return
 		}
-		for _, item := range clipsRaw {
+		for _, item := range clips {
 			entry, ok := item.(map[string]any)
 			if !ok {
 				continue
 			}
-			if id, ok := entry["input_id"].(string); ok && id != "" {
-				m[id] = true
+			for _, key := range []string{"input_id", "media_id"} {
+				if id, ok := entry[key].(string); ok && id != "" {
+					m[id] = true
+				}
+			}
+		}
+	}
+	for _, node := range cfg.Graph.Nodes {
+		if node.Type != "go_processor" {
+			continue
+		}
+		addClips(node.Params["clips"])
+		if tracksRaw, ok := node.Params["tracks"].([]any); ok {
+			for _, tr := range tracksRaw {
+				if tm, ok := tr.(map[string]any); ok {
+					addClips(tm["clips"])
+				}
 			}
 		}
 	}

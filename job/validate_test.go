@@ -105,6 +105,73 @@ func TestTopology_DanglingSourceEventsEdge(t *testing.T) {
 	}
 }
 
+// TestTopology_FrameSourceConsumedInputs verifies that inputs a FrameSource
+// go_processor consumes via media_id in a tracks[].clips timeline
+// (sequence_editor) are not flagged TOPO_DANGLING_SOURCE, even though they carry
+// no outbound graph edges — the processor opens them directly.
+func TestTopology_FrameSourceConsumedInputs(t *testing.T) {
+	cfg := &Config{
+		SchemaVersion: "1.2",
+		Inputs: []Input{
+			{ID: "video_a", URL: "file:///a.mp4"},
+			{ID: "video_b", URL: "file:///b.mp4"},
+		},
+		Graph: GraphDef{
+			Nodes: []NodeDef{
+				{ID: "seq", Type: "go_processor", Processor: "sequence_editor", Params: map[string]any{
+					"tracks": []any{
+						map[string]any{"id": "V1", "clips": []any{
+							map[string]any{"media_id": "video_a", "source_in": 0.0, "source_out": 5.0, "timeline_in": 0.0},
+							map[string]any{"media_id": "video_b", "source_in": 0.0, "source_out": 5.0, "timeline_in": 5.0},
+						}},
+					},
+				}},
+				{ID: "enc", Type: "encoder", Params: map[string]any{"codec": "libx264"}},
+			},
+			Edges: []EdgeDef{
+				{From: "seq", To: "enc", Type: "video"},
+				{From: "enc", To: "out0:v", Type: "video"},
+			},
+		},
+		Outputs: []Output{{ID: "out0", URL: "file:///out.mp4"}},
+	}
+	r := ValidateConfigStatic(cfg, nil)
+	for _, iss := range r.Issues {
+		if iss.Code == "TOPO_DANGLING_SOURCE" {
+			t.Errorf("unexpected TOPO_DANGLING_SOURCE for media_id-referenced input: %+v", iss)
+		}
+	}
+}
+
+// TestFrameSourceConsumedInputs unit-tests the helper: it must collect ids from
+// both a top-level clips list and a tracks[].clips timeline, via input_id and
+// media_id.
+func TestFrameSourceConsumedInputs(t *testing.T) {
+	cfg := &Config{
+		Graph: GraphDef{Nodes: []NodeDef{
+			{ID: "xfs", Type: "go_processor", Processor: "xfade_sequence", Params: map[string]any{
+				"clips": []any{map[string]any{"input_id": "clipA"}},
+			}},
+			{ID: "seq", Type: "go_processor", Processor: "sequence_editor", Params: map[string]any{
+				"tracks": []any{map[string]any{"clips": []any{
+					map[string]any{"media_id": "clipB"},
+					map[string]any{"input_id": "clipC"},
+				}}},
+			}},
+			{ID: "enc", Type: "encoder"}, // non-go_processor: ignored
+		}},
+	}
+	got := frameSourceConsumedInputs(cfg)
+	for _, id := range []string{"clipA", "clipB", "clipC"} {
+		if !got[id] {
+			t.Errorf("frameSourceConsumedInputs missing %q; got %v", id, got)
+		}
+	}
+	if len(got) != 3 {
+		t.Errorf("frameSourceConsumedInputs = %v, want exactly clipA/B/C", got)
+	}
+}
+
 func TestTopology_DanglingSink(t *testing.T) {
 	cfg := minCfg(
 		[]Input{defaultInput()},
