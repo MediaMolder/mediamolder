@@ -173,15 +173,9 @@ type SequenceEditor struct {
 	readers   map[string]*clipReader
 	lastFrame *av.Frame // last successfully sent frame (used for hold/freeze on timeline gaps)
 
-	// blendGraph is a reusable two-input blend graph for dissolve transitions.
-	// Created lazily on first use during a dissolve window. Reusing it avoids
-	// the cost of repeated NewComplexFilterGraph / parse / config for every
-	// blended frame (which was contributing to the observed slowdown).
-	blendGraph *av.FilterGraph
-
 	// xfadeGraph is a two-input libavfilter xfade graph used for non-dissolve
-	// transitions (wipes, slides, fades, …). Unlike blendGraph it is built
-	// PER transition window — xfade derives progress from input PTS over its
+	// transitions (wipes, slides, fades, …). It is built PER transition
+	// window — xfade derives progress from input PTS over its
 	// configured duration, so a fresh graph (and a reset PTS counter) is
 	// needed for each window. xfadeKey identifies the current window so the
 	// graph is rebuilt when a new one begins; xfadePTS is the continuous
@@ -374,10 +368,6 @@ func (se *SequenceEditor) Close() error {
 		}
 	}
 	se.readers = nil
-	if se.blendGraph != nil {
-		se.blendGraph.Close()
-		se.blendGraph = nil
-	}
 	if se.xfadeGraph != nil {
 		se.xfadeGraph.Close()
 		se.xfadeGraph = nil
@@ -591,61 +581,19 @@ func (se *SequenceEditor) Run(ctx context.Context, send func(*av.Frame) error) e
 					outFrame = se.xfadeComposite(transType, transKey, transDur, cframes[0], cframes[1])
 					contentThisFrame = true
 				} else if len(cframes) >= 2 {
-					// To achieve the correct cross-fade direction with the blend filter
-					// (which appears to implement A*X + B*(1-X) when all_opacity=X),
-					// we pass X = 1 - prog (i.e. outgoing's opacity) as the all_opacity
-					// value. This gives A*(1-prog) + B*prog where A=outgoing, B=incoming.
-					// Clear PTS on the inputs to the blend graph (we set the correct
-					// sequence PTS on the blended result later). This avoids timebase
-					// mismatch errors when pushing to buffers declared with the seq TB.
-					for _, cf := range cframes[:2] {
-						if cf != nil {
-							cf.SetPTS(0)
-						}
-					}
-					blendAllOpacity := activeLayers[0].opacity // 1 - prog
-					fg := se.getBlendGraph()
-					if fg == nil {
-						// Fallback to old per-frame creation (slower, and may fail
-						// if graph wiring has issues).
-						outFrame = se.blendTwoFrames(cframes[0], cframes[1], blendAllOpacity)
-					} else {
-						// Update opacity for *this* frame (cheap, no re-config).
-						if err := fg.SendCommand("blender", "all_opacity", fmt.Sprintf("%f", blendAllOpacity)); err != nil {
-							fmt.Printf("sequence_editor: blend SendCommand failed for op=%.3f: %v\n", blendAllOpacity, err)
-							outFrame = se.blendTwoFrames(cframes[0], cframes[1], blendAllOpacity) // fallback
-						} else {
-							// Push the already-converted target-format frames.
-							// The graph stays alive for the next blended frame.
-							if err := fg.PushFrameAt(0, cframes[0]); err != nil {
-								fmt.Printf("sequence_editor: blend push bottom failed: %v\n", err)
-								cframes[0].Close()
-								cframes[1].Close()
-								outFrame = nil
-							} else {
-								cframes[0].Close()
-								if err := fg.PushFrameAt(1, cframes[1]); err != nil {
-									fmt.Printf("sequence_editor: blend push top failed: %v\n", err)
-									cframes[1].Close()
-									outFrame = nil
-								} else {
-									cframes[1].Close()
-									blended, aerr := av.AllocFrame()
-									if aerr != nil {
-										outFrame = nil
-									} else if perr := fg.PullFrameAt(0, blended); perr != nil {
-										blended.Close()
-										if !av.IsEAgain(perr) && !av.IsEOF(perr) {
-											fmt.Printf("sequence_editor: blend pull failed: %v\n", perr)
-										}
-										outFrame = nil
-									} else {
-										outFrame = blended
-									}
-								}
-							}
-						}
-					}
+					// Cross-dissolve (transType "dissolve"), or an undeclared overlap
+					// of two clips: composite A*(1-prog) + B*prog with the blend filter.
+					// activeLayers[0] is the outgoing layer, so its opacity (1-prog) is
+					// the value blend wants as all_opacity (see blendTwoFrames, which
+					// short-circuits the trivial 0/1 endpoints without a graph and
+					// builds a one-shot blend graph for intermediate frames).
+					//
+					// A reusable blend graph whose all_opacity was updated per frame via
+					// SendCommand was tried here, but the blend filter implements no
+					// process_command: every SendCommand failed with ENOSYS ("Function
+					// not implemented") and fell back to this same path anyway, logging
+					// an error per frame. The reusable graph is gone; this is the path.
+					outFrame = se.blendTwoFrames(cframes[0], cframes[1], activeLayers[0].opacity)
 					contentThisFrame = true
 				} else if len(cframes) > 0 {
 					outFrame = cframes[0]
@@ -781,9 +729,16 @@ func (se *SequenceEditor) blendTwoFrames(frameA, frameB *av.Frame, opacityB floa
 	// With the filter's apparent formula A*X + B*(1-X), we pass X = out.opacity
 	// (1-prog) to get the correct A fading out, B fading in.
 	if frameB == nil || opacityB >= 1 {
+		// Fully the outgoing frame; the incoming one is discarded — close it so it
+		// is not leaked (this trivial endpoint is hit every overlap frame at op=1).
+		if frameB != nil {
+			frameB.Close()
+		}
 		return frameA
 	}
 	if opacityB <= 0 {
+		// Fully the incoming frame; discard the outgoing one.
+		frameA.Close()
 		return frameB
 	}
 
@@ -875,60 +830,6 @@ func (se *SequenceEditor) blendTwoFrames(frameA, frameB *av.Frame, opacityB floa
 		return nil
 	}
 	return blended
-}
-
-// getBlendGraph returns a reusable two-input blend graph for dissolves.
-// It is created on first use (with a named "blender" filter) and kept for the
-// lifetime of the SequenceEditor. Reusing avoids the expensive
-// NewComplexFilterGraph/parse/config on every blended frame during dissolve
-// windows (the main cause of the observed slowdown when dissolve support
-// was added). The all_opacity is updated per frame via SendCommand.
-func (se *SequenceEditor) getBlendGraph() *av.FilterGraph {
-	if se.blendGraph != nil {
-		return se.blendGraph
-	}
-	cfg := av.ComplexFilterGraphConfig{
-		Inputs: []av.FilterPadConfig{
-			{
-				Label:     "bottom",
-				MediaType: av.MediaTypeVideo,
-				Width:     se.format.Width,
-				Height:    se.format.Height,
-				PixFmt:    se.format.PixFmtInt,
-				TBNum:     se.format.TimeBase[0],
-				TBDen:     se.format.TimeBase[1],
-				SARNum:    1,
-				SARDen:    1,
-			},
-			{
-				Label:     "top",
-				MediaType: av.MediaTypeVideo,
-				Width:     se.format.Width,
-				Height:    se.format.Height,
-				PixFmt:    se.format.PixFmtInt,
-				TBNum:     se.format.TimeBase[0],
-				TBDen:     se.format.TimeBase[1],
-				SARNum:    1,
-				SARDen:    1,
-			},
-		},
-		Outputs: []av.FilterOutputConfig{
-			{
-				Label:     "out",
-				MediaType: av.MediaTypeVideo,
-			},
-		},
-		// Name the blend filter so we can SendCommand to it to change
-		// all_opacity cheaply on each use without recreating the graph.
-		FilterSpec: "[bottom][top]blend@blender=all_opacity=0.5[out]",
-	}
-	fg, err := av.NewComplexFilterGraph(cfg)
-	if err != nil {
-		fmt.Printf("sequence_editor: failed to create reusable blend graph: %v\n", err)
-		return nil
-	}
-	se.blendGraph = fg
-	return fg
 }
 
 // newXfadeGraph builds a two-input libavfilter xfade graph for a single
