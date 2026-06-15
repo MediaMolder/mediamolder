@@ -7,6 +7,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- **Native Go transition engine** (`transition/` package, documented in
+  [`docs/architecture/transitions.md`](docs/architecture/transitions.md)): the
+  `sequence_editor` now composites non-dissolve transitions (wipes, slides,
+  fades, circles, …) in pure Go — ported from FFmpeg's `vf_xfade.c` — instead of
+  feeding the libavfilter `xfade` filter. Custom transitions can be added in Go
+  via the `transition.Register` registry. Adds `av.Frame` plane access
+  (`Plane`/`Linesize`/`PlaneWidth`/`PlaneHeight`), `av.NewVideoFrame`, and
+  `Frame.CopyPropsFrom` to support pixel-level work in Go.
+
 - **Video Editing Guide** (`docs/video-editing-guide.md`): task-oriented guide
   to assembling clips into a finished video with the `sequence_editor` and
   `xfade_sequence` FrameSource processors — choosing between them, the
@@ -117,6 +126,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   `internal/server`. Docs: `docs/remote-server.md`, `docs/openapi-server.yaml`.
 
 ### Fixed
+- **sequence_editor: chroma corruption (green cast on the incoming clip) during
+  wipe/slide/fade transitions.** Pushing pre-converted frames into a libavfilter
+  `xfade` graph shifted the second input's chroma; these transitions are now
+  composited by the native Go transition engine and render cleanly. Also fixes a
+  per-frame `blend` `SendCommand` ENOSYS error on the dissolve/overlap path
+  (the filter has no `process_command`), a frame leak in the trivial-opacity
+  blend short-circuit, and per-source frame converters so two clips converted in
+  one timestep can no longer corrupt each other.
 - Re-encoding now clears decoded source `pict_type` at the encoder boundary,
   matching FFmpeg's `frame_encode` behavior. Custom graph requests still force
   IDR frames through `force_key_frames` or processor metadata, so scene-change
