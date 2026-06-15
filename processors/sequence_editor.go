@@ -166,11 +166,12 @@ type SequenceEditor struct {
 	tracks   []seqTrack
 	duration float64 // computed or user-supplied total sequence length in seconds
 
-	// runtime state
-	readers          map[string]*clipReader
-	converter        *av.FilterGraph // single-input scale+format converter (input = source native, output = sequence format)
-	converterInputSI av.StreamInfo
-	lastFrame        *av.Frame // last successfully sent frame (used for hold/freeze on timeline gaps)
+	// runtime state. Each clipReader owns its own scale+format converter (see
+	// clipReader.converter); there is deliberately no SequenceEditor-level shared
+	// converter, because a transition converts two sources in the same timestep
+	// and a single shared graph corrupted one of the two outputs' chroma.
+	readers   map[string]*clipReader
+	lastFrame *av.Frame // last successfully sent frame (used for hold/freeze on timeline gaps)
 
 	// blendGraph is a reusable two-input blend graph for dissolve transitions.
 	// Created lazily on first use during a dissolve window. Reusing it avoids
@@ -373,10 +374,6 @@ func (se *SequenceEditor) Close() error {
 		}
 	}
 	se.readers = nil
-	if se.converter != nil {
-		se.converter.Close()
-		se.converter = nil
-	}
 	if se.blendGraph != nil {
 		se.blendGraph.Close()
 		se.blendGraph = nil
@@ -565,7 +562,7 @@ func (se *SequenceEditor) Run(ctx context.Context, send func(*av.Frame) error) e
 						}
 						// source ended — fall through to black
 					} else if native != nil {
-						outFrame = se.convertFrame(native, reader.si)
+						outFrame = se.convertFrame(native, reader)
 						contentThisFrame = true
 					}
 				}
@@ -578,7 +575,7 @@ func (se *SequenceEditor) Run(ctx context.Context, send func(*av.Frame) error) e
 					if reader != nil {
 						native, err := reader.getFrameAtSeconds(l.srcT)
 						if err == nil && native != nil {
-							cf := se.convertFrame(native, reader.si)
+							cf := se.convertFrame(native, reader)
 							if cf != nil {
 								cframes = append(cframes, cf)
 							}
@@ -758,8 +755,8 @@ func (se *SequenceEditor) emitSequenceLog(i int, t float64, pts int64, action st
 	rec.DstW = se.format.Width
 	rec.DstH = se.format.Height
 	rec.DstPixFmt = se.format.PixFmtInt
-	if se.converter != nil {
-		rec.Converter = "scale+format (via av.FilterGraph)"
+	if len(se.readers) > 0 {
+		rec.Converter = "scale+format (per-source av.FilterGraph)"
 	}
 
 	enc := json.NewEncoder(se.sequenceLog)
@@ -1219,6 +1216,7 @@ type clipReader struct {
 	dec        *av.DecoderContext
 	pkt        *av.Packet
 	si         av.StreamInfo
+	converter  *av.FilterGraph // per-source scale+format normalizer to the sequence format (lazily built)
 	vidIdx     int
 	lastSrcSec float64
 	sourceFPS  float64 // nominal frame rate for this source (from r_frame_rate or avg), used for reliable "skip N frames to reach source_in" without depending on PTS or broken seeks
@@ -1274,6 +1272,10 @@ func openClipReader(url string) (*clipReader, error) {
 }
 
 func (r *clipReader) close() {
+	if r.converter != nil {
+		r.converter.Close()
+		r.converter = nil
+	}
 	if r.pkt != nil {
 		r.pkt.Close()
 		r.pkt = nil
@@ -1363,26 +1365,35 @@ func (r *clipReader) getFrameAtSeconds(sec float64) (*av.Frame, error) {
 	}
 }
 
-// convertFrame runs a decoded source frame through the (lazily built) scale+format
-// converter so the frame delivered to downstream nodes (e.g. the encoder) exactly
-// matches the sequence format declared in OutputStreamInfo (width/height/pix_fmt
-// from the job JSON "format"). Sending unconverted native source frames (which may
-// have a different pix_fmt, full-range vs limited, or even different resolution)
-// to an encoder configured for the target format produces garbage output (vertical
-// lines, corrupted blocks, no recognizable picture) and/or absurdly low bitrate
-// because the encoder receives bogus pixel data.
-func (se *SequenceEditor) convertFrame(native *av.Frame, srcSI av.StreamInfo) *av.Frame {
+// convertFrame runs a decoded source frame through the reader's (lazily built)
+// scale+format converter so the frame delivered to downstream nodes (e.g. the
+// encoder) exactly matches the sequence format declared in OutputStreamInfo
+// (width/height/pix_fmt from the job JSON "format"). Sending unconverted native
+// source frames (which may have a different pix_fmt, full-range vs limited, or
+// even different resolution) to an encoder configured for the target format
+// produces garbage output (vertical lines, corrupted blocks, no recognizable
+// picture) and/or absurdly low bitrate because the encoder receives bogus data.
+//
+// The converter is owned by the clipReader, not the SequenceEditor: a transition
+// converts two sources in the same timestep, and feeding both through one shared
+// scale+format graph corrupted one of the two outputs' chroma (the composited
+// frame showed garbage colour-difference data). Per-source graphs keep the two
+// conversions independent.
+func (se *SequenceEditor) convertFrame(native *av.Frame, r *clipReader) *av.Frame {
 	if native == nil {
 		return nil
 	}
-	se.ensureConverter(srcSI)
-	if se.converter == nil {
+	if r == nil {
+		return native
+	}
+	se.ensureReaderConverter(r)
+	if r.converter == nil {
 		// Converter could not be built for this source (logged by ensure). Fall back
 		// to the native frame; downstream may still produce something or the sizes
 		// may happen to match.
 		return native
 	}
-	if err := se.converter.PushFrame(native); err != nil {
+	if err := r.converter.PushFrame(native); err != nil {
 		native.Close()
 		fmt.Printf("sequence_editor: converter push err: %v\n", err)
 		return nil
@@ -1391,17 +1402,16 @@ func (se *SequenceEditor) convertFrame(native *av.Frame, srcSI av.StreamInfo) *a
 	native.Close()
 
 	// Pull the converted frame. A simple scale+format graph is 1:1 and should
-	// produce output on the first Pull after Push, but the first frame (or after
-	// a clip switch) can require several Pull attempts while the filter configures
-	// itself (see the "changing video frame properties on the fly" warnings).
-	// Keep pulling on EAGAIN for a while before giving up (caller will then hold
-	// the previous lastFrame for this timestep).
+	// produce output on the first Pull after Push, but the first frame can require
+	// several Pull attempts while the filter configures itself (see the "changing
+	// video frame properties on the fly" warnings). Keep pulling on EAGAIN for a
+	// while before giving up (caller will then hold the previous lastFrame).
 	for attempt := 0; attempt < 16; attempt++ {
 		cf, aerr := av.AllocFrame()
 		if aerr != nil {
 			return nil
 		}
-		perr := se.converter.PullFrame(cf)
+		perr := r.converter.PullFrame(cf)
 		if perr == nil {
 			return cf
 		}
@@ -1416,21 +1426,18 @@ func (se *SequenceEditor) convertFrame(native *av.Frame, srcSI av.StreamInfo) *a
 	return nil
 }
 
-func (se *SequenceEditor) ensureConverter(srcSI av.StreamInfo) {
-	if se.converter != nil {
-		// very naive: keep if dimensions/pixfmt roughly match last used
-		if se.converterInputSI.Width == srcSI.Width && se.converterInputSI.PixFmt == srcSI.PixFmt {
-			return
-		}
-		se.converter.Close()
-		se.converter = nil
+// ensureReaderConverter lazily builds the per-source scale+format converter that
+// normalizes this reader's native frames to the sequence format. Built once per
+// reader from its fixed StreamInfo; never shared across readers.
+func (se *SequenceEditor) ensureReaderConverter(r *clipReader) {
+	if r == nil || r.converter != nil {
+		return
 	}
-	// Use scale's out_range=tv (limited range) + format to produce frames
-	// with the conventional properties of yuv420p (instead of inheriting
-	// full-range "pc" / yuvj from camera sources). This avoids "changing
-	// video frame properties on the fly" warnings when the same converter
-	// instance receives frames from different sources, and ensures the
-	// frames passed to our dissolve blend graphs have consistent metadata.
+	srcSI := r.si
+	// Use scale's out_range=tv (limited range) + format to produce frames with the
+	// conventional properties of yuv420p (instead of inheriting full-range "pc" /
+	// yuvj from camera sources), so the frames passed to the blend/xfade graphs
+	// have consistent metadata.
 	spec := fmt.Sprintf("scale=%d:%d:flags=bicubic:out_range=tv,format=%s",
 		se.format.Width, se.format.Height, se.format.PixFmt)
 	fg, err := av.NewVideoFilterGraph(av.VideoFilterGraphConfig{
@@ -1448,8 +1455,7 @@ func (se *SequenceEditor) ensureConverter(srcSI av.StreamInfo) {
 		// best effort — caller will fall back to black or error later
 		return
 	}
-	se.converter = fg
-	se.converterInputSI = srcSI
+	r.converter = fg
 }
 
 func init() {
