@@ -15,11 +15,11 @@ import (
 // a near-verbatim translation. width/height are PLANE dimensions, so the chroma
 // planes scale with luma. See transition.go for the pointwise/registry plumbing.
 //
-// Coverage note: this is a faithful core, not the entire xfade set. The
-// scaling/blur transitions (zoomin, squeezeh/v, hblur), the crop shapes
-// (circlecrop, rectcrop), the corner/bar wipes (wipetl…, vertopen…) and
-// fadegrays are not yet ported; sequence_editor falls back to "fade" for any
-// supported name without an entry here. distance is an approximation (see below).
+// This file holds the pointwise core (fades, hard/smooth wipes, slides, circles,
+// radial, slices). The crop/corner/bar transitions and the ones needing
+// neighbourhood or resample access (distance, hblur, squeeze, zoomin) are in
+// builtin_more.go. Together they cover the full xfade set the sequence_editor
+// accepts, so the engine never falls back.
 func init() {
 	// ---- fades ----
 	registerPointwise("fade", func(a, b float64, x, y, w, h, plane int, p float64) float64 {
@@ -110,17 +110,6 @@ func init() {
 	registerPointwise("vdslice", func(a, b float64, x, y, w, h, plane int, p float64) float64 {
 		yy := float64(h-1-y) / float64(h)
 		return sliceMix(a, b, smoothstep(-0.5, 0, yy-p*1.5), fract(10*yy))
-	})
-
-	// ---- distance (approximate: vf_xfade.c sums normalized squared diffs over
-	// all planes at one pixel; planar YUV planes are different sizes, so here it
-	// is computed per plane from that plane's own a/b difference). ----
-	registerPointwise("distance", func(a, b float64, x, y, w, h, plane int, p float64) float64 {
-		dist := 0.0
-		if math.Abs(a-b)/255 <= p {
-			dist = 1
-		}
-		return mix(mix(a, b, dist), b, p)
 	})
 
 	// ---- slides (a/b wrap-shifted across the frame) ----

@@ -145,19 +145,24 @@ func clip8(v float64) byte {
 	return byte(v + 0.5)
 }
 
-// blackLevel/whiteLevel return the limited-range ("tv") 8-bit background values
-// per plane: luma uses 16/235, chroma is neutral at 128 for both. The sequence
-// converter emits limited-range yuv420p, so these match the frames we receive.
+// blackLevel/whiteLevel return xfade's 8-bit background values per plane,
+// matching vf_xfade.c exactly (it uses full-range levels regardless of the
+// frame's signalled range): luma black/white are 0/255, chroma is neutral at
+// max_value/2 = 127 for both, and a fourth (alpha) plane is opaque (255).
 func blackLevel(plane int) float64 {
-	if plane == 0 {
-		return 16
+	switch plane {
+	case 0:
+		return 0
+	case 3:
+		return 255
+	default:
+		return 127
 	}
-	return 128
 }
 
 func whiteLevel(plane int) float64 {
-	if plane == 0 {
-		return 235
+	if plane == 1 || plane == 2 {
+		return 127
 	}
-	return 128
+	return 255
 }

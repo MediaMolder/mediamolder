@@ -121,25 +121,26 @@ Either way, also add the name to `processors.seqSupportedTransitions` so the
 
 ## Coverage
 
-Ported faithfully from `vf_xfade.c` (23):
+The engine ports the **entire** xfade transition set the `sequence_editor`
+accepts (`processors.seqSupportedTransitions`), so it never falls back:
 
-> `fade`, `fadeblack`, `fadewhite`,
+> `fade`, `fadeblack`, `fadewhite`, `fadegrays`,
 > `wipeleft`, `wiperight`, `wipeup`, `wipedown`,
+> `wipetl`, `wipetr`, `wipebl`, `wipebr`,
 > `slideleft`, `slideright`, `slideup`, `slidedown`,
 > `smoothleft`, `smoothright`, `smoothup`, `smoothdown`,
-> `circleopen`, `circleclose`, `radial`,
-> `hlslice`, `hrslice`, `vuslice`, `vdslice`,
-> `distance`.
+> `circleopen`, `circleclose`, `circlecrop`, `rectcrop`,
+> `vertopen`, `vertclose`, `horzopen`, `horzclose`,
+> `radial`, `distance`, `zoomin`, `squeezeh`, `squeezev`,
+> `hlslice`, `hrslice`, `vuslice`, `vdslice`, `hblur`.
 
-- **`distance`** is an approximation: `vf_xfade.c` sums normalized squared
-  differences across all planes at one pixel, but planar-YUV planes differ in
-  size, so the Go version computes it per plane from that plane's own a/b
-  difference. Visually similar; not bit-exact.
-- **Not yet ported** (these currently fall back to a linear fade): `fadegrays`,
-  the corner wipes (`wipetl`/`wipetr`/`wipebl`/`wipebr`), the bar opens/closes
-  (`vertopen`/`vertclose`/`horzopen`/`horzclose`), the crop shapes
-  (`circlecrop`/`rectcrop`), and the resample/blur transitions (`zoomin`,
-  `squeezeh`, `squeezev`, `hblur`). They are good first contributions.
+`builtin.go` holds the pointwise core; `builtin_more.go` holds the crop/corner/bar
+transitions plus those needing neighbourhood or resample access (`distance` reads
+all planes per pixel, `hblur` is a running box blur, `squeezeh/v` and `zoomin`
+resample). The fallback-to-`fade` path in `sequence_editor` remains only as a
+defensive guard. (The dithered `dissolve` and the few xfade transitions outside
+`seqSupportedTransitions` — `pixelize`, `diagtl…`, `hwind…`, `cover`/`reveal`,
+`fadefast/slow` — are deliberately not exposed.)
 
 ## Performance
 
