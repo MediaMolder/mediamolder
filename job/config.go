@@ -1961,20 +1961,20 @@ func validateClipInputIDs(node NodeDef, cfg *Config) error {
 
 // Timeline is the top-level description for a timeline/sequence-editing job.
 type Timeline struct {
-	Sequence  SequenceSpec         `json:"sequence"`
-	MediaPool map[string]MediaRef  `json:"media_pool,omitempty"`
-	Tracks    []Track              `json:"tracks"`
-	Duration  float64              `json:"duration,omitempty"`
+	Sequence  SequenceSpec        `json:"sequence"`
+	MediaPool map[string]MediaRef `json:"media_pool,omitempty"`
+	Tracks    []Track             `json:"tracks"`
+	Duration  float64             `json:"duration,omitempty"`
 }
 
 // SequenceSpec defines the fixed output format and continuous timebase
 // for the rendered sequence (analogous to "project settings" in an NLE).
 type SequenceSpec struct {
-	Width     int     `json:"width"`
-	Height    int     `json:"height"`
-	PixFmt    string  `json:"pix_fmt"`
-	FrameRate [2]int  `json:"frame_rate"` // {num, den}
-	TimeBase  [2]int  `json:"time_base"`  // continuous TB for output PTS, e.g. {1,90000}
+	Width     int    `json:"width"`
+	Height    int    `json:"height"`
+	PixFmt    string `json:"pix_fmt"`
+	FrameRate [2]int `json:"frame_rate"` // {num, den}
+	TimeBase  [2]int `json:"time_base"`  // continuous TB for output PTS, e.g. {1,90000}
 	// Optional color metadata forwarded to downstream.
 	ColorRange     string `json:"color_range,omitempty"`
 	ColorSpace     string `json:"color_space,omitempty"`
@@ -1990,24 +1990,24 @@ type MediaRef struct {
 
 // Track is one layer (video or audio) in the timeline.
 type Track struct {
-	ID    string            `json:"id"`
-	Type  string            `json:"type"` // "video" | "audio"
-	Clips []ClipPlacement   `json:"clips"`
-	Attrs map[string]any    `json:"attributes,omitempty"`
+	ID    string          `json:"id"`
+	Type  string          `json:"type"` // "video" | "audio"
+	Clips []ClipPlacement `json:"clips"`
+	Attrs map[string]any  `json:"attributes,omitempty"`
 }
 
 // ClipPlacement places a segment of a source onto the timeline at a specific
 // position, with optional outgoing transition.
 type ClipPlacement struct {
-	MediaID    string       `json:"media_id,omitempty"`
-	URL        string       `json:"url,omitempty"`
-	SourceIn   float64      `json:"source_in"`
-	SourceOut  float64      `json:"source_out,omitempty"`
-	TimelineIn float64      `json:"timeline_in"`
-	Duration   float64      `json:"duration,omitempty"`
-	Transition *Transition  `json:"transition,omitempty"`
+	MediaID    string         `json:"media_id,omitempty"`
+	URL        string         `json:"url,omitempty"`
+	SourceIn   float64        `json:"source_in"`
+	SourceOut  float64        `json:"source_out,omitempty"`
+	TimelineIn float64        `json:"timeline_in"`
+	Duration   float64        `json:"duration,omitempty"`
+	Transition *Transition    `json:"transition,omitempty"`
 	Attrs      map[string]any `json:"attributes,omitempty"`
-	Label      string       `json:"label,omitempty"`
+	Label      string         `json:"label,omitempty"`
 }
 
 // Transition for crossfades etc between adjacent clips on the same track.
