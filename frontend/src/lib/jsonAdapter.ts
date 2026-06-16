@@ -121,6 +121,13 @@ export interface FlowNodeData extends Record<string, unknown> {
    */
   friendlyName?: string;
   /**
+   * True when this go_processor implements FrameSource — it generates its
+   * own frames and has no inbound AV edge. MMNode suppresses the
+   * video/audio target handles on such nodes. Editor-only; set from the
+   * /api/nodes catalog on spawn and on catalog update after load.
+   */
+  sourceOnly?: boolean;
+  /**
    * Hardware device name when this node runs on a named accelerator
    * (NodeDef.device). Injected by app.tsx decoratedNodes; drives the
    * GPU badge in MMNode. Editor-only. (Wave 10 #60)
@@ -136,11 +143,13 @@ export interface FlowNodeData extends Record<string, unknown> {
 }
 
 export interface FlowEdgeData extends Record<string, unknown> {
-  streamType: StreamType;
+  streamType: StreamType | string;
   rawFrom: string;
   rawTo: string;
   /** Set on synthetic ghost-chain edges. Dropped on export. */
   implicit?: boolean;
+  /** Set on synthetic clips-reference edges derived from input_id params. Dropped on export. */
+  synthetic?: boolean;
 }
 
 export type FlowNode = Node<FlowNodeData>;
@@ -436,31 +445,43 @@ export function configToFlow(cfg: JobConfig, opts: ConvertOptions = {}): {
   });
 
   cfg.graph.nodes.forEach((n) => {
+    const data: FlowNodeData = {
+      kind: n.type,
+      label: nodeDisplayLabel(n),
+      sublabel: nodeDisplaySublabel(n),
+      ref: { kind: 'node', def: n },
+      // For stream-copy nodes infer the supported media type from the
+      // edges the node participates in. This narrows MMNode's pins
+      // (video-only handles for a video copy, etc.) and lets
+      // describeKind render the friendly heading "Video stream copy"
+      // / "Audio stream copy" instead of the generic "Stream copy".
+      //
+      // For go_processor nodes, use the same edge-based inference as
+      // a fallback until the async catalog fetch resolves and overwrites
+      // with the authoritative list. This prevents showing all four
+      // handles for processors like the scene detectors that only handle
+      // video, when loading a graph that was saved before pin metadata
+      // was stored in the config.
+      ...((n.type === 'copy' || n.type === 'go_processor')
+        ? { streams: inferCopyStreams(n.id, cfg.graph.edges) }
+        : {}),
+    };
+    // Eagerly mark go_processor nodes as sourceOnly when their clips array
+    // contains input_id entries. This ensures the clips_ref target handle is
+    // rendered on the first paint, before the async catalog fetch resolves.
+    if (n.type === 'go_processor') {
+      const clips = (n.params as Record<string, unknown> | undefined)?.clips;
+      if (Array.isArray(clips) && (clips as unknown[]).some(
+        (c) => typeof c === 'object' && c !== null && typeof (c as Record<string, unknown>).input_id === 'string',
+      )) {
+        data.sourceOnly = true;
+      }
+    }
     nodes.push({
       id: n.id,
       type: 'mmNode',
       position: positions[n.id] ?? { x: 0, y: 0 },
-      data: {
-        kind: n.type,
-        label: nodeDisplayLabel(n),
-        sublabel: nodeDisplaySublabel(n),
-        ref: { kind: 'node', def: n },
-        // For stream-copy nodes infer the supported media type from the
-        // edges the node participates in. This narrows MMNode's pins
-        // (video-only handles for a video copy, etc.) and lets
-        // describeKind render the friendly heading "Video stream copy"
-        // / "Audio stream copy" instead of the generic "Stream copy".
-        //
-        // For go_processor nodes, use the same edge-based inference as
-        // a fallback until the async catalog fetch resolves and overwrites
-        // with the authoritative list. This prevents showing all four
-        // handles for processors like the scene detectors that only handle
-        // video, when loading a graph that was saved before pin metadata
-        // was stored in the config.
-        ...((n.type === 'copy' || n.type === 'go_processor')
-          ? { streams: inferCopyStreams(n.id, cfg.graph.edges) }
-          : {}),
-      },
+      data,
     });
   });
 
@@ -536,6 +557,35 @@ export function configToFlow(cfg: JobConfig, opts: ConvertOptions = {}): {
     };
   });
 
+  // Synthesise visual "clips reference" edges for FrameSource processors.
+  // These are purely decorative: the engine resolves input_id at runtime.
+  // They are tagged synthetic:true so flowToConfig strips them before saving.
+  cfg.graph.nodes.forEach((n) => {
+    if (n.type !== 'go_processor') return;
+    const clips = (n.params as Record<string, unknown> | undefined)?.clips;
+    if (!Array.isArray(clips)) return;
+    const seenInputIds = new Set<string>();
+    (clips as unknown[]).forEach((clip) => {
+      if (typeof clip !== 'object' || clip === null) return;
+      const c = clip as Record<string, unknown>;
+      if (typeof c.input_id !== 'string') return;
+      if (seenInputIds.has(c.input_id)) return;
+      seenInputIds.add(c.input_id);
+      if (!inputIds.has(c.input_id)) return;
+      const srcFlowId = INPUT_PREFIX + c.input_id;
+      edges.push({
+        id: `clips_ref-${srcFlowId}-${n.id}`,
+        type: 'mmEdge',
+        source: srcFlowId,
+        target: n.id,
+        sourceHandle: 'clips_ref',
+        targetHandle: 'clips_ref',
+        className: 'edge-clips_ref',
+        data: { streamType: 'clips_ref', synthetic: true, rawFrom: '', rawTo: '' },
+      });
+    });
+  });
+
   // Apply layout fallback only if no positions were stored.
   const hasAnyPosition = Object.keys(positions).length > 0;
   if (autoLayout && !hasAnyPosition) {
@@ -559,7 +609,7 @@ export function flowToConfig(
   // user-facing edges remain in `edges` (marked hidden) so the round-trip
   // preserves the user's wiring.
   nodes = nodes.filter((n) => !n.data.implicit);
-  edges = edges.filter((e) => !e.data?.implicit);
+  edges = edges.filter((e) => !e.data?.implicit && !(e.data as { synthetic?: boolean } | undefined)?.synthetic);
 
   const inputs: JobConfig['inputs'] = [];
   const outputs: JobConfig['outputs'] = [];

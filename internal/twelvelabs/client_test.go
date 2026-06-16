@@ -33,7 +33,7 @@ func TestCreateIndex(t *testing.T) {
 		}
 		_ = json.NewDecoder(r.Body).Decode(&gotBody)
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(Index{ID: "idx1", Name: "test-index"})
+		_ = json.NewEncoder(w).Encode(Index{ID: "idx1", Name: "test-index"})
 	}))
 	defer srv.Close()
 
@@ -84,7 +84,7 @@ func TestListIndexes(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{
+		_ = json.NewEncoder(w).Encode(map[string]any{
 			"data": []Index{
 				{ID: "a", Name: "first"},
 				{ID: "b", Name: "second"},
@@ -109,7 +109,7 @@ func TestListIndexes_RawAPIFields(t *testing.T) {
 	raw := `{"data":[{"_id":"abc123","index_name":"my-index","created_at":"2026-01-01T00:00:00Z","models":[{"model_name":"marengo3.0","model_options":["visual","audio"]}]}]}`
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(raw))
+		_, _ = w.Write([]byte(raw))
 	}))
 	defer srv.Close()
 
@@ -174,7 +174,7 @@ func TestGetTask(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(Task{ID: "task1", Status: TaskStatusReady})
+		_ = json.NewEncoder(w).Encode(Task{ID: "task1", Status: TaskStatusReady})
 	}))
 	defer srv.Close()
 
@@ -199,7 +199,7 @@ func TestGetTask_EmptyID(t *testing.T) {
 func TestWaitForTask_ImmediatelyReady(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(Task{ID: "t1", Status: TaskStatusReady, VideoID: "v1"})
+		_ = json.NewEncoder(w).Encode(Task{ID: "t1", Status: TaskStatusReady, VideoID: "v1"})
 	}))
 	defer srv.Close()
 
@@ -225,7 +225,7 @@ func TestWaitForTask_EventuallyReady(t *testing.T) {
 			status = TaskStatusReady
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(Task{ID: "t1", Status: status})
+		_ = json.NewEncoder(w).Encode(Task{ID: "t1", Status: status})
 	}))
 	defer srv.Close()
 
@@ -245,7 +245,7 @@ func TestWaitForTask_EventuallyReady(t *testing.T) {
 func TestWaitForTask_Failed(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(Task{ID: "t1", Status: TaskStatusFailed})
+		_ = json.NewEncoder(w).Encode(Task{ID: "t1", Status: TaskStatusFailed})
 	}))
 	defer srv.Close()
 
@@ -261,7 +261,7 @@ func TestWaitForTask_Failed(t *testing.T) {
 func TestWaitForTask_ContextCancelled(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(Task{ID: "t1", Status: TaskStatusIndexing})
+		_ = json.NewEncoder(w).Encode(Task{ID: "t1", Status: TaskStatusIndexing})
 	}))
 	defer srv.Close()
 
@@ -283,7 +283,7 @@ func TestAPIKey_SentInHeader(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotKey = r.Header.Get("x-api-key")
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{"data": []Index{}})
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": []Index{}})
 	}))
 	defer srv.Close()
 

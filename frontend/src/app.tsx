@@ -211,6 +211,7 @@ function Editor() {
     fetchCatalog()
       .then((catalog) => {
         const idx = indexStreams(catalog);
+        const srcOnly = new Set(catalog.filter((e) => e.source_only).map((e) => `${e.type}/${e.name}`));
         setNodes((cur) =>
           cur.map((node) => {
             if (node.data.ref.kind !== 'node') return node;
@@ -223,9 +224,13 @@ function Editor() {
                   : def.type === 'go_processor'
                     ? (def.processor ?? '')
                     : '';
-            const streams = idx.get(`${def.type}/${lookupName}`);
-            if (!streams) return node;
-            return { ...node, data: { ...node.data, streams } };
+            const key = `${def.type}/${lookupName}`;
+            const streams = idx.get(key);
+            const updates: Record<string, unknown> = {};
+            if (streams) updates.streams = streams;
+            if (srcOnly.has(key)) updates.sourceOnly = true;
+            if (Object.keys(updates).length === 0) return node;
+            return { ...node, data: { ...node.data, ...updates } };
           }),
         );
       })
@@ -297,7 +302,8 @@ function Editor() {
               // Events and file edges are routing annotations, not AV streams
               // — never remove them based on probe results.
               const st = (e.data as { streamType?: string } | null)?.streamType;
-              if (st === 'events' || st === 'file') return true;
+              const isSynthetic = (e.data as { synthetic?: boolean } | null)?.synthetic;
+              if (st === 'events' || st === 'file' || isSynthetic) return true;
               return streams.includes(e.sourceHandle.split(':')[0]);
             }),
           );
@@ -811,7 +817,7 @@ function Editor() {
           data: { ...(e.data as FlowEdgeData), rawTo: newId },
         }));
         // Infer stream type from first rerouted edge.
-        const st: StreamType = rerouted[0]?.data?.streamType ?? 'video';
+        const st: StreamType = (rerouted[0]?.data?.streamType as StreamType | undefined) ?? 'video';
         const bridgeEdge: FlowEdge = {
           id: `${newId}_to_${before_node_id}`,
           source: newId,
@@ -1077,6 +1083,7 @@ function Editor() {
   const decoratedEdges = useMemo<FlowEdge[]>(
     () =>
       edges.map((e) => {
+        if ((e.data as { synthetic?: boolean } | null)?.synthetic) return e;
         const attrs = inferEdgeAttributes(nodes, edges, e);
         const summary = summariseAttributes(attrs);
         return {

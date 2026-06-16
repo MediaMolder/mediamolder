@@ -31,6 +31,7 @@ Everything runs in-process: no subprocesses, no network calls, no Python. Your p
 		- [`twelvelabs_analyzer`](#twelvelabs_analyzer)
 		- [`twelvelabs_searcher`](#twelvelabs_searcher)
 		- [`twelvelabs_embedder`](#twelvelabs_embedder)
+		- [`sequence_editor`](#sequence_editor)
 	- [Helper functions](#helper-functions)
 		- [Letterbox](#letterbox)
 		- [ImageToFloat32Tensor](#imagetofloat32tensor)
@@ -39,6 +40,7 @@ Everything runs in-process: no subprocesses, no network calls, no Python. Your p
 		- [When to use what](#when-to-use-what)
 		- [Example](#example)
 	- [Writing a custom processor](#writing-a-custom-processor)
+	- [Writing a FrameSource processor](#writing-a-framesource-processor)
 		- [Step 1: Implement the interface](#step-1-implement-the-interface)
 		- [Step 2: Register it](#step-2-register-it)
 		- [Step 3: Use it in JSON](#step-3-use-it-in-json)
@@ -128,6 +130,10 @@ type Processor interface {
 type FrameLookahead interface {
   LookbackFrames() int
 }
+
+type FrameSource interface {
+  Run(ctx context.Context, send func(*av.Frame) error) error
+}
 ```
 
 | Method | When it runs | What to do |
@@ -140,6 +146,8 @@ type FrameLookahead interface {
 for an earlier frame after seeing future frames. The runtime delays downstream
 delivery by `LookbackFrames()` frames so metadata routing and forced-IDR marks
 can target the event frame instead of the confirmation frame.
+
+`FrameSource` is optional. Implement it when a processor **generates its own frames** rather than processing inbound ones.  A `go_processor` that also implements `FrameSource` may have **zero inbound AV edges** in the graph; the runtime calls `Run()` instead of the `Process()` loop and feeds the produced frames to all downstream channels.  The `send` callback takes ownership of each frame — do not close frames you have sent.  `sequence_editor` is the built-in example.  See [Writing a FrameSource processor](#writing-a-framesource-processor) for implementation notes.
 
 ### ProcessorContext
 
@@ -555,6 +563,90 @@ All four nodes share an API-key resolution chain (`api_key` param → `TWELVELAB
 
 ---
 
+### `sequence_editor`
+
+A basic NLE-style timeline / sequence generator (a **FrameSource**
+`go_processor`). You declare a fixed output video format and one or more
+**tracks**; each track holds clips placed at explicit sequence times. At any
+output time the clip on the highest-priority (highest-index) track that
+covers that time is decoded, converted to the sequence format, stamped with a
+continuous sequence PTS, and emitted; uncovered times render black. This
+gives cuts, inserts, multi-cam selects, and layered content via track
+priority. The sequence timebase is continuous and independent of the
+sources' timebases, so output PTS is strictly increasing at a constant rate.
+
+Transitions between adjacent clips on a track support `dissolve` (a linear
+cross-fade) and the full libavfilter `xfade` set (wipes, slides, fades, …) —
+see the `transition` field below.
+
+#### When to use `sequence_editor`
+
+- Multi-track / layered timelines (upper track replaces lower where present)
+- Precise placement: clips at specific sequence times, with gaps or overlaps
+- A fixed output format that sources are scaled/retimed into
+- Dissolve or any `xfade` transition between adjacent clips on a track
+
+#### Params
+
+```json
+{
+  "format": {
+    "width": 1920,
+    "height": 1080,
+    "pix_fmt": "yuv420p",
+    "frame_rate": 29.97,
+    "time_base": [1, 90000],
+    "length_sec": 130
+  },
+  "tracks": [
+    {
+      "id": "V1",
+      "type": "video",
+      "clips": [
+        { "input_id": "video_a", "source_in": 0,  "source_out": 10.5, "timeline_in": 0,  "transition": { "type": "dissolve", "duration": 0.5 } },
+        { "input_id": "video_b", "source_in": 10, "source_out": 20.5, "timeline_in": 10, "transition": { "type": "dissolve", "duration": 0.5 } },
+        { "input_id": "video_a", "source_in": 20, "source_out": 30,   "timeline_in": 20 }
+      ]
+    }
+  ],
+  "sequence_log": "/tmp/seq.jsonl"
+}
+```
+
+| Field (in `format`) | Type | Description |
+|---|---|---|
+| `width` / `height` | int | Output resolution; sources are scaled to it. |
+| `pix_fmt` | string | Output pixel format (e.g. `yuv420p`). |
+| `frame_rate` | number | Constant output frame rate. |
+| `time_base` | [int,int] | Continuous sequence timebase (e.g. `[1, 90000]`). |
+| `length_sec` | number | Exact sequence length; overrides the computed duration. |
+
+| Field (in `tracks[].clips[]`) | Type | Description |
+|---|---|---|
+| `url` *or* `input_id` / `media_id` | string | Source. `input_id`/`media_id` reference a graph Input node and are resolved to a `url` by the engine before `Init()`. |
+| `source_in` | number | Source time (seconds) mapped to `timeline_in`. |
+| `source_out` | number | Source stop time; clip duration = `source_out − source_in` (must be > 0, and includes any transition overlap). |
+| `timeline_in` | number | Where the clip begins on the output timeline (seconds). |
+| `transition` | object | Optional `{ "type": "<name>", "duration": <sec> }` transition into the next clip. `dissolve` is a linear cross-fade (the `blend` filter — *not* xfade's dithered dissolve); every other name is a **libavfilter `xfade` transition** (`fade`, `wipeleft/right/up/down`, `slideleft/right/…`, `circleopen/close`, `fadeblack/white/grays`, `radial`, `zoomin`, `hblur`, …) composited per-window via an xfade graph. Transitions are within-track (between two adjacent clips on the same track); they do not compose across track layers. Unsupported names are rejected at load time. |
+
+`sequence_log` (optional): a path to write one JSON-Lines record per output
+frame describing what the renderer did (winning track/clip, source time
+fetched, hold vs. fresh content) — useful for debugging timeline math.
+
+Runnable examples:
+[`61_sequence_editor_dissolves.json`](../testdata/examples/61_sequence_editor_dissolves.json)
+(dissolve) and
+[`62_sequence_editor_wipe.json`](../testdata/examples/62_sequence_editor_wipe.json)
+(xfade `wipeleft` + `slideright`).
+
+**Note**: `sequence_editor` is a **FrameSource** — it
+opens its sources internally and has **no inbound AV edge**. Reference
+sources via `input_id`/`media_id` on top-level Input nodes (the engine
+resolves them to URLs); those Input nodes need no edges into the sequence
+node.
+
+---
+
 ## Helper functions
 
 The `processors` package includes utility functions that handle common preprocessing and visualisation tasks you'd otherwise have to write yourself. These are **not called automatically** — you call them inside your `Process()` method whenever you need them.
@@ -728,6 +820,70 @@ func init() {
   ]
 }
 ```
+
+---
+
+## Writing a FrameSource processor
+
+A `FrameSource` processor generates its own frames instead of processing inbound ones.  This pattern is ideal for anything that reads files directly (clip assemblers, test-pattern generators, deck-ingest adapters) and must keep memory proportional to the working set rather than the full timeline.
+
+### When to use FrameSource vs Processor
+
+| Use `Processor` when… | Use `FrameSource` when… |
+|---|---|
+| Frames arrive from a graph input node | The node opens its own files |
+| You transform, analyse, or annotate each frame | You emit frames from scratch or from a controlled read |
+| You need to consume exactly one inbound AV edge | Zero inbound AV edges make sense for this node |
+
+### Implementation skeleton
+
+```go
+type MySource struct {
+    clips []string
+}
+
+func (s *MySource) Init(params map[string]any) error {
+    // parse params["clips"] etc.
+    return nil
+}
+
+// Process is required by the Processor interface but must never be called.
+func (s *MySource) Process(_ *av.Frame, _ processors.ProcessorContext) (*av.Frame, *processors.Metadata, error) {
+    return nil, nil, fmt.Errorf("MySource: Process() called on a FrameSource — runtime bug")
+}
+
+func (s *MySource) Close() error { return nil }
+
+// Run implements processors.FrameSource.
+func (s *MySource) Run(ctx context.Context, send func(*av.Frame) error) error {
+    for _, clip := range s.clips {
+        if err := ctx.Err(); err != nil {
+            return err
+        }
+        // open clip, decode, send frames ...
+        f, err := decodeOneFrame(clip)
+        if err != nil {
+            return err
+        }
+        if err := send(f); err != nil { // send takes ownership; do not close f after this
+            return err
+        }
+    }
+    return nil
+}
+
+func init() {
+    processors.Register("my_source", func() processors.Processor { return &MySource{} })
+}
+```
+
+### Engine behaviour
+
+- The engine detects `FrameSource` via a Go interface assertion at pipeline initialisation time.
+- `Run()` is called instead of `Process()` when `len(inboundAVEdges) == 0`.
+- Frames produced by `send()` are forwarded to all downstream channels exactly as if they had come from a `Process()` return value.
+- Context cancellation is propagated via `ctx`; check `ctx.Err()` inside your read loop.
+- Input nodes referenced by `input_id` in the processor's params are resolved to URLs before `Init()` is called; the `in` seek point is derived from `options.ss` on the input when no explicit `in` param is given.
 
 ---
 

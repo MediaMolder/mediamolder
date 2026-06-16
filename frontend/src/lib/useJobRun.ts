@@ -215,9 +215,26 @@ export function useJobRun(getConfig: () => JobConfig | null, backend?: BackendSe
       const data = parseEvent<{
         node_id: string;
         time_ms: number;
-        metadata?: { file_path?: string; custom?: { twelvelabs?: Record<string, unknown> } };
+        metadata?: {
+          file_path?: string;
+          progress?: boolean;
+          custom?: { twelvelabs?: Record<string, unknown>; message?: string };
+        };
       }>(ev);
       if (!data) return;
+
+      // Generic progress metadata (e.g. sequence_editor render progress): surface
+      // the message as a single, in-place-updating log line per node.
+      const progressMsg = data.metadata?.custom?.message;
+      if (progressMsg && !data.metadata?.custom?.twelvelabs) {
+        setLogs((l) => trimLog(l, {
+          time_ms: data.time_ms,
+          message: `[${data.node_id}] ${progressMsg}`,
+          replaceKey: `progress:${data.node_id}`,
+        }));
+        return;
+      }
+
       const tl = data.metadata?.custom?.twelvelabs;
       if (!tl) return;
       const event = String(tl['event'] ?? '');

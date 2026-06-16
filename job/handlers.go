@@ -239,23 +239,6 @@ func (g *cutGate) frontCut() int64 {
 	return g.cuts[0]
 }
 
-// nextCutAfter returns the first queued cut strictly greater than after,
-// or -1 if no such cut exists. Used by non-video writers to decide which
-// held packets belong to the just-rotated segment vs later segments.
-func (g *cutGate) nextCutAfter(after int64) int64 {
-	if g == nil {
-		return -1
-	}
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	for _, c := range g.cuts {
-		if c > after {
-			return c
-		}
-	}
-	return -1
-}
-
 // popFront removes the head of the queue after a successful rotation and
 // broadcasts so any waiters wake.
 func (g *cutGate) popFront() {

@@ -30,7 +30,7 @@ func TestSearch_Basic(t *testing.T) {
 			t.Errorf("QueryText: got %q", body.QueryText)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{
+		_ = json.NewEncoder(w).Encode(map[string]any{
 			"data": []SearchResult{
 				{VideoID: "v1", StartS: 0, EndS: 5.2, Score: 0.95, Confidence: "high"},
 				{VideoID: "v1", StartS: 10, EndS: 15, Score: 0.80, Confidence: "medium"},
@@ -80,7 +80,7 @@ func TestSearch_APIError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(422)
-		json.NewEncoder(w).Encode(map[string]string{
+		_ = json.NewEncoder(w).Encode(map[string]string{
 			"code":    "invalid_options",
 			"message": "unsupported search option",
 		})
@@ -109,7 +109,7 @@ func TestSearch_QueryMediaURL(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		json.NewDecoder(r.Body).Decode(&gotBody) //nolint:errcheck
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{"data": []SearchResult{}})
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": []SearchResult{}})
 	}))
 	defer srv.Close()
 

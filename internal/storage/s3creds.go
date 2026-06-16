@@ -76,10 +76,5 @@ func LoadS3CredentialsFromFile(path string) (S3Credentials, error) {
 	if cf.AccessKeyID == "" || cf.SecretAccessKey == "" {
 		return S3Credentials{}, errors.New("s3 credentials: access_key_id and secret_access_key are required")
 	}
-	return S3Credentials{
-		AccessKeyID:     cf.AccessKeyID,
-		SecretAccessKey: cf.SecretAccessKey,
-		SessionToken:    cf.SessionToken,
-		Region:          cf.Region,
-	}, nil
+	return S3Credentials(cf), nil
 }

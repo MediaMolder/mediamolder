@@ -31,6 +31,7 @@ see [using-mediamolder.md](using-mediamolder.md).
 - [File browser](#file-browser)
 - [Scene detection processors](#scene-detection-processors)
 - [TwelveLabs processors](#twelvelabs-processors)
+- [Sequence editor — timeline table editor](#sequence-editor--timeline-table-editor)
 - [FFmpeg CLI export](#ffmpeg-cli-export)
 - [Performance overlay](#performance-overlay)
 - [Development workflow](#development-workflow)
@@ -398,6 +399,7 @@ against FFmpeg drift by `internal/gui/curation_test.go`
   `metadata_file_writer` to persist its events to a file without touching the
   video path. Handles only accept connections of the same type — incompatible
   drags are rejected.
+* **FrameSource `go_processor` nodes** (such as `sequence_editor`) have **no video or audio input handle**.  They generate their own frames internally and cannot receive AV edges from other nodes.  Only the file-input and events handles are shown on their left edge.  See [§ Sequence editor — timeline table editor](#sequence-editor--timeline-table-editor) for the recommended layout with input nodes.
 * **Input nodes grow per-track audio handles** after **Get Properties** is
   clicked.  A 16-track MOV shows 16 green dots labelled `a:1` … `a:16` on
   the right edge instead of a single generic `audio` handle.  The handle
@@ -1477,6 +1479,42 @@ The same key is also used by the `mediamolder twelvelabs` CLI subcommand and the
 | `POST`   | `/api/twelvelabs/search`         | Natural-language search. |
 
 See the [TwelveLabs Guide](twelvelabs.md) for full parameter reference, graph recipes, and cost notes.
+
+---
+
+## Sequence editor — timeline table editor
+
+The `sequence_editor` node holds a multi-track timeline of clips, which is too
+wide to edit in the narrow Inspector. Selecting a `sequence_editor` node shows
+its **output format** (resolution, frame rate, pixel format, length) inline, an
+**Audio output** control, plus a **Timeline** summary and an **Edit Timeline…**
+button.
+
+**Audio output.** By default a sequence is video-only. Click **Enable audio
+output** to add a mixed audio stream (sets the format's `sample_rate` to 48000
+and `channels` to 2, both editable; **Disable** removes it). Audio is mixed from
+the *same clips* as the video — wire the node's audio output to an audio encoder.
+
+**Edit Timeline…** opens a wide, spreadsheet-style dialog whose rows map 1:1 to
+the track's clips and whose columns map to the JSON fields:
+
+| Column | JSON field | Notes |
+| --- | --- | --- |
+| Media | `media_id` (or `url`) | dropdown of the job's input nodes |
+| Src In / Src Out | `source_in` / `source_out` | seconds into the source clip |
+| Span | — | derived (`source_out − source_in`), read-only |
+| Timeline In | `timeline_in` | where the clip starts on the output timeline |
+| Transition → / Dur | `transition.type` / `transition.duration` | the transition *into the next clip*; the dropdown is populated from the engine's supported set via `GET /api/transitions`, so it can't offer a transition the processor would reject |
+| Audio Fade | `transition.audio` | shown only when audio is enabled: a crossfade-curve picker (**(coupled)** uses the engine default across the transition window, a named curve overrides it, **off** hard-cuts), plus an optional duration override (blank = match the video transition). Curves come from `GET /api/audio-transitions`. |
+
+Buttons: **+ Clip** appends a clip chained after the last; the per-row **⎘** / **✕**
+duplicate / delete a clip; and **Chain timeline ⟂** recomputes every `timeline_in`
+back-to-back, including the transition overlap
+(`source_out = source_in + span + transition.duration`). A status strip flags
+missing media, `source_out ≤ source_in`, over-long transitions, unknown audio
+curves, and backward timing. Edits are **buffered**: **Apply** commits them to the
+node, **Cancel** discards. (This first version edits the first track; multi-track
+tabs are planned.)
 
 ---
 

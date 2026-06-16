@@ -1,0 +1,7 @@
+# Map historical commit identities to a single canonical identity.
+# Format: Proper Name <proper@email> <commit@email>
+# Remaps every commit authored/committed under tom@tvaughan.com
+# (both "Tom Vaughan" and "DESKTOP-RNSRG3E\Tom") to the GitHub
+# identity, and normalizes the lowercase "tmvn" display name.
+Tom Vaughan <tmvn@users.noreply.github.com> <tom@tvaughan.com>
+Tom Vaughan <tmvn@users.noreply.github.com> <tmvn@users.noreply.github.com>

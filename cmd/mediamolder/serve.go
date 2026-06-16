@@ -277,9 +277,8 @@ func openQueue(uri string) (queue.Queue, error) {
 		streamName := ""
 		if idx := strings.Index(strings.TrimPrefix(uri, "nats://"), "/"); idx >= 0 {
 			// path after host
-			natsURL := uri
 			parts := strings.SplitN(strings.TrimPrefix(uri, "nats://"), "/", 2)
-			natsURL = "nats://" + parts[0]
+			natsURL := "nats://" + parts[0]
 			streamName = parts[1]
 			return queue.NewNATSQueue(natsURL, streamName)
 		}

@@ -128,7 +128,7 @@ func (d *ThresholdDetector) isFadeOut(avg float64) bool {
 func (d *ThresholdDetector) ProcessFrame(t psd.FrameTimecode, frame *psd.FrameData) ([]psd.FrameTimecode, error) {
 	// Resolve min_scene_len on first call once fps is known.
 	if !d.minFramesReady {
-		n, err := resolveMinSceneLen(d.minSceneLenRaw, t.FrameRate())
+		n, err := ResolveMinSceneLen(d.minSceneLenRaw, t.FrameRate())
 		if err != nil {
 			return nil, fmt.Errorf("threshold_detector: min_scene_len: %w", err)
 		}

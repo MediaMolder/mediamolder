@@ -45,38 +45,44 @@ export function MMEdge(props: EdgeProps) {
   // default `.react-flow__edge-path { stroke: var(--xy-edge-stroke-default) }`
   // rule regardless of CSS cascade order.
   const STREAM_STROKE: Record<string, string> = {
-    file:     '#ffffff',
-    video:    'var(--video)',
-    audio:    'var(--audio)',
-    subtitle: 'var(--subtitle)',
-    data:     'var(--data)',
-    events:   'var(--events)',
+    file:      '#ffffff',
+    video:     'var(--video)',
+    audio:     'var(--audio)',
+    subtitle:  'var(--subtitle)',
+    data:      'var(--data)',
+    events:    'var(--events)',
+    clips_ref: 'rgba(255,255,255,0.25)',
   };
   const st = ed.streamType ?? 'video';
+  const isClipsRef = st === 'clips_ref';
   const edgeStyle: React.CSSProperties = {
     ...style,
     stroke: STREAM_STROKE[st] ?? STREAM_STROKE.video,
-    strokeWidth: 2,
-    ...(st === 'events' ? { strokeDasharray: '6 3' } : {}),
+    strokeWidth: isClipsRef ? 1.5 : 2,
+    ...(st === 'events' || isClipsRef ? { strokeDasharray: '5 4' } : {}),
+    ...(isClipsRef ? { pointerEvents: 'none' } : {}),
   };
 
   return (
     <>
       <BaseEdge id={id} path={edgePath} markerEnd={markerEnd} style={edgeStyle} />
-      {/* Wide invisible hit area so hover/click works reliably on thin edges.
-       * We deliberately do NOT stopPropagation so React Flow can still
-       * select the edge (which makes Backspace/Delete remove it). */}
-      <path
-        d={edgePath}
-        fill="none"
-        stroke="transparent"
-        strokeWidth={20}
-        style={{ cursor: 'pointer' }}
-        onMouseEnter={() => setHover(true)}
-        onMouseLeave={() => setHover(false)}
-        onClick={() => setPinned((p) => !p)}
-      />
-      {open && (
+      {/* Clips-reference edges are purely visual — no hit area, no popover. */}
+      {!isClipsRef && (
+        <>
+          {/* Wide invisible hit area so hover/click works reliably on thin edges.
+           * We deliberately do NOT stopPropagation so React Flow can still
+           * select the edge (which makes Backspace/Delete remove it). */}
+          <path
+            d={edgePath}
+            fill="none"
+            stroke="transparent"
+            strokeWidth={20}
+            style={{ cursor: 'pointer' }}
+            onMouseEnter={() => setHover(true)}
+            onMouseLeave={() => setHover(false)}
+            onClick={() => setPinned((p) => !p)}
+          />
+          {open && (
         <EdgeLabelRenderer>
           <div
             className="mm-edge-popover nodrag nopan"
@@ -118,6 +124,8 @@ export function MMEdge(props: EdgeProps) {
             </div>
           </div>
         </EdgeLabelRenderer>
+          )}
+        </>
       )}
     </>
   );

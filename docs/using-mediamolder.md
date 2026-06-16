@@ -42,7 +42,8 @@ This guide covers every feature available in MediaMolder, from installing the bi
    - [Scene detection in a pipeline](#511-scene-detection-in-a-pipeline)
    - [TwelveLabs cloud analysis in a pipeline](#512-twelvelabs-cloud-analysis-in-a-pipeline)
    - [Real-time mode](#513-real-time-mode)
-   - [TwelveLabs cloud analysis in a pipeline](#512-twelvelabs-cloud-analysis-in-a-pipeline)
+   - [Remote server (`serve` + `job`)](#514-remote-server-serve--job)
+   - [Multi-track timelines with sequence_editor](#515-multi-track-timelines-with-sequence_editor)
 6. [Validation](#6-validation)
 7. [Graphical user interface](#7-graphical-user-interface)
 8. [Tips and troubleshooting](#8-tips-and-troubleshooting)
@@ -1467,6 +1468,83 @@ For the full flag reference, S3 presigning setup, and API specification see
 
 ---
 
+### 5.15 Multi-track timelines with sequence_editor
+
+`sequence_editor` is a timeline FrameSource: a basic **NLE-style editor**.  You declare a fixed output format and one or more **tracks**, and place clips at explicit sequence times; at each output time the clip on the highest-priority track that covers it wins (upper track replaces lower), uncovered times render black.  This gives cuts, inserts, multi-cam selects, and layering.  Transitions between adjacent clips on a track support `dissolve` (a linear cross-fade) **and the full libavfilter `xfade` set** (wipes, slides, fades, …).
+
+Clips are placed with `timeline_in` (where on the output), `source_in`/`source_out` (what part of the source), and an optional `transition`:
+
+```json
+{
+  "id": "seq",
+  "type": "go_processor",
+  "processor": "sequence_editor",
+  "params": {
+    "format": { "width": 1920, "height": 1080, "pix_fmt": "yuv420p", "frame_rate": 29.97, "time_base": [1, 90000], "length_sec": 130 },
+    "tracks": [
+      {
+        "id": "V1",
+        "type": "video",
+        "clips": [
+          { "input_id": "video_a", "source_in": 0,  "source_out": 10.5, "timeline_in": 0,  "transition": { "type": "dissolve", "duration": 0.5 } },
+          { "input_id": "video_b", "source_in": 10, "source_out": 20.5, "timeline_in": 10, "transition": { "type": "dissolve", "duration": 0.5 } },
+          { "input_id": "video_a", "source_in": 20, "source_out": 30,   "timeline_in": 20 }
+        ]
+      }
+    ]
+  }
+}
+```
+
+It is a **FrameSource** with no inbound AV edges — reference sources by `input_id`/`media_id` on Input nodes and the engine resolves them to URLs.  Full field reference: **[go-processor-nodes.md § `sequence_editor`](go-processor-nodes.md#sequence_editor)**; a runnable example is [`testdata/examples/61_sequence_editor_dissolves.json`](../testdata/examples/61_sequence_editor_dissolves.json).
+
+#### Audio and crossfades
+
+`sequence_editor` can also **mix an audio stream**, taken from the *same clips* as the picture, and crossfade it across each transition. Audio is **opt-in** and turned on entirely from the job JSON — there are two steps:
+
+1. **Declare audio in the format.** Add `sample_rate` (and optionally `channels`, default `2`) to `params.format`. This makes the node emit a second, audio output stream in addition to video:
+
+   ```json
+   "format": {
+     "width": 1920, "height": 1080, "pix_fmt": "yuv420p", "frame_rate": 29.97,
+     "time_base": [1, 90000], "length_sec": 130,
+     "sample_rate": 48000, "channels": 2
+   }
+   ```
+
+2. **Wire the audio output to an audio encoder.** The node now has both a `video` and an `audio` output; route each to its own encoder, and both encoders to the output:
+
+   ```json
+   "nodes": [
+     { "id": "seq",  "type": "go_processor", "processor": "sequence_editor", "params": { /* …format with sample_rate… */ } },
+     { "id": "venc", "type": "encoder", "params": { "codec": "libx264" } },
+     { "id": "aenc", "type": "encoder", "params": { "codec": "aac", "b": "128000" } }
+   ],
+   "edges": [
+     { "from": "seq",  "to": "venc",   "type": "video" },
+     { "from": "seq",  "to": "aenc",   "type": "audio" },
+     { "from": "venc", "to": "out0:v", "type": "video" },
+     { "from": "aenc", "to": "out0:a", "type": "audio" }
+   ]
+   ```
+
+The audio crossfade is **auto-coupled** to each clip's video `transition`: it fades the outgoing clip out and the incoming clip in across the same window. Override it per clip with a `transition.audio` object:
+
+```json
+"transition": {
+  "type": "wipeleft", "duration": 1.0,
+  "audio": { "curve": "qsin", "duration": 0.3, "off": false }
+}
+```
+
+- **`curve`** — the crossfade curve (`tri` linear default, `qsin` equal-power, `hsin`, `esin`, `qua`, `cub`, `squ`, `par`, `exp`, `log`); empty/omitted uses the default.
+- **`duration`** — shorten the audio fade so it ramps faster but still lands on the cut; omit to match the video transition's duration.
+- **`off`** — hard-cut the audio while the video still transitions.
+
+A clip whose source file has no audio contributes silence. A runnable example is [`testdata/examples/63_sequence_editor_audio.json`](../testdata/examples/63_sequence_editor_audio.json); the engine and curve set are documented in [docs/architecture/transitions.md § Audio crossfades](architecture/transitions.md#audio-crossfades).
+
+---
+
 ## 6. Validation
 
 Validation is built into both the CLI and the GUI. It runs in two phases:
@@ -1568,6 +1646,7 @@ mediamolder version
 | [architecture/observability.md](architecture/observability.md) | Event bus, metrics, SSE API |
 | [scene-detection.md](scene-detection.md) | Scene detector algorithms, CLI usage, pipeline JSON, events |
 | [twelvelabs.md](twelvelabs.md) | TwelveLabs Video Understanding API — quick-start, graph recipes, processor reference |
+| [go-processor-nodes.md](go-processor-nodes.md) | Go processor interface, FrameSource, built-in processors including `sequence_editor` |
 | [architecture/graph-state-machine.md](architecture/graph-state-machine.md) | Graph lifecycle, pause/resume, seek |
 | [build-and-packaging.md](build-and-packaging.md) | Static linking, cross-compilation, packaging |
 | [architecture/graph_validation_design.md](architecture/graph_validation_design.md) | Validation architecture and issue code catalogue |

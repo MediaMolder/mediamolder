@@ -50,7 +50,7 @@ func TestContentDetector_FirstFrameReturnsNil(t *testing.T) {
 func TestContentDetector_IdenticalFrames(t *testing.T) {
 	d, _ := NewContentDetector(27.0, 0, DefaultContentWeights, 0, psd.FlashFilterModeMerge)
 	frame := blackFrame(16, 16)
-	d.ProcessFrame(makeTC(0), frame)
+	_, _ = d.ProcessFrame(makeTC(0), frame)
 	cuts, err := d.ProcessFrame(makeTC(1), frame)
 	if err != nil {
 		t.Fatalf("ProcessFrame: %v", err)
@@ -67,7 +67,7 @@ func TestContentDetector_IdenticalFrames(t *testing.T) {
 // fully-black frame to a fully-white frame triggers a cut above threshold=27.
 func TestContentDetector_BlackToWhiteCut(t *testing.T) {
 	d, _ := NewContentDetector(27.0, 0, DefaultContentWeights, 0, psd.FlashFilterModeMerge)
-	d.ProcessFrame(makeTC(0), blackFrame(16, 16))
+	_, _ = d.ProcessFrame(makeTC(0), blackFrame(16, 16))
 	cuts, err := d.ProcessFrame(makeTC(1), whiteFrame(16, 16))
 	if err != nil {
 		t.Fatalf("ProcessFrame: %v", err)
@@ -81,7 +81,7 @@ func TestContentDetector_BlackToWhiteCut(t *testing.T) {
 // suppresses detection of even a maximal change.
 func TestContentDetector_HighThresholdNocut(t *testing.T) {
 	d, _ := NewContentDetector(200.0, 0, DefaultContentWeights, 0, psd.FlashFilterModeMerge)
-	d.ProcessFrame(makeTC(0), blackFrame(16, 16))
+	_, _ = d.ProcessFrame(makeTC(0), blackFrame(16, 16))
 	cuts, _ := d.ProcessFrame(makeTC(1), whiteFrame(16, 16))
 	if len(cuts) != 0 {
 		t.Errorf("threshold=200: expected no cut, got %v (score %f)", cuts, d.Score())
@@ -106,7 +106,7 @@ func TestContentDetector_LumaOnlyWeights(t *testing.T) {
 	cyanFrame := &psd.FrameData{Width: w, Height: h, BGR: cyan}
 
 	d, _ := NewContentDetector(27.0, 0, LumaOnlyWeights, 0, psd.FlashFilterModeMerge)
-	d.ProcessFrame(makeTC(0), redFrame)
+	_, _ = d.ProcessFrame(makeTC(0), redFrame)
 	cuts, err := d.ProcessFrame(makeTC(1), cyanFrame)
 	if err != nil {
 		t.Fatalf("ProcessFrame: %v", err)
@@ -133,8 +133,8 @@ func TestContentDetector_ScoreIncreaseWithChange(t *testing.T) {
 	var prev float64
 	for _, v := range []byte{64, 128, 192, 255} {
 		d, _ := NewContentDetector(0.0, 0, DefaultContentWeights, 0, psd.FlashFilterModeMerge)
-		d.ProcessFrame(makeTC(0), base)
-		d.ProcessFrame(makeTC(1), makeGray(v))
+		_, _ = d.ProcessFrame(makeTC(0), base)
+		_, _ = d.ProcessFrame(makeTC(1), makeGray(v))
 		if d.Score() <= prev {
 			t.Errorf("gray=%d: score %f not greater than gray=%d score %f", v, d.Score(), v-64, prev)
 		}
@@ -170,8 +170,8 @@ func TestContentDetector_StatsManager(t *testing.T) {
 	d, _ := NewContentDetector(27.0, 0, DefaultContentWeights, 0, psd.FlashFilterModeMerge)
 	d.SetStats(sm)
 
-	d.ProcessFrame(makeTC(0), blackFrame(8, 8))
-	d.ProcessFrame(makeTC(1), whiteFrame(8, 8))
+	_, _ = d.ProcessFrame(makeTC(0), blackFrame(8, 8))
+	_, _ = d.ProcessFrame(makeTC(1), whiteFrame(8, 8))
 
 	vals := sm.GetMetrics(1, []string{"content_val", "delta_lum"})
 	if vals[0] == 0 {

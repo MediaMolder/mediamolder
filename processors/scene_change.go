@@ -145,7 +145,13 @@ func (p *SceneChange) Process(frame *av.Frame, ctx ProcessorContext) (*av.Frame,
 	custom["reasons"] = reasons
 	custom["frame_index"] = ctx.FrameIndex
 
-	md := &Metadata{Custom: custom}
+	var logMsg string
+	if s, ok := custom["score"].(float64); ok {
+		logMsg = fmt.Sprintf("frame %d scene cut (score %.2f)", ctx.FrameIndex, s)
+	} else {
+		logMsg = fmt.Sprintf("frame %d pts gap", ctx.FrameIndex)
+	}
+	md := &Metadata{Custom: custom, LogMessage: logMsg}
 	p.hook.write(ctx, md)
 	return frame, md, nil
 }

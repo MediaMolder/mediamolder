@@ -44,7 +44,7 @@ func TestEmbedText(t *testing.T) {
 			t.Errorf("text: got %v", body["text"])
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{
+		_ = json.NewEncoder(w).Encode(map[string]any{
 			"model_name": "marengo3.0",
 			"text_embedding": map[string]any{
 				"float_array": []float32{0.1, 0.2, 0.3},
@@ -86,7 +86,7 @@ func TestEmbedVideo_URL(t *testing.T) {
 		}
 		json.NewDecoder(r.Body).Decode(&gotBody) //nolint:errcheck
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(fakeEmbedTaskResponse("et1", TaskStatusPending, 0))
+		_ = json.NewEncoder(w).Encode(fakeEmbedTaskResponse("et1", TaskStatusPending, 0))
 	}))
 	defer srv.Close()
 
@@ -120,7 +120,7 @@ func TestGetEmbedTask_FlattenSegments(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(fakeEmbedTaskResponse("et1", TaskStatusReady, 3))
+		_ = json.NewEncoder(w).Encode(fakeEmbedTaskResponse("et1", TaskStatusReady, 3))
 	}))
 	defer srv.Close()
 
@@ -154,7 +154,7 @@ func TestGetEmbedTask_EmptyID(t *testing.T) {
 func TestWaitForEmbedTask_Ready(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(fakeEmbedTaskResponse("et1", TaskStatusReady, 2))
+		_ = json.NewEncoder(w).Encode(fakeEmbedTaskResponse("et1", TaskStatusReady, 2))
 	}))
 	defer srv.Close()
 
@@ -173,7 +173,7 @@ func TestWaitForEmbedTask_Ready(t *testing.T) {
 func TestWaitForEmbedTask_Failed(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(fakeEmbedTaskResponse("et1", TaskStatusFailed, 0))
+		_ = json.NewEncoder(w).Encode(fakeEmbedTaskResponse("et1", TaskStatusFailed, 0))
 	}))
 	defer srv.Close()
 
@@ -189,7 +189,7 @@ func TestWaitForEmbedTask_Failed(t *testing.T) {
 func TestWaitForEmbedTask_ContextCancelled(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(fakeEmbedTaskResponse("et1", TaskStatusIndexing, 0))
+		_ = json.NewEncoder(w).Encode(fakeEmbedTaskResponse("et1", TaskStatusIndexing, 0))
 	}))
 	defer srv.Close()
 

@@ -24,11 +24,6 @@ func (r *graphRunner) handleSource(ctx context.Context, node *graph.Node, outs [
 	if src == nil {
 		return fmt.Errorf("source handler: no resources for node %q", node.ID)
 	}
-	// Publish the input's known duration once so the GUI can compute
-	// percent-complete / ETA. Stays 0 for live or unknown-duration
-	// inputs; the GUI hides the progress bar in that case and shows
-	// only elapsed-time and processed-media-time.
-	r.pipe.Metrics().Node(node.ID).SetMediaDuration(src.mediaDuration)
 
 	// Build per-stream-index routing maps so that each outbound edge
 	// receives only the frames/packets from the specific source stream
@@ -111,10 +106,22 @@ func (r *graphRunner) handleSource(ctx context.Context, node *graph.Node, outs [
 	t := perfTrackerFrom(ctx)
 
 	// Fast path: this input has no AV consumers — all downstream edges are
-	// "events" type handled out-of-band by the engine. Skip demuxing.
+	// "events" type handled out-of-band by the engine, or the input is opened
+	// directly by a FrameSource (e.g. sequence_editor references it by
+	// media_id) and never demuxed here. Skip demuxing.
 	if len(streamIdxToFrameChans) == 0 && len(streamIdxToCopyChans) == 0 {
 		return nil
 	}
+
+	// Publish the input's known duration so the GUI can compute
+	// percent-complete / ETA. Done only AFTER the no-AV-consumer fast path
+	// above: an unconsumed source (e.g. a sequence_editor's media_id inputs)
+	// is not part of the AV work, and its (much longer) file duration would
+	// otherwise dominate the aggregate progress denominator — making the GUI
+	// show the source clip's length instead of the rendered sequence's. Stays
+	// 0 for live or unknown-duration inputs; the GUI then hides the progress
+	// bar and shows only elapsed-time and processed-media-time.
+	r.pipe.Metrics().Node(node.ID).SetMediaDuration(src.mediaDuration)
 
 	// sendFrame delivers f to each listed output channel. When more
 	// than one channel is listed (multiple consumers of the same
@@ -787,6 +794,14 @@ func (r *graphRunner) openSource(cfg Input, srcNode *graph.Node, decOpts av.Deco
 			// Attachment data lives in codecpar->extradata and is written
 			// by WriteHeader; no packet decoding is needed.
 		case typ == "subtitle":
+			if si.CodecID == 0 {
+				// AV_CODEC_ID_NONE: codec is unidentified (e.g. QuickTime CEA-708
+				// CC tracks appear as subtitle type with codec_id=0 when the tag
+				// isn't recognised). avcodec_find_decoder(0) always returns NULL,
+				// so attempting to open a decoder would always fail. Mirror
+				// FFmpeg's behaviour: skip decoder open and treat as stream-copy.
+				break
+			}
 			subDec, err := av.OpenSubtitleDecoderWithOptions(input, si.Index, av.SubtitleDecoderOptions{
 				Charenc: cfg.SubtitleCharenc,
 			})

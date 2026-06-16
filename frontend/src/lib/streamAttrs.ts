@@ -47,6 +47,7 @@ function keysFor(type: StreamType): readonly string[] {
     case 'attachment': return [];
     case 'events': return [];
     case 'file': return [];
+    default: return [];
   }
 }
 

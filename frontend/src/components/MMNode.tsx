@@ -52,6 +52,10 @@ export function MMNode({ id, data, selected }: NodeProps & { data: FlowNodeData 
   const heading = displayName({ name: data.label, friendly_name: friendly }, naming);
   const isInput = data.kind === 'input' || data.kind === 'filter_source';
   const isOutput = data.kind === 'output' || data.kind === 'filter_sink';
+  // go_processor nodes that implement FrameSource generate their own frames.
+  // Suppress AV target (input) handles so users are not misled into wiring
+  // a video or audio input; file/events handles are still exposed.
+  const isSourceOnlyProcessor = data.kind === 'go_processor' && !!data.sourceOnly;
   const run = data.run;
   const errored = !!run?.hasError || (run?.errors ?? 0) > 0;
 
@@ -199,6 +203,20 @@ export function MMNode({ id, data, selected }: NodeProps & { data: FlowNodeData 
   return (
     <div className={classes} style={nodeMinHeight ? { minHeight: nodeMinHeight } : undefined}>
       {/* Target (left) handles */}
+      {/* FrameSource processors: clips_ref target handle where the video
+          input would normally appear. Non-connectable — synthetic edges from
+          configToFlow anchor here purely for visual wiring of input nodes. */}
+      {isSourceOnlyProcessor && (
+        <Handle
+          type="target"
+          position={Position.Left}
+          id="clips_ref"
+          isConnectable={false}
+          className="handle-clips_ref"
+          style={{ top: slotTop('video') }}
+        />
+      )}
+
       {!isInput &&
         supported.flatMap((t) => {
           // file target handles only make sense on go_processor nodes that
@@ -206,6 +224,10 @@ export function MMNode({ id, data, selected }: NodeProps & { data: FlowNodeData 
           // metadata_file_writer is driven by events edges, not file paths.
           if (t === 'file' && data.kind !== 'go_processor') return [];
           if (t === 'file' && (data.ref as { kind?: string; def?: { processor?: string } } | undefined)?.def?.processor === 'metadata_file_writer') return [];
+          // FrameSource processors generate their own frames — no AV input pads.
+          // Still allow file/events handles so the node can receive completion
+          // notifications or be wired into a metadata sink.
+          if (isSourceOnlyProcessor && t !== 'file' && t !== 'events') return [];
           if (t === 'audio' && audioTgtCount > 1) {
             return Array.from({ length: audioTgtCount }, (_, i) => (
               <Fragment key={`tgt-audio-${i}`}>
@@ -383,6 +405,19 @@ export function MMNode({ id, data, selected }: NodeProps & { data: FlowNodeData 
             />,
           ];
         })}
+
+      {/* Input nodes: clips_ref source handle for visual wiring to FrameSource
+          processors. Non-connectable — managed by configToFlow / flowToConfig. */}
+      {isInput && (
+        <Handle
+          type="source"
+          position={Position.Right}
+          id="clips_ref"
+          isConnectable={false}
+          className="handle-clips_ref"
+          style={{ top: slotTop('video') }}
+        />
+      )}
     </div>
   );
 }

@@ -6,6 +6,69 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 ## [Unreleased]
 
 ### Added
+
+- **sequence_editor audio + crossfades.** The `sequence_editor` now mixes an
+  audio stream alongside the composited video, derived from the same clips as the
+  picture. Audio is opt-in: set the `format`'s `sample_rate` (and optionally
+  `channels`, default 2). Each clip's `transition` auto-crossfades the audio
+  across the same window (coupled by default), overridable per clip via
+  `transition.audio` (`curve` / `duration` / `off`). Adds a native Go audio
+  crossfade engine ([`acrossfade/`](acrossfade), curves ported from FFmpeg's
+  `af_afade.c`), audio frame primitives in `av` (`NewAudioFrame`, fltp accessors),
+  and the `processors.MultiStreamSource` interface so a FrameSource can emit both
+  a video and an audio stream that route to separate encoders. The GUI's timeline
+  editor gains an audio-output toggle and a per-clip crossfade-curve picker (fed
+  by a new `GET /api/audio-transitions`). Documented in
+  [`docs/architecture/transitions.md`](docs/architecture/transitions.md#audio-crossfades).
+
+- **FrameSource render progress.** The `sequence_editor` FrameSource now records
+  node metrics and emits periodic `rendered X / N frames` progress events while
+  producing frames. Previously these source nodes
+  were invisible during a run (no inbound loop ticked their metrics), so a slow
+  render looked like a hang. The progress denominator is now the sequence's own
+  duration rather than the (much longer) source files'. Adds the optional
+  `processors.FrameSourceProgress` interface (`OutputFrameCount`). The GUI shows
+  the per-node frame count/fps and an in-place progress line in the log panel.
+
+- **GUI: sequence_editor timeline table editor.** The `sequence_editor` node's
+  Inspector now edits the output format inline and opens its multi-track timeline
+  in a wide, spreadsheet-style **Edit Timeline…** dialog (rows = clips; columns =
+  `media_id`/`source_in`/`source_out`/`timeline_in`/`transition`), with buffered
+  Apply/Cancel, live validation, a "Chain timeline" helper, and a transition
+  picker fed by a new `GET /api/transitions` endpoint
+  (`processors.SupportedTransitions`). Documented in
+  [`docs/gui.md`](docs/gui.md#sequence-editor--timeline-table-editor).
+
+- **Native Go transition engine** (`transition/` package, documented in
+  [`docs/architecture/transitions.md`](docs/architecture/transitions.md)): the
+  `sequence_editor` now composites non-dissolve transitions (wipes, slides,
+  fades, circles, …) in pure Go — ported from FFmpeg's `vf_xfade.c` — instead of
+  feeding the libavfilter `xfade` filter. Custom transitions can be added in Go
+  via the `transition.Register` registry. Adds `av.Frame` plane access
+  (`Plane`/`Linesize`/`PlaneWidth`/`PlaneHeight`), `av.NewVideoFrame`, and
+  `Frame.CopyPropsFrom` to support pixel-level work in Go.
+
+- **Video Editing Guide** (`docs/video-editing-guide.md`): task-oriented guide
+  to assembling clips into a finished video with the `sequence_editor`
+  FrameSource processor — the source-vs-timeline timing model, multi-track
+  layering, the full transition set, mixed-resolution handling, and the GUI/CLI
+  workflow. Linked from the README.
+
+- **`sequence_editor` go_processor (FrameSource).** NLE-style timeline /
+  sequence generator: declares a fixed output format and one or more tracks,
+  places clips at explicit sequence times (`timeline_in` / `source_in` /
+  `source_out`), and renders the highest-priority track covering each output
+  time (upper track wins; gaps render black). Supports cuts, inserts,
+  multi-cam selects, layering, and between-clip transitions: `dissolve` (a
+  linear cross-fade) and the **full `xfade` transition set** (wipes, slides,
+  fades, circles, …), composited per transition window. Unsupported transition
+  names are rejected at load time. Introduces the `FrameSource` optional
+  interface (`processors.FrameSource`): a `go_processor` with no inbound AV edge
+  calls `Run(ctx, send)` instead of the per-frame `Process()` loop, opening its
+  sources directly. Examples `testdata/examples/61_sequence_editor_dissolves.json`
+  and `62_sequence_editor_wipe.json`; reference in
+  `docs/go-processor-nodes.md`.
+
 - **Remote backend user guide** (`docs/remote-backend-guide.md`): step-by-step
   guide for Tier 1 (single-machine `--mode=server`) and Tier 2 (distributed
   cluster) deployments; covers TLS, static token and OIDC auth, mTLS, S3
@@ -79,6 +142,22 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   `internal/server`. Docs: `docs/remote-server.md`, `docs/openapi-server.yaml`.
 
 ### Fixed
+- **Progress/ETA used a source clip's length instead of the rendered output.**
+  An input opened directly by a FrameSource (e.g. a `sequence_editor`'s
+  `media_id`/`input_id` clips) is never demuxed in the graph, but the source
+  handler still published its (much longer) file duration, which then dominated
+  the aggregate progress denominator — the GUI showed e.g. `00:30 / 35:14` and a
+  wildly long ETA for a 2:10 sequence. The duration is now published only for
+  inputs that actually have AV consumers, so progress/ETA track the rendered
+  sequence's length.
+- **sequence_editor: chroma corruption (green cast on the incoming clip) during
+  wipe/slide/fade transitions.** Pushing pre-converted frames into a libavfilter
+  `xfade` graph shifted the second input's chroma; these transitions are now
+  composited by the native Go transition engine and render cleanly. Also fixes a
+  per-frame `blend` `SendCommand` ENOSYS error on the dissolve/overlap path
+  (the filter has no `process_command`), a frame leak in the trivial-opacity
+  blend short-circuit, and per-source frame converters so two clips converted in
+  one timestep can no longer corrupt each other.
 - Re-encoding now clears decoded source `pict_type` at the encoder boundary,
   matching FFmpeg's `frame_encode` behavior. Custom graph requests still force
   IDR frames through `force_key_frames` or processor metadata, so scene-change

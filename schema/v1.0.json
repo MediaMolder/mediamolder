@@ -26,6 +26,12 @@
       "items": { "$ref": "#/$defs/input" }
     },
     "graph": { "$ref": "#/$defs/graph" },
+    "mode": {
+      "type": "string",
+      "enum": ["graph", "timeline"],
+      "description": "Job representation style. \"graph\" (default) uses the nodes/edges DAG; \"timeline\" uses the editor-style timeline with tracks and clips rendered by the TimelineRenderer."
+    },
+    "timeline": { "$ref": "#/$defs/timeline" },
     "outputs": {
       "type": "array",
       "minItems": 1,
@@ -52,6 +58,17 @@
     }
   },
   "$defs": {
+    "timeline": {
+      "type": "object",
+      "required": ["sequence", "tracks"],
+      "description": "Editor-style timeline used when mode is \"timeline\": a fixed output sequence format, a media pool of reusable sources, and tracks of clips with optional transitions.",
+      "properties": {
+        "sequence": { "type": "object", "description": "Fixed output format and continuous timebase for the rendered sequence (width, height, pix_fmt, frame rate, audio format) — analogous to NLE project settings." },
+        "media_pool": { "type": "object", "description": "Named media references reusable by clips (url and probe metadata), keyed by id." },
+        "tracks": { "type": "array", "items": { "type": "object" }, "description": "Ordered tracks; each contains clips (media_id, in/out, timeline_in) and optional transitions between adjacent clips." },
+        "duration": { "type": "number", "minimum": 0, "description": "Total sequence duration in seconds; derived from track content when omitted." }
+      }
+    },
     "input": {
       "type": "object",
       "required": ["id", "url", "streams"],

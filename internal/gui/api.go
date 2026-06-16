@@ -35,6 +35,10 @@ type NodeCatalogEntry struct {
 	Common       bool     `json:"common,omitempty"`
 	FriendlyName string   `json:"friendly_name,omitempty"`
 	Aliases      []string `json:"aliases,omitempty"`
+	// SourceOnly is set for go_processor nodes that implement FrameSource —
+	// they generate their own frames and require no inbound AV edge.  The
+	// GUI suppresses the video/audio target handles on such nodes.
+	SourceOnly bool `json:"source_only,omitempty"`
 }
 
 // handleListNodes returns the node palette catalogue assembled from the live
@@ -265,7 +269,7 @@ func handleListNodes(w http.ResponseWriter, _ *http.Request) {
 
 	// Go processors.
 	for _, name := range processors.Names() {
-		out = append(out, NodeCatalogEntry{
+		e := NodeCatalogEntry{
 			Category:    "Processors",
 			Subcategory: "Built-in processors",
 			Type:        "go_processor",
@@ -273,7 +277,16 @@ func handleListNodes(w http.ResponseWriter, _ *http.Request) {
 			Label:       prettyProcessorName(name),
 			Description: processorDescription(name),
 			Streams:     processorStreams(name),
-		})
+		}
+		// Flag FrameSource processors: they generate frames with no inbound
+		// AV edge. Create a transient instance only to check the interface;
+		// Init() is not called, so no side effects occur.
+		if p, err := processors.Get(name); err == nil {
+			if _, ok := p.(processors.FrameSource); ok {
+				e.SourceOnly = true
+			}
+		}
+		out = append(out, e)
 	}
 
 	// Attach curation metadata (Common / FriendlyName / Aliases) from
@@ -481,6 +494,8 @@ func processorStreams(name string) []string {
 		"twelvelabs_searcher",
 		"twelvelabs_embedder":
 		return []string{"events"}
+	case "sequence_editor":
+		return []string{"video", "audio"}
 	}
 	return nil
 }
@@ -518,6 +533,8 @@ func processorDescription(name string) string {
 		return "Run Marengo semantic search on a timer or per segment and emit timestamped matches."
 	case "twelvelabs_embedder":
 		return "Generate Marengo video embeddings per segment, inline or to disk (json / jsonl)."
+	case "sequence_editor":
+		return "Multi-track NLE timeline: place clips on tracks with cuts, layering, and the full transition set (native Go engine). Optionally mixes audio from the same clips with auto-coupled crossfades. A FrameSource — clips reference inputs by id; no graph inputs needed."
 	}
 	return ""
 }

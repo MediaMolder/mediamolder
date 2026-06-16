@@ -64,12 +64,10 @@ func TestInMemory_NackRedelivers(t *testing.T) {
 	_ = q.Nack(ctx, lease.Task.ID, 50*time.Millisecond)
 
 	// Should not be immediately available.
-	n, _ := q.Len(ctx)
-	if n == 0 {
-		// The item is pending but notBefore is in the future — Len counts items
-		// in the pending slice regardless of notBefore.
-		// Accept either 0 or 1 here; Receive is the authoritative test below.
-	}
+	// The item is pending but notBefore is in the future — Len counts items
+	// in the pending slice regardless of notBefore, so accept either 0 or 1
+	// here; Receive is the authoritative test below.
+	_, _ = q.Len(ctx)
 
 	// Wait for notBefore to pass.
 	time.Sleep(200 * time.Millisecond)

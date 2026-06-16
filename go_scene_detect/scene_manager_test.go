@@ -247,7 +247,6 @@ func TestSceneManager_StatsManagerIntegration(t *testing.T) {
 	// metricDetector implements statsAssigner so SceneManager calls SetStats.
 	type metricDetector struct {
 		fakeDetector
-		stats *StatsManager
 	}
 	md := &metricDetector{fakeDetector: fakeDetector{cutAt: map[int64]bool{5: true}}}
 	// Manually implement statsAssigner via an adapter wrapper (avoids test complexity).

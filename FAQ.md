@@ -73,6 +73,45 @@ Yes. The default build uses `pkg-config` to find system-installed libav* develop
 
 Yes, via MSYS2 or WSL. Under MSYS2, install `mingw-w64-x86_64-ffmpeg` and build with the MinGW toolchain. Native Windows builds require a working CGo environment with access to the libav* development headers and libraries.
 
+### Can I build and run MediaMolder in a Docker container?
+
+Yes. A `Dockerfile.ci` is included in the repository for exactly this purpose. It
+performs a two-stage build: the first stage compiles MediaMolder against
+Debian-packaged FFmpeg libraries; the second stage produces a minimal runtime image.
+
+```bash
+# From the repo root — build the image from the current working tree.
+docker build -f Dockerfile.ci -t mediamolder:dev .
+
+# Run the GUI server (port 8080 inside the container, mapped to 8080 on your host).
+docker run --rm -p 8080:8080 mediamolder:dev gui --addr=:8080
+
+# Or run the Tier 1 remote server with TLS certificates mounted from the host.
+docker run --rm -p 8443:8443 \
+  -v /path/to/certs:/certs:ro \
+  mediamolder:dev serve \
+    --mode=server \
+    --addr=:8443 \
+    --tls-cert=/certs/server.crt \
+    --tls-key=/certs/server.key \
+    --auth-token-file=/certs/token
+
+# Process a local file — mount a directory so the container can read/write it.
+docker run --rm \
+  -v "$PWD/jobs:/jobs" \
+  mediamolder:dev run /jobs/my-pipeline.json
+```
+
+The image uses Debian bookworm's packaged FFmpeg. If you need a specific FFmpeg
+version, custom `./configure` flags (e.g. `--enable-libx265`), or a GPU-capable
+base image, extend `Dockerfile.ci` with a FFmpeg build stage before the MediaMolder
+build stage.
+
+MediaMolder does not publish pre-built Docker images — see the
+[Licensing FAQ](#are-pre-compiled-binaries-available) for why. You are responsible
+for understanding the patent and license implications of any codecs enabled in
+your FFmpeg build.
+
 ### Why does the build require CGo?
 
 MediaMolder calls the libav* C libraries directly through Go's CGo interface. There is no pure-Go alternative for these libraries — they contain decades of hand-optimized codec implementations, SIMD routines, and hardware acceleration interfaces. CGo is the bridge that makes this possible without reimplementing any of that work.

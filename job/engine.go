@@ -816,6 +816,105 @@ func configHasFilterSource(cfg *Config) bool {
 	return false
 }
 
+// resolveClipInputIDs replaces "input_id" references in a FrameSource
+// processor's "clips" params array with the concrete "url" (and optionally
+// an "in" seek derived from the input's options.ss) sourced from the job's
+// inputs slice.  Returns a shallow-copied params map with the resolved clips
+// when any input_id was found, or nil when nothing needed resolving.
+// Returns an error when an input_id has no matching entry in inputs.
+func resolveClipInputIDs(params map[string]any, inputs []Input) (map[string]any, error) {
+	byID := make(map[string]Input, len(inputs))
+	for _, inp := range inputs {
+		byID[inp.ID] = inp
+	}
+	// Handle tracks for sequence_editor new timeline definition (media_id/input_id -> url)
+	if tracksRaw, ok := params["tracks"].([]any); ok {
+		changed := false
+		for _, tr := range tracksRaw {
+			if tm, ok := tr.(map[string]any); ok {
+				if clipsRaw2, ok := tm["clips"].([]any); ok {
+					for _, citem := range clipsRaw2 {
+						cm, ok := citem.(map[string]any)
+						if !ok {
+							continue
+						}
+						id, has := cm["input_id"].(string)
+						if !has {
+							id, has = cm["media_id"].(string)
+						}
+						if !has || id == "" {
+							continue
+						}
+						inp, found := byID[id]
+						if !found {
+							return nil, fmt.Errorf("tracks clips: id %q not found", id)
+						}
+						cm["url"] = inp.URL
+						delete(cm, "input_id")
+						delete(cm, "media_id")
+						if _, hasSI := cm["source_in"]; !hasSI {
+							if ssRaw, hasSS := inp.Options["ss"]; hasSS {
+								if f, ok := ssRaw.(float64); ok {
+									cm["source_in"] = f
+								} else if ss, ok := ssRaw.(string); ok && ss != "" {
+									if sec, err := parseSS(ss); err == nil {
+										cm["source_in"] = sec
+									}
+								}
+							}
+						}
+						changed = true
+					}
+				}
+			}
+		}
+		if changed {
+			cp := make(map[string]any, len(params))
+			for k, v := range params {
+				cp[k] = v
+			}
+			return cp, nil
+		}
+	}
+	return nil, nil
+}
+
+// parseSS parses an FFmpeg-style -ss value (seconds as float or HH:MM:SS.mmm)
+// into a float64 number of seconds.  Used when resolving input_id options.ss.
+func parseSS(s string) (float64, error) {
+	// Try plain float first.
+	var sec float64
+	if _, err := fmt.Sscanf(s, "%g", &sec); err == nil {
+		return sec, nil
+	}
+	// Try HH:MM:SS or MM:SS.
+	parts := strings.SplitN(s, ":", 3)
+	switch len(parts) {
+	case 2: // MM:SS
+		var m, sv float64
+		if _, err := fmt.Sscanf(parts[0], "%g", &m); err != nil {
+			return 0, err
+		}
+		if _, err := fmt.Sscanf(parts[1], "%g", &sv); err != nil {
+			return 0, err
+		}
+		return m*60 + sv, nil
+	case 3: // HH:MM:SS
+		var h, m, sv float64
+		if _, err := fmt.Sscanf(parts[0], "%g", &h); err != nil {
+			return 0, err
+		}
+		if _, err := fmt.Sscanf(parts[1], "%g", &m); err != nil {
+			return 0, err
+		}
+		if _, err := fmt.Sscanf(parts[2], "%g", &sv); err != nil {
+			return 0, err
+		}
+		return h*3600 + m*60 + sv, nil
+	}
+	return 0, fmt.Errorf("unparseable ss value %q", s)
+}
+
 // configHasFilterSink reports whether cfg.Graph contains at least one
 // node of type "filter_sink" (Wave 7 #36d). Lets the engine accept a
 // pipeline whose terminal nodes are all libavfilter sinks (nullsink,
@@ -1020,7 +1119,15 @@ func (p *Pipeline) runGraph(ctx context.Context) (runErr error) {
 	// evLive is computed lazily on the first dead_node warning that might be
 	// suppressed because it is reachable via events/file edges.
 	var evLive map[string]bool
+	// Inputs a FrameSource go_processor consumes by input_id/media_id have no
+	// outbound AV edges by design, so the AV compiler reports them as dead /
+	// disconnected sources; that is a false positive.
+	consumedInputs := frameSourceConsumedInputs(cfg)
 	for _, w := range plan.Warnings {
+		if (w.Code == graph.WarnDeadNode || w.Code == graph.WarnDisconnectedSource) &&
+			consumedInputs[w.NodeID] {
+			continue
+		}
 		// For go_processor-only pipelines, events edges are stripped from the
 		// AV graph before compilation, so dead_node and disconnected_source
 		// warnings are expected and should not be surfaced as errors.
@@ -1182,6 +1289,7 @@ func (p *Pipeline) runGraph(ctx context.Context) (runErr error) {
 			if err != nil {
 				return fmt.Errorf("go_processor %q: %w", node.ID, err)
 			}
+
 			// Auto-inject "frame_rate" from the probed upstream video stream
 			// so processors like the scene detectors don't require the user
 			// to specify it manually. Only injected when the param is absent
@@ -1199,6 +1307,20 @@ func (p *Pipeline) runGraph(ctx context.Context) (runErr error) {
 					initParams = cp
 				}
 			}
+			// Resolve "input_id" references in clips params for FrameSource
+			// processors (e.g. sequence_editor). Each clip entry may carry
+			// "input_id" instead of "url"; we replace it with the URL (and
+			// optionally the "in" seek from options.ss) from cfg.Inputs.
+			if _, ok := proc.(processors.FrameSource); ok {
+				if resolved, err := resolveClipInputIDs(initParams, cfg.Inputs); err != nil {
+					return fmt.Errorf("go_processor %q: %w", node.ID, err)
+				} else if resolved != nil {
+					initParams = resolved
+				}
+			}
+
+			// Timeline top-level resolution is handled inside resolveClipInputIDs
+			// (which now walks "tracks" for sequence_editor etc). No separate call needed.
 			if err := proc.Init(initParams); err != nil {
 				return fmt.Errorf("go_processor %q init: %w", node.ID, err)
 			}

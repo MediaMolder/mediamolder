@@ -19,6 +19,7 @@
 | **Live observability**          | **Per-node metrics, Prometheus, OTEL, live terminal** | None                       | Basic                      |
 | **Real-time adaptive controller** | **Full adaptive loop (threads + presets + frame drop + jitter buffers)** | None | Limited |
 | **Extensibility**               | **Pure Go `Processor` interface**                    | C filters (rebuild required) | C plugins                |
+| **In-graph video editing**      | **Multi-track timeline node — cuts, transitions, audio crossfades** | Manual filter graphs | Separate GES library |
 | **Hardware acceleration**       | **Probed, auto-mapped, safe across platforms**       | Opaque & error-prone       | Complex                    |
 | **Declarative config**          | **Versioned JSON + GUI round-trip**                  | Command strings            | Pipeline code              |
 | **FFmpeg command migration**    | **One-command `convert-cmd` with round-trip**        | N/A                        | Manual                     |
@@ -151,7 +152,9 @@ subtitle generation, business-specific metadata — slots into any graph as a
 first-class node, written as an ordinary Go struct that implements the
 `processors.Processor` interface. No C, no rebuilds, no filtergraph string
 hacks. The engine schedules, monitors, and error-handles custom nodes
-identically to built-in nodes. For more details, see [go-processor-nodes.md](docs/go-processor-nodes.md). 
+identically to built-in nodes. For more details, see [go-processor-nodes.md](docs/go-processor-nodes.md).
+
+Processors may also implement the optional `FrameSource` sub-interface to **generate their own frames** rather than processing inbound ones — the built-in `sequence_editor` timeline node is one example (see [Video editing built in](#video-editing-built-in)).
 
 You can add a custom Yolo-v8 object-detection node to a graph and it will 
 run directly inside your media graph. See [Yolo-V8 Guide](docs/yolov8-guide.md)
@@ -159,6 +162,17 @@ run directly inside your media graph. See [Yolo-V8 Guide](docs/yolov8-guide.md)
 For multimodal scene understanding — captions, temporal grounding, edit plans, QA — the built-in `vidi_analyzer` node connects any graph to a [Vidi 2.5](https://github.com/bytedance/vidi) inference service. See [Vidi 2.5 Guide](docs/vidi-guide.md)
 
 For cloud-hosted video understanding — index, search, caption, and embed clips via the [TwelveLabs](https://twelvelabs.io) Marengo and Pegasus models — the `twelvelabs_indexer`, `twelvelabs_analyzer`, `twelvelabs_searcher`, and `twelvelabs_embedder` nodes are built in. See [TwelveLabs Guide](docs/twelvelabs.md)
+
+### Video editing built in
+
+Assemble clips into a finished video — cuts, trims, wipes, dissolves, layering,
+and audio crossfades — entirely inside a job graph, with no external NLE. The
+built-in **`sequence_editor`** node is a multi-track timeline that opens its own
+sources and emits a finished stream: place clips on tracks at explicit times, add
+transitions composited by a [native Go engine](docs/architecture/transitions.md)
+(the full `xfade` set), and mix audio from the same clips with crossfades
+auto-coupled to each cut. Build it as a spreadsheet-style table in the GUI or as
+declarative JSON. See the [Video Editing Guide](docs/video-editing-guide.md).
 
 ### Hardware acceleration — any platform, properly
 
@@ -295,8 +309,9 @@ For detailed instructions see [MacOS](docs/build/macos.md), [Windows](docs/build
 - [FFmpeg Migration Guide](docs/ffmpeg-migration-guide.md)
 - [Export to FFmpeg CLI](docs/architecture/export.md)
 - [Validation](docs/architecture/graph_validation_design.md)
-- [Go Processor Nodes](docs/go-processor-nodes.md)
-- [Scene Detection (go-scene-detect)](docs/scene-detection.md)
+- [Video Editing Guide](docs/video-editing-guide.md) — assemble clips into a finished video: multi-track timelines, cuts/trims, dissolves and the full transition set with audio crossfades (`sequence_editor`)
+- [Go Processor Nodes](docs/go-processor-nodes.md) — `Processor` interface, `FrameSource` interface, built-in processors (`sequence_editor`, scene detectors, TwelveLabs, Vidi, …), writing custom nodes
+- [Scene Detection](docs/scene-detection.md) — six detectors: go-scene-detect ports (content, adaptive, threshold, hash, histogram) and FFmpeg scdet
 - [Yolov8 object detection/classification](docs/yolov8-guide.md)
 - [Vidi 2.5 multimodal analysis](docs/vidi-guide.md)
 - [TwelveLabs video understanding](docs/twelvelabs.md)
@@ -313,6 +328,7 @@ For detailed instructions see [MacOS](docs/build/macos.md), [Windows](docs/build
 - [Hardware Acceleration](docs/hardware-acceleration.md)
 - [Observability](docs/architecture/observability.md) — Prometheus metrics, OpenTelemetry tracing, per-node performance monitoring, `mediamolder perf` CLI
 - [Graph Compilation](docs/architecture/graph-compilation.md)
+- [Video Transitions](docs/architecture/transitions.md) — native Go transition engine (wipes, slides, fades, circles, …) that replaces libavfilter `xfade`
 
 ### Project
 
@@ -321,3 +337,13 @@ For detailed instructions see [MacOS](docs/build/macos.md), [Windows](docs/build
 - [Project Specification](docs/architecture/specification.md)
 - [Benchmarks](docs/architecture/benchmarks.md) — `mediamolder hwbench` user tool + Go graph CI benchmarks
 - [Licensing](LICENSING.md)
+
+## Star History
+
+<a href="https://www.star-history.com/?repos=MediaMolder%2Fmediamolder&type=date&legend=top-left">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=MediaMolder/mediamolder&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=MediaMolder/mediamolder&type=date&legend=top-left" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=MediaMolder/mediamolder&type=date&legend=top-left" />
+ </picture>
+</a>

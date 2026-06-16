@@ -4,7 +4,6 @@
 package av
 
 /*
-#cgo pkg-config: libavcodec libavutil
 #include <libavcodec/avcodec.h>
 #include <libavutil/opt.h>
 */

@@ -23,6 +23,53 @@ type FrameLookahead interface {
 	LookbackFrames() int
 }
 
+// FrameSource is an optional interface a Processor may implement to indicate
+// that it generates its own frames rather than processing incoming ones.
+// When a go_processor node implementing FrameSource has no inbound AV edges,
+// the runtime calls Run() instead of the normal Process() loop.
+// The send callback takes ownership of each frame; Run must not close frames
+// it has successfully sent.
+type FrameSource interface {
+	Run(ctx context.Context, send func(*av.Frame) error) error
+}
+
+// FrameSourceInfo is an optional interface a FrameSource may implement to
+// report the StreamInfo of its output before Run() is called.  This allows
+// downstream filter nodes (scale, fps, format, …) to be configured with the
+// correct frame dimensions and pixel format without waiting for the first
+// frame produced by Run().
+type FrameSourceInfo interface {
+	OutputStreamInfo() (av.StreamInfo, error)
+}
+
+// FrameSourceProgress is an optional interface a FrameSource may implement to
+// report the total number of output frames Run() will produce, so the runner
+// can surface render progress (frame X of N) in node metrics and on the event
+// bus. A return of 0 means the total is unknown.
+type FrameSourceProgress interface {
+	OutputFrameCount() int64
+}
+
+// MultiStreamSource is an optional interface a FrameSource may implement to emit
+// more than one output stream (e.g. sequence_editor produces a composited video
+// stream and a mixed audio stream). Streams are identified by their index into
+// OutputStreams(); the runtime routes each emitted frame to the downstream edges
+// whose port type matches that stream's StreamInfo.Type.
+//
+// A processor implementing MultiStreamSource is dispatched via RunStreams in
+// preference to FrameSource.Run. The send callback takes ownership of each frame
+// (RunStreams must not close a frame it has successfully sent), exactly like
+// FrameSource.Run.
+type MultiStreamSource interface {
+	// OutputStreams returns one StreamInfo per emitted stream, in a stable
+	// order. Each entry's Type (video/audio/…) is used to route frames and to
+	// configure the matching downstream encoder before the first frame.
+	OutputStreams() []av.StreamInfo
+	// RunStreams produces frames, tagging each with the index into the slice
+	// returned by OutputStreams.
+	RunStreams(ctx context.Context, send func(stream int, f *av.Frame) error) error
+}
+
 // Processor is the interface every go_processor node must implement.
 type Processor interface {
 	// Init is called once during graph construction, before the first frame.
@@ -74,6 +121,11 @@ type Metadata struct {
 	// SegmentEventConsumer nodes, preventing downstream processors from
 	// acting on a failed upstream result.
 	Failed bool `json:"failed,omitempty"`
+	// LogMessage, when non-empty, is surfaced in the GUI log panel as a
+	// one-line human-readable summary of the detection event.  The backend
+	// translates the enclosing ProcessorMetadata event to a "log" SSE event
+	// (rather than "metadata") when this field is set.
+	LogMessage string `json:"log_message,omitempty"`
 }
 
 // Detection represents a single detected object in a video frame.

@@ -14,6 +14,7 @@ import (
 
 	"github.com/MediaMolder/MediaMolder/job"
 	"github.com/MediaMolder/MediaMolder/job/snap"
+	"github.com/MediaMolder/MediaMolder/processors"
 )
 
 // jobStatus is the lifecycle status of a managed pipeline job.
@@ -366,6 +367,11 @@ func translateEvent(ev job.Event, tMs int64) jobEvent {
 	case job.MetricsSnapshotEvent:
 		return jobEvent{Type: "metrics", Time: tMs, Data: e.Snapshot}
 	case job.ProcessorMetadata:
+		if pm, ok := e.Metadata.(*processors.Metadata); ok && pm != nil && pm.LogMessage != "" {
+			return jobEvent{Type: "log", Time: tMs, Data: map[string]any{
+				"message": fmt.Sprintf("[%s] %s", e.NodeID, pm.LogMessage),
+			}}
+		}
 		return jobEvent{Type: "metadata", Time: tMs, Data: e}
 	default:
 		return jobEvent{Type: "log", Time: tMs, Data: map[string]any{"event": "unknown"}}

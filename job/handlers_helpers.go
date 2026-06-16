@@ -10,6 +10,7 @@ import (
 
 	"github.com/MediaMolder/MediaMolder/av"
 	"github.com/MediaMolder/MediaMolder/graph"
+	"github.com/MediaMolder/MediaMolder/processors"
 )
 
 // ---------- Helpers ----------
@@ -172,7 +173,30 @@ func (r *graphRunner) resolveEdgeStreamInfo(dag *graph.Graph, e *graph.Edge) (av
 		}
 		return si, nil
 	case graph.KindGoProcessor:
-		// Pass through to the node's upstream source.
+		// FrameSource processors have no inbound edges; ask the processor
+		// directly for its output format before falling back to upstream
+		// traversal. A MultiStreamSource (e.g. sequence_editor → video+audio)
+		// declares one StreamInfo per stream — pick the one matching this
+		// edge's media type so the audio encoder reads the sequence's
+		// sample-rate/channels and the video encoder its geometry.
+		if proc, ok := r.goProcessors[from.ID]; ok {
+			if ms, ok := proc.(processors.MultiStreamSource); ok {
+				mt := portTypeToAVMediaType(e.Type)
+				for _, si := range ms.OutputStreams() {
+					if si.Type == mt {
+						return si, nil
+					}
+				}
+			}
+			if info, ok := proc.(processors.FrameSourceInfo); ok {
+				si, err := info.OutputStreamInfo()
+				if err != nil {
+					return av.StreamInfo{}, fmt.Errorf("node %q: %w", from.ID, err)
+				}
+				return si, nil
+			}
+		}
+		// Fall back to walking upstream edges for processors with inbound edges.
 		return r.resolveStreamInfo(dag, from)
 	default:
 		return av.StreamInfo{}, fmt.Errorf("cannot resolve stream info from node %q (kind=%v)", from.ID, from.Kind)

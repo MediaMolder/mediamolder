@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/MediaMolder/MediaMolder/processors"
 )
 
 // Config is the top-level MediaMolder graph/job configuration (JSON schema v1.0).
@@ -31,6 +33,16 @@ type Config struct {
 	Graph         GraphDef `json:"graph"`
 	Outputs       []Output `json:"outputs"`
 	GlobalOptions Options  `json:"global_options,omitempty"`
+
+	// Mode selects the job representation style.
+	// "graph" (default) uses the traditional nodes/edges DAG.
+	// "timeline" uses the new editor-style timeline with tracks and clips.
+	Mode string `json:"mode,omitempty"`
+
+	// Timeline is the top-level description for timeline/sequence editing jobs.
+	// When Mode == "timeline" (or Timeline is non-nil), the pipeline uses
+	// a TimelineRenderer instead of (or in addition to) the graph scheduler.
+	Timeline *Timeline `json:"timeline,omitempty"`
 	// CopyTS preserves the original demuxer timestamps end-to-end
 	// instead of rebasing every input to start at PTS 0. Mirrors
 	// FFmpeg's global `-copyts` flag, which is global in the FFmpeg
@@ -1422,14 +1434,26 @@ func validate(cfg *Config) error {
 		// nodes (e.g. testsrc → encoder → file) with no top-level
 		// demuxer inputs. Permit that, but require at least one
 		// filter_source node to make the intent explicit.
+		//
+		// Also permit graphs whose sole frame source is a FrameSource
+		// go_processor (e.g. sequence_editor) — those open files
+		// internally and emit frames without any graph-level input node.
 		hasFilterSource := false
+		hasFrameSourceProcessor := false
 		for _, n := range cfg.Graph.Nodes {
 			if n.Type == "filter_source" {
 				hasFilterSource = true
 				break
 			}
+			if n.Type == "go_processor" && n.Processor != "" {
+				if p, err := processors.Get(n.Processor); err == nil {
+					if _, ok := p.(processors.FrameSource); ok {
+						hasFrameSourceProcessor = true
+					}
+				}
+			}
 		}
-		if !hasFilterSource {
+		if !hasFilterSource && !hasFrameSourceProcessor {
 			return fmt.Errorf("config must have at least one input")
 		}
 	}
@@ -1724,6 +1748,12 @@ func validate(cfg *Config) error {
 		if node.Type == "go_processor" && node.Processor == "" {
 			return fmt.Errorf("node[%d] %q: go_processor requires a \"processor\" field", i, node.ID)
 		}
+		// Validate input_id references in FrameSource processor clips params.
+		if node.Type == "go_processor" {
+			if err := validateClipInputIDs(node, cfg); err != nil {
+				return fmt.Errorf("node[%d] %q: %w", i, node.ID, err)
+			}
+		}
 	}
 	// Wave 7 #42: reject filters whose libavfilter implementation is
 	// not compiled into this build (e.g. zscale without --enable-libzimg).
@@ -1891,4 +1921,98 @@ func joinedKeys(m map[string]string) string {
 	}
 	sort.Strings(keys)
 	return strings.Join(keys, ", ")
+}
+
+// validateClipInputIDs checks that every "input_id" reference in a
+// go_processor node's clips params resolves to a known cfg.Inputs entry.
+// Returns nil when the node has no clips params or no input_id entries.
+func validateClipInputIDs(node NodeDef, cfg *Config) error {
+	clipsRaw, ok := node.Params["clips"].([]any)
+	if !ok {
+		return nil
+	}
+	inputIDs := make(map[string]bool, len(cfg.Inputs))
+	for _, inp := range cfg.Inputs {
+		inputIDs[inp.ID] = true
+	}
+	for i, item := range clipsRaw {
+		m, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		id, hasID := m["input_id"].(string)
+		if !hasID {
+			continue
+		}
+		if !inputIDs[id] {
+			return fmt.Errorf("clips[%d]: input_id %q not found in job inputs", i, id)
+		}
+	}
+	return nil
+}
+
+// ============================================================================
+// Timeline mode types (new "editor" / sequence representation, see
+// private_local/timeline_data_model.md for full design).
+// When Config.Mode == "timeline" or Config.Timeline != nil, the pipeline
+// uses a TimelineRenderer (FrameSource) instead of building/executing the
+// traditional Graph DAG for the main content assembly.
+// ============================================================================
+
+// Timeline is the top-level description for a timeline/sequence-editing job.
+type Timeline struct {
+	Sequence  SequenceSpec        `json:"sequence"`
+	MediaPool map[string]MediaRef `json:"media_pool,omitempty"`
+	Tracks    []Track             `json:"tracks"`
+	Duration  float64             `json:"duration,omitempty"`
+}
+
+// SequenceSpec defines the fixed output format and continuous timebase
+// for the rendered sequence (analogous to "project settings" in an NLE).
+type SequenceSpec struct {
+	Width     int    `json:"width"`
+	Height    int    `json:"height"`
+	PixFmt    string `json:"pix_fmt"`
+	FrameRate [2]int `json:"frame_rate"` // {num, den}
+	TimeBase  [2]int `json:"time_base"`  // continuous TB for output PTS, e.g. {1,90000}
+	// Optional color metadata forwarded to downstream.
+	ColorRange     string `json:"color_range,omitempty"`
+	ColorSpace     string `json:"color_space,omitempty"`
+	ColorTransfer  string `json:"color_transfer,omitempty"`
+	ColorPrimaries string `json:"color_primaries,omitempty"`
+}
+
+// MediaRef is a reference in the media pool (named sources).
+type MediaRef struct {
+	URL  string `json:"url"`
+	Name string `json:"name,omitempty"`
+}
+
+// Track is one layer (video or audio) in the timeline.
+type Track struct {
+	ID    string          `json:"id"`
+	Type  string          `json:"type"` // "video" | "audio"
+	Clips []ClipPlacement `json:"clips"`
+	Attrs map[string]any  `json:"attributes,omitempty"`
+}
+
+// ClipPlacement places a segment of a source onto the timeline at a specific
+// position, with optional outgoing transition.
+type ClipPlacement struct {
+	MediaID    string         `json:"media_id,omitempty"`
+	URL        string         `json:"url,omitempty"`
+	SourceIn   float64        `json:"source_in"`
+	SourceOut  float64        `json:"source_out,omitempty"`
+	TimelineIn float64        `json:"timeline_in"`
+	Duration   float64        `json:"duration,omitempty"`
+	Transition *Transition    `json:"transition,omitempty"`
+	Attrs      map[string]any `json:"attributes,omitempty"`
+	Label      string         `json:"label,omitempty"`
+}
+
+// Transition for crossfades etc between adjacent clips on the same track.
+type Transition struct {
+	Type     string         `json:"type"`
+	Duration float64        `json:"duration"`
+	Params   map[string]any `json:"params,omitempty"`
 }
