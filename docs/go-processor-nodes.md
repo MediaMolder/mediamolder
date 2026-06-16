@@ -579,13 +579,6 @@ Transitions between adjacent clips on a track support `dissolve` (a linear
 cross-fade) and the full libavfilter `xfade` set (wipes, slides, fades, …) —
 see the `transition` field below.
 
-#### When to use `sequence_editor`
-
-- Multi-track / layered timelines (upper track replaces lower where present)
-- Precise placement: clips at specific sequence times, with gaps or overlaps
-- A fixed output format that sources are scaled/retimed into
-- Dissolve or any `xfade` transition between adjacent clips on a track
-
 #### Params
 
 ```json
