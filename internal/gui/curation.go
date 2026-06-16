@@ -166,6 +166,15 @@ var curatedNodes = map[string]NodeMeta{
 		Aliases:  []string{"goscenedetect", "histogram", "luma"},
 	},
 
+	// ── Motion-compensated scene / dissolve detector ──────────────────
+	// Our own x264-style lowres lookahead (SATD ME + intra cost) detector;
+	// specialised for frame-accurate dissolves and fades. See
+	// docs/scene-detection.md.
+	"scene_change_mc": {
+		Friendly: "Scene change (motion-compensated)",
+		Aliases:  []string{"motioncompensated", "dissolve", "fade", "lookahead", "x264", "cuts", "mc"},
+	},
+
 	// ── TwelveLabs multimodal analysis ────────────────────────
 	// REST integration with the TwelveLabs Video Understanding API
 	// (Marengo + Pegasus). See docs/twelvelabs.md for the full guide.

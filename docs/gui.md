@@ -112,10 +112,14 @@ in-app help dialog.
      container must accept the source codec.
    * **Processors** — Go-side custom blocks that operate on decoded frames.
      Ships with frame analysis helpers (`frame_counter`, `frame_info`), the
-     built-in `scene_change` detector (mirrors FFmpeg `scdet`), and five
+     built-in `scene_change` detector (mirrors FFmpeg `scdet`), five
      go-scene-detect processors (`scene_change_content`,
      `scene_change_adaptive`, `scene_change_hash`, `scene_change_histogram`,
-     `scene_change_threshold`). Each detector accepts an optional
+     `scene_change_threshold`), and the motion-compensated
+     `scene_change_mc` detector (x264-style lowres lookahead; tuned for
+     frame-accurate dissolves and fades — its Inspector exposes the coarse /
+     refined prediction distances, dissolve and fade bounds, and an optional
+     cost-matrix CSV debug log). Each detector accepts an optional
      `output_file` param — set it in the Inspector to write cut events to a
      `.jsonl` sidecar. Leave it blank to emit events to the event bus only
      (visible in the SSE stream / **Observations** panel).

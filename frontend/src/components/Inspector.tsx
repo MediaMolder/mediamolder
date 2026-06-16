@@ -2044,13 +2044,14 @@ interface SceneDetectorMeta {
 interface ExtraControl {
   key: string;
   label: string;
-  type: 'select' | 'number' | 'checkbox';
+  type: 'select' | 'number' | 'checkbox' | 'number-list';
   options?: Array<{ value: string; label: string }>;
   min?: number;
   max?: number;
   step?: number;
   defaultValue?: unknown;
   hint?: string;
+  placeholder?: string;
 }
 
 const SCENE_DETECTOR_META: Record<string, SceneDetectorMeta> = {
@@ -2196,6 +2197,176 @@ const SCENE_DETECTOR_META: Record<string, SceneDetectorMeta> = {
       },
     ],
   },
+  scene_change_mc: {
+    label: 'Scene change — motion-compensated lookahead',
+    thresholdDefault: 0.5,
+    thresholdMin: 0,
+    thresholdMax: 1,
+    thresholdStep: 0.01,
+    thresholdHint:
+      'Hard-cut score-surface peak threshold [0–1]. A frame is flagged as a cut when its ' +
+      'aggregated excess score exceeds this. Lower = more sensitive; raise to suppress false ' +
+      'positives on fast-motion content. Default 0.50.',
+    extra: [
+      {
+        key: 'coarse_prediction_distance',
+        label: 'Coarse prediction distance(s)',
+        type: 'number-list',
+        defaultValue: [5],
+        placeholder: 'e.g. 15, 45',
+        hint:
+          'Prediction distance(s) used (alongside lag 1) in the cheap coarse first pass over the ' +
+          'whole video. A lag k only forms a flat-top plateau on dissolves shorter than k, so a ' +
+          'single distance cannot localize both short and long blends — a multi-scale set (e.g. ' +
+          '15, 45 or 30, 90) is recommended: a short distance localizes short dissolves, a long ' +
+          'one localizes long dissolves. Main performance control; cost is (1 + count) lowres ME ' +
+          'per frame. Comma- or space-separated. Default 5.',
+      },
+      {
+        key: 'refined_prediction_distances',
+        label: 'Refined prediction distances',
+        type: 'number-list',
+        defaultValue: [5, 15, 30, 45, 60, 75, 90, 105, 120],
+        placeholder: 'e.g. 5 15 30 60 90',
+        hint:
+          'Menu of prediction distances from which the staged refinement stage picks value(s) near ' +
+          'each detected dissolve’s estimated duration D, computed only inside a window (~±D) ' +
+          'around the candidate. This supplies accurate long-lag plateau data exactly where needed. ' +
+          'Comma- or space-separated. Default covers common dissolve lengths.',
+      },
+      {
+        key: 'excess_threshold',
+        label: 'Excess threshold',
+        type: 'number',
+        defaultValue: 0.15,
+        min: 0,
+        max: 1,
+        step: 0.01,
+        hint:
+          'Minimum excess above the per-frame baseline that counts as transition activity [0–1]. ' +
+          'Distinguishes gradual transitions from ordinary inter-frame variation. Default 0.15.',
+      },
+      {
+        key: 'dissolve_min_len',
+        label: 'Dissolve min length',
+        type: 'number',
+        defaultValue: 2,
+        min: 1,
+        max: 40,
+        step: 1,
+        hint:
+          'Minimum measured blend duration (frames) to classify a transition as a dissolve/fade ' +
+          'rather than a hard cut. Default 2.',
+      },
+      {
+        key: 'dissolve_max_len',
+        label: 'Dissolve max length',
+        type: 'number',
+        defaultValue: 0,
+        min: 0,
+        max: 240,
+        step: 1,
+        hint:
+          'Maximum active-lag width for dissolve/fade classification. 0 = auto (L/2). Increase for ' +
+          'long dissolves (e.g. 30+ frames). Default 0.',
+      },
+      {
+        key: 'agg_window',
+        label: 'Aggregation window',
+        type: 'number',
+        defaultValue: 5,
+        min: 1,
+        max: 60,
+        step: 1,
+        hint:
+          'Frames used for score-surface aggregation. A larger window aids slow dissolves. Default 5.',
+      },
+      {
+        key: 'prediction_failure_threshold',
+        label: 'Prediction failure threshold',
+        type: 'number',
+        defaultValue: 0.985,
+        min: 0.5,
+        max: 1,
+        step: 0.005,
+        hint:
+          'Inter/intra cost-ratio level (near 1.0) at which temporal prediction is treated as fully ' +
+          'failed (the plateau saturation level for extracting saturated runs). Higher = stricter; ' +
+          'lower captures more flanking ramp (noisier). Default 0.985.',
+      },
+      {
+        key: 'fade_threshold',
+        label: 'Fade-to-black threshold',
+        type: 'number',
+        defaultValue: 0.1,
+        min: 0.01,
+        max: 0.5,
+        step: 0.01,
+        hint:
+          'Normalised luma [0–1] below which a frame is considered dark (part of a fade to/from ' +
+          'black). Default 0.10.',
+      },
+      {
+        key: 'fade_white_threshold',
+        label: 'Fade-to-white threshold',
+        type: 'number',
+        defaultValue: 0.9,
+        min: 0,
+        max: 1.1,
+        step: 0.01,
+        hint:
+          'Normalised luma [0–1] above which a frame is considered bright (part of a fade to/from ' +
+          'white). Set above 1.0 to disable white-fade detection. Default 0.90.',
+      },
+      {
+        key: 'fade_min_len',
+        label: 'Fade min length',
+        type: 'number',
+        defaultValue: 3,
+        min: 1,
+        max: 60,
+        step: 1,
+        hint:
+          'Minimum consecutive dark/bright frames required to classify a valley as a fade rather ' +
+          'than a single-frame flash or noise. Default 3.',
+      },
+      {
+        key: 'fade_max_len',
+        label: 'Fade max length',
+        type: 'number',
+        defaultValue: 120,
+        min: 5,
+        max: 1800,
+        step: 5,
+        hint:
+          'Maximum dark/bright-region length (frames) before the valley is treated as programme ' +
+          'black/white rather than a fade and suppressed. Default 120.',
+      },
+      {
+        key: 'fullres_refine',
+        label: 'Full-resolution edge refine',
+        type: 'checkbox',
+        defaultValue: false,
+        hint:
+          'Measure full-resolution inter-prediction ratios around each detected dissolve and refine ' +
+          'the END of short/mid blends (D≤25). Requires the source to be re-decoded (uses ' +
+          'source_url). Adds CSV ratio columns. Default off.',
+      },
+      {
+        key: 'lookahead',
+        label: 'Lookahead length (legacy)',
+        type: 'number',
+        defaultValue: 34,
+        min: 1,
+        max: 80,
+        step: 1,
+        hint:
+          'Legacy / informational. The current staged implementation drives the coarse pass from ' +
+          'the coarse prediction distance(s); this value is accepted for compatibility but has ' +
+          'limited effect. Default 34.',
+      },
+    ],
+  },
 };
 
 const SCENE_CHANGE_KNOWN_KEYS = new Set([
@@ -2207,6 +2378,11 @@ const SCENE_CHANGE_KNOWN_KEYS = new Set([
   'size', 'lowpass',
   'bins',
   'pts_threshold',
+  'lookahead', 'excess_threshold', 'dissolve_min_len', 'dissolve_max_len',
+  'agg_window', 'prediction_failure_threshold',
+  'fade_threshold', 'fade_min_len', 'fade_max_len', 'fade_white_threshold',
+  'fullres_refine', 'cost_matrix_csv',
+  'coarse_prediction_distance', 'refined_prediction_distances',
 ]);
 
 function SceneChangeParams({
@@ -2231,6 +2407,7 @@ function SceneChangeParams({
   const minSceneLen = String(get('min_scene_len', '0.6s'));
   const outputFile = typeof params['output_file'] === 'string' ? params['output_file'] : '';
   const outputFormat = String(get('output_format', 'jsonl'));
+  const costMatrixCsv = typeof params['cost_matrix_csv'] === 'string' ? params['cost_matrix_csv'] : '';
 
   const fileFilter = outputFormat === 'csv' ? '.csv' : outputFormat === 'timecodes' ? '.txt' : '.jsonl';
   const defaultFn  = outputFormat === 'csv' ? 'scene_changes.csv'
@@ -2239,7 +2416,7 @@ function SceneChangeParams({
 
   // Params not rendered by the structured UI fall through to the generic editor.
   const extraKeys = meta?.extra?.map((e) => e.key) ?? [];
-  const structuredKeys = new Set(['threshold', 'min_scene_len', 'output_file', 'output_format', ...extraKeys]);
+  const structuredKeys = new Set(['threshold', 'min_scene_len', 'output_file', 'output_format', 'cost_matrix_csv', ...extraKeys]);
   const overflow = Object.fromEntries(
     Object.entries(params).filter(([k]) => !SCENE_CHANGE_KNOWN_KEYS.has(k) && !structuredKeys.has(k)),
   );
@@ -2282,20 +2459,46 @@ function SceneChangeParams({
         <code>.txt</code>: comma-separated cut timecodes (written at stream end).
       </div>
 
+      {processorName === 'scene_change_mc' && (
+        <>
+          <label style={{ marginTop: 8 }}>Cost matrix CSV (x264 lookahead debug)</label>
+          <FileField
+            label="cost_matrix_csv"
+            value={costMatrixCsv}
+            mode="save"
+            filter=".csv"
+            defaultFilename="x264_costs.csv"
+            placeholder="x264_costs.csv"
+            onChange={(val) => {
+              const next = { ...params };
+              if (val) next['cost_matrix_csv'] = val; else delete next['cost_matrix_csv'];
+              onChange(next);
+            }}
+          />
+          <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: -4, marginBottom: 8 }}>
+            Optional path for a CSV of the full per-frame intra vs. per-lag inter prediction costs
+            (and ratios) from the motion-compensated x264 lookahead. Useful for analysing the
+            detector. Leave blank to disable.
+          </div>
+        </>
+      )}
+
       {meta && (
         <div style={{ fontSize: 11, color: 'var(--text-dim)', marginBottom: 8 }}>
           {meta.label}
-          <span style={{ marginLeft: 6 }}>
-            {'— '}
-            <a
-              href="https://scenedetect.com"
-              target="_blank"
-              rel="noopener noreferrer"
-              style={{ color: 'var(--text-dim)' }}
-            >
-              PySceneDetect
-            </a>
-          </span>
+          {processorName !== 'scene_change_mc' && (
+            <span style={{ marginLeft: 6 }}>
+              {'— '}
+              <a
+                href="https://scenedetect.com"
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{ color: 'var(--text-dim)' }}
+              >
+                PySceneDetect
+              </a>
+            </span>
+          )}
         </div>
       )}
 
@@ -2395,6 +2598,36 @@ function SceneChangeParams({
                 onChange={(e) => {
                   const v = parseFloat(e.target.value);
                   if (!isNaN(v)) set(ctrl.key, v);
+                }}
+              />
+              {ctrl.hint && (
+                <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: -4, marginBottom: 4 }}>
+                  {ctrl.hint}
+                </div>
+              )}
+            </Fragment>
+          );
+        }
+        if (ctrl.type === 'number-list') {
+          // Render as comma/space separated numbers; store as number[].
+          // Coerce a saved scalar (legacy single value) to a one-element list.
+          const arr = Array.isArray(value)
+            ? (value as number[])
+            : typeof value === 'number'
+              ? [value]
+              : ((ctrl.defaultValue as number[]) ?? []);
+          const text = arr.join(', ');
+          return (
+            <Fragment key={ctrl.key}>
+              <label style={{ marginTop: 8 }}>{ctrl.label}</label>
+              <input
+                type="text"
+                value={text}
+                placeholder={ctrl.placeholder ?? 'e.g. 5, 15, 30, 45, 60'}
+                onChange={(e) => {
+                  const parts = e.target.value.split(/[,\s]+/).filter(Boolean);
+                  const nums = parts.map((p) => parseFloat(p)).filter((n) => !isNaN(n) && n > 0);
+                  set(ctrl.key, nums.length ? nums : undefined);
                 }}
               />
               {ctrl.hint && (

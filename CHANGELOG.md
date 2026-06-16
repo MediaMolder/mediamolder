@@ -19,7 +19,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   re-decode. New package `lookahead/` (the ported x264 lowres engine) and
   `processors/scene_change_mc.go`; `av.DecoderContext.FlushBuffers`
   (avcodec_flush_buffers) added for post-seek re-decode. See
-  `docs/scene-detection.md`.
+  `docs/scene-detection.md`. The web GUI curates `scene_change_mc` in the
+  node palette and gives it a typed Inspector panel (threshold, coarse /
+  refined prediction distances, dissolve and fade bounds, aggregation window,
+  prediction-failure threshold, full-resolution edge refine, and an optional
+  cost-matrix CSV debug log).
 
 - **sequence_editor audio + crossfades.** The `sequence_editor` now mixes an
   audio stream alongside the composited video, derived from the same clips as the
