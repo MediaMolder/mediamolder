@@ -155,6 +155,16 @@ func (d *DecoderContext) Flush() error {
 	return d.SendPacket(nil)
 }
 
+// FlushBuffers resets the decoder's internal state (avcodec_flush_buffers),
+// discarding all buffered frames and reference pictures. This is the call
+// to make after seeking an OPEN decoder: unlike Flush (which sends a NULL
+// packet and puts the decoder into drain/EOF mode, after which it refuses
+// further packets), FlushBuffers leaves the decoder ready to accept packets
+// from the new position.
+func (d *DecoderContext) FlushBuffers() {
+	C.avcodec_flush_buffers(d.p)
+}
+
 // ThreadCount returns the number of threads the decoder is using.
 func (d *DecoderContext) ThreadCount() int {
 	return int(d.p.thread_count)

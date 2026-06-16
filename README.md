@@ -311,7 +311,7 @@ For detailed instructions see [MacOS](docs/build/macos.md), [Windows](docs/build
 - [Validation](docs/architecture/graph_validation_design.md)
 - [Video Editing Guide](docs/video-editing-guide.md) — assemble clips into a finished video: multi-track timelines, cuts/trims, dissolves and the full transition set with audio crossfades (`sequence_editor`)
 - [Go Processor Nodes](docs/go-processor-nodes.md) — `Processor` interface, `FrameSource` interface, built-in processors (`sequence_editor`, scene detectors, TwelveLabs, Vidi, …), writing custom nodes
-- [Scene Detection](docs/scene-detection.md) — six detectors: go-scene-detect ports (content, adaptive, threshold, hash, histogram) and FFmpeg scdet
+- [Scene Detection](docs/scene-detection.md) — seven detectors: go-scene-detect ports (content, adaptive, threshold, hash, histogram), FFmpeg scdet, and the motion-compensated `scene_change_mc` (frame-accurate dissolve/fade detection)
 - [Yolov8 object detection/classification](docs/yolov8-guide.md)
 - [Vidi 2.5 multimodal analysis](docs/vidi-guide.md)
 - [TwelveLabs video understanding](docs/twelvelabs.md)
