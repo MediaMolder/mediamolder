@@ -23,6 +23,13 @@ func newTestPkt(t *testing.T, ptsUS int64, streamIdx int) *av.Packet {
 	pkt.SetPTS(ptsUS)
 	pkt.SetDTS(ptsUS)
 	pkt.SetStreamIndex(streamIdx)
+	// Free every test packet at test end. Without this the packets the
+	// OutputBuffer never closes (those still buffered when a test returns, and
+	// those AddOrPass passes back to the caller) leak — flagged by the ASan
+	// (LeakSanitizer) CI job. Packet.Close is idempotent, so this is also safe
+	// for packets the buffer takes ownership of and closes itself (evict /
+	// Drain / Close).
+	t.Cleanup(func() { _ = pkt.Close() })
 	return pkt
 }
 
