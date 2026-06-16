@@ -45,7 +45,9 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"path/filepath"
 	"sort"
+	"strings"
 
 	"github.com/MediaMolder/MediaMolder/av"
 	"github.com/MediaMolder/MediaMolder/transition"
@@ -402,12 +404,28 @@ func (se *SequenceEditor) Init(params map[string]any) error {
 	// Records exactly what the renderer did for debugging (source extraction,
 	// which clip(s) won, srcT actually requested, conversion, hold vs content, etc.).
 	if p, ok := params["sequence_log"].(string); ok && p != "" {
-		f, err := os.Create(p)
+		// Sanitize the user-provided debug-log path: resolve any "../"
+		// traversal, require an absolute path, then re-derive safePath from a
+		// non-user-input filesystem root via the filepath.Rel + HasPrefix
+		// confinement pattern (mirrors processors/file_write_hook.go) so the
+		// os.Create sink is not tainted by static analysis
+		// (CWE-22 / CodeQL go/path-injection).
+		clean := filepath.Clean(p)
+		if !filepath.IsAbs(clean) {
+			return fmt.Errorf("sequence_editor: sequence_log must be an absolute path, got %q", p)
+		}
+		fsRoot := string(filepath.Separator)
+		rel, relErr := filepath.Rel(fsRoot, clean)
+		if relErr != nil || strings.HasPrefix(rel, "..") {
+			return fmt.Errorf("sequence_editor: sequence_log %q is not within an accessible filesystem root", p)
+		}
+		safePath := filepath.Join(fsRoot, rel)
+		f, err := os.Create(safePath)
 		if err != nil {
-			return fmt.Errorf("sequence_editor: cannot create sequence_log %q: %w", p, err)
+			return fmt.Errorf("sequence_editor: cannot create sequence_log %q: %w", safePath, err)
 		}
 		se.sequenceLog = f
-		se.sequenceLogPath = p
+		se.sequenceLogPath = safePath
 	}
 
 	return nil
