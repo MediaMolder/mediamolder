@@ -19,6 +19,7 @@
 | **Live observability**          | **Per-node metrics, Prometheus, OTEL, live terminal** | None                       | Basic                      |
 | **Real-time adaptive controller** | **Full adaptive loop (threads + presets + frame drop + jitter buffers)** | None | Limited |
 | **Extensibility**               | **Pure Go `Processor` interface**                    | C filters (rebuild required) | C plugins                |
+| **In-graph video editing**      | **Multi-track timeline node — cuts, transitions, audio crossfades** | Manual filter graphs | Separate GES library |
 | **Hardware acceleration**       | **Probed, auto-mapped, safe across platforms**       | Opaque & error-prone       | Complex                    |
 | **Declarative config**          | **Versioned JSON + GUI round-trip**                  | Command strings            | Pipeline code              |
 | **FFmpeg command migration**    | **One-command `convert-cmd` with round-trip**        | N/A                        | Manual                     |
@@ -153,7 +154,7 @@ first-class node, written as an ordinary Go struct that implements the
 hacks. The engine schedules, monitors, and error-handles custom nodes
 identically to built-in nodes. For more details, see [go-processor-nodes.md](docs/go-processor-nodes.md).
 
-Processors may also implement the optional `FrameSource` sub-interface to **generate their own frames** rather than processing inbound ones.  The built-in **`sequence_editor`** FrameSource assembles a multi-track NLE timeline with placement, layering, the full transition set (a native Go engine), and **audio mixing with auto-coupled crossfades** — so you can cut, trim, and add wipes/dissolves/slides (and matching audio crossfades) entirely inside a job graph.  See the [Video Editing Guide](docs/video-editing-guide.md) for the workflow and timing model.
+Processors may also implement the optional `FrameSource` sub-interface to **generate their own frames** rather than processing inbound ones — the built-in `sequence_editor` timeline node is one example (see [Video editing built in](#video-editing-built-in)).
 
 You can add a custom Yolo-v8 object-detection node to a graph and it will 
 run directly inside your media graph. See [Yolo-V8 Guide](docs/yolov8-guide.md)
@@ -161,6 +162,17 @@ run directly inside your media graph. See [Yolo-V8 Guide](docs/yolov8-guide.md)
 For multimodal scene understanding — captions, temporal grounding, edit plans, QA — the built-in `vidi_analyzer` node connects any graph to a [Vidi 2.5](https://github.com/bytedance/vidi) inference service. See [Vidi 2.5 Guide](docs/vidi-guide.md)
 
 For cloud-hosted video understanding — index, search, caption, and embed clips via the [TwelveLabs](https://twelvelabs.io) Marengo and Pegasus models — the `twelvelabs_indexer`, `twelvelabs_analyzer`, `twelvelabs_searcher`, and `twelvelabs_embedder` nodes are built in. See [TwelveLabs Guide](docs/twelvelabs.md)
+
+### Video editing built in
+
+Assemble clips into a finished video — cuts, trims, wipes, dissolves, layering,
+and audio crossfades — entirely inside a job graph, with no external NLE. The
+built-in **`sequence_editor`** node is a multi-track timeline that opens its own
+sources and emits a finished stream: place clips on tracks at explicit times, add
+transitions composited by a [native Go engine](docs/architecture/transitions.md)
+(the full `xfade` set), and mix audio from the same clips with crossfades
+auto-coupled to each cut. Build it as a spreadsheet-style table in the GUI or as
+declarative JSON. See the [Video Editing Guide](docs/video-editing-guide.md).
 
 ### Hardware acceleration — any platform, properly
 
