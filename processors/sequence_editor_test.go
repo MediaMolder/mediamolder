@@ -39,7 +39,7 @@ func initWithTransition(t *testing.T, transition string) error {
 }
 
 // An unsupported transition type must be rejected at Init (not silently
-// rendered as a hard cut), pointing the user at xfade_sequence.
+// rendered as a hard cut).
 func TestSequenceEditor_RejectsUnsupportedTransition(t *testing.T) {
 	err := initWithTransition(t, `{ "type": "notarealtransition", "duration": 0.5 }`)
 	if err == nil {

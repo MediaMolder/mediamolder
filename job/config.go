@@ -1436,7 +1436,7 @@ func validate(cfg *Config) error {
 		// filter_source node to make the intent explicit.
 		//
 		// Also permit graphs whose sole frame source is a FrameSource
-		// go_processor (e.g. xfade_sequence) — those open files
+		// go_processor (e.g. sequence_editor) — those open files
 		// internally and emit frames without any graph-level input node.
 		hasFilterSource := false
 		hasFrameSourceProcessor := false

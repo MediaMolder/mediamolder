@@ -203,6 +203,14 @@ type SequenceEditor struct {
 	// clipReader.converter); there is deliberately no SequenceEditor-level shared
 	// converter, because a transition converts two sources in the same timestep
 	// and a single shared graph corrupted one of the two outputs' chroma.
+	//
+	// Readers are cached per unique source URL and held open until Close(), so
+	// memory scales with the number of *distinct* sources (fine for multi-cam /
+	// layered timelines that reuse a few sources). Follow-up optimization for
+	// very long *linear montages* of many distinct clips: stream sources one at
+	// a time and evict a reader once its last covering clip has passed, keeping
+	// at most ~2 decoders open during a transition window (the O(1)-frame memory
+	// model the removed xfade_sequence processor used).
 	readers   map[string]*clipReader
 	lastFrame *av.Frame // last successfully sent frame (used for hold/freeze on timeline gaps)
 
@@ -340,8 +348,7 @@ func (se *SequenceEditor) Init(params map[string]any) error {
 					st.Type = typ
 				}
 				if !seqSupportedTransitions[st.Type] {
-					return fmt.Errorf("sequence_editor: unsupported transition type %q (supported: %s); "+
-						"for wipes, slides, fades and other styles use the xfade_sequence processor", st.Type, seqSupportedTransitionList)
+					return fmt.Errorf("sequence_editor: unsupported transition type %q (supported: %s)", st.Type, seqSupportedTransitionList)
 				}
 				dur, ok := transm["duration"].(float64)
 				if !ok || dur <= 0 {

@@ -494,8 +494,8 @@ func processorStreams(name string) []string {
 		"twelvelabs_searcher",
 		"twelvelabs_embedder":
 		return []string{"events"}
-	case "xfade_sequence":
-		return []string{"video"}
+	case "sequence_editor":
+		return []string{"video", "audio"}
 	}
 	return nil
 }
@@ -533,8 +533,8 @@ func processorDescription(name string) string {
 		return "Run Marengo semantic search on a timer or per segment and emit timestamped matches."
 	case "twelvelabs_embedder":
 		return "Generate Marengo video embeddings per segment, inline or to disk (json / jsonl)."
-	case "xfade_sequence":
-		return "Compose a sequential clip timeline with libavfilter xfade transitions. Opens at most 2 decoders at a time — no OOM regardless of timeline length. Clips and transitions are defined inline in params; no graph inputs needed."
+	case "sequence_editor":
+		return "Multi-track NLE timeline: place clips on tracks with cuts, layering, and the full transition set (native Go engine). Optionally mixes audio from the same clips with auto-coupled crossfades. A FrameSource — clips reference inputs by id; no graph inputs needed."
 	}
 	return ""
 }

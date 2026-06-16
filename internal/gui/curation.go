@@ -187,9 +187,9 @@ var curatedNodes = map[string]NodeMeta{
 	},
 
 	// ── Timeline composition ─────────────────────────────────────────
-	"xfade_sequence": {
-		Friendly: "Xfade sequence (timeline)",
-		Aliases:  []string{"dissolve", "fade", "transition", "timeline", "sequence", "xfade"},
+	"sequence_editor": {
+		Friendly: "Sequence editor (timeline)",
+		Aliases:  []string{"dissolve", "fade", "transition", "timeline", "sequence", "xfade", "nle", "edit", "crossfade", "audio"},
 	},
 }
 

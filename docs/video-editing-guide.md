@@ -2,14 +2,12 @@
 
 MediaMolder can assemble clips into a finished video — cuts, trims,
 transitions, layering — entirely inside a job graph, no external NLE
-required. This guide explains the two timeline tools, how to choose between
-them, and the timing model that trips people up.
+required. This guide explains the timeline tool and the timing model that
+trips people up.
 
-- [Two timeline tools](#two-timeline-tools)
-- [Which one should I use?](#which-one-should-i-use)
+- [The timeline tool](#the-timeline-tool)
 - [The timing model (read this first)](#the-timing-model-read-this-first)
 - [`sequence_editor` (multi-track timeline)](#sequence_editor-multi-track-timeline)
-- [`xfade_sequence` (linear montage)](#xfade_sequence-linear-montage)
 - [Transitions](#transitions)
 - [Mixed resolutions and formats](#mixed-resolutions-and-formats)
 - [Audio](#audio)
@@ -19,34 +17,19 @@ them, and the timing model that trips people up.
 
 ---
 
-## Two timeline tools
+## The timeline tool
 
-Both are MediaMolder-native `go_processor` **FrameSource** nodes: they open
-their own source files and emit a finished video stream, so they take **no
-inbound A/V edge** — you wire their *output* to an encoder/output.
+`sequence_editor` is a MediaMolder-native `go_processor` **FrameSource** node:
+it opens its own source files and emits a finished video stream, so it takes
+**no inbound A/V edge** — you wire its *output* to an encoder/output.
 
-- **`sequence_editor`** — a multi-track, NLE-style timeline. Place clips at
-  explicit times on one or more tracks; upper tracks win where they overlap.
-  Supports `dissolve` (a linear cross-fade) **and the full libavfilter
-  `xfade` transition set** between adjacent clips on a track.
-- **`xfade_sequence`** — a single-track linear montage: clips abut
-  end-to-end, joined by `xfade` transitions, with O(1-frame) memory no
-  matter how long the timeline.
+It is a multi-track, NLE-style timeline. Place clips at explicit times on one
+or more tracks; upper tracks win where they overlap. It supports `dissolve`
+(a linear cross-fade) **and the full libavfilter `xfade` transition set**
+between adjacent clips on a track, and can carry an audio stream that
+crossfades across each transition.
 
----
-
-## Which one should I use?
-
-| You need… | Use |
-|---|---|
-| Multiple tracks, layering, multi-cam selects | `sequence_editor` |
-| Precise placement (clips at specific times, gaps, overlaps) | `sequence_editor` |
-| A fixed output format that every source is scaled/retimed into | `sequence_editor` |
-| Any transition (wipe, slide, fade, dissolve) on a simple A→B→C montage | either |
-| A very long montage where memory must stay flat | `xfade_sequence` |
-| The flat `clips: [clip, transition, clip, …]` array style | `xfade_sequence` |
-
-Full side-by-side: [go-processor-nodes.md § Timeline assembly](go-processor-nodes.md#timeline-assembly-sequence_editor-vs-xfade_sequence).
+Full reference: [go-processor-nodes.md § `sequence_editor`](go-processor-nodes.md#sequence_editor).
 
 ---
 
@@ -81,10 +64,6 @@ clip B: timeline_in 3, source_in 3, source_out 6.5
 The overlap `[3.0, 3.5]` is the cross-fade window: A fades out while B fades
 in. The last clip has no transition, so its `source_out` is just
 `source_in + length`.
-
-`xfade_sequence` expresses the same idea with `in`/`out` per clip and the
-rule `out − in − duration` = unique (non-overlapping) content; `out` includes
-the transition window. See its [reference](go-processor-nodes.md#xfade_sequence).
 
 ---
 
@@ -138,39 +117,9 @@ Full field tables: [go-processor-nodes.md § `sequence_editor`](go-processor-nod
 
 ---
 
-## `xfade_sequence` (linear montage)
-
-A flat `clips` array that **alternates** clip and transition objects (N clips
-→ N−1 transitions). It opens at most two decoders at once, so memory is
-O(1 frame) regardless of length.
-
-```json
-{
-  "id": "seq",
-  "type": "go_processor",
-  "processor": "xfade_sequence",
-  "params": {
-    "clips": [
-      { "input_id": "video_a", "out": 15.5 },
-      { "transition": "dissolve", "duration": 0.5 },
-      { "input_id": "video_b", "out": 15.5 },
-      { "transition": "wipeleft", "duration": 0.5 },
-      { "input_id": "video_a", "in": 15 }
-    ]
-  }
-}
-```
-
-`in`/`out` are seconds (`out` defaults to end-of-file; required on every clip
-but the last). Full reference and the GUI editor:
-[go-processor-nodes.md § `xfade_sequence`](go-processor-nodes.md#xfade_sequence)
-and [using-mediamolder.md §5.15](using-mediamolder.md#515-timeline-assembly-with-xfade_sequence).
-
----
-
 ## Transitions
 
-Both processors join clips with libavfilter
+`sequence_editor` joins clips with libavfilter
 [`xfade`](https://ffmpeg.org/ffmpeg-filters.html#xfade) transitions. Set the
 type and a `duration` (seconds); the duration is the overlap window between
 the outgoing and incoming clip.
@@ -206,20 +155,16 @@ Example using xfade transitions:
 
 ## Mixed resolutions and formats
 
-- **`sequence_editor`** normalises everything to its declared `format`, so
-  mixed-resolution / mixed-fps sources just work.
-- **`xfade_sequence`** builds each transition from the first clip's stream
-  info; the two clips in a transition must share pixel format, frame rate,
-  and resolution. For mixed sources, insert a `scale`/`format` filter on the
-  output edge or pre-scale the files.
+`sequence_editor` normalises everything to its declared `format`, so
+mixed-resolution / mixed-fps sources just work.
 
 ---
 
 ## Audio
 
-Both processors are **video-only** today. Route audio through a separate path
-(e.g. a parallel `amix`/`acrossfade` graph) and mux it at the output if your
-timeline needs sound.
+`sequence_editor` can carry an audio stream taken from the *same clips* as the
+picture, crossfaded across each transition. Audio is opt-in from the job JSON.
+See [using-mediamolder.md § Audio and crossfades](using-mediamolder.md#515-multi-track-timelines-with-sequence_editor).
 
 ---
 
@@ -241,18 +186,16 @@ placeholders, or run them through the example harness):
 
 ## GUI workflow
 
-The graphical editor has an Inspector for these nodes (input-node dropdowns,
-a clip/transition editor, and the canvas layout where input nodes are *not*
-edge-connected to the sequence node). See
-[gui.md § Xfade sequence (timeline assembly)](gui.md#xfade-sequence-timeline-assembly).
+The graphical editor has an Inspector for the `sequence_editor` node
+(input-node dropdowns, a clip/transition table editor, and the canvas layout
+where input nodes are *not* edge-connected to the sequence node). See
+[gui.md § Sequence editor — timeline table editor](gui.md#sequence-editor--timeline-table-editor).
 
 ---
 
 ## Reference
 
 - [Go Processor Nodes](go-processor-nodes.md) — interface, FrameSource model,
-  full `sequence_editor` / `xfade_sequence` field tables, and the
-  side-by-side comparison.
-- [Using MediaMolder (CLI)](using-mediamolder.md) — §5.15 / §5.16 timeline
-  workflows.
+  and full `sequence_editor` field tables.
+- [Using MediaMolder (CLI)](using-mediamolder.md) — §5.15 timeline workflow.
 - [GUI Reference](gui.md) — building timelines on the canvas.

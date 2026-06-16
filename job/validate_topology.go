@@ -65,9 +65,9 @@ func sourceIDsWithEventsEdges(cfg *Config) map[string]bool {
 		}
 	}
 	// Also exempt inputs consumed by a FrameSource go_processor via
-	// input_id/media_id in its clips or tracks params (xfade_sequence,
-	// sequence_editor). Those inputs have no outbound AV edges by design — the
-	// processor opens them directly.
+	// input_id/media_id in its clips or tracks params (e.g. sequence_editor).
+	// Those inputs have no outbound AV edges by design — the processor opens
+	// them directly.
 	for id := range frameSourceConsumedInputs(cfg) {
 		m[id] = true
 	}
@@ -76,10 +76,10 @@ func sourceIDsWithEventsEdges(cfg *Config) map[string]bool {
 
 // frameSourceConsumedInputs returns the set of input IDs referenced by a
 // FrameSource go_processor's params, via "input_id" or "media_id" in either a
-// top-level "clips" list (xfade_sequence) or a "tracks[].clips" timeline
-// (sequence_editor). These inputs are read directly by the processor (by URL,
-// resolved from the id before Init — see resolveClipInputIDs) and carry no
-// outbound graph edges, so they must not be reported as dead/dangling sources.
+// top-level "clips" list or a "tracks[].clips" timeline (sequence_editor). These
+// inputs are read directly by the processor (by URL, resolved from the id before
+// Init — see resolveClipInputIDs) and carry no outbound graph edges, so they
+// must not be reported as dead/dangling sources.
 func frameSourceConsumedInputs(cfg *Config) map[string]bool {
 	m := make(map[string]bool)
 	addClips := func(clipsRaw any) {

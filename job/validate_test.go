@@ -149,7 +149,8 @@ func TestTopology_FrameSourceConsumedInputs(t *testing.T) {
 func TestFrameSourceConsumedInputs(t *testing.T) {
 	cfg := &Config{
 		Graph: GraphDef{Nodes: []NodeDef{
-			{ID: "xfs", Type: "go_processor", Processor: "xfade_sequence", Params: map[string]any{
+			// A FrameSource that consumes inputs via a top-level "clips" list.
+			{ID: "fs", Type: "go_processor", Processor: "frame_source", Params: map[string]any{
 				"clips": []any{map[string]any{"input_id": "clipA"}},
 			}},
 			{ID: "seq", Type: "go_processor", Processor: "sequence_editor", Params: map[string]any{

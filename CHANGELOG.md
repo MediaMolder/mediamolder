@@ -21,9 +21,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   by a new `GET /api/audio-transitions`). Documented in
   [`docs/architecture/transitions.md`](docs/architecture/transitions.md#audio-crossfades).
 
-- **FrameSource render progress.** FrameSource go_processors (`sequence_editor`,
-  `xfade_sequence`) now record node metrics and emit periodic `rendered X / N
-  frames` progress events while producing frames. Previously these source nodes
+- **FrameSource render progress.** The `sequence_editor` FrameSource now records
+  node metrics and emits periodic `rendered X / N frames` progress events while
+  producing frames. Previously these source nodes
   were invisible during a run (no inbound loop ticked their metrics), so a slow
   render looked like a hang. The progress denominator is now the sequence's own
   duration rather than the (much longer) source files'. Adds the optional
@@ -49,25 +49,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   `Frame.CopyPropsFrom` to support pixel-level work in Go.
 
 - **Video Editing Guide** (`docs/video-editing-guide.md`): task-oriented guide
-  to assembling clips into a finished video with the `sequence_editor` and
-  `xfade_sequence` FrameSource processors — choosing between them, the
-  source-vs-timeline timing model, multi-track layering, the full xfade
-  transition set, mixed-resolution handling, and the GUI/CLI workflow. Linked
-  from the README.
-
-- **`xfade_sequence` go_processor (FrameSource).** New processor that composes
-  a sequential clip timeline with libavfilter `xfade` transitions while keeping
-  memory usage O(1 frame), regardless of timeline length.  At most two decoders
-  are open at once (one per side of each transition window).  Replaces the
-  chain-xfade graph approach which OOMs on long timelines by requiring all
-  decoders to run concurrently.  Params: `clips` array of alternating clip
-  (`url`, `in`, `out`) and transition (`transition`, `duration`) objects.  The
-  new `FrameSource` optional interface (`processors.FrameSource`) allows any
-  `go_processor` with no inbound AV edge to call `Run(ctx, send)` instead of
-  the per-frame `Process()` loop; `handleGoProcessor` dispatches accordingly.
-  GUI: Inspector shows a structured clips/transitions editor; the node's video
-  input handle is hidden because the processor opens files internally.
-  See `docs/go-processor-nodes.md#xfade_sequence`.
+  to assembling clips into a finished video with the `sequence_editor`
+  FrameSource processor — the source-vs-timeline timing model, multi-track
+  layering, the full transition set, mixed-resolution handling, and the GUI/CLI
+  workflow. Linked from the README.
 
 - **`sequence_editor` go_processor (FrameSource).** NLE-style timeline /
   sequence generator: declares a fixed output format and one or more tracks,
@@ -75,14 +60,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   `source_out`), and renders the highest-priority track covering each output
   time (upper track wins; gaps render black). Supports cuts, inserts,
   multi-cam selects, layering, and between-clip transitions: `dissolve` (a
-  linear cross-fade via the `blend` filter) and the **full libavfilter
-  `xfade` set** (wipes, slides, fades, circles, …), composited per
-  transition window by an `xfade` graph driven one frame-pair at a time.
-  Unsupported transition names are rejected at load time. Complements
-  `xfade_sequence` (single-track, O(1)-frame memory): use `sequence_editor`
-  for multi-track/placement, `xfade_sequence` for a memory-flat linear
-  montage. Examples `testdata/examples/61_sequence_editor_dissolves.json`
-  and `62_sequence_editor_wipe.json`; reference and comparison in
+  linear cross-fade) and the **full `xfade` transition set** (wipes, slides,
+  fades, circles, …), composited per transition window. Unsupported transition
+  names are rejected at load time. Introduces the `FrameSource` optional
+  interface (`processors.FrameSource`): a `go_processor` with no inbound AV edge
+  calls `Run(ctx, send)` instead of the per-frame `Process()` loop, opening its
+  sources directly. Examples `testdata/examples/61_sequence_editor_dissolves.json`
+  and `62_sequence_editor_wipe.json`; reference in
   `docs/go-processor-nodes.md`.
 
 - **Remote backend user guide** (`docs/remote-backend-guide.md`): step-by-step

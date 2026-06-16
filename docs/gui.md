@@ -32,7 +32,6 @@ see [using-mediamolder.md](using-mediamolder.md).
 - [Scene detection processors](#scene-detection-processors)
 - [TwelveLabs processors](#twelvelabs-processors)
 - [Sequence editor — timeline table editor](#sequence-editor--timeline-table-editor)
-- [Xfade sequence (timeline assembly)](#xfade-sequence-timeline-assembly)
 - [FFmpeg CLI export](#ffmpeg-cli-export)
 - [Performance overlay](#performance-overlay)
 - [Development workflow](#development-workflow)
@@ -400,7 +399,7 @@ against FFmpeg drift by `internal/gui/curation_test.go`
   `metadata_file_writer` to persist its events to a file without touching the
   video path. Handles only accept connections of the same type — incompatible
   drags are rejected.
-* **FrameSource `go_processor` nodes** (such as `xfade_sequence`) have **no video or audio input handle**.  They generate their own frames internally and cannot receive AV edges from other nodes.  Only the file-input and events handles are shown on their left edge.  See [§ Xfade sequence (timeline assembly)](#xfade-sequence-timeline-assembly) for the recommended layout with input nodes.
+* **FrameSource `go_processor` nodes** (such as `sequence_editor`) have **no video or audio input handle**.  They generate their own frames internally and cannot receive AV edges from other nodes.  Only the file-input and events handles are shown on their left edge.  See [§ Sequence editor — timeline table editor](#sequence-editor--timeline-table-editor) for the recommended layout with input nodes.
 * **Input nodes grow per-track audio handles** after **Get Properties** is
   clicked.  A 16-track MOV shows 16 green dots labelled `a:1` … `a:16` on
   the right edge instead of a single generic `audio` handle.  The handle
@@ -1516,90 +1515,6 @@ missing media, `source_out ≤ source_in`, over-long transitions, unknown audio
 curves, and backward timing. Edits are **buffered**: **Apply** commits them to the
 node, **Cancel** discards. (This first version edits the first track; multi-track
 tabs are planned.)
-
-## Xfade sequence (timeline assembly)
-
-> **`xfade_sequence` vs `sequence_editor`.** Both are FrameSource timeline nodes. `xfade_sequence` (this section) is a **single-track, linear** sequence with the **full `xfade` transition library** (wipes, slides, fades, dissolve). `sequence_editor` is a **multi-track NLE timeline** with explicit placement and layering, and it now supports dissolve **and the full `xfade` set** too — reach for it when you need tracks or precise placement. See the [comparison](go-processor-nodes.md#timeline-assembly-sequence_editor-vs-xfade_sequence).
-
-The `xfade_sequence` processor assembles a sequential clip timeline with libavfilter `xfade` transitions.  Unlike chaining multiple `xfade` filter nodes — which requires all decoders to run concurrently — `xfade_sequence` is a **FrameSource**: it opens source files one at a time and keeps at most two decoders alive simultaneously (one for the outgoing clip, one for the incoming clip, only during the overlap window).  Memory usage is O(1 frame) regardless of timeline length.
-
-### Placing the node
-
-1. In the palette, search for **xfade** or **timeline** (or select *Processors → Xfade sequence (timeline)*).
-2. Drag the node onto the canvas.
-
-Because `xfade_sequence` is a FrameSource, **it has no video or audio input handle**.  You cannot draw AV edges into it from other nodes.  Its output is video frames that flow to scale filters, encoders, or any downstream node.
-
-### Input nodes on the canvas
-
-Add one **Input** node per source file (drag from the *Inputs* category in the palette, or press `I`).  Give each a meaningful id (`video_a`, `vacation_clip`, etc.).  These nodes appear on the canvas and are visible and editable — but they are **not connected by edges** to the `xfade_sequence` node.  Instead, the sequence node's Inspector references them by id.
-
-This means:
-- Each source file is visible as a named node on the canvas.
-- You can open the Inspector on an input node to seek (`ss`), set pixel format, etc. — and `xfade_sequence` automatically picks up the `ss` value as the default clip start time.
-- The graph stays readable regardless of how many clips are in the timeline.
-
-### Inspector — clips and transitions
-
-Click on the `xfade_sequence` node to open its Inspector.  The **Clips** section shows a list that alternates between *clip rows* and *transition rows*.
-
-#### Clip row
-
-| Field | Description |
-|---|---|
-| **Input** | Dropdown of all input node ids defined in the graph. |
-| **in (s)** | Start time in seconds within the source file. Leave blank to use the input node's `options.ss` value (or 0 if not set). |
-| **out (s)** | End time in seconds. Required for all clips except the last. |
-| **×** | Remove this clip. |
-
-#### Transition row
-
-| Field | Description |
-|---|---|
-| **Transition** | Dropdown of supported libavfilter `xfade` transitions (`dissolve`, `fade`, `wipeleft`, `wiperight`, `slideleft`, `slideright`, `circlecrop`, `rectcrop`, `distance`, `fadeblack`, `fadewhite`, `radial`, `smoothleft`, `smoothright`, `smoothup`, `smoothdown`, `circleopen`, `circleclose`, `vertopen`, `vertclose`, `horzopen`, `horzclose`, `zoomin`, `squeezev`, `squeezeh`, `hlslice`, `hrslice`, `vuslice`, `vdslice`, `hblur`, `fadegrays`, `wipetl`, `wipetr`, `wipebl`, `wipebr`, `squeezev`, `squeezeh`). |
-| **Duration (s)** | Length of the overlap in seconds. Must be ≤ `out - in` of the preceding clip. |
-| **×** | Remove this transition (and merge the surrounding clips). |
-
-Use **+ Add clip** to append a new clip (a transition is automatically inserted before it).
-
-#### Timing rule
-
-For every clip except the last:
-
-```
-out - in > transition.duration
-```
-
-The engine enforces this at validation time and the GUI highlights the violating field in red.
-
-### Example canvas layout
-
-```
-[Input: video_a]   [Input: video_b]   [Input: video_c]
-                                               ↕ (Inspector references by id)
-                          [xfade_sequence]
-                                 │ video
-                            [scale 1920×1080]
-                                 │ video
-                           [encoder libx264]
-                                 │ video
-                           [output out0.mp4]
-```
-
-No edges connect the input nodes to `xfade_sequence`; the arrows above are conceptual only.
-
-### Format constraints
-
-- All clips must have the same pixel format, frame rate, and resolution, **or** you must insert a `scale` / `format` filter node on the output edge.  A `scale` node set to the target resolution placed between `xfade_sequence` and the encoder is the easiest way to normalise mixed-resolution clips.
-- Audio is not yet supported by `xfade_sequence`.  Pass an audio input through a separate path if needed.
-
-### Saving and running
-
-**Save** exports a standard MediaMolder JSON.  The `graph.ui` block is ignored at runtime.  Run it with:
-
-```sh
-mediamolder run my_timeline.json
-```
 
 ---
 

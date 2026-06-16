@@ -1308,7 +1308,7 @@ func (p *Pipeline) runGraph(ctx context.Context) (runErr error) {
 				}
 			}
 			// Resolve "input_id" references in clips params for FrameSource
-			// processors (e.g. xfade_sequence). Each clip entry may carry
+			// processors (e.g. sequence_editor). Each clip entry may carry
 			// "input_id" instead of "url"; we replace it with the URL (and
 			// optionally the "in" seek from options.ss) from cfg.Inputs.
 			if _, ok := proc.(processors.FrameSource); ok {
