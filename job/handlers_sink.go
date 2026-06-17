@@ -551,7 +551,13 @@ func (r *graphRunner) handleSink(ctx context.Context, node *graph.Node, ins []<-
 	}
 
 	// Multiple input streams: interleave with per-stream goroutines.
-	eg, _ := errgroup.WithContext(ctx)
+	// Keep the derived context: if one stream's consumer fails (e.g. the
+	// muxer rejects a non-monotonic DTS), egctx is cancelled so the sibling
+	// consumers — which would otherwise block forever on a never-closed
+	// input channel — unwind promptly. Without this the whole pipeline
+	// deadlocks: a single failed stream hangs the muxer's eg.Wait and
+	// back-pressures every upstream node feeding the abandoned channel.
+	eg, egctx := errgroup.WithContext(ctx)
 
 	for _, c := range ctxs {
 		c := c
@@ -637,7 +643,17 @@ func (r *graphRunner) handleSink(ctx context.Context, node *graph.Node, ins []<-
 				}
 				return progBoundary
 			}
-			for v := range in {
+			for {
+				var v any
+				var ok bool
+				select {
+				case <-egctx.Done():
+					return egctx.Err()
+				case v, ok = <-in:
+				}
+				if !ok {
+					break
+				}
 				pkt := v.(*av.Packet)
 				// If audio is holding packets and we can now safely flush
 				// some (because either the muxer rotated or go_processor

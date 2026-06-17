@@ -160,6 +160,19 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   `internal/server`. Docs: `docs/remote-server.md`, `docs/openapi-server.yaml`.
 
 ### Fixed
+- **Multi-stream output: a single stream's muxer error no longer deadlocks the
+  whole pipeline.** The muxing sink runs one consumer goroutine per output
+  stream, but built its consumer group with `errgroup.WithContext(ctx)` while
+  discarding the cancellable context and looping with a bare `for v := range
+  in`. When one stream's `WritePacket` failed (e.g. the muxer rejecting a
+  non-monotonic DTS — reproducible with a two-input `xfade`+`acrossfade` graph
+  over a seeked source), the failing consumer exited but its siblings stayed
+  blocked forever on never-closed input channels; `eg.Wait()` hung and every
+  upstream node feeding the abandoned stream back-pressured into a full
+  deadlock (jobs hung until timeout). The consumers now honour the derived
+  context, so any stream's failure fails the output **promptly** with that
+  error instead of hanging. Regression test:
+  `TestHandleSink_OneStreamErrorDoesNotHangSiblings`.
 - **`scene_change_mc`: bound `min_scene_len` before narrowing to `int`.**
   A caller-controlled `min_scene_len` (e.g. a large `"frames"` string) was
   converted from `int64` to `int` without an upper-bound check, which could
