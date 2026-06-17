@@ -5,10 +5,12 @@
 > licensed under the BSD 3-Clause License.
 > See <https://scenedetect.com> for the upstream project.
 
-MediaMolder ships six scene-change detectors. The original `scene_change` processor uses
+MediaMolder ships seven scene-change detectors. The original `scene_change` processor uses
 the same algorithm as FFmpeg's built-in `scdet` filter (fast, luma-only). The five
 PySceneDetect processors are full ports of PySceneDetect v0.7's algorithms and accept the
-same parameters as their Python counterparts.
+same parameters as their Python counterparts. The seventh, `scene_change_mc`, is a
+motion-compensated detector that additionally finds **dissolves and fades with
+frame-accurate boundaries** — the others detect hard cuts only.
 
 All processors run as [`go_processor`](go-processor-nodes.md) nodes directly inside the
 media graph — no subprocess, no Python runtime, no inter-process overhead.
@@ -25,6 +27,7 @@ media graph — no subprocess, no Python runtime, no inter-process overhead.
   - [`scene_change_threshold`](#scene_change_threshold)
   - [`scene_change_hash`](#scene_change_hash)
   - [`scene_change_histogram`](#scene_change_histogram)
+- [The motion-compensated detector (`scene_change_mc`)](#the-motion-compensated-detector-scene_change_mc)
 - [Common parameters](#common-parameters)
 - [Persisting events](#persisting-events)
 - [CLI: `mediamolder go-scene-detect`](#cli-mediamolder-go-scene-detect)
@@ -44,6 +47,7 @@ media graph — no subprocess, no Python runtime, no inter-process overhead.
 | `scene_change_threshold` | Mean brightness threshold (fade detection) | ★★★★★ | ★★★ | Fades to/from black or white |
 | `scene_change_hash` | Perceptual DCT hash, Hamming distance | ★★★★ | ★★★★ | Near-duplicate detection; robust to minor colour grading changes |
 | `scene_change_histogram` | Y-channel histogram correlation | ★★★★★ | ★★★ | Fast secondary check; low memory, one histogram per frame |
+| `scene_change_mc` | Motion-compensated lookahead (x264-style lowres inter/intra cost) | ★★ | ★★★★★ | **Dissolves and fades** with frame-accurate start/end bounds, plus hard cuts |
 
 ---
 
@@ -344,6 +348,97 @@ Event record on each detected cut:
 
 ---
 
+## The motion-compensated detector (`scene_change_mc`)
+
+Motion compensation is one element of inter-frame prediction, a technique
+used by modern video encoders. Blocks of a current frame can be represented
+(predicted) by a block of the same size in another frame, offset by some 
+motion vector. This is the most efficient way to code video. A less efficient 
+way is to use intra-frame prediction, which takes pixels from adjacent blocks 
+above and to the left of the current block, copying them at some angle (down
+and to the right) into the current block to form the prediction. The "cost"
+of either method of prediction can be represented by the bits required to
+encode the residual error (the block represented by subtracting the predicted
+block from the block of source pixels we are trying to encode). When 2 frames
+are similar, inter-prediction has a low cost. When 2 frames are not similar,
+the inter / intra prediction cost goes up.
+
+`scene_change_mc` is the only detector that finds **gradual transitions —
+cross-dissolves and fades — with frame-accurate boundaries**, in addition to
+hard cuts. The PySceneDetect detectors react to per-frame content deltas and
+fire on cuts. Other types of scene transitions, such as a dissolve, are more 
+gradual, occurring over many frames with no single large delta, so they miss it. 
+`scene_change_mc` instead asks a motion-aware question:
+*how well can frame *j* be predicted from an earlier frame?*
+
+It runs an x264-style **lookahead** on a quarter-resolution copy of each frame:
+for several reference distances *k* it motion-compensates frame *j* from frame
+*j−k* and forms the **inter/intra cost ratio** (how much better real
+prediction does than coding the frame fresh). Across a dissolve from scene A
+to scene B, prediction from pure-A into the blend fails progressively, so the
+ratio rises into a saturated **plateau** whose flanks pin the transition's
+start and end. The detector is batch-only: it accumulates the whole input,
+runs a cheap coarse pass, then refines candidate regions with extra reference
+distances, forward/reverse narrowing, and complementary signals (per-frame AC
+texture energy and Y/U/V channel-mean steps) to drive the measured bounds
+toward frame accuracy. See the [design notes](#how-it-works) below.
+
+### Output
+
+Hard cuts emit a single frame; dissolves and fades emit a span. In JSONL,
+`frame_index` is the last fully-unblended frame **before** the transition and
+`dissolve_frames` is the inclusive length to the first fully-unblended frame
+**after** it (so a true *D*-frame blend reports `D + 2`). Both endpoints are
+clean frames suitable as encoder anchors.
+
+### Parameters
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `coarse_prediction_distance` | int \| []int | `5` | Reference distance(s) used (with lag 1) in the cheap first pass over the whole video. A multi-scale set like `[30, 90]` localizes both short and long dissolves. Alias: `coarse_prediction_distances`. |
+| `refined_prediction_distances` | []int | built-in menu | Menu of distances the refinement stage draws from near an estimated dissolve duration (e.g. `[5,15,30,45,60,75,90,105,120]`). |
+| `threshold` | float64 | `0.50` | Hard-cut score-surface peak threshold. |
+| `dissolve_min_len` | int | `2` | Minimum measured blend length to call a dissolve. |
+| `dissolve_max_len` | int | `0` (= L/2) | Max transition width for dissolve/fade classification; raise for long dissolves. |
+| `agg_window` | int | `5` | Score-surface aggregation window (larger aids slow dissolves). |
+| `prediction_failure_threshold` | float64 | `0.985` | Inter/intra ratio level (0–1, near 1.0) treated as full prediction failure — the plateau saturation level. Per-distance overrides via `prediction_failure_thresholds`. |
+| `fade_threshold` / `fade_white_threshold` | float64 | `0.10` / `0.90` | Normalised luma below/above which a frame is dark/bright (fade detection); `>1.0` disables white fades. |
+| `fade_min_len` / `fade_max_len` | int | `3` / `120` | Min frames for a valid fade / max before treating as programme black/white. |
+| `min_scene_len` | int/float64/string | `15` | Min frames or duration (`"0.5s"`) between detections. |
+| `fullres_refine` | bool | `false` | Re-measure short/mid dissolve ends at full resolution via a windowed re-decode of `source_url` (sharper than the half-res lookahead on short blends). |
+| `source_url` | string | — | Input path the detector re-opens when `fullres_refine` is on. |
+| `cost_matrix_csv` | string | — | Debug: write the full augmented cost matrix (per-frame intra/luma/chroma/energy + per-distance inter/ratio, forward and reverse) to a CSV. |
+| `frame_rate` | float64 | `25.0` | Stream frame rate, for timecode generation. |
+| `output_file` / `output_format` | string | — / `"jsonl"` | Write results (`jsonl`, `csv`, `timecodes`). |
+
+```json
+{
+  "id": "detect",
+  "type": "go_processor",
+  "processor": "scene_change_mc",
+  "params": {
+    "coarse_prediction_distance": [30, 90],
+    "refined_prediction_distances": [1, 2, 3, 5, 15, 30, 45, 60, 75, 90, 105, 120],
+    "dissolve_max_len": 150,
+    "output_file": "scenes.jsonl"
+  }
+}
+```
+
+### How it works
+
+The detector is a Go port of the x264 lowres lookahead (half-res SATD motion
+estimation and intra cost) plus a dissolve-detection pipeline built on top:
+multi-scale coarse plateau detection → region seeding → reference-distance
+ladder refinement → ramp-foot cross-distance consensus → forward/reverse edge
+narrowing → AC-energy and channel-mean witnesses. Because it ports x264's
+mature ME/intra logic, the cost engine is reliable; the novelty is the
+staged measurement architecture that turns those costs into frame-accurate
+transition bounds. (The `lookahead/` package is the engine; the detector
+itself is `processors/scene_change_mc.go`.)
+
+---
+
 ## Common parameters
 
 All five go-scene-detect processors share these parameters:
@@ -464,9 +559,27 @@ pipeline, writing the detected scene list to stdout or a file.
 mediamolder go-scene-detect [flags] <input>
 ```
 
+**Scope — which detectors the CLI exposes.** The subcommand offers only the
+**five PySceneDetect *streaming* detectors** (`content`, `adaptive`,
+`threshold`, `hash`, `histogram`). These consume the video one frame at a time
+and emit a flat **scene list** — contiguous scenes split at cut points — which
+the [output formats](#output-format) below all encode. The two non-streaming
+detectors are intentionally **not** CLI flags and run only inside the media
+graph (or the GUI):
+
+- **`scene_change` (scdet)** — a `go_processor`; wire it into a pipeline as
+  shown in [The `scene_change` processor](#the-scene_change-processor-scdet).
+- **`scene_change_mc`** — its result is **transition *intervals*** (dissolve
+  start→end, fade-in/out bounds), which a flat cut-point scene list cannot
+  represent, and it is **batch + multi-pass** (staged refinement, optional
+  full-resolution re-decode of the source). Run it as a `go_processor` and
+  collect results via its own `output_file` or an `events` edge — see
+  [the motion-compensated detector](#the-motion-compensated-detector-scene_change_mc)
+  and [Persisting events](#persisting-events).
+
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--detector` | `content` | `content`, `adaptive`, `threshold`, `hash`, `histogram` |
+| `--detector` | `content` | `content`, `adaptive`, `threshold`, `hash`, `histogram` (PySceneDetect streaming detectors only — see Scope above) |
 | `--threshold` | detector default | Override detector threshold (0 = use detector default) |
 | `--luma-only` | false | `content` / `adaptive`: use luma channel only |
 | `--min-scene-len` | `0.6s` | Minimum scene length (frames, seconds, or timecode) |
@@ -506,6 +619,12 @@ mediamolder go-scene-detect --downscale=1 input.mp4
 
 ## Output format
 
+These three formats describe the **CLI scene list** (the streaming detectors'
+cut-based output). The pipeline-only `scene_change_mc` writes its own `jsonl` /
+`csv` / `timecodes` files that additionally carry the transition *type* and span
+— see [its Output section](#output) — so a `scene_change_mc` JSONL record is not
+the same shape as the records shown here.
+
 ### JSONL (default)
 
 One JSON object per scene, one per line:
@@ -537,10 +656,11 @@ Cut points only, comma-separated, for use with FFmpeg `-ss` flags or chapter mar
 
 ## Using detectors in the GUI
 
-All six detectors are available as drag-and-drop nodes in the GUI palette under
+All seven detectors are available as drag-and-drop nodes in the GUI palette under
 **Processors**. `scene_change_content` and `scene_change_adaptive` appear in the
 default *Common* view; the others require *All* mode or a text search (`hash`,
-`histogram`, `threshold`, `scdet`).
+`histogram`, `threshold`, `scdet`, or — for `scene_change_mc` — `mc`, `dissolve`,
+or `fade`).
 
 For full GUI instructions — including how to set `output_file` from the Inspector,
 how to wire an `events` edge to a `metadata_file_writer` sink node, and a quick-
@@ -559,11 +679,16 @@ reference detector table — see
 | Fade to black / fade to white transitions only | `scene_change_threshold` |
 | Robust to minor colour grading or compression artefact changes | `scene_change_hash` |
 | Fast secondary detector; low memory usage | `scene_change_histogram` |
+| **Cross-dissolves / fades with frame-accurate start+end bounds** (plus hard cuts) | `scene_change_mc` |
 | Need to match PySceneDetect Python output exactly | `scene_change_content` or `scene_change_adaptive` |
 
 For most narrative video content, `scene_change_content` (threshold 27) or
 `scene_change_adaptive` (threshold 3) will produce the best results. When processing
-speed is the only constraint, `scene_change` (scdet) is the fastest option.
+speed is the only constraint, `scene_change` (scdet) is the fastest option. When you
+need **gradual transitions** — dissolves and fades — located with frame-accurate
+boundaries (e.g. to set clean encoder cut points or chapter marks), reach for
+`scene_change_mc`; it is the slowest and is pipeline/GUI-only (not a
+`go-scene-detect` CLI flag — see [Scope](#cli-mediamolder-go-scene-detect)).
 
 `scene_change_content` and `scene_change_adaptive` require a BGR→HSV conversion per
 frame (via libswscale). `scene_change_threshold` and `scene_change_histogram` operate

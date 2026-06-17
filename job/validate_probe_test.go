@@ -145,6 +145,77 @@ func TestValidateConfig_ProbeCleanRun(t *testing.T) {
 	}
 }
 
+// TestValidateConfig_UnconsumedDeclaredStreamSkipped reproduces the report
+// where a job declares an input stream that no edge wires up and the file
+// lacks it: the job must validate cleanly rather than failing with
+// STREAM_INDEX_OUT_OF_RANGE. The synthetic fixture has video+audio but no
+// subtitle stream; the declared subtitle selector is connected to nothing.
+func TestValidateConfig_UnconsumedDeclaredStreamSkipped(t *testing.T) {
+	bbb := synthProbeFixture(t)
+	cfg := &Config{
+		Inputs: []Input{{
+			ID:  "in",
+			URL: bbb,
+			Streams: []StreamSelect{
+				{Type: "video", Track: 0},
+				{Type: "subtitle", Track: 0}, // declared, but no edge consumes it
+			},
+		}},
+		Graph: GraphDef{
+			Nodes: []NodeDef{{ID: "enc", Type: "encoder", Params: map[string]any{"codec": "libx264"}}},
+			Edges: []EdgeDef{
+				{From: "in:v:0", To: "enc", Type: "video"},
+				{From: "enc", To: "out", Type: "video"},
+			},
+		},
+		Outputs: []Output{{ID: "out", URL: "/tmp/out.mp4", Format: "mp4"}},
+	}
+	report, err := ValidateConfig(cfg, nil)
+	if err != nil {
+		t.Fatalf("ValidateConfig returned error: %v", err)
+	}
+	if hasCode(report, "STREAM_INDEX_OUT_OF_RANGE") {
+		t.Error("unconsumed declared stream must not raise STREAM_INDEX_OUT_OF_RANGE")
+		for _, iss := range report.Issues {
+			t.Logf("  %s %s: %s", iss.Severity, iss.Code, iss.Message)
+		}
+	}
+}
+
+// TestValidateConfig_ConsumedMissingStreamStillErrors is the guard for the
+// fix above: a declared stream that *is* wired to a downstream edge but is
+// absent from the file must still be reported, so genuinely missing mapped
+// streams are not silently swallowed.
+func TestValidateConfig_ConsumedMissingStreamStillErrors(t *testing.T) {
+	bbb := synthProbeFixture(t)
+	cfg := &Config{
+		Inputs: []Input{{
+			ID:  "in",
+			URL: bbb,
+			Streams: []StreamSelect{
+				{Type: "subtitle", Track: 0}, // absent from file, but consumed below
+			},
+		}},
+		Graph: GraphDef{
+			Nodes: []NodeDef{},
+			Edges: []EdgeDef{
+				{From: "in:s:0", To: "out", Type: "subtitle"},
+			},
+		},
+		Outputs: []Output{{ID: "out", URL: "/tmp/out.mkv", Format: "matroska"}},
+	}
+	report, err := ValidateConfig(cfg, nil)
+	if err != nil {
+		t.Fatalf("ValidateConfig returned error: %v", err)
+	}
+	if !hasCode(report, "STREAM_INDEX_OUT_OF_RANGE") {
+		t.Error("a consumed but missing stream must still raise STREAM_INDEX_OUT_OF_RANGE")
+		for _, iss := range report.Issues {
+			t.Logf("  %s %s: %s", iss.Severity, iss.Code, iss.Message)
+		}
+	}
+}
+
 // synthProbeFixture creates a small synthetic H.264+AAC MP4 (1 video stream,
 // 1 audio stream) using the pipeline engine and returns its path. The file
 // lives in t.TempDir() and is removed when the test ends.

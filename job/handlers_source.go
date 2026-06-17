@@ -776,7 +776,15 @@ func (r *graphRunner) openSource(cfg Input, srcNode *graph.Node, decOpts av.Deco
 	// order; Negate selectors subtract from the running set; missing
 	// non-Optional matches fail fast (the previous silent-skip
 	// behaviour produced confusing downstream graph errors).
-	selectedIdx, err := resolveStreamSelection(cfg.Streams, allStreams, input.Programs())
+	// Drop declared streams that no outbound edge consumes before
+	// resolving against the file: an unconnected stream is demuxed by
+	// nobody (the run loop routes only edge-referenced streams), so its
+	// absence from the file must not fail the job — the same graph then
+	// runs whether or not the input carries that stream. Inputs with no
+	// media edges (e.g. opened directly by a FrameSource processor) keep
+	// their full selection untouched.
+	selectors := dropUnconsumedSelections(cfg.Streams, nodeInputConsumers(srcNode))
+	selectedIdx, err := resolveStreamSelection(selectors, allStreams, input.Programs())
 	if err != nil {
 		input.Close()
 		return nil, fmt.Errorf("input %q: %w", cfg.URL, err)

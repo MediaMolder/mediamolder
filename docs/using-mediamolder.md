@@ -375,8 +375,11 @@ Decodes every frame, runs one of five detectors ported from
 The same five detectors are also available as `go_processor` nodes inside a
 graph (see [§5.11](#511-scene-detection-in-a-pipeline)), letting you
 detect scenes *during* a transcode in a single pass with no extra decode step.
-Use this subcommand when you need the scene list before building or running a
-graph.
+The pipeline additionally offers two detectors this CLI does not: `scene_change`
+(FFmpeg `scdet`) and the motion-compensated `scene_change_mc`, which locates
+**dissolves and fades** with frame-accurate bounds. Use this subcommand when you
+need a quick scene list from one of the five streaming detectors before building
+or running a graph.
 
 ```sh
 mediamolder go-scene-detect [flags] <input>
@@ -1123,17 +1126,22 @@ For live streaming to RTMP/SRT where the output must pace to wall clock, combine
 ### 5.11 Scene detection in a pipeline
 
 Scene detection can be embedded directly in a transcoding graph using `go_processor`
-nodes. Five detectors are available; all are ported from
+nodes. **Seven** detectors are available: five ported from
 [PySceneDetect](https://github.com/Breakthrough/PySceneDetect) by Brandon Castellano
-(BSD-3-Clause). For offline use on a single file see [§3.10](#310-go-scene-detect).
+(BSD-3-Clause), the built-in `scene_change` (FFmpeg `scdet`), and the
+motion-compensated `scene_change_mc`. The CLI in [§3.11](#311-go-scene-detect)
+offers only the five streaming PySceneDetect detectors; `scene_change` and
+`scene_change_mc` run only in a pipeline (or the GUI).
 
 | Processor | Threshold default | Best for |
 |---|---|---|
+| `scene_change` | 10.0 | Fast hard cuts; matches FFmpeg `scdet` |
 | `scene_change_content` | 27.0 | General-purpose; highest accuracy |
 | `scene_change_adaptive` | 3.0 | Action/sports; suppresses false positives on fast pans |
 | `scene_change_threshold` | 12.0 | Fade to/from black or white |
 | `scene_change_hash` | 0.395 | Robust to colour-grading and compression artefacts |
 | `scene_change_histogram` | 0.05 | Fast coarse filter; low memory |
+| `scene_change_mc` | 0.50 | **Dissolves & fades** with frame-accurate bounds, plus hard cuts ([details](scene-detection.md#the-motion-compensated-detector-scene_change_mc)) |
 
 #### Wiring rules for scene detector nodes
 

@@ -7,6 +7,24 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- **`scene_change_mc` motion-compensated scene detector.** A new
+  `go_processor` that detects hard cuts and — uniquely among the detectors —
+  **cross-dissolves and fades with frame-accurate start/end bounds**. It runs
+  an x264-style half-resolution lookahead (SATD motion estimation + intra
+  cost) and reads dissolves as saturated plateaus in the inter/intra cost
+  ratio across multiple reference distances, then refines candidate regions
+  with a distance ladder, ramp-foot cross-distance consensus, forward/reverse
+  edge narrowing, and complementary AC-energy and Y/U/V channel-mean signals;
+  optional `fullres_refine` sharpens short-blend ends via a windowed
+  re-decode. New package `lookahead/` (the ported x264 lowres engine) and
+  `processors/scene_change_mc.go`; `av.DecoderContext.FlushBuffers`
+  (avcodec_flush_buffers) added for post-seek re-decode. See
+  `docs/scene-detection.md`. The web GUI curates `scene_change_mc` in the
+  node palette and gives it a typed Inspector panel (threshold, coarse /
+  refined prediction distances, dissolve and fade bounds, aggregation window,
+  prediction-failure threshold, full-resolution edge refine, and an optional
+  cost-matrix CSV debug log).
+
 - **sequence_editor audio + crossfades.** The `sequence_editor` now mixes an
   audio stream alongside the composited video, derived from the same clips as the
   picture. Audio is opt-in: set the `format`'s `sample_rate` (and optionally
@@ -142,6 +160,24 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   `internal/server`. Docs: `docs/remote-server.md`, `docs/openapi-server.yaml`.
 
 ### Fixed
+- **`scene_change_mc`: bound `min_scene_len` before narrowing to `int`.**
+  A caller-controlled `min_scene_len` (e.g. a large `"frames"` string) was
+  converted from `int64` to `int` without an upper-bound check, which could
+  wrap to a bogus negative frame count on 32-bit targets (flagged by CodeQL).
+  Out-of-range values are now rejected with a clear error.
+- **A declared input stream that no edge consumes no longer fails the job.**
+  A job that declared, say, an `audio` stream on an input but wired only the
+  video to the graph was rejected — at validation with
+  `STREAM_INDEX_OUT_OF_RANGE` and at run with `no input stream matches
+  type=audio` — whenever the file lacked that stream (e.g. a video-only file,
+  or a stale stream declaration the GUI left behind). Such a stream is demuxed
+  by nobody (the source handler already routes only edge-referenced streams),
+  so selection and validation now drop mandatory selectors that no edge
+  consumes, mirroring FFmpeg, where an unmapped stream's absence is never an
+  error. The same graph now runs identically whether or not the input carries
+  the stream. Streams that *are* wired to a downstream edge but missing from
+  the file still error, and `optional`/negate selectors and inputs opened
+  directly by a FrameSource processor are untouched.
 - **Progress/ETA used a source clip's length instead of the rendered output.**
   An input opened directly by a FrameSource (e.g. a `sequence_editor`'s
   `media_id`/`input_id` clips) is never demuxed in the graph, but the source

@@ -112,10 +112,14 @@ in-app help dialog.
      container must accept the source codec.
    * **Processors** — Go-side custom blocks that operate on decoded frames.
      Ships with frame analysis helpers (`frame_counter`, `frame_info`), the
-     built-in `scene_change` detector (mirrors FFmpeg `scdet`), and five
+     built-in `scene_change` detector (mirrors FFmpeg `scdet`), five
      go-scene-detect processors (`scene_change_content`,
      `scene_change_adaptive`, `scene_change_hash`, `scene_change_histogram`,
-     `scene_change_threshold`). Each detector accepts an optional
+     `scene_change_threshold`), and the motion-compensated
+     `scene_change_mc` detector (x264-style lowres lookahead; tuned for
+     frame-accurate dissolves and fades — its Inspector exposes the coarse /
+     refined prediction distances, dissolve and fade bounds, and an optional
+     cost-matrix CSV debug log). Each detector accepts an optional
      `output_file` param — set it in the Inspector to write cut events to a
      `.jsonl` sidecar. Leave it blank to emit events to the event bus only
      (visible in the SSE stream / **Observations** panel).
@@ -1342,13 +1346,15 @@ that connects mid-run still sees prior `error`/`state` events.
 
 ## Scene detection processors
 
-MediaMolder ships six scene-change processor algorithms ported from
-[PySceneDetect](https://github.com/Breakthrough/PySceneDetect) (BSD-3-Clause),
-plus the built-in `scene_change` detector that mirrors FFmpeg's `scdet` filter.
-All are available in the palette under **Processors** — `scene_change_content`
+MediaMolder ships **seven** scene-change processors: **five** algorithms ported
+from [PySceneDetect](https://github.com/Breakthrough/PySceneDetect)
+(BSD-3-Clause), the built-in `scene_change` detector that mirrors FFmpeg's
+`scdet` filter, and the motion-compensated `scene_change_mc` — the only one that
+finds **dissolves and fades with frame-accurate boundaries** in addition to hard
+cuts. All are available in the palette under **Processors** — `scene_change_content`
 and `scene_change_adaptive` appear in *Common* view; the rest require *All* or
-a free-text search (type `goscenedetect`, `cuts`, `fade`, `hash`, or
-`histogram`).
+a free-text search (type `goscenedetect`, `cuts`, `fade`, `hash`, `histogram`,
+`scdet`, or `mc`).
 
 | Processor | Algorithm | Key params | Example |
 |---|---|---|---|
@@ -1358,8 +1364,9 @@ a free-text search (type `goscenedetect`, `cuts`, `fade`, `hash`, or
 | `scene_change_hash` | DCT perceptual hash — normalised Hamming distance (HashDetector) | `threshold` 0–1 (default 0.395), `size`, `lowpass` | [54](../testdata/examples/54_scene_change_hash.json) |
 | `scene_change_histogram` | Pearson correlation on luma histograms (HistogramDetector) | `threshold` 0–1 (default 0.05), `bins` | [55](../testdata/examples/55_scene_change_histogram.json) |
 | `scene_change_threshold` | Average-brightness fade-in/out tracking (ThresholdDetector) | `threshold` 0–255 (default 12.0), `method` (`floor`/`ceiling`), `fade_bias` | [56](../testdata/examples/56_scene_change_threshold.json) |
+| `scene_change_mc` | Motion-compensated x264-style lookahead — dissolves & fades with frame-accurate bounds, plus hard cuts (batch, pipeline/GUI only) | `threshold` (default 0.50), `coarse_prediction_distance`, `refined_prediction_distances`, `dissolve_max_len`, `fullres_refine` — [full reference](scene-detection.md#parameters) | [guide](scene-detection.md#the-motion-compensated-detector-scene_change_mc) |
 
-All go-scene-detect processors share:
+The five PySceneDetect processors (and `scene_change_mc`) share:
 
 - `min_scene_len` — minimum frames between cuts; accepts an integer frame
   count, a float in seconds (`0.6`), or a duration string (`"0.6s"`). Default 15.

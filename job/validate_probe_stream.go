@@ -17,7 +17,14 @@ func validateProbeStreams(cfg *Config, probed map[string][]av.StreamInfo, r *Val
 		if !ok {
 			continue // probe failed — already reported
 		}
+		consumers := configInputConsumers(cfg.Graph.Edges, inp.ID)
 		for _, ss := range inp.Streams {
+			// An input stream that no edge consumes is never demuxed, so
+			// don't reject the job when the file lacks it (mirrors the
+			// runtime selection in openSource).
+			if streamSelectionDropped(consumers, ss) {
+				continue
+			}
 			checkStreamSelect(inp.ID, ss, streams, r)
 		}
 	}
