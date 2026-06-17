@@ -1346,13 +1346,15 @@ that connects mid-run still sees prior `error`/`state` events.
 
 ## Scene detection processors
 
-MediaMolder ships six scene-change processor algorithms ported from
-[PySceneDetect](https://github.com/Breakthrough/PySceneDetect) (BSD-3-Clause),
-plus the built-in `scene_change` detector that mirrors FFmpeg's `scdet` filter.
-All are available in the palette under **Processors** — `scene_change_content`
+MediaMolder ships **seven** scene-change processors: **five** algorithms ported
+from [PySceneDetect](https://github.com/Breakthrough/PySceneDetect)
+(BSD-3-Clause), the built-in `scene_change` detector that mirrors FFmpeg's
+`scdet` filter, and the motion-compensated `scene_change_mc` — the only one that
+finds **dissolves and fades with frame-accurate boundaries** in addition to hard
+cuts. All are available in the palette under **Processors** — `scene_change_content`
 and `scene_change_adaptive` appear in *Common* view; the rest require *All* or
-a free-text search (type `goscenedetect`, `cuts`, `fade`, `hash`, or
-`histogram`).
+a free-text search (type `goscenedetect`, `cuts`, `fade`, `hash`, `histogram`,
+`scdet`, or `mc`).
 
 | Processor | Algorithm | Key params | Example |
 |---|---|---|---|
@@ -1362,8 +1364,9 @@ a free-text search (type `goscenedetect`, `cuts`, `fade`, `hash`, or
 | `scene_change_hash` | DCT perceptual hash — normalised Hamming distance (HashDetector) | `threshold` 0–1 (default 0.395), `size`, `lowpass` | [54](../testdata/examples/54_scene_change_hash.json) |
 | `scene_change_histogram` | Pearson correlation on luma histograms (HistogramDetector) | `threshold` 0–1 (default 0.05), `bins` | [55](../testdata/examples/55_scene_change_histogram.json) |
 | `scene_change_threshold` | Average-brightness fade-in/out tracking (ThresholdDetector) | `threshold` 0–255 (default 12.0), `method` (`floor`/`ceiling`), `fade_bias` | [56](../testdata/examples/56_scene_change_threshold.json) |
+| `scene_change_mc` | Motion-compensated x264-style lookahead — dissolves & fades with frame-accurate bounds, plus hard cuts (batch, pipeline/GUI only) | `threshold` (default 0.50), `coarse_prediction_distance`, `refined_prediction_distances`, `dissolve_max_len`, `fullres_refine` — [full reference](scene-detection.md#parameters) | [guide](scene-detection.md#the-motion-compensated-detector-scene_change_mc) |
 
-All go-scene-detect processors share:
+The five PySceneDetect processors (and `scene_change_mc`) share:
 
 - `min_scene_len` — minimum frames between cuts; accepts an integer frame
   count, a float in seconds (`0.6`), or a duration string (`"0.6s"`). Default 15.
