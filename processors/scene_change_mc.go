@@ -36,6 +36,7 @@ package processors
 import (
 	"encoding/csv"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -369,6 +370,13 @@ func (p *SceneChangeMC) Init(params map[string]any) error {
 		n, err := detectors.ResolveMinSceneLen(minSceneLenRaw, p.frameRate)
 		if err != nil {
 			return fmt.Errorf("scene_change_mc: min_scene_len: %w", err)
+		}
+		// Bound before narrowing int64 -> int: ResolveMinSceneLen can return a
+		// caller-controlled value (e.g. a huge "frames" string), and int is
+		// 32-bit on 32-bit targets. Reject out-of-range rather than silently
+		// truncating to a wrapped frame count.
+		if n < 0 || n > math.MaxInt32 {
+			return fmt.Errorf("scene_change_mc: min_scene_len out of range (%d); must be 0..%d frames", n, math.MaxInt32)
 		}
 		p.analyzer.MinSceneLen = int(n)
 	}

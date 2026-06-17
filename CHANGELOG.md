@@ -160,6 +160,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   `internal/server`. Docs: `docs/remote-server.md`, `docs/openapi-server.yaml`.
 
 ### Fixed
+- **`scene_change_mc`: bound `min_scene_len` before narrowing to `int`.**
+  A caller-controlled `min_scene_len` (e.g. a large `"frames"` string) was
+  converted from `int64` to `int` without an upper-bound check, which could
+  wrap to a bogus negative frame count on 32-bit targets (flagged by CodeQL).
+  Out-of-range values are now rejected with a clear error.
 - **A declared input stream that no edge consumes no longer fails the job.**
   A job that declared, say, an `audio` stream on an input but wired only the
   video to the graph was rejected — at validation with
