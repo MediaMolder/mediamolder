@@ -160,6 +160,19 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   `internal/server`. Docs: `docs/remote-server.md`, `docs/openapi-server.yaml`.
 
 ### Fixed
+- **A declared input stream that no edge consumes no longer fails the job.**
+  A job that declared, say, an `audio` stream on an input but wired only the
+  video to the graph was rejected — at validation with
+  `STREAM_INDEX_OUT_OF_RANGE` and at run with `no input stream matches
+  type=audio` — whenever the file lacked that stream (e.g. a video-only file,
+  or a stale stream declaration the GUI left behind). Such a stream is demuxed
+  by nobody (the source handler already routes only edge-referenced streams),
+  so selection and validation now drop mandatory selectors that no edge
+  consumes, mirroring FFmpeg, where an unmapped stream's absence is never an
+  error. The same graph now runs identically whether or not the input carries
+  the stream. Streams that *are* wired to a downstream edge but missing from
+  the file still error, and `optional`/negate selectors and inputs opened
+  directly by a FrameSource processor are untouched.
 - **Progress/ETA used a source clip's length instead of the rendered output.**
   An input opened directly by a FrameSource (e.g. a `sequence_editor`'s
   `media_id`/`input_id` clips) is never demuxed in the graph, but the source

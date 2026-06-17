@@ -224,6 +224,53 @@ func TestStreamSelectValidation_AttachmentTypeAccepted(t *testing.T) {
 	}
 }
 
+// TestStreamSelectionDropped exercises the rule that a declared input stream
+// which no edge consumes is dropped from selection (so a video-only file does
+// not fail a job that declares — but never wires — an audio stream).
+func TestStreamSelectionDropped(t *testing.T) {
+	// Only a video edge leaves in0.
+	consumers := configInputConsumers([]EdgeDef{
+		{From: "in0:v:0", To: "scene", Type: "video"},
+	}, "in0")
+
+	if !streamSelectionDropped(consumers, StreamSelect{Type: "audio", Track: 0}) {
+		t.Error("audio:0 should be dropped: no edge consumes it")
+	}
+	if streamSelectionDropped(consumers, StreamSelect{Type: "video", Track: 0}) {
+		t.Error("video:0 must be kept: an edge consumes it")
+	}
+	// Explicit user intent (optional / negate) is never silently dropped.
+	if streamSelectionDropped(consumers, StreamSelect{Type: "audio", Optional: true}) {
+		t.Error("optional selector must not be dropped")
+	}
+	if streamSelectionDropped(consumers, StreamSelect{Type: "audio", Negate: true}) {
+		t.Error("negate selector must not be dropped")
+	}
+	// An input with no media edges (e.g. opened directly by a FrameSource
+	// processor) keeps its full selection.
+	if streamSelectionDropped(nil, StreamSelect{Type: "audio", Track: 0}) {
+		t.Error("with no media consumers, nothing should be dropped")
+	}
+	// A type-only edge ("-map 0:a") consumes every track of the type.
+	allAudio := configInputConsumers([]EdgeDef{
+		{From: "in0:a", To: "enc", Type: "audio"},
+	}, "in0")
+	if streamSelectionDropped(allAudio, StreamSelect{Type: "audio", Track: 3}) {
+		t.Error("type-only audio edge should consume every audio track")
+	}
+
+	// dropUnconsumedSelections filters mandatory unconsumed selectors and
+	// leaves the input slice untouched.
+	in := []StreamSelect{{Type: "video", Track: 0}, {Type: "audio", Track: 0}}
+	got := dropUnconsumedSelections(in, consumers)
+	if len(got) != 1 || got[0].Type != "video" {
+		t.Errorf("expected only video:0 to survive, got %+v", got)
+	}
+	if len(in) != 2 {
+		t.Errorf("dropUnconsumedSelections mutated its input: %+v", in)
+	}
+}
+
 func equalInts(a, b []int) bool {
 	if len(a) != len(b) {
 		return false
