@@ -15,7 +15,71 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"sync"
+	"time"
 )
+
+// listDirTimeout bounds how long a single /api/files request may spend touching
+// the filesystem before it gives up. os.ReadDir / os.Stat / DirEntry.Info are
+// not cancellable, so a slow or stale mount (e.g. a sleeping external drive or
+// a disconnected network share) would otherwise hang the request forever — and
+// with it the file dialog and the server's graceful shutdown. On timeout the
+// request returns 504 and the blocked goroutine is abandoned (it no longer
+// holds the connection), keeping the server responsive.
+const listDirTimeout = 5 * time.Second
+
+// volumesCacheTTL is how long the (potentially blocking) volume/shortcut
+// enumeration is reused before recomputing.
+const volumesCacheTTL = 10 * time.Second
+
+var (
+	volumesMu      sync.Mutex
+	volRootsCache  []string
+	volDrivesCache []string
+	volumesExpiry  time.Time
+)
+
+// cachedVolumeRoots returns shortcutRoots()/localDrives(), recomputing at most
+// once per volumesCacheTTL. Both walk /Volumes (and friends), which can block
+// on a slow/stale mount; defaultRoots() and every directory listing call them,
+// so caching avoids re-walking the volumes on every keystroke in the picker.
+//
+// The enumeration runs WITHOUT holding the lock: if it blocks, concurrent
+// callers are not wedged on the mutex (they fall through and recompute too, or
+// serve a stale value), and the request-level timeout still bounds each call.
+func cachedVolumeRoots() (roots, drives []string) {
+	volumesMu.Lock()
+	if volRootsCache != nil && time.Now().Before(volumesExpiry) {
+		roots, drives = volRootsCache, volDrivesCache
+		volumesMu.Unlock()
+		return roots, drives
+	}
+	volumesMu.Unlock()
+
+	roots = shortcutRoots()
+	drives = localDrives()
+
+	volumesMu.Lock()
+	volRootsCache, volDrivesCache, volumesExpiry = roots, drives, time.Now().Add(volumesCacheTTL)
+	volumesMu.Unlock()
+	return roots, drives
+}
+
+// callWithTimeout runs fn and returns its result, or ok=false if fn does not
+// return within timeout. fn keeps running in the background after a timeout but
+// no longer blocks the caller — used to bound non-cancellable blocking
+// filesystem calls so an unresponsive volume can't hang the request.
+func callWithTimeout[T any](timeout time.Duration, fn func() T) (T, bool) {
+	ch := make(chan T, 1)
+	go func() { ch <- fn() }()
+	select {
+	case v := <-ch:
+		return v, true
+	case <-time.After(timeout):
+		var zero T
+		return zero, false
+	}
+}
 
 // mkdirBodyLimit caps the request body for POST /api/files/mkdir.
 // The endpoint only carries a parent path and a folder name, so 4 KiB is
@@ -51,6 +115,36 @@ type fileListResponse struct {
 func handleListDir(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	target := strings.TrimSpace(q.Get("path"))
+	dirsOnly := q.Get("dirs_only") == "1"
+	exts := parseExtensions(q.Get("filter"))
+
+	type listResult struct {
+		resp   fileListResponse
+		status int
+		err    error
+	}
+	res, ok := callWithTimeout(listDirTimeout, func() listResult {
+		resp, status, err := computeDirListing(target, dirsOnly, exts)
+		return listResult{resp: resp, status: status, err: err}
+	})
+	if !ok {
+		writeJSONError(w, http.StatusGatewayTimeout,
+			fmt.Errorf("directory listing timed out after %s — the volume may be slow or unresponsive", listDirTimeout))
+		return
+	}
+	if res.err != nil {
+		writeJSONError(w, res.status, res.err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(res.resp)
+}
+
+// computeDirListing performs the filesystem work for handleListDir, returning
+// the response plus an HTTP status and error instead of writing them so the
+// caller can run it under callWithTimeout. Every blocking call (defaultRoots →
+// volume walk, os.Stat, os.ReadDir, DirEntry.Info) lives here.
+func computeDirListing(target string, dirsOnly bool, exts map[string]struct{}) (fileListResponse, int, error) {
 	roots := defaultRoots()
 	if target == "" {
 		if home, err := os.UserHomeDir(); err == nil {
@@ -62,24 +156,21 @@ func handleListDir(w http.ResponseWriter, r *http.Request) {
 	target = expandHome(target)
 	abs, err := filepath.Abs(target)
 	if err != nil {
-		writeJSONError(w, http.StatusBadRequest, fmt.Errorf("invalid path: %w", err))
-		return
+		return fileListResponse{}, http.StatusBadRequest, fmt.Errorf("invalid path: %w", err)
 	}
 	abs = filepath.Clean(abs)
 	// Re-derive abs from a trusted root so no tainted value reaches the
 	// file-system calls below (same pattern as handleReadFile).
 	safeAbs, ok := sanitizePathAnyRoot(abs, roots)
 	if !ok {
-		writeJSONError(w, http.StatusBadRequest, errors.New("path is outside allowed roots"))
-		return
+		return fileListResponse{}, http.StatusBadRequest, errors.New("path is outside allowed roots")
 	}
 	abs = safeAbs
 
 	info, err := os.Stat(abs)
 	if err != nil {
 		if !errors.Is(err, fs.ErrNotExist) {
-			writeJSONError(w, http.StatusForbidden, err)
-			return
+			return fileListResponse{}, http.StatusForbidden, err
 		}
 		// Walk up until we find an ancestor that exists. This lets the browser
 		// open gracefully when the stored path (e.g. "out/shot-%05d.mp4")
@@ -100,14 +191,12 @@ func handleListDir(w http.ResponseWriter, r *http.Request) {
 			next := filepath.Dir(candidate)
 			if next == candidate {
 				// Reached filesystem root and nothing exists.
-				writeJSONError(w, http.StatusNotFound, err)
-				return
+				return fileListResponse{}, http.StatusNotFound, err
 			}
 			candidate = next
 		}
 		if info == nil {
-			writeJSONError(w, http.StatusNotFound, err)
-			return
+			return fileListResponse{}, http.StatusNotFound, err
 		}
 	}
 	if !info.IsDir() {
@@ -115,20 +204,15 @@ func handleListDir(w http.ResponseWriter, r *http.Request) {
 		parent := filepath.Dir(abs)
 		safe, ok := sanitizePathAnyRoot(parent, roots)
 		if !ok {
-			writeJSONError(w, http.StatusBadRequest, errors.New("path is outside allowed roots"))
-			return
+			return fileListResponse{}, http.StatusBadRequest, errors.New("path is outside allowed roots")
 		}
 		abs = safe
 	}
 
 	rawEntries, err := os.ReadDir(abs)
 	if err != nil {
-		writeJSONError(w, http.StatusForbidden, err)
-		return
+		return fileListResponse{}, http.StatusForbidden, err
 	}
-
-	dirsOnly := q.Get("dirs_only") == "1"
-	exts := parseExtensions(q.Get("filter"))
 
 	entries := make([]fileEntry, 0, len(rawEntries))
 	for _, e := range rawEntries {
@@ -173,15 +257,14 @@ func handleListDir(w http.ResponseWriter, r *http.Request) {
 		parent = p
 	}
 
-	resp := fileListResponse{
+	shortcuts, drives := cachedVolumeRoots()
+	return fileListResponse{
 		Path:    abs,
 		Parent:  parent,
 		Entries: entries,
-		Drives:  localDrives(),
-		Roots:   shortcutRoots(),
-	}
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(resp)
+		Drives:  drives,
+		Roots:   shortcuts,
+	}, http.StatusOK, nil
 }
 
 func expandHome(p string) string {
@@ -475,8 +558,9 @@ func handleWriteFile(w http.ResponseWriter, r *http.Request) {
 // mounted volumes) plus any local drives. Returned paths are absolute and
 // cleaned so they can be compared with filepath.Rel.
 func defaultRoots() []string {
+	shortcuts, drives := cachedVolumeRoots()
 	var out []string
-	for _, r := range append(shortcutRoots(), localDrives()...) {
+	for _, r := range append(append([]string(nil), shortcuts...), drives...) {
 		if abs, err := filepath.Abs(r); err == nil {
 			out = append(out, filepath.Clean(abs))
 		}
