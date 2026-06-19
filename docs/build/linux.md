@@ -238,6 +238,104 @@ make test-static                # Option B2 — static FFmpeg
 go test ./pipeline/...          # narrow to one package
 ```
 
+## Optional built-in nodes
+
+A few processors are **opt-in**: they sit behind a build tag (so they don't add
+a cgo dependency for builds that don't need them) or need an external runtime
+service. Install the prerequisites below **before** building or running.
+
+| Node | Build tag | Needs | Runtime env / config |
+| --- | --- | --- | --- |
+| `whisper_stt` (speech-to-text) | `with_whisper` | whisper.cpp / `libwhisper` | `model` param → ggml model path |
+| `yolo_v8` (object detection) | `with_onnx` | ONNX Runtime shared lib | `ONNXRUNTIME_SHARED_LIBRARY_PATH` |
+| `vidi_analyzer` (multimodal) | *(none)* | a running Vidi 2.5 service | `service_url` param |
+| `twelvelabs_*` (cloud understanding) | *(none)* | TwelveLabs API key | `TWELVELABS_API_KEY` |
+
+> `whisper_stt` binds **whisper.cpp** (`ggml-org/whisper.cpp`), **not** the
+> OpenAI Python `whisper` package — the latter does not produce `libwhisper`.
+
+### whisper_stt (whisper.cpp)
+
+Run the whisper.cpp steps from any workspace dir; run the `make` steps from
+the **MediaMolder repo root** (a different directory — `make build-whisper`
+only exists in MediaMolder's Makefile).
+
+```bash
+sudo apt install cmake                       # Debian/Ubuntu  (Fedora/RHEL: sudo dnf install cmake)
+
+# 1. Clone + build whisper.cpp
+git clone https://github.com/ggml-org/whisper.cpp
+cmake -S whisper.cpp -B whisper.cpp/build
+cmake --build whisper.cpp/build -j
+sudo cmake --install whisper.cpp/build       # installs to /usr/local (whisper.pc's prefix)
+sudo ldconfig                                # refresh the runtime linker cache for /usr/local/lib
+# No-sudo alternative — reconfigure to a writable prefix (use the SAME prefix when building):
+#   cmake -S whisper.cpp -B whisper.cpp/build -DCMAKE_INSTALL_PREFIX="$HOME/.local"
+#   cmake --build whisper.cpp/build -j && cmake --install whisper.cpp/build
+#   export PKG_CONFIG_PATH="$HOME/.local/lib/pkgconfig:$PKG_CONFIG_PATH"
+
+# 2. Fetch a model (you supply this — MediaMolder ships none) and note its path
+./whisper.cpp/models/download-ggml-model.sh base.en
+MODEL="$PWD/whisper.cpp/models/ggml-base.en.bin"
+
+# 3. Build MediaMolder with the node compiled in — RUN FROM THE MEDIAMOLDER REPO
+#    ROOT (not whisper.cpp). Embeds an rpath to WHISPER_PREFIX/lib (default
+#    /usr/local) for runtime lookup.
+cd /path/to/mediamolder                      # your MediaMolder checkout
+make build-whisper                           # used ~/.local? → make build-whisper WHISPER_PREFIX="$HOME/.local"
+
+# 4. Run the gated tests against the model
+WHISPER_TEST_MODEL="$MODEL" make test-whisper
+```
+
+Pass the model path in the node's `model` param. Usage, params, and output
+formats: [Whisper Speech-to-Text Guide](../whisper-stt-guide.md). Without the
+tag, a config using `whisper_stt` fails with `unknown processor "whisper_stt"`.
+If `make build-whisper` reports `No rule to make target 'build-whisper'`, you
+are not in the MediaMolder repo root — `cd` there and retry.
+
+### yolo_v8 (ONNX Runtime)
+
+Download a release for your architecture from the
+[ONNX Runtime releases](https://github.com/microsoft/onnxruntime/releases),
+place `libonnxruntime.so` on your library path, then:
+
+```bash
+export ONNXRUNTIME_SHARED_LIBRARY_PATH=/usr/local/lib/libonnxruntime.so
+
+go build -tags=with_onnx ./cmd/mediamolder   # add ffstatic too for a static FFmpeg link
+```
+
+You also need a `.onnx` model and a labels file — see the
+[YOLOv8 Guide](../yolov8-guide.md).
+
+### vidi_analyzer / twelvelabs_*
+
+No build tag. `vidi_analyzer` needs a running
+[Vidi 2.5](https://github.com/bytedance/vidi) service (pass its `service_url`);
+the `twelvelabs_*` nodes need a [TwelveLabs](https://twelvelabs.io) API key via
+`TWELVELABS_API_KEY`, the `api_key` param, or
+`~/.config/mediamolder/twelvelabs.json`. See the
+[Vidi 2.5](../vidi-guide.md) and [TwelveLabs](../twelvelabs.md) guides.
+
+### Combining nodes in one binary
+
+The build tags stack, so one binary can carry several nodes. Append the extra
+node tags via `EXTRA_TAGS`:
+
+```bash
+# GUI single-binary: static FFmpeg + whisper_stt + yolo_v8
+make build-gui-whisper EXTRA_TAGS=with_onnx
+
+# Headless (CLI) build with the same nodes
+make build-whisper EXTRA_TAGS=with_onnx
+```
+
+Each enabled node keeps its own runtime requirement: libwhisper for
+`whisper_stt` (resolved by the embedded rpath) and the ONNX Runtime shared
+library + `ONNXRUNTIME_SHARED_LIBRARY_PATH` for `yolo_v8` (install both per the
+sections above before running such a node).
+
 ## Troubleshooting
 
 - **`error: gcc not found`** or **`undefined: cmdGUI`** — `gcc` is missing.

@@ -50,6 +50,7 @@ The `Makefile` ships these top-level targets:
 | `make build-static` | `go build -tags=ffstatic ./...` | Static via `../ffmpeg` |
 | `make build-gui` | `mediamolder` with embedded GUI | Shared |
 | `make build-gui-static` | `mediamolder` with embedded GUI | Static |
+| `make build-whisper` / `make test-whisper` | `go build -tags=with_whisper ./...` — opt-in `whisper_stt` (needs libwhisper) | Shared |
 | `make build-debug` | `mediamolder` + `mediamolder-build.log` | Shared |
 | `make build-gui-debug` | `mediamolder` + `mediamolder-build.log` | Shared (+ frontend) |
 | `make check-deps` | Verify gcc + FFmpeg ≥ 8.1 headers | — |
@@ -76,6 +77,71 @@ make build-debug LOG=/tmp/my.log   # write log to a custom path
 
 Windows users run the equivalent commands by hand from PowerShell — see
 [build/windows.md](build/windows.md).
+
+## Optional built-in nodes & their prerequisites
+
+Most processors compile into every build. A few heavyweight or service-backed
+[go_processor nodes](go-processor-nodes.md) are **opt-in** — either behind a
+build tag (so they don't add a cgo dependency for people who don't need them) or
+requiring an external runtime. Each has prerequisites you must install **before**
+building or running, including environment variables.
+
+| Node | Build tag | External dependency | Get it from | Runtime env / config |
+| --- | --- | --- | --- | --- |
+| `whisper_stt` (speech-to-text) | `with_whisper` | whisper.cpp → `libwhisper` | [`ggml-org/whisper.cpp`](https://github.com/ggml-org/whisper.cpp), built with CMake | `PKG_CONFIG_PATH` (locate `whisper.pc`); `model` param → ggml model path; `WHISPER_TEST_MODEL` for tests |
+| `yolo_v8` (object detection) | `with_onnx` | ONNX Runtime shared lib | [onnxruntime releases](https://github.com/microsoft/onnxruntime/releases) or a package manager | `ONNXRUNTIME_SHARED_LIBRARY_PATH` (or `ort_lib` param); `model` param → `.onnx` path |
+| `vidi_analyzer` (multimodal) | *(none)* | Vidi 2.5 Python inference service | [`bytedance/vidi`](https://github.com/bytedance/vidi) | `service_url` param → the running service |
+| `twelvelabs_*` (cloud understanding) | *(none)* | TwelveLabs cloud API | [twelvelabs.io](https://twelvelabs.io) | `TWELVELABS_API_KEY` env (or `api_key` param / `~/.config/mediamolder/twelvelabs.json`) |
+
+> **`whisper_stt` uses whisper.cpp, not the OpenAI Python `whisper` package.**
+> The node is a cgo binding to `libwhisper`; `github.com/openai/whisper` is the
+> PyTorch implementation and does **not** produce the library/headers this build
+> links against.
+
+### Example: enable `whisper_stt`
+
+The whisper.cpp steps run from any workspace dir; the `make` steps run from the
+**MediaMolder repo root** (`make build-whisper` only exists in its Makefile).
+
+```bash
+# 1. Clone + build whisper.cpp (produces libwhisper + whisper.pc on install)
+git clone https://github.com/ggml-org/whisper.cpp
+cmake -S whisper.cpp -B whisper.cpp/build
+cmake --build whisper.cpp/build -j
+sudo cmake --install whisper.cpp/build     # whisper.pc's prefix is /usr/local (needs sudo)
+# no-sudo: reconfigure -DCMAKE_INSTALL_PREFIX="$HOME/.local", rebuild, install,
+#   then export PKG_CONFIG_PATH="$HOME/.local/lib/pkgconfig:$PKG_CONFIG_PATH"
+
+# 2. Fetch a model (you supply this — MediaMolder ships none) and note its path
+./whisper.cpp/models/download-ggml-model.sh base.en
+MODEL="$PWD/whisper.cpp/models/ggml-base.en.bin"
+
+# 3. Build MediaMolder with the node compiled in — FROM THE MEDIAMOLDER REPO ROOT.
+#    whisper.cpp's libs use @rpath, so build-whisper embeds
+#    -Wl,-rpath,WHISPER_PREFIX/lib (default /usr/local).
+cd /path/to/mediamolder
+make build-whisper                          # custom prefix → make build-whisper WHISPER_PREFIX="$HOME/.local"
+
+# 4. Run the gated tests against the model
+WHISPER_TEST_MODEL="$MODEL" make test-whisper
+```
+
+Full per-node setup lives in the feature guides:
+[Whisper](whisper-stt-guide.md), [YOLOv8](yolov8-guide.md),
+[Vidi 2.5](vidi-guide.md), [TwelveLabs](twelvelabs.md).
+
+**Combining nodes.** The build tags stack — enable several opt-in nodes at once
+by combining them, e.g. `-tags=ffstatic,with_whisper,with_onnx` (static FFmpeg +
+`whisper_stt` + `yolo_v8`). For a GUI single-binary, append the extra tags to
+`build-gui-whisper`:
+
+```bash
+make build-gui-whisper EXTRA_TAGS=with_onnx
+```
+
+ONNX Runtime is loaded at runtime, so `with_onnx` adds nothing to the build
+besides the tag; you only need the onnxruntime shared library (and
+`ONNXRUNTIME_SHARED_LIBRARY_PATH`) to actually *run* a `yolo_v8` node.
 
 ## Frontend embedding model
 

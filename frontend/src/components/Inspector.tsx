@@ -1878,6 +1878,10 @@ function GoProcessorParams({
     return <SequenceEditorParams params={params} inputIds={inputIds} onChange={onChange} />;
   }
 
+  if (processorName === 'whisper_stt') {
+    return <WhisperSTTParams params={params} onChange={onChange} />;
+  }
+
   if (processorName === 'metadata_file_writer') {
     const outputFile = typeof params['output_file'] === 'string' ? params['output_file'] : '';
     // inner_processor is preserved for backward-compat round-trip if present,
@@ -1926,6 +1930,164 @@ function GoProcessorParams({
         />
       ))}
       <ParamsEditor params={restParams} onChange={(next) => onChange({ ...fileEntries.reduce<Record<string, unknown>>((acc, [k, v]) => { acc[k] = v; return acc; }, {}), ...next })} />
+    </>
+  );
+}
+
+/* ---------- WhisperSTTParams ----------
+ * Inspector body for the whisper_stt go_processor: model + transcription
+ * options + an optional sidecar transcript. Unknown keys fall through to the
+ * generic ParamsEditor. Mirrors the scene-detector panel conventions. */
+function WhisperSTTParams({
+  params,
+  onChange,
+}: {
+  params: Record<string, unknown>;
+  onChange: (next: Record<string, unknown>) => void;
+}) {
+  const set = (key: string, value: unknown) => {
+    const next = { ...params };
+    const blank = value === '' || value === undefined || value === null || value === false;
+    if (blank) delete next[key];
+    else next[key] = value;
+    onChange(next);
+  };
+  const str = (key: string, fallback = ''): string =>
+    typeof params[key] === 'string' ? (params[key] as string) : fallback;
+  const num = (key: string, fallback: number): number =>
+    typeof params[key] === 'number' ? (params[key] as number) : fallback;
+
+  const language = str('language', 'auto');
+  const task = str('task', 'transcribe');
+  const beamSize = num('beam_size', 0);
+  const threads = num('threads', 0);
+  const wordTimestamps = params['word_timestamps'] === true;
+  const outputFormat = str('output_format', 'srt');
+
+  const EXT: Record<string, string> = { srt: '.srt', vtt: '.vtt', json: '.json', txt: '.txt' };
+  const ext = EXT[outputFormat] ?? '.srt';
+
+  const KNOWN = new Set([
+    'model', 'language', 'task', 'beam_size', 'word_timestamps',
+    'threads', 'initial_prompt', 'output_file', 'output_format',
+  ]);
+  const known = Object.fromEntries(Object.entries(params).filter(([k]) => KNOWN.has(k)));
+  const overflow = Object.fromEntries(Object.entries(params).filter(([k]) => !KNOWN.has(k)));
+
+  const hint = (text: string) => (
+    <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: -4, marginBottom: 8 }}>{text}</div>
+  );
+
+  const setInt = (key: string, raw: string) => {
+    const v = parseInt(raw, 10);
+    set(key, Number.isNaN(v) ? undefined : v);
+  };
+
+  return (
+    <>
+      <div style={{ fontSize: 11, color: 'var(--text-dim)', marginBottom: 8 }}>
+        <strong style={{ color: 'var(--text)' }}>Whisper speech-to-text</strong> — local, offline
+        transcription via whisper.cpp. Audio passes through unchanged; each segment emits an event,
+        and an optional transcript file is written. Requires a <code>with_whisper</code> build.
+      </div>
+
+      <FileField
+        label="model"
+        value={str('model')}
+        mode="open"
+        filter=".bin,.gguf"
+        placeholder="/path/to/ggml-base.en.bin"
+        onChange={(val) => set('model', val)}
+      />
+      {hint('Required. Path to a ggml/gguf Whisper model.')}
+
+      <label style={{ marginTop: 8 }}>Language</label>
+      <input
+        type="text"
+        value={language}
+        placeholder="auto"
+        onChange={(e) => set('language', e.target.value)}
+      />
+      {hint('Source language hint; "auto" detects, or an ISO code like "en".')}
+
+      <label style={{ marginTop: 8 }}>Task</label>
+      <select value={task} onChange={(e) => set('task', e.target.value)}>
+        <option value="transcribe">Transcribe</option>
+        <option value="translate">Translate to English</option>
+      </select>
+      {hint('Transcribe in the source language, or translate to English.')}
+
+      <label style={{ marginTop: 8 }}>Beam size</label>
+      <input
+        type="number"
+        min={0}
+        step={1}
+        value={beamSize}
+        onChange={(e) => setInt('beam_size', e.target.value)}
+      />
+      {hint('0 or 1 = greedy (fast); >1 = beam search (slower, often better).')}
+
+      <label style={{ display: 'flex', alignItems: 'flex-start', gap: 6, marginTop: 8, cursor: 'pointer' }}>
+        <input
+          type="checkbox"
+          checked={wordTimestamps}
+          style={{ marginTop: 2, flexShrink: 0 }}
+          onChange={(e) => set('word_timestamps', e.target.checked)}
+        />
+        <span>
+          Word timestamps
+          <div style={{ fontSize: 11, color: 'var(--text-dim)', fontWeight: 'normal', marginTop: 2 }}>
+            Request token-level timestamps.
+          </div>
+        </span>
+      </label>
+
+      <label style={{ marginTop: 8 }}>Threads</label>
+      <input
+        type="number"
+        min={0}
+        step={1}
+        value={threads}
+        placeholder="0 = auto"
+        onChange={(e) => setInt('threads', e.target.value)}
+      />
+      {hint('Inference threads. 0 = one per CPU.')}
+
+      <label style={{ marginTop: 8 }}>Initial prompt</label>
+      <input
+        type="text"
+        value={str('initial_prompt')}
+        placeholder="Optional context / vocabulary"
+        onChange={(e) => set('initial_prompt', e.target.value)}
+      />
+      {hint('Optional context/biasing prompt.')}
+
+      <label style={{ marginTop: 8 }}>Output format</label>
+      <select value={outputFormat} onChange={(e) => set('output_format', e.target.value)}>
+        <option value="srt">SRT</option>
+        <option value="vtt">VTT (WebVTT)</option>
+        <option value="json">JSON</option>
+        <option value="txt">TXT (plain)</option>
+      </select>
+      {hint('Sidecar transcript format (used when an output file is set).')}
+
+      <FileField
+        label="output_file"
+        value={str('output_file')}
+        mode="save"
+        filter={ext}
+        defaultFilename={`transcript${ext}`}
+        placeholder={`/path/to/transcript${ext}`}
+        onChange={(val) => set('output_file', val)}
+      />
+      {hint('Optional. Leave blank to emit segment events only.')}
+
+      {Object.keys(overflow).length > 0 && (
+        <>
+          <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 10 }}>Other params</div>
+          <ParamsEditor params={overflow} onChange={(next) => onChange({ ...known, ...next })} />
+        </>
+      )}
     </>
   );
 }

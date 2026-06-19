@@ -163,6 +163,8 @@ For multimodal scene understanding — captions, temporal grounding, edit plans,
 
 For cloud-hosted video understanding — index, search, caption, and embed clips via the [TwelveLabs](https://twelvelabs.io) Marengo and Pegasus models — the `twelvelabs_indexer`, `twelvelabs_analyzer`, `twelvelabs_searcher`, and `twelvelabs_embedder` nodes are built in. See [TwelveLabs Guide](docs/twelvelabs.md)
 
+For local, offline speech-to-text, the built-in `whisper_stt` node transcribes an audio stream to timestamped subtitles (SRT/VTT/JSON/TXT) with [whisper.cpp](https://github.com/ggml-org/whisper.cpp). See [Whisper Speech-to-Text Guide](docs/whisper-stt-guide.md)
+
 ### Video editing built in
 
 Assemble clips into a finished video — cuts, trims, wipes, dissolves, layering,
@@ -315,6 +317,7 @@ For detailed instructions see [MacOS](docs/build/macos.md), [Windows](docs/build
 - [Yolov8 object detection/classification](docs/yolov8-guide.md)
 - [Vidi 2.5 multimodal analysis](docs/vidi-guide.md)
 - [TwelveLabs video understanding](docs/twelvelabs.md)
+- [Whisper speech-to-text](docs/whisper-stt-guide.md) — local, offline transcription to SRT/VTT/JSON/TXT (`whisper_stt`)
 - [Real-Time Controller](docs/realtime-controller.md) — adaptive control loop, encoder preset stepping, output buffers, `mediamolder watch`, HTTP API
 
 ### Code

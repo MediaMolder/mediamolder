@@ -1,6 +1,6 @@
 .PHONY: build build-static test test-static lint bench bench-static clean \
         frontend-install frontend-dev frontend-build gui gui-dev build-gui build-gui-static \
-        check-deps build-debug build-gui-debug
+        check-deps build-debug build-gui-debug build-whisper test-whisper build-gui-whisper
 
 # Detect macOS: Apple ld warns about duplicate -l flags when two CGO packages
 # (av and PySceneDetect/internal) both link -lavutil and -lswscale. Pass
@@ -26,6 +26,30 @@ test:
 test-static:
 	CGO_LDFLAGS_ALLOW='.*' CGO_LDFLAGS='$(CGO_LDFLAGS_NODUP)' \
 	  go test -tags=ffstatic ./...
+
+# Whisper speech-to-text (whisper_stt node). Requires libwhisper: a system
+# install discoverable via pkg-config (whisper.pc). whisper.cpp's dylibs/.so
+# use @rpath, so we embed an rpath to WHISPER_PREFIX/lib for runtime lookup.
+# WHISPER_PREFIX must match the prefix libwhisper was installed under (the
+# whisper.pc default is /usr/local; override e.g. WHISPER_PREFIX=$HOME/.local).
+# We ship neither the library nor any model — see docs/whisper-stt-guide.md.
+#
+# The rpath is passed via the Go linker's -extldflags (applied once to the
+# final link) rather than CGO_LDFLAGS (recorded per-cgo-package, which would
+# emit "duplicate -rpath ... ignored" warnings on the multi-cgo binary).
+# EXTRA_TAGS appends more opt-in node tags to any whisper target, so one binary
+# can carry several nodes, e.g.  make build-whisper EXTRA_TAGS=with_onnx.
+WHISPER_PREFIX ?= /usr/local
+comma := ,
+build-whisper:
+	CGO_LDFLAGS_ALLOW='.*' CGO_LDFLAGS='$(CGO_LDFLAGS_NODUP)' \
+	  go build -tags=with_whisper$(if $(EXTRA_TAGS),$(comma)$(EXTRA_TAGS)) -ldflags='-extldflags "-Wl,-rpath,$(WHISPER_PREFIX)/lib"' ./...
+
+# Set WHISPER_TEST_MODEL to a ggml model to exercise the integration tests;
+# without it the tagged tests skip.
+test-whisper:
+	CGO_LDFLAGS_ALLOW='.*' CGO_LDFLAGS='$(CGO_LDFLAGS_NODUP)' \
+	  go test -tags=with_whisper -ldflags='-extldflags "-Wl,-rpath,$(WHISPER_PREFIX)/lib"' ./av/... ./processors/...
 
 lint:
 	golangci-lint run ./...
@@ -157,6 +181,22 @@ build-gui: check-deps frontend-build
 	go build -o mediamolder ./cmd/mediamolder
 
 # Same as build-gui but linking against a local FFmpeg source tree.
+# NOTE: this does NOT include whisper_stt — use build-gui-whisper for that.
 build-gui-static: frontend-build
 	CGO_LDFLAGS_ALLOW='.*' CGO_LDFLAGS='$(CGO_LDFLAGS_NODUP)' \
 	  go build -tags=ffstatic -o mediamolder ./cmd/mediamolder
+
+# build-gui-static + the whisper_stt node: static FFmpeg plus a dynamic
+# libwhisper (via pkg-config). Requires libwhisper installed (see
+# docs/whisper-stt-guide.md); override WHISPER_PREFIX if it is not under
+# /usr/local. Append more opt-in node tags with EXTRA_TAGS, e.g.
+#   make build-gui-whisper EXTRA_TAGS=with_onnx      # also compile in yolo_v8
+# (ONNX Runtime is loaded at runtime, so it is not needed to build — only to
+# run a yolo_v8 node, via ONNXRUNTIME_SHARED_LIBRARY_PATH.) The "whisperstatic"
+# tag (independent of ffstatic) links libwhisper statically instead — that needs
+# a static whisper.cpp build.
+build-gui-whisper: frontend-build
+	CGO_LDFLAGS_ALLOW='.*' CGO_LDFLAGS='$(CGO_LDFLAGS_NODUP)' \
+	  go build -tags=ffstatic,with_whisper$(if $(EXTRA_TAGS),$(comma)$(EXTRA_TAGS)) \
+	  -ldflags='-extldflags "-Wl,-rpath,$(WHISPER_PREFIX)/lib"' \
+	  -o mediamolder ./cmd/mediamolder

@@ -31,6 +31,7 @@ Everything runs in-process: no subprocesses, no network calls, no Python. Your p
 		- [`twelvelabs_analyzer`](#twelvelabs_analyzer)
 		- [`twelvelabs_searcher`](#twelvelabs_searcher)
 		- [`twelvelabs_embedder`](#twelvelabs_embedder)
+		- [`whisper_stt`](#whisper_stt)
 		- [`sequence_editor`](#sequence_editor)
 	- [Helper functions](#helper-functions)
 		- [Letterbox](#letterbox)
@@ -560,6 +561,39 @@ Runs a Marengo natural-language search against an index — on a timer or per se
 Generates Marengo video embeddings per clip (and optionally per fixed window), inline on the event bus or to per-segment `json` / `jsonl` files.
 
 All four nodes share an API-key resolution chain (`api_key` param → `TWELVELABS_API_KEY` env → `~/.config/mediamolder/twelvelabs.json`) and emit to `Metadata.Custom["twelvelabs"]`. See the full [TwelveLabs Guide](twelvelabs.md) for parameters, graph examples, and the CLI / HTTP surface.
+
+### `whisper_stt`
+
+Transcribes an audio stream to timestamped text locally with [whisper.cpp](https://github.com/ggml-org/whisper.cpp) — offline, no network. It accumulates the (auto-resampled 16 kHz mono) audio during processing and runs a single transcription pass at end-of-stream; the audio passes through unchanged. Each segment is emitted as `Metadata` on the event bus, and an optional sidecar transcript (SRT / VTT / JSON / TXT) is written. Compiled only with the **`with_whisper`** build tag; you supply `libwhisper` and a ggml model (MediaMolder ships neither).
+
+| Param             | Type   | Default        | Description |
+|-------------------|--------|----------------|-------------|
+| `model`           | string | **(required)** | Path to a ggml/gguf Whisper model |
+| `language`        | string | `"auto"`       | Source language hint (`auto` detects) |
+| `task`            | string | `"transcribe"` | `transcribe` \| `translate` (to English) |
+| `beam_size`       | int    | `0`            | `0`/`1` greedy; `>1` beam search |
+| `word_timestamps` | bool   | `false`        | Request token-level timestamps |
+| `threads`         | int    | `NumCPU()`     | Inference threads |
+| `initial_prompt`  | string | `""`           | Context/biasing prompt |
+| `output_file`     | string | `""`           | Sidecar path; empty = events only |
+| `output_format`   | string | `"srt"`        | `srt` \| `vtt` \| `json` \| `txt` |
+
+```json
+{
+  "id": "stt",
+  "type": "go_processor",
+  "processor": "whisper_stt",
+  "params": {
+    "model":         "/models/ggml-base.en.bin",
+    "language":      "en",
+    "output_file":   "/tmp/out.srt",
+    "output_format": "srt"
+  }
+}
+```
+
+See the full [Whisper Speech-to-Text Guide](whisper-stt-guide.md) for build
+instructions, model selection, and output details.
 
 ---
 
