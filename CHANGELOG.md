@@ -23,7 +23,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   The web GUI curates `whisper_stt` in the node palette ("Whisper
   speech-to-text") and gives it a typed Inspector panel (model file picker,
   language, transcribe/translate, beam size, word timestamps, threads, initial
-  prompt, and output file/format).
+  prompt, and output file/format). `make build-gui-whisper` produces a GUI
+  single-binary with the node (static FFmpeg + dynamic libwhisper); the
+  `whisperstatic` build tag (independent of `ffstatic`) links libwhisper
+  statically instead.
 
 - **`scene_change_mc` motion-compensated scene detector.** A new
   `go_processor` that detects hard cuts and — uniquely among the detectors —

@@ -270,8 +270,10 @@ make build-whisper                          # used ~/.local? → make build-whis
 WHISPER_TEST_MODEL="$MODEL" make test-whisper   # same WHISPER_PREFIX override if you used one
 ```
 
-For a fully static whisper link, build whisper.cpp with `-DBUILD_SHARED_LIBS=OFF`
-(produces `.a` archives) and use `-tags=ffstatic,with_whisper` — advanced; see
+For a GUI single-binary with whisper compiled in, use `make build-gui-whisper`
+(static FFmpeg + dynamic libwhisper). To link libwhisper **statically** instead,
+build whisper.cpp with `-DBUILD_SHARED_LIBS=OFF` (produces `.a` archives) and add
+the `whisperstatic` tag, e.g. `-tags=with_whisper,whisperstatic` — advanced; see
 [av/cgo_flags_whisper_static.go](../../av/cgo_flags_whisper_static.go).
 
 Pass the model path in the node's `model` param. Usage, params, and output

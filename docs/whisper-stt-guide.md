@@ -74,12 +74,20 @@ make build-whisper
 #   CGO_LDFLAGS_ALLOW='.*' go build -tags=with_whisper \
 #     -ldflags='-extldflags "-Wl,-rpath,/usr/local/lib"' ./...
 
-# Static FFmpeg + local whisper.cpp tree at ../../whisper.cpp (advanced — needs a
-# static whisper build, -DBUILD_SHARED_LIBS=OFF):
-CGO_LDFLAGS_ALLOW='.*' go build -tags=ffstatic,with_whisper ./...
+# GUI single-binary with whisper_stt (static FFmpeg + dynamic libwhisper):
+make build-gui-whisper
+
+# Link libwhisper STATICALLY instead (needs a static whisper.cpp build,
+# -DBUILD_SHARED_LIBS=OFF). The "whisperstatic" tag is independent of ffstatic:
+CGO_LDFLAGS_ALLOW='.*' go build -tags=with_whisper,whisperstatic ./...
 ```
 
-Without the tag, `whisper_stt` is simply not registered; a config that
+Build tags: `with_whisper` compiles the node in (dynamic libwhisper via
+pkg-config by default); `whisperstatic` switches libwhisper to a static link
+from a sibling `../../whisper.cpp` tree; `ffstatic` independently controls
+FFmpeg. So `ffstatic,with_whisper` = static FFmpeg + dynamic libwhisper.
+
+Without `with_whisper`, `whisper_stt` is simply not registered; a config that
 references it fails with `unknown processor "whisper_stt"`. If `make
 build-whisper` reports `No rule to make target 'build-whisper'`, you're not in
 the MediaMolder repo root.
@@ -170,8 +178,9 @@ The binary was built without the `with_whisper` tag. Rebuild with
 ### `Package 'whisper' not found` at build time
 
 pkg-config cannot find `whisper.pc`. Install whisper.cpp (`cmake --install`) or
-set `PKG_CONFIG_PATH` to its `lib/pkgconfig`. For the static path, ensure
-`../../whisper.cpp/build` exists and use `-tags=ffstatic,with_whisper`.
+set `PKG_CONFIG_PATH` to its `lib/pkgconfig`. To skip pkg-config entirely, link
+libwhisper statically with `-tags=with_whisper,whisperstatic` from a sibling
+`../../whisper.cpp` static build.
 
 ### `whisper_stt: model file: no such file or directory`
 

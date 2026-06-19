@@ -1,6 +1,6 @@
 .PHONY: build build-static test test-static lint bench bench-static clean \
         frontend-install frontend-dev frontend-build gui gui-dev build-gui build-gui-static \
-        check-deps build-debug build-gui-debug build-whisper test-whisper
+        check-deps build-debug build-gui-debug build-whisper test-whisper build-gui-whisper
 
 # Detect macOS: Apple ld warns about duplicate -l flags when two CGO packages
 # (av and PySceneDetect/internal) both link -lavutil and -lswscale. Pass
@@ -178,6 +178,17 @@ build-gui: check-deps frontend-build
 	go build -o mediamolder ./cmd/mediamolder
 
 # Same as build-gui but linking against a local FFmpeg source tree.
+# NOTE: this does NOT include whisper_stt — use build-gui-whisper for that.
 build-gui-static: frontend-build
 	CGO_LDFLAGS_ALLOW='.*' CGO_LDFLAGS='$(CGO_LDFLAGS_NODUP)' \
 	  go build -tags=ffstatic -o mediamolder ./cmd/mediamolder
+
+# build-gui-static + the whisper_stt node: static FFmpeg plus a dynamic
+# libwhisper (via pkg-config). Requires libwhisper installed (see
+# docs/whisper-stt-guide.md); override WHISPER_PREFIX if it is not under
+# /usr/local. The "whisperstatic" tag (independent of ffstatic) would link
+# libwhisper statically instead — that needs a static whisper.cpp build.
+build-gui-whisper: frontend-build
+	CGO_LDFLAGS_ALLOW='.*' CGO_LDFLAGS='$(CGO_LDFLAGS_NODUP)' \
+	  go build -tags=ffstatic,with_whisper -ldflags='-extldflags "-Wl,-rpath,$(WHISPER_PREFIX)/lib"' \
+	  -o mediamolder ./cmd/mediamolder

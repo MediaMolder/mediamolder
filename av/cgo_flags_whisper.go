@@ -1,7 +1,7 @@
 // Copyright (C) 2026 Thomas Vaughan
 // SPDX-License-Identifier: LGPL-2.1-or-later
 
-//go:build with_whisper && !ffstatic
+//go:build with_whisper && !whisperstatic
 
 package av
 
