@@ -248,9 +248,80 @@ go test .\...                             # Option A — default FFmpeg
 go test -tags=ffstatic .\...             # Option B2 — static FFmpeg
 ```
 
-> **Optional built-in nodes** (`whisper_stt`, `yolo_v8`, …) need extra build
-> tags and external dependencies you must install first — see
-> [Optional built-in nodes & their prerequisites](../build-and-packaging.md#optional-built-in-nodes--their-prerequisites).
+## Optional built-in nodes
+
+A few processors are **opt-in**: they sit behind a build tag (so they don't add
+a cgo dependency for builds that don't need them) or need an external runtime
+service. Install the prerequisites below **before** building or running.
+
+| Node | Build tag | Needs | Runtime env / config |
+| --- | --- | --- | --- |
+| `whisper_stt` (speech-to-text) | `with_whisper` | whisper.cpp / `libwhisper` | `model` param → ggml model path |
+| `yolo_v8` (object detection) | `with_onnx` | ONNX Runtime DLL | `ONNXRUNTIME_SHARED_LIBRARY_PATH` |
+| `vidi_analyzer` (multimodal) | *(none)* | a running Vidi 2.5 service | `service_url` param |
+| `twelvelabs_*` (cloud understanding) | *(none)* | TwelveLabs API key | `TWELVELABS_API_KEY` |
+
+> `whisper_stt` binds **whisper.cpp** (`ggml-org/whisper.cpp`), **not** the
+> OpenAI Python `whisper` package — the latter does not produce `libwhisper`.
+
+### whisper_stt (whisper.cpp)
+
+Build whisper.cpp in the **MSYS2 MinGW64** shell and install it into the MinGW64
+prefix so `pkg-config` (and the cgo build) can find `whisper.pc`:
+
+```bash
+pacman -S mingw-w64-x86_64-cmake mingw-w64-x86_64-ninja
+
+git clone https://github.com/ggml-org/whisper.cpp
+cmake -S whisper.cpp -B whisper.cpp/build -G Ninja
+cmake --build whisper.cpp/build -j
+cmake --install whisper.cpp/build --prefix /mingw64   # puts whisper.pc on PKG_CONFIG_PATH
+```
+
+Then build MediaMolder with the tag. The whisper link flags use `pkg-config`,
+so build against **shared** FFmpeg (omit `ffstatic`):
+
+```powershell
+go build -tags=with_whisper -o mediamolder.exe .\cmd\mediamolder\
+```
+
+Fetch a model (you supply this — MediaMolder ships none) and point the node's
+`model` param at it; set `WHISPER_TEST_MODEL` to run the gated tests:
+
+```powershell
+$env:WHISPER_TEST_MODEL = "C:\path\to\ggml-base.en.bin"
+go test -tags=with_whisper .\av\... .\processors\...
+```
+
+> **Note:** static whisper linking is wired for macOS/Linux only
+> ([av/cgo_flags_whisper_static.go](../../av/cgo_flags_whisper_static.go) has no
+> Windows branch). On Windows, build the `whisper_stt` node against shared
+> FFmpeg via the `pkg-config` path above; combining `ffstatic` with
+> `with_whisper` is not currently supported here. Usage, params, and output
+> formats: [Whisper Speech-to-Text Guide](../whisper-stt-guide.md).
+
+### yolo_v8 (ONNX Runtime)
+
+Download the Windows zip from the
+[ONNX Runtime releases](https://github.com/microsoft/onnxruntime/releases),
+extract `onnxruntime.dll` next to `mediamolder.exe`, then:
+
+```powershell
+$env:ONNXRUNTIME_SHARED_LIBRARY_PATH = "C:\path\to\onnxruntime.dll"
+go build -tags=with_onnx -o mediamolder.exe .\cmd\mediamolder\
+```
+
+You also need a `.onnx` model and a labels file — see the
+[YOLOv8 Guide](../yolov8-guide.md).
+
+### vidi_analyzer / twelvelabs_*
+
+No build tag. `vidi_analyzer` needs a running
+[Vidi 2.5](https://github.com/bytedance/vidi) service (pass its `service_url`);
+the `twelvelabs_*` nodes need a [TwelveLabs](https://twelvelabs.io) API key via
+`TWELVELABS_API_KEY` (`$env:TWELVELABS_API_KEY`), the `api_key` param, or
+`%USERPROFILE%\.config\mediamolder\twelvelabs.json`. See the
+[Vidi 2.5](../vidi-guide.md) and [TwelveLabs](../twelvelabs.md) guides.
 
 ## Troubleshooting linker errors
 

@@ -205,10 +205,6 @@ make build-gui-debug LOG=/tmp/mediamolder.log
 make build-debug BUILD_TAGS=ffstatic LOG=/tmp/static.log
 ```
 
-> **Optional built-in nodes** (`whisper_stt`, `yolo_v8`, …) need extra build
-> tags and external dependencies you must install first — see
-> [Optional built-in nodes & their prerequisites](../build-and-packaging.md#optional-built-in-nodes--their-prerequisites).
-
 Upload `mediamolder-build.log` when [opening a bug report](https://github.com/MediaMolder/mediamolder/issues). The file is safe to share — it contains no passwords or private keys.
 
 ## 7. Run the tests
@@ -218,6 +214,74 @@ make test                       # Option A — default FFmpeg
 make test-static                # Option B2 — static FFmpeg
 go test ./pipeline/...          # narrow to one package
 ```
+
+## Optional built-in nodes
+
+A few processors are **opt-in**: they sit behind a build tag (so they don't add
+a cgo dependency for builds that don't need them) or need an external runtime
+service. Install the prerequisites below **before** building or running.
+
+| Node | Build tag | Needs | Runtime env / config |
+| --- | --- | --- | --- |
+| `whisper_stt` (speech-to-text) | `with_whisper` | whisper.cpp / `libwhisper` | `model` param → ggml model path |
+| `yolo_v8` (object detection) | `with_onnx` | ONNX Runtime shared lib | `ONNXRUNTIME_SHARED_LIBRARY_PATH` |
+| `vidi_analyzer` (multimodal) | *(none)* | a running Vidi 2.5 service | `service_url` param |
+| `twelvelabs_*` (cloud understanding) | *(none)* | TwelveLabs API key | `TWELVELABS_API_KEY` |
+
+> `whisper_stt` binds **whisper.cpp** (`ggml-org/whisper.cpp`), **not** the
+> OpenAI Python `whisper` package — the latter does not produce `libwhisper`.
+
+### whisper_stt (whisper.cpp)
+
+```bash
+brew install cmake                          # build tool for whisper.cpp
+
+# 1. Clone + build whisper.cpp (Metal-accelerated on Apple Silicon)
+git clone https://github.com/ggml-org/whisper.cpp
+cmake -S whisper.cpp -B whisper.cpp/build
+cmake --build whisper.cpp/build -j
+cmake --install whisper.cpp/build           # installs whisper.pc for pkg-config
+# Homebrew's prefix is already on PKG_CONFIG_PATH; for a custom prefix:
+#   export PKG_CONFIG_PATH=<prefix>/lib/pkgconfig:$PKG_CONFIG_PATH
+
+# 2. Build MediaMolder with the node compiled in
+make build-whisper                          # = go build -tags=with_whisper ./...
+# Static FFmpeg + a sibling whisper.cpp tree at ../whisper.cpp (next to the
+# mediamolder checkout) instead:
+#   CGO_LDFLAGS_ALLOW='.*' go build -tags=ffstatic,with_whisper ./...
+
+# 3. Fetch a model (you supply this — MediaMolder ships none)
+./whisper.cpp/models/download-ggml-model.sh base.en
+
+# 4. Run the gated tests against it
+export WHISPER_TEST_MODEL=$PWD/whisper.cpp/models/ggml-base.en.bin
+make test-whisper
+```
+
+Pass the model path in the node's `model` param. Usage, params, and output
+formats: [Whisper Speech-to-Text Guide](../whisper-stt-guide.md). Without the
+tag, a config using `whisper_stt` fails with `unknown processor "whisper_stt"`.
+
+### yolo_v8 (ONNX Runtime)
+
+```bash
+brew install onnxruntime
+export ONNXRUNTIME_SHARED_LIBRARY_PATH=$(brew --prefix onnxruntime)/lib/libonnxruntime.dylib
+
+go build -tags=with_onnx ./cmd/mediamolder  # add ffstatic too for a static FFmpeg link
+```
+
+You also need a `.onnx` model and a labels file — see the
+[YOLOv8 Guide](../yolov8-guide.md).
+
+### vidi_analyzer / twelvelabs_*
+
+No build tag. `vidi_analyzer` needs a running
+[Vidi 2.5](https://github.com/bytedance/vidi) service (pass its `service_url`);
+the `twelvelabs_*` nodes need a [TwelveLabs](https://twelvelabs.io) API key via
+`TWELVELABS_API_KEY`, the `api_key` param, or
+`~/.config/mediamolder/twelvelabs.json`. See the
+[Vidi 2.5](../vidi-guide.md) and [TwelveLabs](../twelvelabs.md) guides.
 
 ## Troubleshooting
 
