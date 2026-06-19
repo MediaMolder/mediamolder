@@ -228,6 +228,10 @@ make build-gui-debug LOG=/tmp/mediamolder.log
 make build-debug BUILD_TAGS=ffstatic LOG=/tmp/static.log
 ```
 
+> **Optional built-in nodes** (`whisper_stt`, `yolo_v8`, …) need extra build
+> tags and external dependencies you must install first — see
+> [Optional built-in nodes & their prerequisites](../build-and-packaging.md#optional-built-in-nodes--their-prerequisites).
+
 Upload `mediamolder-build.log` when [opening a bug report](https://github.com/MediaMolder/mediamolder/issues). The file is safe to share — it contains no passwords or private keys.
 
 ## 7. Run the tests

@@ -248,6 +248,10 @@ go test .\...                             # Option A — default FFmpeg
 go test -tags=ffstatic .\...             # Option B2 — static FFmpeg
 ```
 
+> **Optional built-in nodes** (`whisper_stt`, `yolo_v8`, …) need extra build
+> tags and external dependencies you must install first — see
+> [Optional built-in nodes & their prerequisites](../build-and-packaging.md#optional-built-in-nodes--their-prerequisites).
+
 ## Troubleshooting linker errors
 
 Static linking can fail with `undefined reference to …` errors when FFmpeg
