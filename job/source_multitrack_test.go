@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/MediaMolder/MediaMolder/av"
+	"github.com/MediaMolder/MediaMolder/graph"
 )
 
 // TestSourceResources_StreamForTrack is a fast, file-free regression test for
@@ -41,6 +42,45 @@ func TestSourceResources_StreamForTrack(t *testing.T) {
 	}
 	if idx, _, ok := src.streamForTrack(av.MediaTypeAudio, 1); !ok || idx != 2 {
 		t.Fatalf("streamForTrack(audio,1)=(%d,%v), want (2,true)", idx, ok)
+	}
+}
+
+// TestResolveEdgeStreamInfo_SourceTrackByFileRank guards the sibling of the
+// routing bug: resolveEdgeStreamInfo's KindSource branch must return the
+// StreamInfo of the track an edge addresses (via file-rank), not the first
+// stream of that media type in the map-ordered selection. Two same-type audio
+// streams with DIFFERING params both survive pruning here, so the pre-fix
+// "first of type" code returned the wrong (and non-deterministic) params; this
+// feeds downstream filter/encoder configuration.
+func TestResolveEdgeStreamInfo_SourceTrackByFileRank(t *testing.T) {
+	src := &sourceResources{
+		streams: map[int]av.StreamInfo{
+			1: {Index: 1, Type: av.MediaTypeAudio, SampleRate: 48000, Channels: 2}, // a:0
+			2: {Index: 2, Type: av.MediaTypeAudio, SampleRate: 16000, Channels: 1}, // a:1
+		},
+		trackOf: map[int]int{0: 0, 1: 0, 2: 1}, // video:0, audio:0, audio:1
+	}
+	r := &graphRunner{sources: map[string]*sourceResources{"in0": src}}
+	e := &graph.Edge{
+		From:     &graph.Node{ID: "in0", Kind: graph.KindSource},
+		Type:     graph.PortAudio,
+		FromPort: "a:1",
+	}
+	si, err := r.resolveEdgeStreamInfo(nil, e)
+	if err != nil {
+		t.Fatalf("resolveEdgeStreamInfo(a:1): %v", err)
+	}
+	if si.Index != 2 || si.SampleRate != 16000 || si.Channels != 1 {
+		t.Fatalf("a:1 resolved wrong stream: idx=%d sr=%d ch=%d, want idx=2 sr=16000 ch=1", si.Index, si.SampleRate, si.Channels)
+	}
+
+	e.FromPort = "a:0"
+	si, err = r.resolveEdgeStreamInfo(nil, e)
+	if err != nil {
+		t.Fatalf("resolveEdgeStreamInfo(a:0): %v", err)
+	}
+	if si.Index != 1 || si.SampleRate != 48000 || si.Channels != 2 {
+		t.Fatalf("a:0 resolved wrong stream: idx=%d sr=%d ch=%d, want idx=1 sr=48000 ch=2", si.Index, si.SampleRate, si.Channels)
 	}
 }
 

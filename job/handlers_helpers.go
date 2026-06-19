@@ -67,12 +67,17 @@ func (r *graphRunner) resolveEdgeStreamInfo(dag *graph.Graph, e *graph.Edge) (av
 			return av.StreamInfo{}, fmt.Errorf("no source resources for node %q", from.ID)
 		}
 		mt := portTypeToAVMediaType(e.Type)
-		for _, si := range src.streams {
-			if si.Type == mt {
-				return si, nil
-			}
+		// Resolve the specific track the edge addresses (e.g. "a:2") via the
+		// stream's stable file-rank, mirroring the frame-routing and copy
+		// paths (handlers_source.go). Returning the first stream of the type
+		// would hand a downstream filter/encoder the wrong track's params once
+		// more than one same-type stream survives selection pruning — and is
+		// non-deterministic, since src.streams is a map.
+		track, _ := edgeTrack(e.FromPort)
+		if _, si, ok := src.streamForTrack(mt, track); ok {
+			return si, nil
 		}
-		return av.StreamInfo{}, fmt.Errorf("source %q has no %v stream", from.ID, e.Type)
+		return av.StreamInfo{}, fmt.Errorf("source %q has no %v stream (track %d)", from.ID, e.Type, track)
 	case graph.KindFilter:
 		// If the upstream filter graph is already built (topological order
 		// guarantees this), query its actual output dimensions rather than

@@ -189,8 +189,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   `a:2` edge matched nothing and routed zero frames (a `whisper_stt`/encoder/
   copy consumer silently received no audio). Edge track numbers are now
   resolved against each stream's stable file-rank (`sourceResources.trackOf` /
-  `streamForTrack`), independent of pruning, in both the frame-routing and
-  stream-copy paths.
+  `streamForTrack`), independent of pruning, in the frame-routing, stream-copy,
+  and stream-info paths. The last (`resolveEdgeStreamInfo`) previously returned
+  the first stream of the matching media type from the map-ordered selection,
+  ignoring the edge's track — so a direct source→filter/encoder edge on a
+  non-zero track could be configured with another track's params (sample rate /
+  channels / dimensions), non-deterministically, when two same-type streams
+  survived pruning.
 - **Multi-stream output: a single stream's muxer error no longer deadlocks the
   whole pipeline.** The muxing sink runs one consumer goroutine per output
   stream, but built its consumer group with `errgroup.WithContext(ctx)` while
