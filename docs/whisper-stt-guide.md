@@ -70,9 +70,9 @@ cd /path/to/mediamolder
 # resolve at runtime:
 make build-whisper
 # custom install prefix → make build-whisper WHISPER_PREFIX="$HOME/.local"
-# or, by hand:
-#   CGO_LDFLAGS_ALLOW='.*' CGO_LDFLAGS='-Wl,-rpath,/usr/local/lib' \
-#     go build -tags=with_whisper ./...
+# or, by hand (rpath via -extldflags so it is added once, not per cgo package):
+#   CGO_LDFLAGS_ALLOW='.*' go build -tags=with_whisper \
+#     -ldflags='-extldflags "-Wl,-rpath,/usr/local/lib"' ./...
 
 # Static FFmpeg + local whisper.cpp tree at ../../whisper.cpp (advanced — needs a
 # static whisper build, -DBUILD_SHARED_LIBS=OFF):

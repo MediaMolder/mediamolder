@@ -33,16 +33,20 @@ test-static:
 # WHISPER_PREFIX must match the prefix libwhisper was installed under (the
 # whisper.pc default is /usr/local; override e.g. WHISPER_PREFIX=$HOME/.local).
 # We ship neither the library nor any model — see docs/whisper-stt-guide.md.
+#
+# The rpath is passed via the Go linker's -extldflags (applied once to the
+# final link) rather than CGO_LDFLAGS (recorded per-cgo-package, which would
+# emit "duplicate -rpath ... ignored" warnings on the multi-cgo binary).
 WHISPER_PREFIX ?= /usr/local
 build-whisper:
-	CGO_LDFLAGS_ALLOW='.*' CGO_LDFLAGS='$(CGO_LDFLAGS_NODUP) -Wl,-rpath,$(WHISPER_PREFIX)/lib' \
-	  go build -tags=with_whisper ./...
+	CGO_LDFLAGS_ALLOW='.*' CGO_LDFLAGS='$(CGO_LDFLAGS_NODUP)' \
+	  go build -tags=with_whisper -ldflags='-extldflags "-Wl,-rpath,$(WHISPER_PREFIX)/lib"' ./...
 
 # Set WHISPER_TEST_MODEL to a ggml model to exercise the integration tests;
 # without it the tagged tests skip.
 test-whisper:
-	CGO_LDFLAGS_ALLOW='.*' CGO_LDFLAGS='$(CGO_LDFLAGS_NODUP) -Wl,-rpath,$(WHISPER_PREFIX)/lib' \
-	  go test -tags=with_whisper ./av/... ./processors/...
+	CGO_LDFLAGS_ALLOW='.*' CGO_LDFLAGS='$(CGO_LDFLAGS_NODUP)' \
+	  go test -tags=with_whisper -ldflags='-extldflags "-Wl,-rpath,$(WHISPER_PREFIX)/lib"' ./av/... ./processors/...
 
 lint:
 	golangci-lint run ./...
