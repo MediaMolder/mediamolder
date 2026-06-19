@@ -5,7 +5,7 @@ stream to timestamped text using [whisper.cpp](https://github.com/ggml-org/whisp
 — locally and offline, with no network calls. It consumes a decoded audio
 stream, passes the audio through unchanged (so it can still be encoded or
 muxed), and writes the transcript to a sidecar file (SRT / VTT / JSON / TXT)
-while emitting one event per segment on the pipeline event bus.
+while emitting one event per segment on the graph event bus.
 
 It is built only when the **`with_whisper`** build tag is set. MediaMolder ships
 neither the library nor any model — you supply both (see Prerequisites).
@@ -14,7 +14,7 @@ neither the library nor any model — you supply both (see Prerequisites).
 
 - [Prerequisites](#prerequisites)
 - [Building with whisper support](#building-with-whisper-support)
-- [Pipeline configuration](#pipeline-configuration)
+- [Graph configuration](#graph-configuration)
 - [Output formats](#output-formats)
 - [Reading the transcript](#reading-the-transcript)
 - [How it works](#how-it-works)
@@ -92,7 +92,7 @@ references it fails with `unknown processor "whisper_stt"`. If `make
 build-whisper` reports `No rule to make target 'build-whisper'`, you're not in
 the MediaMolder repo root.
 
-## Pipeline configuration
+## Graph configuration
 
 Route a decoded audio stream into a `whisper_stt` node. Minimal example:
 
