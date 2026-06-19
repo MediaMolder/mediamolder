@@ -195,6 +195,15 @@ var curatedNodes = map[string]NodeMeta{
 		Aliases:  []string{"twelvelabs", "ai", "marengo", "embedding", "vector", "clip"},
 	},
 
+	// ── Whisper speech-to-text ───────────────────────────────────────
+	// Local, offline transcription via whisper.cpp. Only registered when
+	// built with the with_whisper build tag, so curation_test.go tolerates
+	// its absence (see the optional set there). See docs/whisper-stt-guide.md.
+	"whisper_stt": {
+		Friendly: "Whisper speech-to-text",
+		Aliases:  []string{"whisper", "stt", "speech", "transcribe", "subtitle", "caption", "srt", "vtt"},
+	},
+
 	// ── Timeline composition ─────────────────────────────────────────
 	"sequence_editor": {
 		Friendly: "Sequence editor (timeline)",

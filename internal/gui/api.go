@@ -496,6 +496,8 @@ func processorStreams(name string) []string {
 		return []string{"events"}
 	case "sequence_editor":
 		return []string{"video", "audio"}
+	case "whisper_stt":
+		return []string{"audio", "events"}
 	}
 	return nil
 }
@@ -525,6 +527,8 @@ func processorDescription(name string) string {
 		return "Wrap another processor and write its metadata to a JSON Lines file."
 	case "yolo_v8":
 		return "YOLOv8 object detection (requires the with_onnx build tag)."
+	case "whisper_stt":
+		return "Local speech-to-text with whisper.cpp (requires the with_whisper build tag). Audio passes through; emits per-segment events and writes an optional SRT/VTT/JSON/TXT transcript."
 	case "twelvelabs_indexer":
 		return "Upload completed segments / files to a TwelveLabs index (Marengo + Pegasus). See docs/twelvelabs.md."
 	case "twelvelabs_analyzer":

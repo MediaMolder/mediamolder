@@ -113,6 +113,17 @@ float32, regardless of the source rate, format, or channel count.
   the mean per-token probability, 0–1) — the same shape as the per-segment
   event payload.
 
+## GUI
+
+In the web GUI, `whisper_stt` appears in the node palette as **"Whisper
+speech-to-text"** (search: whisper, stt, speech, subtitle, …). Its Inspector
+panel gives typed controls for every param — a file picker for the model, a
+language box, transcribe/translate and output-format dropdowns, beam-size and
+thread numbers, a word-timestamps toggle, an initial-prompt box, and a file
+picker for the transcript — so you don't hand-edit JSON. The node carries an
+audio port (pass-through) and an events port. (The node only appears when the
+binary is built with the `with_whisper` tag.)
+
 ## Reading the transcript
 
 Independent of `output_file`, every segment is published as a `Metadata` event

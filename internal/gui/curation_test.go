@@ -59,6 +59,7 @@ func TestCuratedNodesResolveToRealEntries(t *testing.T) {
 		"frame_counter": {}, "frame_info": {}, "scene_change": {},
 		"scene_change_content": {}, "scene_change_adaptive": {},
 		"scene_change_threshold": {}, "scene_change_hash": {}, "scene_change_histogram": {},
+		"whisper_stt": {}, // registered only with the with_whisper build tag
 	}
 
 	for name := range curatedNodes {

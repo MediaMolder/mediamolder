@@ -20,6 +20,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   `processors/whisper_format.go` are untagged and unit-tested without
   libwhisper. Build with `make build-whisper`. MediaMolder ships neither the
   library nor any model — you supply both. See `docs/whisper-stt-guide.md`.
+  The web GUI curates `whisper_stt` in the node palette ("Whisper
+  speech-to-text") and gives it a typed Inspector panel (model file picker,
+  language, transcribe/translate, beam size, word timestamps, threads, initial
+  prompt, and output file/format).
 
 - **`scene_change_mc` motion-compensated scene detector.** A new
   `go_processor` that detects hard cuts and — uniquely among the detectors —
