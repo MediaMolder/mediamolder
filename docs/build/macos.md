@@ -240,23 +240,33 @@ brew install cmake                          # build tool for whisper.cpp
 git clone https://github.com/ggml-org/whisper.cpp
 cmake -S whisper.cpp -B whisper.cpp/build
 cmake --build whisper.cpp/build -j
-cmake --install whisper.cpp/build           # installs whisper.pc for pkg-config
-# Homebrew's prefix is already on PKG_CONFIG_PATH; for a custom prefix:
-#   export PKG_CONFIG_PATH=<prefix>/lib/pkgconfig:$PKG_CONFIG_PATH
 
-# 2. Build MediaMolder with the node compiled in
-make build-whisper                          # = go build -tags=with_whisper ./...
-# Static FFmpeg + a sibling whisper.cpp tree at ../whisper.cpp (next to the
-# mediamolder checkout) instead:
-#   CGO_LDFLAGS_ALLOW='.*' go build -tags=ffstatic,with_whisper ./...
+# 2. Install the library, headers and whisper.pc. whisper.pc's prefix is
+#    /usr/local, so installing there (needs sudo) makes pkg-config resolve:
+sudo cmake --install whisper.cpp/build
+#    No-sudo alternative — reconfigure to a writable prefix so whisper.pc and
+#    the rpath agree (use the SAME prefix when building in step 3):
+#      cmake -S whisper.cpp -B whisper.cpp/build -DCMAKE_INSTALL_PREFIX="$HOME/.local"
+#      cmake --build whisper.cpp/build -j && cmake --install whisper.cpp/build
+#      export PKG_CONFIG_PATH="$HOME/.local/lib/pkgconfig:$PKG_CONFIG_PATH"
 
-# 3. Fetch a model (you supply this — MediaMolder ships none)
+# 3. Build MediaMolder with the node compiled in. whisper.cpp's dylibs use
+#    @rpath, so build-whisper embeds an rpath to WHISPER_PREFIX/lib (default
+#    /usr/local) for runtime lookup — without it the binary links but fails to
+#    start ("Library not loaded: @rpath/libwhisper...").
+make build-whisper                          # used ~/.local? → make build-whisper WHISPER_PREFIX="$HOME/.local"
+
+# 4. Fetch a model (you supply this — MediaMolder ships none)
 ./whisper.cpp/models/download-ggml-model.sh base.en
 
-# 4. Run the gated tests against it
+# 5. Run the gated tests against it
 export WHISPER_TEST_MODEL=$PWD/whisper.cpp/models/ggml-base.en.bin
-make test-whisper
+make test-whisper                           # same WHISPER_PREFIX override if you used one
 ```
+
+For a fully static whisper link, build whisper.cpp with `-DBUILD_SHARED_LIBS=OFF`
+(produces `.a` archives) and use `-tags=ffstatic,with_whisper` — advanced; see
+[av/cgo_flags_whisper_static.go](../../av/cgo_flags_whisper_static.go).
 
 Pass the model path in the node's `model` param. Usage, params, and output
 formats: [Whisper Speech-to-Text Guide](../whisper-stt-guide.md). Without the
@@ -294,3 +304,12 @@ the `twelvelabs_*` nodes need a [TwelveLabs](https://twelvelabs.io) API key via
 - **Apple Silicon vs. Intel mismatch** — your FFmpeg `.a` archives must be
   built for the same architecture you're compiling Go for. Check with
   `file ../ffmpeg/libavcodec/libavcodec.a`. Only applies to Option B2.
+- **`cmake --install` → `Permission denied` writing `/usr/local/lib`** —
+  `whisper.pc`'s prefix is `/usr/local`. Either `sudo cmake --install
+  whisper.cpp/build`, or reconfigure with
+  `-DCMAKE_INSTALL_PREFIX="$HOME/.local"` and rebuild before installing
+  (then `make build-whisper WHISPER_PREFIX="$HOME/.local"`).
+- **Runtime `Library not loaded: @rpath/libwhisper.1.dylib`** — the binary was
+  built without an rpath. Rebuild with `make build-whisper` (it embeds
+  `-Wl,-rpath,$(WHISPER_PREFIX)/lib`); pass the matching `WHISPER_PREFIX` if you
+  installed somewhere other than `/usr/local`.

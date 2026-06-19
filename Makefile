@@ -27,18 +27,21 @@ test-static:
 	CGO_LDFLAGS_ALLOW='.*' CGO_LDFLAGS='$(CGO_LDFLAGS_NODUP)' \
 	  go test -tags=ffstatic ./...
 
-# Whisper speech-to-text (whisper_stt node). Requires libwhisper: either a
-# system install with a pkg-config file (whisper.pc), or a local whisper.cpp
-# source tree at ../../whisper.cpp built with CMake (combine with ffstatic).
+# Whisper speech-to-text (whisper_stt node). Requires libwhisper: a system
+# install discoverable via pkg-config (whisper.pc). whisper.cpp's dylibs/.so
+# use @rpath, so we embed an rpath to WHISPER_PREFIX/lib for runtime lookup.
+# WHISPER_PREFIX must match the prefix libwhisper was installed under (the
+# whisper.pc default is /usr/local; override e.g. WHISPER_PREFIX=$HOME/.local).
 # We ship neither the library nor any model — see docs/whisper-stt-guide.md.
+WHISPER_PREFIX ?= /usr/local
 build-whisper:
-	CGO_LDFLAGS_ALLOW='.*' CGO_LDFLAGS='$(CGO_LDFLAGS_NODUP)' \
+	CGO_LDFLAGS_ALLOW='.*' CGO_LDFLAGS='$(CGO_LDFLAGS_NODUP) -Wl,-rpath,$(WHISPER_PREFIX)/lib' \
 	  go build -tags=with_whisper ./...
 
 # Set WHISPER_TEST_MODEL to a ggml model to exercise the integration tests;
 # without it the tagged tests skip.
 test-whisper:
-	CGO_LDFLAGS_ALLOW='.*' CGO_LDFLAGS='$(CGO_LDFLAGS_NODUP)' \
+	CGO_LDFLAGS_ALLOW='.*' CGO_LDFLAGS='$(CGO_LDFLAGS_NODUP) -Wl,-rpath,$(WHISPER_PREFIX)/lib' \
 	  go test -tags=with_whisper ./av/... ./processors/...
 
 lint:

@@ -263,11 +263,16 @@ sudo apt install cmake                       # Debian/Ubuntu  (Fedora/RHEL: sudo
 git clone https://github.com/ggml-org/whisper.cpp
 cmake -S whisper.cpp -B whisper.cpp/build
 cmake --build whisper.cpp/build -j
-sudo cmake --install whisper.cpp/build       # installs whisper.pc for pkg-config
-# Installed to a custom prefix? export PKG_CONFIG_PATH=<prefix>/lib/pkgconfig:$PKG_CONFIG_PATH
+sudo cmake --install whisper.cpp/build       # installs to /usr/local (whisper.pc's prefix)
+sudo ldconfig                                # refresh the runtime linker cache for /usr/local/lib
+# No-sudo alternative — reconfigure to a writable prefix (use the SAME prefix when building):
+#   cmake -S whisper.cpp -B whisper.cpp/build -DCMAKE_INSTALL_PREFIX="$HOME/.local"
+#   cmake --build whisper.cpp/build -j && cmake --install whisper.cpp/build
+#   export PKG_CONFIG_PATH="$HOME/.local/lib/pkgconfig:$PKG_CONFIG_PATH"
 
-# 2. Build MediaMolder with the node compiled in
-make build-whisper                           # = go build -tags=with_whisper ./...
+# 2. Build MediaMolder with the node compiled in (embeds an rpath to
+#    WHISPER_PREFIX/lib, default /usr/local, for runtime lookup)
+make build-whisper                           # used ~/.local? → make build-whisper WHISPER_PREFIX="$HOME/.local"
 # Static FFmpeg + a sibling whisper.cpp tree at ../whisper.cpp (next to the
 # mediamolder checkout) instead:
 #   CGO_LDFLAGS_ALLOW='.*' go build -tags=ffstatic,with_whisper ./...

@@ -105,13 +105,13 @@ building or running, including environment variables.
 git clone https://github.com/ggml-org/whisper.cpp
 cmake -S whisper.cpp -B whisper.cpp/build
 cmake --build whisper.cpp/build -j
-cmake --install whisper.cpp/build          # installs whisper.pc for pkg-config
-# custom prefix? export PKG_CONFIG_PATH=<prefix>/lib/pkgconfig
+sudo cmake --install whisper.cpp/build     # whisper.pc's prefix is /usr/local (needs sudo)
+# no-sudo: reconfigure -DCMAKE_INSTALL_PREFIX="$HOME/.local", rebuild, install,
+#   then export PKG_CONFIG_PATH="$HOME/.local/lib/pkgconfig:$PKG_CONFIG_PATH"
 
-# 2. Build MediaMolder with the node compiled in
-make build-whisper                          # = go build -tags=with_whisper ./...
-# static FFmpeg + a local sibling tree at ../../whisper.cpp instead:
-#   CGO_LDFLAGS_ALLOW='.*' go build -tags=ffstatic,with_whisper ./...
+# 2. Build MediaMolder with the node compiled in. whisper.cpp's libs use @rpath,
+#    so build-whisper embeds -Wl,-rpath,WHISPER_PREFIX/lib (default /usr/local).
+make build-whisper                          # custom prefix → make build-whisper WHISPER_PREFIX="$HOME/.local"
 
 # 3. Fetch a model (you supply this — MediaMolder ships none)
 ./whisper.cpp/models/download-ggml-model.sh base.en
