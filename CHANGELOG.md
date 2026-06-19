@@ -160,6 +160,21 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   `internal/server`. Docs: `docs/remote-server.md`, `docs/openapi-server.yaml`.
 
 ### Fixed
+- **Mapping a non-zero input track now routes frames when lower tracks are
+  unconsumed.** When an edge referenced e.g. `in0:a:2` but tracks `a:0`/`a:1`
+  were declared yet read by no edge, `dropUnconsumedSelections` pruned the
+  demux selection down to the single consumed stream — after which the source
+  handler numbered the survivor by its position in the pruned set (`0`), so the
+  `a:2` edge matched nothing and routed zero frames (a `whisper_stt`/encoder/
+  copy consumer silently received no audio). Edge track numbers are now
+  resolved against each stream's stable file-rank (`sourceResources.trackOf` /
+  `streamForTrack`), independent of pruning, in the frame-routing, stream-copy,
+  and stream-info paths. The last (`resolveEdgeStreamInfo`) previously returned
+  the first stream of the matching media type from the map-ordered selection,
+  ignoring the edge's track — so a direct source→filter/encoder edge on a
+  non-zero track could be configured with another track's params (sample rate /
+  channels / dimensions), non-deterministically, when two same-type streams
+  survived pruning.
 - **GUI file dialog no longer hangs on a slow/stale volume.** The
   `GET /api/files` directory lister ran `os.ReadDir` / `os.Stat` /
   `DirEntry.Info` — and re-walked `/Volumes` via `defaultRoots()` — on every
