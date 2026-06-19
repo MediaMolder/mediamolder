@@ -160,6 +160,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   `internal/server`. Docs: `docs/remote-server.md`, `docs/openapi-server.yaml`.
 
 ### Fixed
+- **GUI file dialog no longer hangs on a slow/stale volume.** The
+  `GET /api/files` directory lister ran `os.ReadDir` / `os.Stat` /
+  `DirEntry.Info` — and re-walked `/Volumes` via `defaultRoots()` — on every
+  request with no timeout, so a sleeping external drive or a disconnected
+  network share could block the file picker indefinitely and stall the
+  server's graceful shutdown (an uninterruptible syscall wait). The listing now
+  runs under a 5s bound (returns `504` instead of hanging, keeping the server
+  responsive), and the volume/shortcut enumeration is cached (10s TTL) so it is
+  not re-walked on every keystroke.
 - **Multi-stream output: a single stream's muxer error no longer deadlocks the
   whole pipeline.** The muxing sink runs one consumer goroutine per output
   stream, but built its consumer group with `errgroup.WithContext(ctx)` while
