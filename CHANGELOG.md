@@ -181,6 +181,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   `internal/server`. Docs: `docs/remote-server.md`, `docs/openapi-server.yaml`.
 
 ### Fixed
+- **Mapping a non-zero input track now routes frames when lower tracks are
+  unconsumed.** When an edge referenced e.g. `in0:a:2` but tracks `a:0`/`a:1`
+  were declared yet read by no edge, `dropUnconsumedSelections` pruned the
+  demux selection down to the single consumed stream — after which the source
+  handler numbered the survivor by its position in the pruned set (`0`), so the
+  `a:2` edge matched nothing and routed zero frames (a `whisper_stt`/encoder/
+  copy consumer silently received no audio). Edge track numbers are now
+  resolved against each stream's stable file-rank (`sourceResources.trackOf` /
+  `streamForTrack`), independent of pruning, in both the frame-routing and
+  stream-copy paths.
 - **Multi-stream output: a single stream's muxer error no longer deadlocks the
   whole pipeline.** The muxing sink runs one consumer goroutine per output
   stream, but built its consumer group with `errgroup.WithContext(ctx)` while
