@@ -80,6 +80,7 @@ import "C"
 import (
 	"context"
 	"fmt"
+	"math"
 	"runtime"
 	"runtime/cgo"
 	"strings"
@@ -150,6 +151,11 @@ func (m *WhisperModel) Full(ctx context.Context, samples []float32, opts Whisper
 	}
 	if len(samples) == 0 {
 		return nil, nil
+	}
+	if len(samples) > math.MaxInt32 {
+		// whisper_full takes the sample count as a C int; guard the narrowing
+		// rather than passing a wrapped/negative count (~37 h at 16 kHz mono).
+		return nil, fmt.Errorf("whisper: too many samples (%d exceeds int32 max)", len(samples))
 	}
 	if ctx == nil {
 		ctx = context.Background()

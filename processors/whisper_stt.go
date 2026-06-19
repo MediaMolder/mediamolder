@@ -108,6 +108,13 @@ func (p *WhisperSTT) Init(params map[string]any) error {
 	if p.opts.Threads == 0 {
 		p.opts.Threads = runtime.NumCPU()
 	}
+	// Validate the sidecar path up front so a bad output_file fails Init rather
+	// than wasting an entire (possibly many-minute) transcription before Close.
+	if p.outputFile != "" {
+		if _, err := sanitizeOutputPath(p.outputFile); err != nil {
+			return err
+		}
+	}
 
 	model, err := av.NewWhisperModel(modelPath)
 	if err != nil {
@@ -128,46 +135,82 @@ func (p *WhisperSTT) Process(frame *av.Frame, ctx ProcessorContext) (*av.Frame, 
 	if frame == nil || ctx.MediaType != av.MediaTypeAudio {
 		return frame, nil, nil
 	}
+	if frame.SampleRate() <= 0 || frame.Channels() <= 0 {
+		return frame, nil, nil // not a usable audio frame yet
+	}
+	if err := p.accumulate(frame); err != nil {
+		return nil, nil, err
+	}
+	return frame, nil, nil
+}
+
+// accumulate resamples frame to 16 kHz mono float32 and appends the samples.
+// It resamples from a ref-counted clone so canonicalizing the clone's channel
+// layout for libswresample never mutates the frame we pass through downstream,
+// and it rebuilds the resampler if the input's rate/format/layout changes
+// mid-stream (e.g. concatenated sources).
+func (p *WhisperSTT) accumulate(frame *av.Frame) error {
+	in, err := frame.Clone()
+	if err != nil {
+		return fmt.Errorf("whisper_stt: clone: %w", err)
+	}
+	defer in.Close()
+	// Canonicalize the clone's channel layout: some decoders emit an
+	// "unspecified" layout (channel count set, no order/mask) which
+	// swr_convert_frame rejects against the resampler's default-mask layout
+	// with AVERROR_INPUT_CHANGED. Done on the clone, not the pass-through frame.
+	in.SetAudioParams(in.SampleFmt(), in.Channels(), in.SampleRate())
 
 	if p.resampler == nil {
-		inRate, inFmt, inCh := frame.SampleRate(), frame.SampleFmt(), frame.Channels()
-		if inRate <= 0 || inCh <= 0 {
-			return frame, nil, nil // not a usable audio frame yet
+		if err := p.buildResampler(in); err != nil {
+			return err
 		}
-		r, err := av.NewResampler(av.ResamplerOptions{
-			InSampleRate:  inRate,
-			InSampleFmt:   inFmt,
-			InChannels:    inCh,
-			OutSampleRate: av.WhisperSampleRate,
-			OutSampleFmt:  av.SampleFmtFLTP,
-			OutChannels:   1,
-		})
-		if err != nil {
-			return nil, nil, fmt.Errorf("whisper_stt: resampler: %w", err)
-		}
-		p.resampler = r
 	}
+	if err := p.resampleAppend(in); err != nil {
+		// The input parameters changed since the resampler was built: rebuild
+		// from the current frame and retry once.
+		p.resampler.Close()
+		p.resampler = nil
+		if err := p.buildResampler(in); err != nil {
+			return err
+		}
+		if err := p.resampleAppend(in); err != nil {
+			return fmt.Errorf("whisper_stt: resample: %w", err)
+		}
+	}
+	return nil
+}
 
+func (p *WhisperSTT) buildResampler(in *av.Frame) error {
+	r, err := av.NewResampler(av.ResamplerOptions{
+		InSampleRate:  in.SampleRate(),
+		InSampleFmt:   in.SampleFmt(),
+		InChannels:    in.Channels(),
+		OutSampleRate: av.WhisperSampleRate,
+		OutSampleFmt:  av.SampleFmtFLTP,
+		OutChannels:   1,
+	})
+	if err != nil {
+		return fmt.Errorf("whisper_stt: resampler: %w", err)
+	}
+	p.resampler = r
+	return nil
+}
+
+func (p *WhisperSTT) resampleAppend(in *av.Frame) error {
 	out, err := av.AllocFrame()
 	if err != nil {
-		return nil, nil, fmt.Errorf("whisper_stt: alloc: %w", err)
+		return fmt.Errorf("whisper_stt: alloc: %w", err)
 	}
 	defer out.Close()
 	out.SetAudioParams(av.SampleFmtFLTP, 1, av.WhisperSampleRate)
-	// Normalize the input frame's channel layout to the canonical default for
-	// its channel count. Some decoders emit an "unspecified" layout (channel
-	// count set, no order/mask), which swr_convert_frame rejects against the
-	// resampler's default-mask layout with AVERROR_INPUT_CHANGED.
-	if ch := frame.Channels(); ch > 0 {
-		frame.SetAudioParams(frame.SampleFmt(), ch, frame.SampleRate())
-	}
-	if err := p.resampler.ConvertFrame(out, frame); err != nil {
-		return nil, nil, fmt.Errorf("whisper_stt: resample: %w", err)
+	if err := p.resampler.ConvertFrame(out, in); err != nil {
+		return err
 	}
 	if n := out.NbSamples(); n > 0 {
 		p.samples = append(p.samples, out.SamplePlaneF32(0)...)
 	}
-	return frame, nil, nil
+	return nil
 }
 
 func (p *WhisperSTT) Close() error {
@@ -175,10 +218,11 @@ func (p *WhisperSTT) Close() error {
 
 	var firstErr error
 	if p.model != nil && len(p.samples) > 0 {
-		// Transcribe with a fresh context: Close runs at end-of-stream, when the
-		// per-frame run context (p.runCtx) is already Done — passing it would make
-		// whisper's abort callback fire on the first encode ("failed to encode")
-		// and drop the entire transcript on a normally-completed job.
+		// Transcribe with a fresh context. Close runs at end-of-stream, where the
+		// per-frame ProcessorContext is already cancelled; passing a Done context
+		// would make whisper's abort callback fire on the first encode and drop
+		// the whole transcript of a normally-completed job. (Cancelling a long
+		// transcription mid-flight is therefore not supported — a v1 trade-off.)
 		ctx := context.Background()
 		progress := func(pct int) {
 			if p.emit != nil {

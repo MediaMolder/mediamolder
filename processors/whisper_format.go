@@ -57,28 +57,40 @@ func formatTimestamp(d time.Duration, comma bool) string {
 	return fmt.Sprintf("%02d:%02d:%02d%s%03d", h, m, s, sep, ms)
 }
 
-// formatSRT renders segments as SubRip (.srt) cues.
+// formatSRT renders segments as SubRip (.srt) cues. Empty/whitespace-only
+// segments (whisper emits them on silence/music) are skipped so cue numbering
+// stays sequential and matches the TXT/JSON/event outputs.
 func formatSRT(segs []whisperSeg) []byte {
 	var b strings.Builder
-	for i, sg := range segs {
+	n := 0
+	for _, sg := range segs {
+		text := strings.TrimSpace(sg.Text)
+		if text == "" {
+			continue
+		}
+		n++
 		fmt.Fprintf(&b, "%d\n%s --> %s\n%s\n\n",
-			i+1,
+			n,
 			formatTimestamp(sg.Start, true),
 			formatTimestamp(sg.End, true),
-			strings.TrimSpace(sg.Text))
+			text)
 	}
 	return []byte(b.String())
 }
 
-// formatVTT renders segments as WebVTT (.vtt) cues.
+// formatVTT renders segments as WebVTT (.vtt) cues, skipping empty segments.
 func formatVTT(segs []whisperSeg) []byte {
 	var b strings.Builder
 	b.WriteString("WEBVTT\n\n")
 	for _, sg := range segs {
+		text := strings.TrimSpace(sg.Text)
+		if text == "" {
+			continue
+		}
 		fmt.Fprintf(&b, "%s --> %s\n%s\n\n",
 			formatTimestamp(sg.Start, false),
 			formatTimestamp(sg.End, false),
-			strings.TrimSpace(sg.Text))
+			text)
 	}
 	return []byte(b.String())
 }
@@ -102,10 +114,14 @@ func formatTXT(segs []whisperSeg) []byte {
 func formatJSON(segs []whisperSeg) []byte {
 	out := make([]transcriptSegmentJSON, 0, len(segs))
 	for _, sg := range segs {
+		text := strings.TrimSpace(sg.Text)
+		if text == "" {
+			continue
+		}
 		out = append(out, transcriptSegmentJSON{
 			Start:      sg.Start.Seconds(),
 			End:        sg.End.Seconds(),
-			Text:       strings.TrimSpace(sg.Text),
+			Text:       text,
 			Confidence: sg.Confidence,
 		})
 	}
@@ -138,12 +154,16 @@ func sanitizeOutputPath(path string) (string, error) {
 	if !filepath.IsAbs(path) {
 		return "", fmt.Errorf("whisper_stt: output_file must be an absolute path, got %q", path)
 	}
-	fsRoot := string(filepath.Separator)
-	rel, relErr := filepath.Rel(fsRoot, path)
+	// Confine to the path's own filesystem root — the volume on Windows
+	// ("C:\\"), "/" on Unix — so filepath.Rel can express the path and a
+	// tainted value never reaches os.WriteFile directly (CWE-022). Using "/"
+	// unconditionally would reject every absolute Windows path.
+	root := filepath.VolumeName(path) + string(filepath.Separator)
+	rel, relErr := filepath.Rel(root, path)
 	if relErr != nil || strings.HasPrefix(rel, "..") {
 		return "", fmt.Errorf("whisper_stt: output_file %q is not within an accessible filesystem root", path)
 	}
-	return filepath.Join(fsRoot, rel), nil
+	return filepath.Join(root, rel), nil
 }
 
 // writeTranscript renders segs in the given format and writes them to path.

@@ -87,6 +87,44 @@ func TestFormatJSON(t *testing.T) {
 	}
 }
 
+func TestFormattersSkipEmptySegments(t *testing.T) {
+	// whisper emits empty/whitespace segments on silence/music; SRT/VTT/JSON
+	// must skip them (matching TXT and the event emit) and SRT must renumber.
+	segs := []whisperSeg{
+		{Start: ms(0), End: ms(1000), Text: "first", Confidence: 0.9},
+		{Start: ms(1000), End: ms(2000), Text: "   ", Confidence: 0.1},
+		{Start: ms(2000), End: ms(3000), Text: "second", Confidence: 0.8},
+	}
+	wantSRT := "1\n00:00:00,000 --> 00:00:01,000\nfirst\n\n" +
+		"2\n00:00:02,000 --> 00:00:03,000\nsecond\n\n"
+	if got := string(formatSRT(segs)); got != wantSRT {
+		t.Errorf("formatSRT did not skip empty / renumber:\n got: %q\nwant: %q", got, wantSRT)
+	}
+	wantVTT := "WEBVTT\n\n" +
+		"00:00:00.000 --> 00:00:01.000\nfirst\n\n" +
+		"00:00:02.000 --> 00:00:03.000\nsecond\n\n"
+	if got := string(formatVTT(segs)); got != wantVTT {
+		t.Errorf("formatVTT did not skip empty:\n got: %q\nwant: %q", got, wantVTT)
+	}
+	var out []transcriptSegmentJSON
+	if err := json.Unmarshal(formatJSON(segs), &out); err != nil {
+		t.Fatalf("formatJSON: %v", err)
+	}
+	if len(out) != 2 || out[0].Text != "first" || out[1].Text != "second" {
+		t.Errorf("formatJSON did not skip empty segment: %+v", out)
+	}
+}
+
+func TestSanitizeOutputPathRejectsRelative(t *testing.T) {
+	if _, err := sanitizeOutputPath("out.srt"); err == nil {
+		t.Fatal("expected error for a relative output path")
+	}
+	abs := filepath.Join(t.TempDir(), "t.srt")
+	if got, err := sanitizeOutputPath(abs); err != nil || got != filepath.Clean(abs) {
+		t.Fatalf("sanitizeOutputPath(%q) = (%q, %v), want (%q, nil)", abs, got, err, filepath.Clean(abs))
+	}
+}
+
 func TestFormatTranscriptInvalid(t *testing.T) {
 	if _, err := formatTranscript("docx", sampleSegs()); err == nil {
 		t.Fatal("expected error for unknown format")

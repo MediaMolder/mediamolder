@@ -149,11 +149,15 @@ binary is built with the `with_whisper` tag.)
 
 ## Reading the transcript
 
-Independent of `output_file`, every segment is published as a `Metadata` event
-on the bus with `Custom["start"|"end"|"text"|"confidence"]` and a human
-`LogMessage` (`[mm:ss.mmm] text`), shown in the GUI log panel / CLI. Chain an
-`events` edge to a [`metadata_file_writer`](go-processor-nodes.md#metadata_file_writer)
-to capture the raw event stream as JSONL.
+The **`output_file`** sidecar is the authoritative transcript — `whisper_stt`
+writes it directly at end-of-stream in your chosen `output_format`, independent
+of any graph wiring.
+
+`whisper_stt` also posts each segment (and transcription progress) to the graph
+event bus as `Metadata` — `Custom["start"|"end"|"text"|"confidence"]` plus a
+`[mm:ss.mmm] text` `LogMessage` — surfaced in the GUI log panel and via the
+CLI's `--metadata-out <file|->` flag (JSON Lines). Use those for a live view;
+rely on `output_file` for the result.
 
 ## How it works
 
