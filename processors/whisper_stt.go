@@ -54,8 +54,7 @@ type WhisperSTT struct {
 	outputFile   string
 	outputFormat string
 
-	emit   MetadataEmitter
-	runCtx context.Context // last per-frame context, used to cancel Close inference
+	emit MetadataEmitter
 }
 
 func (p *WhisperSTT) Init(params map[string]any) error {
@@ -126,7 +125,6 @@ func (p *WhisperSTT) SetMetadataEmitter(emit MetadataEmitter) {
 }
 
 func (p *WhisperSTT) Process(frame *av.Frame, ctx ProcessorContext) (*av.Frame, *Metadata, error) {
-	p.runCtx = ctx.Context
 	if frame == nil || ctx.MediaType != av.MediaTypeAudio {
 		return frame, nil, nil
 	}
@@ -156,6 +154,13 @@ func (p *WhisperSTT) Process(frame *av.Frame, ctx ProcessorContext) (*av.Frame, 
 	}
 	defer out.Close()
 	out.SetAudioParams(av.SampleFmtFLTP, 1, av.WhisperSampleRate)
+	// Normalize the input frame's channel layout to the canonical default for
+	// its channel count. Some decoders emit an "unspecified" layout (channel
+	// count set, no order/mask), which swr_convert_frame rejects against the
+	// resampler's default-mask layout with AVERROR_INPUT_CHANGED.
+	if ch := frame.Channels(); ch > 0 {
+		frame.SetAudioParams(frame.SampleFmt(), ch, frame.SampleRate())
+	}
 	if err := p.resampler.ConvertFrame(out, frame); err != nil {
 		return nil, nil, fmt.Errorf("whisper_stt: resample: %w", err)
 	}
@@ -170,10 +175,11 @@ func (p *WhisperSTT) Close() error {
 
 	var firstErr error
 	if p.model != nil && len(p.samples) > 0 {
-		ctx := p.runCtx
-		if ctx == nil {
-			ctx = context.Background()
-		}
+		// Transcribe with a fresh context: Close runs at end-of-stream, when the
+		// per-frame run context (p.runCtx) is already Done — passing it would make
+		// whisper's abort callback fire on the first encode ("failed to encode")
+		// and drop the entire transcript on a normally-completed job.
+		ctx := context.Background()
 		progress := func(pct int) {
 			if p.emit != nil {
 				p.emit(&Metadata{Progress: true, LogMessage: fmt.Sprintf("whisper: transcribing %d%%", pct)})
