@@ -318,6 +318,24 @@ the `twelvelabs_*` nodes need a [TwelveLabs](https://twelvelabs.io) API key via
 `~/.config/mediamolder/twelvelabs.json`. See the
 [Vidi 2.5](../vidi-guide.md) and [TwelveLabs](../twelvelabs.md) guides.
 
+### Combining nodes in one binary
+
+The build tags stack, so one binary can carry several nodes. Append the extra
+node tags via `EXTRA_TAGS`:
+
+```bash
+# GUI single-binary: static FFmpeg + whisper_stt + yolo_v8
+make build-gui-whisper EXTRA_TAGS=with_onnx
+
+# Headless (CLI) build with the same nodes
+make build-whisper EXTRA_TAGS=with_onnx
+```
+
+Each enabled node keeps its own runtime requirement: libwhisper for
+`whisper_stt` (resolved by the embedded rpath) and the ONNX Runtime shared
+library + `ONNXRUNTIME_SHARED_LIBRARY_PATH` for `yolo_v8` (install both per the
+sections above before running such a node).
+
 ## Troubleshooting
 
 - **`error: gcc not found`** or **`undefined: cmdGUI`** — `gcc` is missing.

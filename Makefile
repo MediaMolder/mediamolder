@@ -37,10 +37,13 @@ test-static:
 # The rpath is passed via the Go linker's -extldflags (applied once to the
 # final link) rather than CGO_LDFLAGS (recorded per-cgo-package, which would
 # emit "duplicate -rpath ... ignored" warnings on the multi-cgo binary).
+# EXTRA_TAGS appends more opt-in node tags to any whisper target, so one binary
+# can carry several nodes, e.g.  make build-whisper EXTRA_TAGS=with_onnx.
 WHISPER_PREFIX ?= /usr/local
+comma := ,
 build-whisper:
 	CGO_LDFLAGS_ALLOW='.*' CGO_LDFLAGS='$(CGO_LDFLAGS_NODUP)' \
-	  go build -tags=with_whisper -ldflags='-extldflags "-Wl,-rpath,$(WHISPER_PREFIX)/lib"' ./...
+	  go build -tags=with_whisper$(if $(EXTRA_TAGS),$(comma)$(EXTRA_TAGS)) -ldflags='-extldflags "-Wl,-rpath,$(WHISPER_PREFIX)/lib"' ./...
 
 # Set WHISPER_TEST_MODEL to a ggml model to exercise the integration tests;
 # without it the tagged tests skip.
@@ -192,7 +195,6 @@ build-gui-static: frontend-build
 # run a yolo_v8 node, via ONNXRUNTIME_SHARED_LIBRARY_PATH.) The "whisperstatic"
 # tag (independent of ffstatic) links libwhisper statically instead — that needs
 # a static whisper.cpp build.
-comma := ,
 build-gui-whisper: frontend-build
 	CGO_LDFLAGS_ALLOW='.*' CGO_LDFLAGS='$(CGO_LDFLAGS_NODUP)' \
 	  go build -tags=ffstatic,with_whisper$(if $(EXTRA_TAGS),$(comma)$(EXTRA_TAGS)) \

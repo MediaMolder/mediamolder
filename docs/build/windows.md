@@ -278,27 +278,31 @@ cmake --build whisper.cpp/build -j
 cmake --install whisper.cpp/build --prefix /mingw64   # puts whisper.pc on PKG_CONFIG_PATH
 ```
 
-Then build MediaMolder with the tag. The whisper link flags use `pkg-config`,
-so build against **shared** FFmpeg (omit `ffstatic`):
+Then build MediaMolder with the `with_whisper` tag. It links libwhisper
+dynamically via `pkg-config`, so it works with or without `ffstatic` — combine
+it with the static-FFmpeg tags from §3 for a static-FFmpeg + dynamic-whisper
+binary:
 
 ```powershell
-go build -tags=with_whisper -o mediamolder.exe .\cmd\mediamolder\
+go build -tags "ffstatic,ffstatic_windows_msys2,with_whisper" -o mediamolder.exe .\cmd\mediamolder\
 ```
 
-Fetch a model (you supply this — MediaMolder ships none) and point the node's
-`model` param at it; set `WHISPER_TEST_MODEL` to run the gated tests:
+At runtime, put `whisper.dll` (and the ggml DLLs) on `PATH` or next to
+`mediamolder.exe` — Windows has no rpath. Fetch a model (you supply this —
+MediaMolder ships none), point the node's `model` param at it, and set
+`WHISPER_TEST_MODEL` to run the gated tests:
 
 ```powershell
 $env:WHISPER_TEST_MODEL = "C:\path\to\ggml-base.en.bin"
-go test -tags=with_whisper .\av\... .\processors\...
+go test -tags "with_whisper" .\av\... .\processors\...
 ```
 
-> **Note:** static whisper linking is wired for macOS/Linux only
+> **Note:** `with_whisper` links libwhisper **dynamically** and is independent
+> of `ffstatic` (FFmpeg). The separate `whisperstatic` tag (fully static
+> libwhisper) is wired for macOS/Linux only
 > ([av/cgo_flags_whisper_static.go](../../av/cgo_flags_whisper_static.go) has no
-> Windows branch). On Windows, build the `whisper_stt` node against shared
-> FFmpeg via the `pkg-config` path above; combining `ffstatic` with
-> `with_whisper` is not currently supported here. Usage, params, and output
-> formats: [Whisper Speech-to-Text Guide](../whisper-stt-guide.md).
+> Windows branch) — do not use it here. Usage, params, and output formats:
+> [Whisper Speech-to-Text Guide](../whisper-stt-guide.md).
 
 ### yolo_v8 (ONNX Runtime)
 
@@ -322,6 +326,21 @@ the `twelvelabs_*` nodes need a [TwelveLabs](https://twelvelabs.io) API key via
 `TWELVELABS_API_KEY` (`$env:TWELVELABS_API_KEY`), the `api_key` param, or
 `%USERPROFILE%\.config\mediamolder\twelvelabs.json`. See the
 [Vidi 2.5](../vidi-guide.md) and [TwelveLabs](../twelvelabs.md) guides.
+
+### Combining nodes in one binary
+
+The build tags stack, so one binary can carry several nodes. The `Makefile` is
+Unix-only, so combine the tags directly — static FFmpeg + `whisper_stt` +
+`yolo_v8`:
+
+```powershell
+go build -tags "ffstatic,ffstatic_windows_msys2,with_whisper,with_onnx" -o mediamolder.exe .\cmd\mediamolder\
+```
+
+For a GUI single-binary, build and embed the frontend first (see §4), then run
+the same command. Each enabled node keeps its own runtime requirement:
+`whisper.dll` + ggml DLLs for `whisper_stt`, and `onnxruntime.dll` +
+`ONNXRUNTIME_SHARED_LIBRARY_PATH` for `yolo_v8` — on `PATH` or beside the exe.
 
 ## Troubleshooting linker errors
 
