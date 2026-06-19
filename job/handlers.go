@@ -27,7 +27,15 @@ type sourceResources struct {
 	decoders    map[int]av.FrameDecoder            // keyed by stream index; sw or hw decoder
 	subDecoders map[int]*av.SubtitleDecoderContext // keyed by stream index
 	streams     map[int]av.StreamInfo              // keyed by stream index
-	cfg         Input
+	// trackOf maps a stream's absolute index to its 0-based rank among streams
+	// of the same media type in the FULL input file (file order), not within
+	// the demuxed selection. Edge endpoints address streams by this file-rank
+	// track number ("a:2" = the third audio stream), so routing must resolve
+	// against it rather than the position inside `streams` — which
+	// dropUnconsumedSelections may prune, renumbering a surviving higher track
+	// down to 0 and starving edges that reference it.
+	trackOf map[int]int
+	cfg     Input
 	// mediaDuration is the longest declared duration across the
 	// selected input streams (0 for live / unknown). Cached at
 	// open-time so handleSource can publish it via the metrics
@@ -105,6 +113,21 @@ func (s *sourceResources) Close() {
 		s.concatCleanup()
 		s.concatCleanup = nil
 	}
+}
+
+// streamForTrack resolves an edge endpoint's (media type, track) to the
+// absolute index of the matching demuxed stream. The track number is the
+// stream's stable file-rank (trackOf), so it addresses the same physical
+// stream regardless of which streams dropUnconsumedSelections pruned from the
+// demux selection — e.g. "a:2" always means the third audio stream, even when
+// it is the only one kept. Returns ok=false when no demuxed stream matches.
+func (s *sourceResources) streamForTrack(mt av.MediaType, track int) (int, av.StreamInfo, bool) {
+	for idx, si := range s.streams {
+		if si.Type == mt && s.trackOf[idx] == track {
+			return idx, si, true
+		}
+	}
+	return 0, av.StreamInfo{}, false
 }
 
 // muxWriter is the subset of *av.OutputFormatContext used by sinkWriter

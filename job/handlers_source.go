@@ -38,26 +38,9 @@ func (r *graphRunner) handleSource(ctx context.Context, node *graph.Node, outs [
 	// streamIdxToCopyChans[absIdx] = outbound channel indices that
 	//   want raw packets forwarded from the stream at position absIdx.
 	//
-	// Build a (MediaType, trackPos) → absStreamIdx map first by
-	// sorting selected stream indices per type; the Nth index in
-	// ascending order is track N.
-	typeStreamsSorted := make(map[av.MediaType][]int)
-	for idx, si := range src.streams {
-		typeStreamsSorted[si.Type] = append(typeStreamsSorted[si.Type], idx)
-	}
-	for t := range typeStreamsSorted {
-		sort.Ints(typeStreamsSorted[t])
-	}
-	type mtTrack struct {
-		mt    av.MediaType
-		track int
-	}
-	trackToStreamIdx := make(map[mtTrack]int)
-	for mt, indices := range typeStreamsSorted {
-		for trackPos, streamIdx := range indices {
-			trackToStreamIdx[mtTrack{mt, trackPos}] = streamIdx
-		}
-	}
+	// Edges address streams by file-rank track number (see
+	// sourceResources.streamForTrack), resolved per edge below.
+	//
 	// portEdgeTrack extracts the 0-based track number from a FromPort
 	// key.  "a:6" → 6, "v:0" → 0, "default" or bare type letter → 0.
 	portEdgeTrack := func(fromPort string) int {
@@ -92,7 +75,7 @@ func (r *graphRunner) handleSource(ctx context.Context, node *graph.Node, outs [
 			continue
 		}
 		trackN := portEdgeTrack(e.FromPort)
-		streamIdx, ok := trackToStreamIdx[mtTrack{mt, trackN}]
+		streamIdx, _, ok := src.streamForTrack(mt, trackN)
 		if !ok {
 			continue
 		}
@@ -793,6 +776,20 @@ func (r *graphRunner) openSource(cfg Input, srcNode *graph.Node, decOpts av.Deco
 	for _, si := range allStreams {
 		streamByIdx[si.Index] = si
 	}
+	// Per-type file-rank for every stream in the input, computed over the FULL
+	// stream list in file order. Edge track numbers ("a:2") are resolved
+	// against this so they map to the same stream even after unconsumed streams
+	// are pruned from the demux selection (dropUnconsumedSelections).
+	trackOf := make(map[int]int, len(allStreams))
+	{
+		ordered := append([]av.StreamInfo(nil), allStreams...)
+		sort.Slice(ordered, func(i, j int) bool { return ordered[i].Index < ordered[j].Index })
+		perType := make(map[av.MediaType]int)
+		for _, si := range ordered {
+			trackOf[si.Index] = perType[si.Type]
+			perType[si.Type]++
+		}
+	}
 	for _, idx := range selectedIdx {
 		si := streamByIdx[idx]
 		typ := si.Type.String()
@@ -962,6 +959,7 @@ func (r *graphRunner) openSource(cfg Input, srcNode *graph.Node, decOpts av.Deco
 		decoders:            decoders,
 		subDecoders:         subDecoders,
 		streams:             streams,
+		trackOf:             trackOf,
 		cfg:                 cfg,
 		mediaDuration:       mediaDuration,
 		stopPTSus:           timing.stopTimestampUS(input.StartTime()),
@@ -1011,25 +1009,11 @@ func (r *graphRunner) copySourceFor(copyNode *graph.Node) (*av.InputFormatContex
 		}
 	}
 
-	// Collect and sort stream indices for deterministic resolution when
-	// there are multiple streams of the same type (e.g. several attachment
-	// streams or audio tracks).
-	indices := make([]int, 0, len(src.streams))
-	for idx := range src.streams {
-		indices = append(indices, idx)
-	}
-	sort.Ints(indices)
-
-	track := 0
-	for _, idx := range indices {
-		si := src.streams[idx]
-		if si.Type != mt {
-			continue
-		}
-		if track == wantTrack {
-			return src.input, idx, si.TimeBase, nil
-		}
-		track++
+	// Resolve wantTrack against the input's stable file-rank numbering so it
+	// maps to the same stream regardless of which streams were pruned from the
+	// demux selection (dropUnconsumedSelections).
+	if idx, si, ok := src.streamForTrack(mt, wantTrack); ok {
+		return src.input, idx, si.TimeBase, nil
 	}
 	return nil, 0, [2]int{}, fmt.Errorf("copy node %q: source %q has no %v stream (track %d)", copyNode.ID, from.ID, in.Type, wantTrack)
 }
