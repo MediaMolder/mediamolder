@@ -186,9 +186,15 @@ build-gui-static: frontend-build
 # build-gui-static + the whisper_stt node: static FFmpeg plus a dynamic
 # libwhisper (via pkg-config). Requires libwhisper installed (see
 # docs/whisper-stt-guide.md); override WHISPER_PREFIX if it is not under
-# /usr/local. The "whisperstatic" tag (independent of ffstatic) would link
-# libwhisper statically instead — that needs a static whisper.cpp build.
+# /usr/local. Append more opt-in node tags with EXTRA_TAGS, e.g.
+#   make build-gui-whisper EXTRA_TAGS=with_onnx      # also compile in yolo_v8
+# (ONNX Runtime is loaded at runtime, so it is not needed to build — only to
+# run a yolo_v8 node, via ONNXRUNTIME_SHARED_LIBRARY_PATH.) The "whisperstatic"
+# tag (independent of ffstatic) links libwhisper statically instead — that needs
+# a static whisper.cpp build.
+comma := ,
 build-gui-whisper: frontend-build
 	CGO_LDFLAGS_ALLOW='.*' CGO_LDFLAGS='$(CGO_LDFLAGS_NODUP)' \
-	  go build -tags=ffstatic,with_whisper -ldflags='-extldflags "-Wl,-rpath,$(WHISPER_PREFIX)/lib"' \
+	  go build -tags=ffstatic,with_whisper$(if $(EXTRA_TAGS),$(comma)$(EXTRA_TAGS)) \
+	  -ldflags='-extldflags "-Wl,-rpath,$(WHISPER_PREFIX)/lib"' \
 	  -o mediamolder ./cmd/mediamolder

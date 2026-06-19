@@ -130,6 +130,19 @@ Full per-node setup lives in the feature guides:
 [Whisper](whisper-stt-guide.md), [YOLOv8](yolov8-guide.md),
 [Vidi 2.5](vidi-guide.md), [TwelveLabs](twelvelabs.md).
 
+**Combining nodes.** The build tags stack — enable several opt-in nodes at once
+by combining them, e.g. `-tags=ffstatic,with_whisper,with_onnx` (static FFmpeg +
+`whisper_stt` + `yolo_v8`). For a GUI single-binary, append the extra tags to
+`build-gui-whisper`:
+
+```bash
+make build-gui-whisper EXTRA_TAGS=with_onnx
+```
+
+ONNX Runtime is loaded at runtime, so `with_onnx` adds nothing to the build
+besides the tag; you only need the onnxruntime shared library (and
+`ONNXRUNTIME_SHARED_LIBRARY_PATH`) to actually *run* a `yolo_v8` node.
+
 ## Frontend embedding model
 
 The GUI is a React/Vite app. `make frontend-build` compiles
