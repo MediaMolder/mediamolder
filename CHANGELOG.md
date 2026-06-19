@@ -7,6 +7,20 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- **`whisper_stt` speech-to-text node.** A new `go_processor` that transcribes
+  an audio stream to timestamped text locally with
+  [whisper.cpp](https://github.com/ggml-org/whisper.cpp) — offline, no network.
+  It auto-resamples the input to 16 kHz mono, buffers it during processing, and
+  runs a single transcription pass at end-of-stream while the audio passes
+  through unchanged; each segment is emitted as `Metadata` on the event bus and
+  an optional sidecar transcript is written in SRT / VTT / JSON / TXT. New thin
+  CGO wrapper `av.WhisperModel` over `whisper.h` (with progress/abort callbacks
+  bridged via `runtime/cgo.Handle`) and `processors/whisper_stt.go`, gated
+  behind the `with_whisper` build tag; the SRT/VTT/JSON/TXT formatters in
+  `processors/whisper_format.go` are untagged and unit-tested without
+  libwhisper. Build with `make build-whisper`. MediaMolder ships neither the
+  library nor any model — you supply both. See `docs/whisper-stt-guide.md`.
+
 - **`scene_change_mc` motion-compensated scene detector.** A new
   `go_processor` that detects hard cuts and — uniquely among the detectors —
   **cross-dissolves and fades with frame-accurate start/end bounds**. It runs

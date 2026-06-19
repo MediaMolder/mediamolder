@@ -1,6 +1,6 @@
 .PHONY: build build-static test test-static lint bench bench-static clean \
         frontend-install frontend-dev frontend-build gui gui-dev build-gui build-gui-static \
-        check-deps build-debug build-gui-debug
+        check-deps build-debug build-gui-debug build-whisper test-whisper
 
 # Detect macOS: Apple ld warns about duplicate -l flags when two CGO packages
 # (av and PySceneDetect/internal) both link -lavutil and -lswscale. Pass
@@ -26,6 +26,20 @@ test:
 test-static:
 	CGO_LDFLAGS_ALLOW='.*' CGO_LDFLAGS='$(CGO_LDFLAGS_NODUP)' \
 	  go test -tags=ffstatic ./...
+
+# Whisper speech-to-text (whisper_stt node). Requires libwhisper: either a
+# system install with a pkg-config file (whisper.pc), or a local whisper.cpp
+# source tree at ../../whisper.cpp built with CMake (combine with ffstatic).
+# We ship neither the library nor any model — see docs/whisper-stt-guide.md.
+build-whisper:
+	CGO_LDFLAGS_ALLOW='.*' CGO_LDFLAGS='$(CGO_LDFLAGS_NODUP)' \
+	  go build -tags=with_whisper ./...
+
+# Set WHISPER_TEST_MODEL to a ggml model to exercise the integration tests;
+# without it the tagged tests skip.
+test-whisper:
+	CGO_LDFLAGS_ALLOW='.*' CGO_LDFLAGS='$(CGO_LDFLAGS_NODUP)' \
+	  go test -tags=with_whisper ./av/... ./processors/...
 
 lint:
 	golangci-lint run ./...
