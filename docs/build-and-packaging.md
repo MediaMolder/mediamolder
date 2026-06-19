@@ -100,6 +100,9 @@ building or running, including environment variables.
 
 ### Example: enable `whisper_stt`
 
+The whisper.cpp steps run from any workspace dir; the `make` steps run from the
+**MediaMolder repo root** (`make build-whisper` only exists in its Makefile).
+
 ```bash
 # 1. Clone + build whisper.cpp (produces libwhisper + whisper.pc on install)
 git clone https://github.com/ggml-org/whisper.cpp
@@ -109,16 +112,18 @@ sudo cmake --install whisper.cpp/build     # whisper.pc's prefix is /usr/local (
 # no-sudo: reconfigure -DCMAKE_INSTALL_PREFIX="$HOME/.local", rebuild, install,
 #   then export PKG_CONFIG_PATH="$HOME/.local/lib/pkgconfig:$PKG_CONFIG_PATH"
 
-# 2. Build MediaMolder with the node compiled in. whisper.cpp's libs use @rpath,
-#    so build-whisper embeds -Wl,-rpath,WHISPER_PREFIX/lib (default /usr/local).
+# 2. Fetch a model (you supply this — MediaMolder ships none) and note its path
+./whisper.cpp/models/download-ggml-model.sh base.en
+MODEL="$PWD/whisper.cpp/models/ggml-base.en.bin"
+
+# 3. Build MediaMolder with the node compiled in — FROM THE MEDIAMOLDER REPO ROOT.
+#    whisper.cpp's libs use @rpath, so build-whisper embeds
+#    -Wl,-rpath,WHISPER_PREFIX/lib (default /usr/local).
+cd /path/to/mediamolder
 make build-whisper                          # custom prefix → make build-whisper WHISPER_PREFIX="$HOME/.local"
 
-# 3. Fetch a model (you supply this — MediaMolder ships none)
-./whisper.cpp/models/download-ggml-model.sh base.en
-
-# 4. Point the node at the model; run the gated tests against it
-export WHISPER_TEST_MODEL=$PWD/whisper.cpp/models/ggml-base.en.bin
-make test-whisper
+# 4. Run the gated tests against the model
+WHISPER_TEST_MODEL="$MODEL" make test-whisper
 ```
 
 Full per-node setup lives in the feature guides:

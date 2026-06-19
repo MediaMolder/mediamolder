@@ -57,17 +57,32 @@ Use the `.en` variants for English-only audio.
 
 ## Building with whisper support
 
-```bash
-# Dynamic linking (pkg-config finds FFmpeg + whisper):
-make build-whisper
-# or: CGO_LDFLAGS_ALLOW='.*' go build -tags=with_whisper ./...
+Run these from the **MediaMolder repo root** (`make build-whisper` lives in
+MediaMolder's Makefile, not whisper.cpp's). See the platform guides
+([macOS](build/macos.md), [Linux](build/linux.md), [Windows](build/windows.md))
+for installing libwhisper first.
 
-# Static FFmpeg + local whisper.cpp tree at ../../whisper.cpp:
+```bash
+cd /path/to/mediamolder
+
+# Dynamic linking (pkg-config finds FFmpeg + whisper). build-whisper embeds an
+# rpath to WHISPER_PREFIX/lib (default /usr/local) so whisper.cpp's @rpath libs
+# resolve at runtime:
+make build-whisper
+# custom install prefix → make build-whisper WHISPER_PREFIX="$HOME/.local"
+# or, by hand:
+#   CGO_LDFLAGS_ALLOW='.*' CGO_LDFLAGS='-Wl,-rpath,/usr/local/lib' \
+#     go build -tags=with_whisper ./...
+
+# Static FFmpeg + local whisper.cpp tree at ../../whisper.cpp (advanced — needs a
+# static whisper build, -DBUILD_SHARED_LIBS=OFF):
 CGO_LDFLAGS_ALLOW='.*' go build -tags=ffstatic,with_whisper ./...
 ```
 
 Without the tag, `whisper_stt` is simply not registered; a config that
-references it fails with `unknown processor "whisper_stt"`.
+references it fails with `unknown processor "whisper_stt"`. If `make
+build-whisper` reports `No rule to make target 'build-whisper'`, you're not in
+the MediaMolder repo root.
 
 ## Pipeline configuration
 

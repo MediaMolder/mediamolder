@@ -233,6 +233,10 @@ service. Install the prerequisites below **before** building or running.
 
 ### whisper_stt (whisper.cpp)
 
+Run the whisper.cpp steps from any workspace dir; run the `make` steps from
+the **MediaMolder repo root** (a different directory — `make build-whisper`
+only exists in MediaMolder's Makefile).
+
 ```bash
 brew install cmake                          # build tool for whisper.cpp
 
@@ -245,23 +249,25 @@ cmake --build whisper.cpp/build -j
 #    /usr/local, so installing there (needs sudo) makes pkg-config resolve:
 sudo cmake --install whisper.cpp/build
 #    No-sudo alternative — reconfigure to a writable prefix so whisper.pc and
-#    the rpath agree (use the SAME prefix when building in step 3):
+#    the rpath agree (use the SAME prefix when building in step 4):
 #      cmake -S whisper.cpp -B whisper.cpp/build -DCMAKE_INSTALL_PREFIX="$HOME/.local"
 #      cmake --build whisper.cpp/build -j && cmake --install whisper.cpp/build
 #      export PKG_CONFIG_PATH="$HOME/.local/lib/pkgconfig:$PKG_CONFIG_PATH"
 
-# 3. Build MediaMolder with the node compiled in. whisper.cpp's dylibs use
-#    @rpath, so build-whisper embeds an rpath to WHISPER_PREFIX/lib (default
-#    /usr/local) for runtime lookup — without it the binary links but fails to
-#    start ("Library not loaded: @rpath/libwhisper...").
+# 3. Fetch a model (you supply this — MediaMolder ships none) and note its path
+./whisper.cpp/models/download-ggml-model.sh base.en
+MODEL="$PWD/whisper.cpp/models/ggml-base.en.bin"
+
+# 4. Build MediaMolder with the node compiled in — RUN FROM THE MEDIAMOLDER REPO
+#    ROOT (not whisper.cpp). whisper.cpp's dylibs use @rpath, so build-whisper
+#    embeds an rpath to WHISPER_PREFIX/lib (default /usr/local) for runtime
+#    lookup — without it the binary links but fails to start
+#    ("Library not loaded: @rpath/libwhisper...").
+cd /path/to/mediamolder                     # your MediaMolder checkout
 make build-whisper                          # used ~/.local? → make build-whisper WHISPER_PREFIX="$HOME/.local"
 
-# 4. Fetch a model (you supply this — MediaMolder ships none)
-./whisper.cpp/models/download-ggml-model.sh base.en
-
-# 5. Run the gated tests against it
-export WHISPER_TEST_MODEL=$PWD/whisper.cpp/models/ggml-base.en.bin
-make test-whisper                           # same WHISPER_PREFIX override if you used one
+# 5. Run the gated tests against the model
+WHISPER_TEST_MODEL="$MODEL" make test-whisper   # same WHISPER_PREFIX override if you used one
 ```
 
 For a fully static whisper link, build whisper.cpp with `-DBUILD_SHARED_LIBS=OFF`
@@ -313,3 +319,6 @@ the `twelvelabs_*` nodes need a [TwelveLabs](https://twelvelabs.io) API key via
   built without an rpath. Rebuild with `make build-whisper` (it embeds
   `-Wl,-rpath,$(WHISPER_PREFIX)/lib`); pass the matching `WHISPER_PREFIX` if you
   installed somewhere other than `/usr/local`.
+- **`make: *** No rule to make target 'build-whisper'`** — you're not in the
+  MediaMolder repo root (a stray `Makefile`, e.g. whisper.cpp's, is being
+  read). `cd` into your MediaMolder checkout and run `make build-whisper` there.

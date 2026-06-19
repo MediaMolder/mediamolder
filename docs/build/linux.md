@@ -256,6 +256,10 @@ service. Install the prerequisites below **before** building or running.
 
 ### whisper_stt (whisper.cpp)
 
+Run the whisper.cpp steps from any workspace dir; run the `make` steps from
+the **MediaMolder repo root** (a different directory — `make build-whisper`
+only exists in MediaMolder's Makefile).
+
 ```bash
 sudo apt install cmake                       # Debian/Ubuntu  (Fedora/RHEL: sudo dnf install cmake)
 
@@ -270,24 +274,25 @@ sudo ldconfig                                # refresh the runtime linker cache 
 #   cmake --build whisper.cpp/build -j && cmake --install whisper.cpp/build
 #   export PKG_CONFIG_PATH="$HOME/.local/lib/pkgconfig:$PKG_CONFIG_PATH"
 
-# 2. Build MediaMolder with the node compiled in (embeds an rpath to
-#    WHISPER_PREFIX/lib, default /usr/local, for runtime lookup)
-make build-whisper                           # used ~/.local? → make build-whisper WHISPER_PREFIX="$HOME/.local"
-# Static FFmpeg + a sibling whisper.cpp tree at ../whisper.cpp (next to the
-# mediamolder checkout) instead:
-#   CGO_LDFLAGS_ALLOW='.*' go build -tags=ffstatic,with_whisper ./...
-
-# 3. Fetch a model (you supply this — MediaMolder ships none)
+# 2. Fetch a model (you supply this — MediaMolder ships none) and note its path
 ./whisper.cpp/models/download-ggml-model.sh base.en
+MODEL="$PWD/whisper.cpp/models/ggml-base.en.bin"
 
-# 4. Run the gated tests against it
-export WHISPER_TEST_MODEL=$PWD/whisper.cpp/models/ggml-base.en.bin
-make test-whisper
+# 3. Build MediaMolder with the node compiled in — RUN FROM THE MEDIAMOLDER REPO
+#    ROOT (not whisper.cpp). Embeds an rpath to WHISPER_PREFIX/lib (default
+#    /usr/local) for runtime lookup.
+cd /path/to/mediamolder                      # your MediaMolder checkout
+make build-whisper                           # used ~/.local? → make build-whisper WHISPER_PREFIX="$HOME/.local"
+
+# 4. Run the gated tests against the model
+WHISPER_TEST_MODEL="$MODEL" make test-whisper
 ```
 
 Pass the model path in the node's `model` param. Usage, params, and output
 formats: [Whisper Speech-to-Text Guide](../whisper-stt-guide.md). Without the
 tag, a config using `whisper_stt` fails with `unknown processor "whisper_stt"`.
+If `make build-whisper` reports `No rule to make target 'build-whisper'`, you
+are not in the MediaMolder repo root — `cd` there and retry.
 
 ### yolo_v8 (ONNX Runtime)
 
