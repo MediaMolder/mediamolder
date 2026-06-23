@@ -181,6 +181,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   `internal/server`. Docs: `docs/remote-server.md`, `docs/openapi-server.yaml`.
 
 ### Fixed
+- **`Frame.ToRGBA` / `ToBGR24` were non-deterministic for some frame widths.**
+  `frame_to_rgba` / `frame_to_bgr24` allocated the swscale destination with
+  `av_malloc` (uninitialized), and `sws_scale` does not write every byte of that
+  destination when the right edge is not block-aligned (e.g. a 737-pixel-wide
+  frame), so the untouched bytes were leftover heap memory — the **same** frame
+  could convert to **different** pixels run to run, breaking byte-stable
+  consumers such as content/pixel hashing and dedup. Switched to `av_mallocz`
+  so any bytes `sws_scale` leaves untouched are deterministically zero.
+  Regression test
+  [av/frame_rgba_determinism_test.go](av/frame_rgba_determinism_test.go) decodes
+  a generated 737×252 JPEG repeatedly and requires byte-identical RGBA output
+  (fails before the fix).
 - **Mapping a non-zero input track now routes frames when lower tracks are
   unconsumed.** When an edge referenced e.g. `in0:a:2` but tracks `a:0`/`a:1`
   were declared yet read by no edge, `dropUnconsumedSelections` pruned the

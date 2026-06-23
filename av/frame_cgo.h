@@ -30,7 +30,10 @@ static int frame_to_rgba(const AVFrame *frame, uint8_t **out_data, int *out_line
     if (!sws) return AVERROR(ENOMEM);
 
     *out_linesize = frame->width * 4;
-    *out_data = (uint8_t *)av_malloc((size_t)(*out_linesize) * frame->height);
+    // Zero-initialize: sws_scale does not necessarily write every byte of the destination
+    // (e.g. an unaligned right edge), so an av_malloc buffer would leave those bytes as
+    // uninitialized heap memory, making the conversion non-deterministic.
+    *out_data = (uint8_t *)av_mallocz((size_t)(*out_linesize) * frame->height);
     if (!*out_data) {
         sws_freeContext(sws);
         return AVERROR(ENOMEM);
@@ -59,7 +62,9 @@ static int frame_to_bgr24(const AVFrame *frame, uint8_t **out_data) {
     if (!sws) return AVERROR(ENOMEM);
 
     int linesize = frame->width * 3;
-    *out_data = (uint8_t *)av_malloc((size_t)linesize * frame->height);
+    // Zero-initialize for determinism (see frame_to_rgba): sws_scale may leave some
+    // destination bytes untouched.
+    *out_data = (uint8_t *)av_mallocz((size_t)linesize * frame->height);
     if (!*out_data) { sws_freeContext(sws); return AVERROR(ENOMEM); }
 
     uint8_t *dst[4] = { *out_data, NULL, NULL, NULL };
