@@ -1,6 +1,7 @@
 .PHONY: build build-static test test-static lint bench bench-static clean \
         frontend-install frontend-dev frontend-build gui gui-dev build-gui build-gui-static \
-        check-deps build-debug build-gui-debug build-whisper test-whisper build-gui-whisper
+        check-deps build-debug build-gui-debug build-whisper test-whisper build-gui-whisper \
+        bundle-libraw build-libraw test-libraw build-gui-libraw
 
 # Detect macOS: Apple ld warns about duplicate -l flags when two CGO packages
 # (av and PySceneDetect/internal) both link -lavutil and -lswscale. Pass
@@ -50,6 +51,22 @@ build-whisper:
 test-whisper:
 	CGO_LDFLAGS_ALLOW='.*' CGO_LDFLAGS='$(CGO_LDFLAGS_NODUP)' \
 	  go test -tags=with_whisper -ldflags='-extldflags "-Wl,-rpath,$(WHISPER_PREFIX)/lib"' ./av/... ./processors/...
+
+# Camera-RAW develop (raw_decode node + raw-decode CLI). Requires the bundled,
+# SHA-pinned LibRaw built into third_party/libraw by `make bundle-libraw`; it is
+# linked STATICALLY (no rpath, unlike whisper), so the targets just add the tag.
+# We ship no binary — bundle-libraw builds LibRaw from pinned source. EXTRA_TAGS
+# composes with other node tags, e.g.  make build-gui-libraw EXTRA_TAGS=with_onnx.
+bundle-libraw:
+	scripts/bundle-libraw.sh
+
+build-libraw:
+	CGO_LDFLAGS_ALLOW='.*' CGO_LDFLAGS='$(CGO_LDFLAGS_NODUP)' \
+	  go build -tags=with_libraw$(if $(EXTRA_TAGS),$(comma)$(EXTRA_TAGS)) ./...
+
+test-libraw:
+	CGO_LDFLAGS_ALLOW='.*' CGO_LDFLAGS='$(CGO_LDFLAGS_NODUP)' \
+	  go test -tags=with_libraw ./raw/... ./processors/...
 
 lint:
 	golangci-lint run ./...
@@ -199,4 +216,12 @@ build-gui-whisper: frontend-build
 	CGO_LDFLAGS_ALLOW='.*' CGO_LDFLAGS='$(CGO_LDFLAGS_NODUP)' \
 	  go build -tags=ffstatic,with_whisper$(if $(EXTRA_TAGS),$(comma)$(EXTRA_TAGS)) \
 	  -ldflags='-extldflags "-Wl,-rpath,$(WHISPER_PREFIX)/lib"' \
+	  -o mediamolder ./cmd/mediamolder
+
+# build-gui-static + the raw_decode node: static FFmpeg plus the statically-linked
+# bundled LibRaw. Run `make bundle-libraw` first. Append more node tags with
+# EXTRA_TAGS, e.g.  make build-gui-libraw EXTRA_TAGS=with_whisper.
+build-gui-libraw: frontend-build
+	CGO_LDFLAGS_ALLOW='.*' CGO_LDFLAGS='$(CGO_LDFLAGS_NODUP)' \
+	  go build -tags=ffstatic,with_libraw$(if $(EXTRA_TAGS),$(comma)$(EXTRA_TAGS)) \
 	  -o mediamolder ./cmd/mediamolder

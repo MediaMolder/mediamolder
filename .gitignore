@@ -84,3 +84,6 @@ pipeline/ffmpeg2pass-0.log.mbtree
 
 # Fetched face models (scripts/fetch-face-models.sh) — bundled by the host app, not committed
 testdata/face_models/
+
+# Bundled LibRaw built from pinned source (scripts/bundle-libraw.sh) — not committed (no binaries)
+third_party/
