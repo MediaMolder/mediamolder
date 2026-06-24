@@ -7,11 +7,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
-- **Face detection setup made bulletproof.** The `face` package now
-  **auto-discovers** the ONNX Runtime shared library in the platform's standard
-  install locations (Homebrew prefixes, `/usr/local/lib`, `/usr/lib/*-linux-gnu`,
-  …) using the correctly-named library (`libonnxruntime.dylib` / `.so`), so a
-  plain `brew install onnxruntime` (or distro package) works with **no env var**.
+- **Face detection setup made bulletproof.** A new shared `internal/onnxrt`
+  package **auto-discovers** the ONNX Runtime shared library in the platform's
+  standard install locations (Homebrew prefixes, `/usr/local/lib`,
+  `/usr/lib/*-linux-gnu`, …) using the correctly-named library
+  (`libonnxruntime.dylib` / `.so`), so a plain `brew install onnxruntime` (or
+  distro package) works with **no env var**. Both `face_detect` **and** `yolo_v8`
+  use it, sharing a single process-global runtime init (which also fixes a latent
+  double-`InitializeEnvironment` error when a graph used both ONNX nodes).
   A non-standard runtime can be pointed at via `face.SetONNXLib`, the new
   `ort_lib` param on `face_detect`, the `--ort-lib` CLI flag, or the GUI's "ONNX
   runtime library" browse field. `face.Available() error` now reports the

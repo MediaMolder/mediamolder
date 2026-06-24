@@ -42,7 +42,7 @@ func SetONNXLib(path string) {
 	cfgMu.Unlock()
 }
 
-// onnxLibOverridePath returns the SetONNXLib override (read by resolveONNXLib in with_onnx builds).
+// onnxLibOverridePath returns the SetONNXLib override (passed to onnxrt.Init in with_onnx builds).
 func onnxLibOverridePath() string {
 	cfgMu.RLock()
 	p := onnxLibPath

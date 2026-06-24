@@ -263,8 +263,8 @@ service. Install the prerequisites below **before** building or running.
 | Node | Build tag | Needs | Runtime env / config |
 | --- | --- | --- | --- |
 | `whisper_stt` (speech-to-text) | `with_whisper` | whisper.cpp / `libwhisper` + a ggml model | `model` param → ggml model path |
-| `yolo_v8` (object detection) | `with_onnx` | ONNX Runtime shared lib + a `.onnx` model | `ONNXRUNTIME_SHARED_LIBRARY_PATH`; `model` + `labels_file` params |
-| `face_detect` (face detection + embeddings) | `with_onnx` | ONNX Runtime shared lib + the two face models | `ONNXRUNTIME_SHARED_LIBRARY_PATH`, `MEDIAMOLDER_FACE_MODELS` |
+| `yolo_v8` (object detection) | `with_onnx` | ONNX Runtime shared lib + a `.onnx` model | ONNX Runtime auto-discovered (or `ONNXRUNTIME_SHARED_LIBRARY_PATH`); `model` + `labels_file` params |
+| `face_detect` (face detection + embeddings) | `with_onnx` | ONNX Runtime shared lib + the two face models | ONNX Runtime auto-discovered; `MEDIAMOLDER_FACE_MODELS` |
 | `vidi_analyzer` (multimodal) | *(none)* | a running Vidi 2.5 service | `service_url` param |
 | `twelvelabs_*` (cloud understanding) | *(none)* | TwelveLabs API key | `TWELVELABS_API_KEY` |
 
@@ -333,16 +333,17 @@ are not in the MediaMolder repo root — `cd` there and retry.
 
 ### yolo_v8 (ONNX Runtime)
 
-Download a release for your architecture from the
-[ONNX Runtime releases](https://github.com/microsoft/onnxruntime/releases),
-place `libonnxruntime.so` on your library path, then:
+Install the ONNX Runtime (distro package, or a release from
+[ONNX Runtime releases](https://github.com/microsoft/onnxruntime/releases) with
+`libonnxruntime.so` in `/usr/lib` or `/usr/local/lib`), then:
 
 ```bash
-export ONNXRUNTIME_SHARED_LIBRARY_PATH=/usr/local/lib/libonnxruntime.so
-
 go build -tags=with_onnx ./cmd/mediamolder   # add ffstatic too for a static FFmpeg link
+# Non-standard install only: export ONNXRUNTIME_SHARED_LIBRARY_PATH=/path/to/libonnxruntime.so
 ```
 
+`yolo_v8` shares `face_detect`'s ONNX Runtime auto-discovery (standard library
+dirs, correct `libonnxruntime.so` name), so a normal install needs no env var.
 You also need a `.onnx` model and a labels file — see the
 [YOLOv8 Guide](../yolov8-guide.md).
 

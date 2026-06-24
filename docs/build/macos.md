@@ -242,8 +242,8 @@ service. Install the prerequisites below **before** building or running.
 | Node | Build tag | Needs | Runtime env / config |
 | --- | --- | --- | --- |
 | `whisper_stt` (speech-to-text) | `with_whisper` | whisper.cpp / `libwhisper` + a ggml model | `model` param → ggml model path |
-| `yolo_v8` (object detection) | `with_onnx` | ONNX Runtime shared lib + a `.onnx` model | `ONNXRUNTIME_SHARED_LIBRARY_PATH`; `model` + `labels_file` params |
-| `face_detect` (face detection + embeddings) | `with_onnx` | ONNX Runtime shared lib + the two face models | `ONNXRUNTIME_SHARED_LIBRARY_PATH`, `MEDIAMOLDER_FACE_MODELS` |
+| `yolo_v8` (object detection) | `with_onnx` | ONNX Runtime shared lib + a `.onnx` model | ONNX Runtime auto-discovered (or `ONNXRUNTIME_SHARED_LIBRARY_PATH`); `model` + `labels_file` params |
+| `face_detect` (face detection + embeddings) | `with_onnx` | ONNX Runtime shared lib + the two face models | ONNX Runtime auto-discovered; `MEDIAMOLDER_FACE_MODELS` |
 | `vidi_analyzer` (multimodal) | *(none)* | a running Vidi 2.5 service | `service_url` param |
 | `twelvelabs_*` (cloud understanding) | *(none)* | TwelveLabs API key | `TWELVELABS_API_KEY` |
 
@@ -324,12 +324,14 @@ tag, a config using `whisper_stt` fails with `unknown processor "whisper_stt"`.
 ### yolo_v8 (ONNX Runtime)
 
 ```bash
-brew install onnxruntime
-export ONNXRUNTIME_SHARED_LIBRARY_PATH=$(brew --prefix onnxruntime)/lib/libonnxruntime.dylib
+brew install onnxruntime          # auto-discovered after install — no env var needed
 
 go build -tags=with_onnx ./cmd/mediamolder  # add ffstatic too for a static FFmpeg link
+# Non-standard install only: export ONNXRUNTIME_SHARED_LIBRARY_PATH=… (or the `ort_lib` param)
 ```
 
+`yolo_v8` shares `face_detect`'s ONNX Runtime auto-discovery, so a normal
+`brew install onnxruntime` needs no env var.
 You also need a `.onnx` model and a labels file — see the
 [YOLOv8 Guide](../yolov8-guide.md).
 

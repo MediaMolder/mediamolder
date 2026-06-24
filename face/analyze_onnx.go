@@ -11,6 +11,7 @@ import (
 	"sync"
 
 	"github.com/MediaMolder/MediaMolder/av"
+	"github.com/MediaMolder/MediaMolder/internal/onnxrt"
 	ort "github.com/yalue/onnxruntime_go"
 )
 
@@ -45,10 +46,6 @@ type pipeline struct {
 var (
 	initMu sync.Mutex
 	pipe   *pipeline
-
-	// ortInitDone records that the ONNX Runtime environment is initialised. Guarded by initMu
-	// (initONNX runs only inside newPipeline, which runs only under ensurePipeline's lock).
-	ortInitDone bool
 )
 
 // Capable reports whether the models load and the pipeline initialises (ONNX runtime present,
@@ -155,22 +152,11 @@ func ensurePipeline() (*pipeline, error) {
 	return pipe, nil
 }
 
-// initONNX initialises the ONNX Runtime environment, locating the shared library via
-// resolveONNXLib (override → env → auto-discovery). On failure it does NOT latch, so a
-// corrected path (env/param) is retried on the next attempt rather than failing for the
-// process lifetime. Caller holds initMu (via ensurePipeline → newPipeline).
+// initONNX initialises the process-global ONNX Runtime via the shared onnxrt package, passing
+// the SetONNXLib override; onnxrt handles env/auto-discovery, the single-init guard (shared with
+// yolo_v8), and retry-on-failure. Caller holds initMu (via ensurePipeline → newPipeline).
 func initONNX() error {
-	if ortInitDone {
-		return nil
-	}
-	if lib := resolveONNXLib(); lib != "" {
-		ort.SetSharedLibraryPath(lib)
-	}
-	if err := ort.InitializeEnvironment(); err != nil {
-		return err
-	}
-	ortInitDone = true
-	return nil
+	return onnxrt.Init(onnxLibOverridePath())
 }
 
 func newPipeline() (*pipeline, error) {

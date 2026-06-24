@@ -50,12 +50,16 @@ The `yolo_v8` processor uses [onnxruntime\_go](https://github.com/yalue/onnxrunt
 | Ubuntu / Debian | Download from [ONNX Runtime releases](https://github.com/microsoft/onnxruntime/releases) and place `libonnxruntime.so` in `/usr/local/lib` (or any path on `LD_LIBRARY_PATH`) |
 | Windows | Download the Windows zip from releases, extract `onnxruntime.dll` alongside the binary |
 
-Tell MediaMolder where to find it using **one** of:
+MediaMolder locates the library in this order:
 
 1. The `ort_lib` processor param (absolute path to the `.so` / `.dylib` / `.dll`).
 2. The `ONNXRUNTIME_SHARED_LIBRARY_PATH` environment variable.
+3. **Auto-discovery** of the standard install locations (Homebrew prefixes,
+   `/usr/local/lib`, `/usr/lib/*-linux-gnu`, …) by the correct library name.
 
-If neither is set, the Go runtime's default library search path is used.
+So on macOS/Linux a plain `brew install onnxruntime` / distro package is found with
+**no configuration** — set `ort_lib` or the env var only for a non-standard install.
+(`yolo_v8` and `face_detect` share this discovery and a single runtime init.)
 
 ### YOLOv8 ONNX model
 
