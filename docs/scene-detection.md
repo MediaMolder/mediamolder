@@ -446,7 +446,7 @@ All five go-scene-detect processors share these parameters:
 | Param | Type | Accepted forms | Description |
 |-------|------|---------------|-------------|
 | `min_scene_len` | int / float64 / string | `15`, `"0.6s"`, `"00:00:00.600"` | Minimum distance between cuts. Frames (int), seconds with `s` suffix, or `HH:MM:SS.mmm` timecode. |
-| `frame_rate` | float64 | `25.0`, `29.97`, `23.976` | Stream frame rate used to interpret time-based `min_scene_len` values. The `mediamolder run` pipeline sets this automatically from the demuxed stream. |
+| `frame_rate` | float64 | `25.0`, `29.97`, `23.976` | Stream frame rate used to interpret time-based `min_scene_len` values. The `mediamolder run` graph sets this automatically from the demuxed stream. |
 | `output_file` | string | absolute path | Write cut events to this file. Format controlled by `output_format`. Leave unset to publish to the event bus only. |
 | `output_format` | string | `"jsonl"` (default), `"csv"`, `"timecodes"` | Format written to `output_file`. `jsonl`: one JSON record per cut. `csv`: header row + one row per cut (Frame Index, Timecode, PTS, Score). `timecodes`: comma-separated cut timecodes, flushed at stream end. |
 
@@ -454,7 +454,7 @@ All five go-scene-detect processors share these parameters:
 
 ## Persisting events
 
-Each detector emits an **event** on the pipeline event bus whenever it detects a cut.
+Each detector emits an **event** on the event bus whenever it detects a cut.
 Events carry the frame index, PTS, timecode, and a detector-specific score (see the
 "Event record" blocks above). They are visible in the SSE stream at `/api/run/events`
 and in the GUI **Observations** panel. Two mechanisms write events to disk:
@@ -546,14 +546,14 @@ the same `jsonl` / `csv` / `timecodes` logic.
 > **Note:** The CLI `--output` flag (see below) writes a _scene list_ — one record
 > per complete scene with start/end frame and timecode — which is a different format
 > from the per-cut event records written by `output_file` or `events` edges in a
-> pipeline.
+> graph.
 
 ---
 
 ## CLI: `mediamolder go-scene-detect`
 
 The `go-scene-detect` subcommand runs scene detection on a media file outside a full
-pipeline, writing the detected scene list to stdout or a file.
+graph, writing the detected scene list to stdout or a file.
 
 ```
 mediamolder go-scene-detect [flags] <input>
@@ -567,7 +567,7 @@ the [output formats](#output-format) below all encode. The two non-streaming
 detectors are intentionally **not** CLI flags and run only inside the media
 graph (or the GUI):
 
-- **`scene_change` (scdet)** — a `go_processor`; wire it into a pipeline as
+- **`scene_change` (scdet)** — a `go_processor`; wire it into a graph as
   shown in [The `scene_change` processor](#the-scene_change-processor-scdet).
 - **`scene_change_mc`** — its result is **transition *intervals*** (dissolve
   start→end, fade-in/out bounds), which a flat cut-point scene list cannot
@@ -620,7 +620,7 @@ mediamolder go-scene-detect --downscale=1 input.mp4
 ## Output format
 
 These three formats describe the **CLI scene list** (the streaming detectors'
-cut-based output). The pipeline-only `scene_change_mc` writes its own `jsonl` /
+cut-based output). The graph-only `scene_change_mc` writes its own `jsonl` /
 `csv` / `timecodes` files that additionally carry the transition *type* and span
 — see [its Output section](#output) — so a `scene_change_mc` JSONL record is not
 the same shape as the records shown here.
@@ -687,7 +687,7 @@ For most narrative video content, `scene_change_content` (threshold 27) or
 speed is the only constraint, `scene_change` (scdet) is the fastest option. When you
 need **gradual transitions** — dissolves and fades — located with frame-accurate
 boundaries (e.g. to set clean encoder cut points or chapter marks), reach for
-`scene_change_mc`; it is the slowest and is pipeline/GUI-only (not a
+`scene_change_mc`; it is the slowest and is graph/GUI-only (not a
 `go-scene-detect` CLI flag — see [Scope](#cli-mediamolder-go-scene-detect)).
 
 `scene_change_content` and `scene_change_adaptive` require a BGR→HSV conversion per

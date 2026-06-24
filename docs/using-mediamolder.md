@@ -39,8 +39,8 @@ This guide covers every feature available in MediaMolder, from installing the bi
    - [Subtitles](#58-subtitles)
    - [Bitstream filters](#59-bitstream-filters)
    - [Live / device inputs](#510-live--device-inputs)
-   - [Scene detection in a pipeline](#511-scene-detection-in-a-pipeline)
-   - [TwelveLabs cloud analysis in a pipeline](#512-twelvelabs-cloud-analysis-in-a-pipeline)
+   - [Scene detection in a graph](#511-scene-detection-in-a-graph)
+   - [TwelveLabs cloud analysis in a graph](#512-twelvelabs-cloud-analysis-in-a-graph)
    - [Real-time mode](#513-real-time-mode)
    - [Remote server (`serve` + `job`)](#514-remote-server-serve--job)
    - [Multi-track timelines with sequence_editor](#515-multi-track-timelines-with-sequence_editor)
@@ -373,9 +373,9 @@ Decodes every frame, runs one of five detectors ported from
 (BSD-3-Clause), and writes the scene list to stdout or a file.
 
 The same five detectors are also available as `go_processor` nodes inside a
-graph (see [§5.11](#511-scene-detection-in-a-pipeline)), letting you
+graph (see [§5.11](#511-scene-detection-in-a-graph)), letting you
 detect scenes *during* a transcode in a single pass with no extra decode step.
-The pipeline additionally offers two detectors this CLI does not: `scene_change`
+The graph additionally offers two detectors this CLI does not: `scene_change`
 (FFmpeg `scdet`) and the motion-compensated `scene_change_mc`, which locates
 **dissolves and fades** with frame-accurate bounds. Use this subcommand when you
 need a quick scene list from one of the five streaming detectors before building
@@ -477,7 +477,7 @@ mediamolder twelvelabs embed --video my-clip.mp4 --out my-clip.embeddings.json
 
 Run `mediamolder twelvelabs help` or `mediamolder twelvelabs <verb> --help` for the full flag reference.
 
-For in-graph usage (uploading, analyzing, searching, or embedding clips automatically as a pipeline runs) see [§5.12](#512-twelvelabs-cloud-analysis-in-a-pipeline) below and the full [TwelveLabs Guide](twelvelabs.md).
+For in-graph usage (uploading, analyzing, searching, or embedding clips automatically as a graph runs) see [§5.12](#512-twelvelabs-cloud-analysis-in-a-graph) below and the full [TwelveLabs Guide](twelvelabs.md).
 
 ---
 
@@ -745,7 +745,7 @@ See `testdata/examples/40_metadata_routing.json` for the explicit graph-node for
 | `preset_group_step` | bool | When `true` (default), step every eligible video encoder together once a quorum is simultaneously behind. |
 | `target_fps` | number | Graph-level real-time fps target. `0` = derive from the source frame rate. |
 | `encoder_input_buffer_frames` | int | Per-encoder input channel capacity in frames when `realtime: true`. `0` = pipeline default. `96` (~4 s at 24 fps) is recommended to absorb the close+reopen window during a preset switch. |
-| `realtime_log_path` | string | When non-empty and `realtime: true`, enables a per-tick debug log from the adaptive controller. Each line is a JSON object containing the full per-node performance snapshot, controller cool-down counters, and any decisions made that tick. The file is created (or truncated) at pipeline start. Example: `"/tmp/rt_debug.jsonl"`. Use `jq` to query the log after the run. |
+| `realtime_log_path` | string | When non-empty and `realtime: true`, enables a per-tick debug log from the adaptive controller. Each line is a JSON object containing the full per-node performance snapshot, controller cool-down counters, and any decisions made that tick. The file is created (or truncated) at graph start. Example: `"/tmp/rt_debug.jsonl"`. Use `jq` to query the log after the run. |
 
 ---
 
@@ -1123,7 +1123,7 @@ For live streaming to RTMP/SRT where the output must pace to wall clock, combine
 
 ---
 
-### 5.11 Scene detection in a pipeline
+### 5.11 Scene detection in a graph
 
 Scene detection can be embedded directly in a transcoding graph using `go_processor`
 nodes. **Seven** detectors are available: five ported from
@@ -1131,7 +1131,7 @@ nodes. **Seven** detectors are available: five ported from
 (BSD-3-Clause), the built-in `scene_change` (FFmpeg `scdet`), and the
 motion-compensated `scene_change_mc`. The CLI in [§3.11](#311-go-scene-detect)
 offers only the five streaming PySceneDetect detectors; `scene_change` and
-`scene_change_mc` run only in a pipeline (or the GUI).
+`scene_change_mc` run only in a graph (or the GUI).
 
 | Processor | Threshold default | Best for |
 |---|---|---|
@@ -1216,7 +1216,7 @@ kinds of data:
 | `audio` | Decoded audio `AVFrame` (raw PCM samples) | Demuxed by libavformat, filtered by libavfilter, encoded/muxed by libavcodec/libavformat |
 | `subtitle` | `AVSubtitle` events (text or bitmap) | Demuxed by libavformat; typically passed through without re-encode |
 | `data` | `AVMEDIA_TYPE_DATA` streams — raw timed-data tracks such as SCTE-35 splice markers, closed-caption side data, or timecode tracks | A real media stream; demuxed and muxed by libavformat alongside audio/video |
-| `metadata` | Container-level metadata and chapter tables copied between inputs and outputs via `metadata_reader` / `metadata_writer` nodes | Resolved at pipeline build time via libavformat metadata APIs; no frames flow at runtime |
+| `metadata` | Container-level metadata and chapter tables copied between inputs and outputs via `metadata_reader` / `metadata_writer` nodes | Resolved at graph build time via libavformat metadata APIs; no frames flow at runtime |
 | `events` | Structured event objects emitted by a `go_processor` via its `Process()` return value (scene boundaries, object detections, frame diagnostics, …) | **None** — handled entirely by the Go runtime event bus; never touches any libav\* library |
 
 The `events` edge type is specifically for routing Go-processor event
@@ -1278,7 +1278,7 @@ The `events` edge wires the detector's metadata stream to the file
 writer without interrupting the video processing path. Multiple event
 sinks can be wired from the same detector — each receives a copy.
 
-**Legacy wrapper mode** (still supported for JSON-authored pipelines):
+**Legacy wrapper mode** (still supported for JSON-authored graphs):
 
 ```json
 {
@@ -1345,7 +1345,7 @@ For full parameter references and algorithm descriptions see
 
 ---
 
-### 5.12 TwelveLabs cloud analysis in a pipeline
+### 5.12 TwelveLabs cloud analysis in a graph
 
 Four built-in `go_processor` nodes connect a running graph to the [TwelveLabs Video Understanding API](https://docs.twelvelabs.io/v1.3/api-reference/introduction). They consume **`events`-kind edges** from a `segment_sink` output (triggered when a segment file is closed) and post to the REST API in the background.
 
@@ -1590,7 +1590,7 @@ mediamolder validate --json job.json | jq '.issues[] | select(.severity == "ERRO
 
 ## 7. Graphical user interface
 
-The GUI is a browser-based visual editor for building, validating, and running MediaMolder JSON pipelines. Start it with `mediamolder gui` (see [§3.8](#38-gui)).
+The GUI is a browser-based visual editor for building, validating, and running MediaMolder JSON graphs. Start it with `mediamolder gui` (see [§3.8](#38-gui)).
 
 For the complete GUI reference — quick start, canvas, palette, inspector, toolbar, validate panel, run panel, performance overlay, hardware capabilities, scene detection nodes, file browser, asset manager, FFmpeg import/export, keyboard shortcuts, and troubleshooting — see **[gui.md](gui.md)**.
 
@@ -1652,7 +1652,7 @@ mediamolder version
 | [subtitles.md](subtitles.md) | Subtitle format support, burn-in, passthrough, charset handling |
 | [architecture/error-handling.md](architecture/error-handling.md) | Error policy, retry, fallback |
 | [architecture/observability.md](architecture/observability.md) | Event bus, metrics, SSE API |
-| [scene-detection.md](scene-detection.md) | Scene detector algorithms, CLI usage, pipeline JSON, events |
+| [scene-detection.md](scene-detection.md) | Scene detector algorithms, CLI usage, graph JSON, events |
 | [twelvelabs.md](twelvelabs.md) | TwelveLabs Video Understanding API — quick-start, graph recipes, processor reference |
 | [go-processor-nodes.md](go-processor-nodes.md) | Go processor interface, FrameSource, built-in processors including `sequence_editor` |
 | [architecture/graph-state-machine.md](architecture/graph-state-machine.md) | Graph lifecycle, pause/resume, seek |

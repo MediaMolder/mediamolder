@@ -1,7 +1,7 @@
 # MediaMolder GUI
 
 The `mediamolder gui` subcommand serves a browser-based visual editor for
-building, validating, and running MediaMolder JSON pipelines. It is bundled
+building, validating, and running MediaMolder JSON graphs. It is bundled
 into the same single binary as the CLI — no separate install or web server is
 required.
 
@@ -13,7 +13,7 @@ see [using-mediamolder.md](using-mediamolder.md).
 ## Contents
 
 - [Quick start](#quick-start)
-- [Your first pipeline (5-minute walkthrough)](#your-first-pipeline-5-minute-walkthrough)
+- [Your first graph (5-minute walkthrough)](#your-first-graph-5-minute-walkthrough)
 - [Anatomy](#anatomy)
   - [Palette](#palette)
   - [Canvas](#canvas)
@@ -62,7 +62,7 @@ Useful flags:
 | `--dev`      | `false`     | Skip the embedded frontend; expects you to run `npm run dev` separately. |
 | `--metrics-addr` | `""` | Start a metrics/perf HTTP server on this address (e.g. `:9090`). Exposes `/perf`, `/perf/stream`, `/metrics` (Prometheus), `/health`, and (when `global_options.realtime` is set) `/realtime/*`. Used by `mediamolder perf` and `mediamolder watch`. |
 
-## Your first pipeline (5-minute walkthrough)
+## Your first graph (5-minute walkthrough)
 
 For an explanation of nodes, pads, edges, sources and sinks — and the rules
 that govern when two nodes can be wired directly versus when a transform
@@ -215,7 +215,7 @@ Firefox and Safari.)
   before browsing.
 * In **Save** mode, navigate to the destination directory, edit the
   **Filename** field at the bottom, and click **Save**. The dialog does
-  *not* create the file — that happens when the pipeline runs.
+  *not* create the file — that happens when the graph runs.
 * Hidden files (starting with `.`) are not shown.
 
 ## Filter categories
@@ -635,7 +635,7 @@ Each control is sourced from the codec's own AVOption metadata: numeric
 fields enforce libav's min/max, enum-like options (e.g. `preset`) become
 dropdowns built from `AV_OPT_TYPE_CONST` children sharing the option's
 `unit`, and the option's default value is shown as the placeholder.
-Leaving a field blank simply omits it from the pipeline JSON, so libav's
+Leaving a field blank simply omits it from the graph JSON, so libav's
 own default applies.
 
 The complete option list lives below in two further sections:
@@ -1009,7 +1009,7 @@ For the six audio channel-routing filters (`pan`, `channelmap`,
 replaced by a purpose-built `AudioChannelForm` that presents structured
 controls instead of a free-form `params` dict.  All sub-forms include a
 **live spec preview** row at the bottom that shows the exact filter
-argument string as it will appear in the pipeline.
+argument string as it will appear in the graph.
 
 #### `pan` — gain matrix
 
@@ -1072,7 +1072,7 @@ fields, and three option controls:
 
 ### Asset registry
 
-The **Assets** toolbar button opens the Asset Registry — a named table of media files (fonts, ML model weights, LUT files, or any other path) that filter params can reference by symbolic name instead of a hard-coded absolute path.  This keeps pipeline JSON machine-agnostic: fonts, RNNoise models, and LUT cubes live at different absolute paths on each workstation.
+The **Assets** toolbar button opens the Asset Registry — a named table of media files (fonts, ML model weights, LUT files, or any other path) that filter params can reference by symbolic name instead of a hard-coded absolute path.  This keeps graph JSON machine-agnostic: fonts, RNNoise models, and LUT cubes live at different absolute paths on each workstation.
 
 #### Using assets in a filter
 
@@ -1250,7 +1250,7 @@ receive a stream of typed events:
 
 | Event      | Payload                                                                 |
 |------------|-------------------------------------------------------------------------|
-| `state`    | `{from, to}` — pipeline state transitions (Ready → Playing → ...).     |
+| `state`    | `{from, to}` — graph state transitions (Ready → Playing → ...).     |
 | `metrics`  | `{State, Elapsed, Nodes:[{NodeID, Frames, FPS, Errors, AvgLatency, ...}], Perf:[{NodeID, FPS, FPSTarget, FPSDeficit, ActiveFrac, IdleFrac, StalledFrac, ...}]}` snapshot. |
 | `error`    | `{node_id, stage, error}` — per-node failures.                          |
 | `log`      | `{message}` — informational entries (e.g. EOS).                         |
@@ -1318,8 +1318,8 @@ explicitly to `127.0.0.1` (the default) if untrusted users share the host.
 | `POST` | `/api/cancel/{jobId}`         | Cancel an in-flight run.                              |
 | `GET`  | `/api/events/{jobId}`         | Server-Sent Events stream for the run.                |
 | `GET`  | `/` _(metrics server)_        | HTML index page listing every registered metrics endpoint; only available when `--metrics-addr` is set. |
-| `GET`  | `/perf`                       | Full `MetricsSnapshot` JSON for the currently-running pipeline, including `[]NodePerfSnapshot` (per-node `ActiveFrac`, `IdleFrac`, `StalledFrac`, `FPS`, `FPSDeficit`, `ThreadsConfigured`, `ThreadsBusy`, `QueueFillFrac`, `InputQueueFillFrac`). Used by `mediamolder perf`. |
-| `GET`  | `/perf/stream`                | SSE endpoint pushing `[]NodePerfSnapshot` at 2 Hz. Consumed by the canvas performance overlay. Sends an empty array when the pipeline is idle. |
+| `GET`  | `/perf`                       | Full `MetricsSnapshot` JSON for the currently-running graph, including `[]NodePerfSnapshot` (per-node `ActiveFrac`, `IdleFrac`, `StalledFrac`, `FPS`, `FPSDeficit`, `ThreadsConfigured`, `ThreadsBusy`, `QueueFillFrac`, `InputQueueFillFrac`). Used by `mediamolder perf`. |
+| `GET`  | `/perf/stream`                | SSE endpoint pushing `[]NodePerfSnapshot` at 2 Hz. Consumed by the canvas performance overlay. Sends an empty array when the graph is idle. |
 | `POST` | `/realtime/preset`            | Set a manual encoder-preset override. Body `{node_id, preset}`. Loopback-only. |
 | `POST` | `/realtime/preset/clear`      | Clear a manual preset override and return the node to controller-managed stepping. Body `{node_id}`. Loopback-only. |
 | `GET`  | `/realtime/decisions`         | Recent `RealtimeDecisionLog` entries as JSON. |
@@ -1364,7 +1364,7 @@ a free-text search (type `goscenedetect`, `cuts`, `fade`, `hash`, `histogram`,
 | `scene_change_hash` | DCT perceptual hash — normalised Hamming distance (HashDetector) | `threshold` 0–1 (default 0.395), `size`, `lowpass` | [54](../testdata/examples/54_scene_change_hash.json) |
 | `scene_change_histogram` | Pearson correlation on luma histograms (HistogramDetector) | `threshold` 0–1 (default 0.05), `bins` | [55](../testdata/examples/55_scene_change_histogram.json) |
 | `scene_change_threshold` | Average-brightness fade-in/out tracking (ThresholdDetector) | `threshold` 0–255 (default 12.0), `method` (`floor`/`ceiling`), `fade_bias` | [56](../testdata/examples/56_scene_change_threshold.json) |
-| `scene_change_mc` | Motion-compensated x264-style lookahead — dissolves & fades with frame-accurate bounds, plus hard cuts (batch, pipeline/GUI only) | `threshold` (default 0.50), `coarse_prediction_distance`, `refined_prediction_distances`, `dissolve_max_len`, `fullres_refine` — [full reference](scene-detection.md#parameters) | [guide](scene-detection.md#the-motion-compensated-detector-scene_change_mc) |
+| `scene_change_mc` | Motion-compensated x264-style lookahead — dissolves & fades with frame-accurate bounds, plus hard cuts (batch, graph/GUI only) | `threshold` (default 0.50), `coarse_prediction_distance`, `refined_prediction_distances`, `dissolve_max_len`, `fullres_refine` — [full reference](scene-detection.md#parameters) | [guide](scene-detection.md#the-motion-compensated-detector-scene_change_mc) |
 
 The five PySceneDetect processors (and `scene_change_mc`) share:
 
@@ -1376,7 +1376,7 @@ The five PySceneDetect processors (and `scene_change_mc`) share:
 
 ### Writing detections to a file
 
-Every processor emits cut events on the pipeline event bus (visible in the
+Every processor emits cut events on the event bus (visible in the
 **Observations** panel and the SSE stream). To also write them to a file,
 set `output_file` in the Inspector's **Save detections to file** field (or
 directly in the JSON `params`). Use the **Format** selector (or the
@@ -1423,7 +1423,7 @@ is still available as a generic wrapper — see example
 
 ## TwelveLabs processors
 
-Four built-in `go_processor` nodes integrate the [TwelveLabs Video Understanding API](https://docs.twelvelabs.io/v1.3/api-reference/introduction) directly into a pipeline graph.
+Four built-in `go_processor` nodes integrate the [TwelveLabs Video Understanding API](https://docs.twelvelabs.io/v1.3/api-reference/introduction) directly into a graph.
 
 | Processor | Common-palette view | Search aliases |
 |---|---|---|
@@ -1548,7 +1548,7 @@ make build-gui
 
 The GUI persists node positions under `graph.ui.positions` keyed by node ID
 (schema v1.2). Older `schema_version: "1.0"` and `"1.1"` jobs load and run
-unchanged; the editor will add the `ui` block on save. Pipelines authored
+unchanged; the editor will add the `ui` block on save. Graphs authored
 without the GUI never need to include it.
 
 ## Security considerations
@@ -1569,8 +1569,8 @@ without the GUI never need to include it.
 | **"Too many redirects" loading the page.** | You are hitting an old build. Rebuild with `make build-gui` (the embedded SPA fallback no longer rewrites `/index.html`). |
 | **Browse… dialog shows "permission denied".** | The directory is not readable by the user running `mediamolder`. Either `chmod` it or pick a different location. |
 | **Connections rejected when wiring nodes.** | Handles are stream-typed. A video output cannot connect to an audio input — see the bottom-centre legend for the colour code. |
-| **`Run` button does nothing.** | The pipeline failed validation. Check the toolbar for a red error banner; common causes are missing URLs, dangling outputs, or unknown filter/codec names. |
-| **No live FPS in node badges.** | The pipeline is not in `Playing` state. Confirm the Run panel shows progressing frame counts; otherwise check the `error` events in the panel. |
+| **`Run` button does nothing.** | The graph failed validation. Check the toolbar for a red error banner; common causes are missing URLs, dangling outputs, or unknown filter/codec names. |
+| **No live FPS in node badges.** | The graph is not in `Playing` state. Confirm the Run panel shows progressing frame counts; otherwise check the `error` events in the panel. |
 | **Filter not in the palette.** | The binary was built without that filter (e.g. a stripped FFmpeg). Rebuild FFmpeg with the missing component enabled. |
 | **`mediamolder` binary date didn't change after `go build ./...`.** | `go build ./...` is a compile check only. Use `make build-gui` or `go build -o mediamolder ./cmd/mediamolder` to actually overwrite the binary. |
 
@@ -1583,7 +1583,7 @@ without the GUI never need to include it.
 | [using-mediamolder.md](using-mediamolder.md) | Complete CLI and JSON graph reference |
 | [concepts-and-graph-basics.md](concepts-and-graph-basics.md) | Core concepts, node types, edge rules |
 | [json-config-reference.md](json-config-reference.md) | Complete field-by-field JSON schema |
-| [scene-detection.md](scene-detection.md) | Scene detector algorithms, CLI usage, pipeline JSON, events |
+| [scene-detection.md](scene-detection.md) | Scene detector algorithms, CLI usage, graph JSON, events |
 | [twelvelabs.md](twelvelabs.md) | TwelveLabs Video Understanding — quick-start, graph recipes, processor reference |
 | [go-processor-nodes.md](go-processor-nodes.md) | Go processor API and built-in processors |
 | [hardware-acceleration.md](hardware-acceleration.md) | Hardware setup, zero-copy paths, GPU encoder options |

@@ -85,7 +85,7 @@ When both the decoder and encoder use the same hardware device, frames stay in G
 }
 ```
 
-With `hw_accel` set, the pipeline:
+With `hw_accel` set, the graph:
 1. Opens a hardware device context (`av.OpenHWDevice`)
 2. Creates hardware-accelerated decoders where supported (`av.OpenHWDecoder`)
 3. Routes frames through hardware filters (e.g., `scale_cuda` instead of `scale`)
@@ -93,7 +93,7 @@ With `hw_accel` set, the pipeline:
 
 ### Hardware Filters — Auto-Mapping (Wave 10 #58)
 
-Hardware filter auto-mapping is **opt-in per node** via the `auto_map_hw` field. When set to `true` on a filter node, the pipeline's `expandHWFilterMappings` pass:
+Hardware filter auto-mapping is **opt-in per node** via the `auto_map_hw` field. When set to `true` on a filter node, the graph's `expandHWFilterMappings` pass:
 
 1. **Promotes** the software filter name to its hardware equivalent based on the node's `device` type (e.g. `"scale"` on a CUDA device → `"scale_cuda"`).
 2. **Inserts `hwupload`** nodes on incoming video edges from sources not on the same device (CPU frames → GPU surface).
@@ -158,7 +158,7 @@ Use `pipeline.HWFilterAlts()` to query the full table at runtime (e.g. for GUI n
 
 ### Fallback to Software
 
-If hardware acceleration is unavailable (driver not installed, GPU not present), the pipeline transparently falls back to software decoding/encoding. Hardware tests gracefully skip on systems without GPU using `av.RequireHWDevice(t, deviceType)`.
+If hardware acceleration is unavailable (driver not installed, GPU not present), the graph transparently falls back to software decoding/encoding. Hardware tests gracefully skip on systems without GPU using `av.RequireHWDevice(t, deviceType)`.
 
 ## Go API Usage
 
@@ -206,7 +206,7 @@ Three fields on each `Input` mirror FFmpeg's per-input `-hwaccel`, `-hwaccel_dev
 | Field | Type | Description |
 |-------|------|-------------|
 | `hwaccel` | string | Hardware acceleration backend: `"cuda"`, `"vaapi"`, `"qsv"`, `"videotoolbox"`, `"d3d11va"`, `"dxva2"`, `"vulkan"`, `"opencl"`, `"auto"`, etc. |
-| `hwaccel_device` | string | Name of a pre-declared `hardware_devices` entry. The pipeline reuses its `AVHWDeviceContext` instead of opening a transient one. Omit to let the pipeline open a transient context. |
+| `hwaccel_device` | string | Name of a pre-declared `hardware_devices` entry. The graph reuses its `AVHWDeviceContext` instead of opening a transient one. Omit to let the graph open a transient context. |
 | `hwaccel_output_format` | string | Pixel format for decoder output. Use a software format (`"nv12"`, `"yuv420p"`, …) for automatic CPU transfer, or a hardware surface name (`"cuda"`, `"vaapi"`, `"qsv"`, …) to keep frames on the GPU for zero-copy filter chains. |
 
 **Validation rules:**
@@ -214,7 +214,7 @@ Three fields on each `Input` mirror FFmpeg's per-input `-hwaccel`, `-hwaccel_dev
 - `hwaccel_device` must match a declared `hardware_devices[].name` entry.
 
 **`hwaccel_output_format` defaults to automatic CPU transfer.**
-When `hwaccel_output_format` is omitted the pipeline sets `AutoTransfer = true`
+When `hwaccel_output_format` is omitted the graph sets `AutoTransfer = true`
 on the decoder, which instructs libav to copy frames from the GPU surface to
 system RAM automatically.  This ensures downstream software filters and encoders
 (libx264, prores, …) always receive CPU frames with correct stride.  To keep
@@ -273,7 +273,7 @@ Setting `hwaccel_output_format` to `"cuda"` keeps decoded frames in GPU memory s
 }
 ```
 
-`"nv12"` is a software format, so the pipeline sets `AutoTransfer: true` on the decoder, which instructs libav to copy frames from the GPU surface to system RAM automatically. This enables downstream software filters.
+`"nv12"` is a software format, so the graph sets `AutoTransfer: true` on the decoder, which instructs libav to copy frames from the GPU surface to system RAM automatically. This enables downstream software filters.
 
 **Multiple inputs, mixed acceleration:**
 
@@ -595,7 +595,7 @@ not representable in the LibAV codec registry.
 **ProRes RAW decode** (`'aprn'` / `'aprh'`) is now handled by a
 MediaMolder-native `VTDecompressionSession` path that activates automatically
 when LibAV reports no decoder for a stream with those codec tags.  On Apple
-Silicon macOS the pipeline will decode ProRes RAW files to P010 (10-bit NV12)
+Silicon macOS the graph will decode ProRes RAW files to P010 (10-bit NV12)
 frames without any additional configuration.  ProRes RAW *encoding* via
 VideoToolbox is not yet supported (Apple's VT encode API does not expose
 ProRes RAW).
@@ -616,6 +616,6 @@ If no `hardware_devices` entries have been declared, the picker renders with onl
 
 Each graph node that has `NodeDef.device` set shows a small **purple chip** bearing the device name (e.g. `⊞ gpu0`). Hovering the chip shows the full tooltip `Hardware device: <name>`.
 
-A **yellow ⚠ sw/hw** warning badge is shown on software filter nodes (no `device`) that are adjacent — via the graph's edges — to at least one hardware-accelerated node. This indicates that the pipeline will be forced to perform an implicit `hwdownload` + `hwupload` round-trip at that boundary, which costs memory bandwidth and can negate the performance benefit of HW acceleration. To eliminate the warning, either:
+A **yellow ⚠ sw/hw** warning badge is shown on software filter nodes (no `device`) that are adjacent — via the graph's edges — to at least one hardware-accelerated node. This indicates that the graph will be forced to perform an implicit `hwdownload` + `hwupload` round-trip at that boundary, which costs memory bandwidth and can negate the performance benefit of HW acceleration. To eliminate the warning, either:
 1. Assign the same device to the filter and enable `auto_map_hw`, or
 2. Reorder the graph so software filters are grouped together away from the HW chain.

@@ -1,6 +1,6 @@
 # YOLOv8 Object Detection Guide
 
-MediaMolder ships an optional `yolo_v8` built-in processor that runs [YOLOv8](https://docs.ultralytics.com/) inference on every video frame, or every Nth video frame via [ONNX Runtime](https://onnxruntime.ai/). Detections are emitted on the pipeline event bus so downstream code can log them, trigger alerts, draw overlays, or store results.
+MediaMolder ships an optional `yolo_v8` built-in processor that runs [YOLOv8](https://docs.ultralytics.com/) inference on every video frame, or every Nth video frame via [ONNX Runtime](https://onnxruntime.ai/). Detections are emitted on the event bus so downstream code can log them, trigger alerts, draw overlays, or store results.
 
 This guide covers installation, model setup, JSON configuration, and troubleshooting.
 
@@ -13,7 +13,7 @@ This guide covers installation, model setup, JSON configuration, and troubleshoo
 		- [YOLOv8 ONNX model](#yolov8-onnx-model)
 		- [Labels file](#labels-file)
 	- [Building with ONNX support](#building-with-onnx-support)
-	- [Pipeline configuration](#pipeline-configuration)
+	- [Graph configuration](#graph-configuration)
 		- [Minimal example](#minimal-example)
 		- [Full parameter reference](#full-parameter-reference)
 	- [How it works](#how-it-works)
@@ -122,7 +122,7 @@ Without the `with_onnx` tag, the processor is not registered and `processors.Get
 
 ---
 
-## Pipeline configuration
+## Graph configuration
 
 ### Minimal example
 
@@ -284,7 +284,7 @@ For file output configured entirely in JSON (no CLI flags), wrap `yolo_v8` with 
 
 This runs detection as normal (frame passes through, metadata reaches the event bus) **and** writes each detection to `detections.jsonl`.
 
-See [example 32](../testdata/examples/32_yolov8_metadata_to_file.json) for a complete pipeline.
+See [example 32](../testdata/examples/32_yolov8_metadata_to_file.json) for a complete graph.
 
 ---
 
@@ -398,6 +398,6 @@ Without the tag, none of the ONNX code compiles. The pure-Go post-processing (`P
 ## See also
 
 - [Go Processor Nodes](go-processor-nodes.md) — full go_processor reference
-- [JSON Config Reference](json-config-reference.md) — pipeline schema documentation
+- [JSON Config Reference](json-config-reference.md) — graph schema documentation
 - [Ultralytics Docs](https://docs.ultralytics.com/) — YOLOv8 training and export
 - [ONNX Runtime](https://onnxruntime.ai/) — inference runtime documentation
