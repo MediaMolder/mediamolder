@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0",
   "description": "Add a soft-subtitle track from a separate SRT file and mux into MKV. Matches 'subtitle-add -i input.mp4 -s subtitle.srt -o output.mkv'. Note: if you edit this JSON manually, you must also update or remove the ffmpeg_cmd field.",
-  "ffmpeg_cmd": "ffmpeg -i {{input}} -i testdata/subs.srt -map 0:a:0 -map 0:v:0 -map 1:s:0 -c:v copy -c:a copy -c:s copy -map_metadata 0 -map_chapters 0 {{output}}",
+  "ffmpeg_cmd": "ffmpeg -i {{input}} -i subs.srt -map 0:a:0 -map 0:v:0 -map 1:s:0 -c:v copy -c:a copy -c:s copy -map_metadata 0 -map_chapters 0 {{output}}",
   "inputs": [
     {
       "id": "in0",
@@ -23,7 +23,7 @@
     },
     {
       "id": "in1",
-      "url": "testdata/subs.srt",
+      "url": "subs.srt",
       "streams": [
         {
           "input_index": 0,
