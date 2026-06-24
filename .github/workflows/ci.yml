@@ -125,6 +125,16 @@ jobs:
       - name: Build
         run: go build ./...
 
+      # Cache the LFS objects keyed on their content hashes so `git lfs pull`
+      # only hits the network when a fixture actually changes — keeping us
+      # under GitHub's free LFS bandwidth tier across repeated CI runs.
+      - name: List LFS objects (cache key)
+        run: git lfs ls-files --long | cut -d ' ' -f1 | sort > .lfs-assets-id
+      - name: Cache LFS objects
+        uses: actions/cache@v4
+        with:
+          path: .git/lfs
+          key: lfs-${{ hashFiles('.lfs-assets-id') }}
       - name: Fetch LFS testdata (small fixtures)
         run: git lfs pull
 
@@ -211,6 +221,16 @@ jobs:
       - name: Update linker cache
         run: sudo ldconfig
 
+      # Cache the LFS objects keyed on their content hashes so `git lfs pull`
+      # only hits the network when a fixture actually changes — keeping us
+      # under GitHub's free LFS bandwidth tier across repeated CI runs.
+      - name: List LFS objects (cache key)
+        run: git lfs ls-files --long | cut -d ' ' -f1 | sort > .lfs-assets-id
+      - name: Cache LFS objects
+        uses: actions/cache@v4
+        with:
+          path: .git/lfs
+          key: lfs-${{ hashFiles('.lfs-assets-id') }}
       - name: Fetch LFS testdata (small fixtures)
         run: git lfs pull
 
@@ -235,6 +255,8 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+        with:
+          lfs: false # lint/build only — no test fixtures needed
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -298,6 +320,8 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+        with:
+          lfs: false # lint/build only — no test fixtures needed
 
       - name: Set up Go
         uses: actions/setup-go@v5
