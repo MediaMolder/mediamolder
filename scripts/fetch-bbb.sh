@@ -39,7 +39,7 @@ ffmpeg -hide_banner -nostdin -y -i "$SRC" \
     -map 0:v:0 -map 0:a:0 \
     -c:v libx264 -preset ultrafast -crf 28 -pix_fmt yuv420p \
     -c:a aac -b:a 128k \
-    "${DEST}.tmp"
+    -f mp4 "${DEST}.tmp"   # explicit muxer: the .tmp suffix hides the .mp4 extension
 mv "${DEST}.tmp" "$DEST"
 rm -f "$SRC"
 echo "Done: $DEST"

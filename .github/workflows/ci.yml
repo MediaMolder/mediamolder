@@ -39,7 +39,8 @@ jobs:
             build-essential nasm pkg-config \
             libx264-dev libx265-dev libvpx-dev libopus-dev \
             libass-dev libfreetype6-dev libfontconfig1-dev \
-            libharfbuzz-dev libfribidi-dev libmp3lame-dev
+            libharfbuzz-dev libfribidi-dev libmp3lame-dev \
+            ffmpeg
 
       - name: Cache FFmpeg (Linux)
         if: runner.os == 'Linux'
@@ -127,13 +128,19 @@ jobs:
       - name: Fetch LFS testdata (small fixtures)
         run: git lfs pull
 
+      # BBB is only needed by the Linux-only example/community suite (and the
+      # aspect/metadata e2e tests, which skip gracefully when it's absent).
+      # Transcoding it requires the ffmpeg CLI, which only the Linux jobs
+      # install — so gate the fetch to Linux and let macOS skip those tests.
       - name: Cache BBB source
+        if: runner.os == 'Linux'
         uses: actions/cache@v4
         with:
           path: testdata/BBB_1080p.mp4
           key: bbb-1080p-h264-mp4-v1
 
       - name: Fetch BBB testdata source
+        if: runner.os == 'Linux'
         run: bash scripts/fetch-bbb.sh testdata/BBB_1080p.mp4
 
       - name: Test
@@ -166,7 +173,8 @@ jobs:
             build-essential nasm pkg-config clang \
             libx264-dev libx265-dev libvpx-dev libopus-dev \
             libass-dev libfreetype6-dev libfontconfig1-dev \
-            libharfbuzz-dev libfribidi-dev libmp3lame-dev
+            libharfbuzz-dev libfribidi-dev libmp3lame-dev \
+            ffmpeg
 
       - name: Cache FFmpeg
         id: cache-ffmpeg-asan
