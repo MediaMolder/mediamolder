@@ -128,12 +128,12 @@ func TestProductionPatternsCorpus(t *testing.T) {
 			if pat.FFmpegCmd == "" {
 				t.Fatalf("%s: blockers cleared but no `ffmpeg_cmd` to drive the test", pat.Name)
 			}
-			inputAbs, err := filepath.Abs(filepath.Join("..", "..", "testdata", "BBB_1080p.avi"))
+			inputAbs, err := filepath.Abs(filepath.Join("..", "..", "testdata", "BBB_1080p.mp4"))
 			if err != nil {
 				t.Fatalf("abs input path: %v", err)
 			}
 			if _, err := os.Stat(inputAbs); err != nil {
-				t.Skipf("environment: testdata/BBB_1080p.avi missing; run scripts/fetch-bbb.sh (%v)", err)
+				t.Skipf("environment: testdata/BBB_1080p.mp4 missing; run scripts/fetch-bbb.sh (%v)", err)
 			}
 			ext := pat.OutExt
 			if ext == "" {
@@ -148,7 +148,7 @@ func TestProductionPatternsCorpus(t *testing.T) {
 				t.Fatalf("ffcli.Parse: %v\ncmd: %s", err, cmd)
 			}
 			// Inject seek so the test consumes 10 s starting at 450 s
-			// of the full BBB_1080p.avi source instead of a trimmed clip.
+			// of the full BBB_1080p.mp4 source instead of a trimmed clip.
 			for i := range cfg.Inputs {
 				inp := &cfg.Inputs[i]
 				if inp.Kind != "" && inp.Kind != "file" {
