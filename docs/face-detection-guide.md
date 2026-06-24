@@ -6,8 +6,8 @@ recognition/clustering. It is available three ways:
 
 - **CLI** — `mediamolder face-detect <input>` for one-shot analysis of an image or
   video to JSONL / CSV / JSON.
-- **Graph node** — the `face_detect` `go_processor`, to analyse video inside a
-  media graph and emit per-face metadata on the event bus.
+- **Graph node** — the `face_detect` `go_processor`, to detect faces in an image or
+  video inside a media graph; emits per-face metadata and can self-write a sidecar.
 - **GUI** — the "Face detection" node in the visual editor's palette.
 
 The detect → align → embed pipeline and its models live in the
@@ -34,10 +34,14 @@ a permissively-licensed export (e.g. YuNet, MIT) with no code change. MediaMolde
 **no binaries and no models** — you fetch them:
 
 ```bash
-scripts/fetch-face-models.sh ./models       # downloads + SHA-256-verifies both models
-export MEDIAMOLDER_FACE_MODELS="$PWD/models"
-export ONNXRUNTIME_SHARED_LIBRARY_PATH=/path/to/libonnxruntime.so   # ONNX Runtime
+scripts/fetch-face-models.sh                 # fetches + SHA-256-verifies into testdata/face_models/ (git-ignored)
+export MEDIAMOLDER_FACE_MODELS="$PWD/testdata/face_models"
+export ONNXRUNTIME_SHARED_LIBRARY_PATH=/path/to/libonnxruntime.{dylib,so}   # ONNX Runtime
 ```
+
+> Fetch into the git-ignored `testdata/face_models/` (the script's default), not
+> an arbitrary path — the models are large and the detector is copyleft-licensed,
+> so they must never land in a tracked directory.
 
 Build with the tag (ONNX Runtime is `dlopen`ed at runtime, so it is needed only to
 *run*, not to build):
@@ -98,41 +102,54 @@ deterministic software path), so they cluster stably.
 
 ## Graph node: `face_detect`
 
-Add a `go_processor` node and wire a video edge into it. The video passes through
-unchanged; results are emitted as `Metadata` — a `Detection` per face (box + score)
-plus the richer `face.Record` slice under `custom.faces`.
+Wire a video edge into a `face_detect` node. The frame passes through unchanged;
+each face is emitted as `Metadata` — a `Detection` (box + score) plus the richer
+`face.Record` (landmarks + optional embedding) under `custom.faces` — and, when
+`output_file` is set, **written to a sidecar directly**. Detecting faces into a file
+therefore needs nothing more than an input and this one node — an **analysis-only**
+graph, no encoder and no muxer:
 
 ```json
 {
+  "schema_version": "1.1",
+  "inputs": [
+    { "id": "in0", "url": "photo.jpg",
+      "streams": [{ "input_index": 0, "type": "video", "track": 0 }] }
+  ],
   "graph": {
     "nodes": [
       { "id": "faces", "type": "go_processor", "processor": "face_detect",
-        "params": { "every": 5, "conf": 0.5, "embeddings": false } }
+        "params": { "every": 1, "conf": 0.5, "embeddings": true,
+                    "output_file": "/abs/path/faces.jsonl" } }
     ],
     "edges": [
-      { "from": "in0:v:0", "to": "faces:v", "type": "video" }
+      { "from": "in0:v:0", "to": "faces:default", "type": "video" }
     ]
-  }
+  },
+  "outputs": []
 }
 ```
 
 Params (all optional): `every` (analyse every Nth frame, default 1), `conf`
-(confidence threshold, default the package's 0.5), `embeddings` (compute the 128-d
-vector, default false), `models_dir` (override `MEDIAMOLDER_FACE_MODELS`).
+(confidence threshold, default 0.5), `embeddings` (compute the 128-d vector, default
+false), `models_dir` (override `MEDIAMOLDER_FACE_MODELS`), `output_file` (an
+**absolute** path to write detections to) and `output_format` (`jsonl` (default),
+`csv`, `timecodes`).
 
-To persist results to a sidecar file, wire an `events` edge from `face_detect` into a
-[`metadata_file_writer`](go-processor-nodes.md) node, exactly as with the scene
-detectors and `whisper_stt` — or wrap it directly (`inner_processor: "face_detect"`),
-as the example jobs below do.
+A still image is just a single-frame video stream, so the **same node** handles
+images and video — only `every` differs. If you also want the (pass-through) video
+out, add an encoder + muxer output and route `faces:default` to it; or, instead of
+`output_file`, wire an `events` edge into a
+[`metadata_file_writer`](go-processor-nodes.md).
 
 ### Example jobs
 
-- [Example 65](../testdata/examples/65_face_detect_image.json) — **image** face
-  detection: point the input at a still (`.jpg`/`.png`); detects, aligns, and embeds
-  each face, writing `faces.jsonl`.
-- [Example 66](../testdata/examples/66_face_detect_video.json) — **video** face
-  detection: runs every 10th frame over a clip (embeddings off for speed), writing
-  `faces.jsonl` and re-encoding the video.
+- [Example 65](../testdata/examples/65_face_detect_image.json) — **image**: point the
+  input at a still (`.jpg`/`.png`); detect, align, and embed each face into
+  `faces.jsonl`. Analysis-only — an input and one node, no media output.
+- [Example 66](../testdata/examples/66_face_detect_video.json) — **video**: run every
+  10th frame over a clip (embeddings off for speed), writing `faces.jsonl`.
+  Analysis-only.
 
 ## GUI
 

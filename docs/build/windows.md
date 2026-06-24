@@ -256,13 +256,43 @@ service. Install the prerequisites below **before** building or running.
 
 | Node | Build tag | Needs | Runtime env / config |
 | --- | --- | --- | --- |
-| `whisper_stt` (speech-to-text) | `with_whisper` | whisper.cpp / `libwhisper` | `model` param → ggml model path |
-| `yolo_v8` (object detection) | `with_onnx` | ONNX Runtime DLL | `ONNXRUNTIME_SHARED_LIBRARY_PATH` |
+| `whisper_stt` (speech-to-text) | `with_whisper` | whisper.cpp / `libwhisper` + a ggml model | `model` param → ggml model path |
+| `yolo_v8` (object detection) | `with_onnx` | ONNX Runtime DLL + a `.onnx` model | `ONNXRUNTIME_SHARED_LIBRARY_PATH`; `model` + `labels_file` params |
+| `face_detect` (face detection + embeddings) | `with_onnx` | ONNX Runtime DLL + the two face models | `ONNXRUNTIME_SHARED_LIBRARY_PATH`, `MEDIAMOLDER_FACE_MODELS` |
 | `vidi_analyzer` (multimodal) | *(none)* | a running Vidi 2.5 service | `service_url` param |
 | `twelvelabs_*` (cloud understanding) | *(none)* | TwelveLabs API key | `TWELVELABS_API_KEY` |
 
 > `whisper_stt` binds **whisper.cpp** (`ggml-org/whisper.cpp`), **not** the
 > OpenAI Python `whisper` package — the latter does not produce `libwhisper`.
+>
+> `with_onnx` enables **both** `yolo_v8` **and** `face_detect` (and the
+> `mediamolder face-detect` CLI) — one tag, all ONNX nodes.
+
+### Combining tags
+
+Windows builds list tags directly in `-tags "…"` (comma-separated, no spaces) —
+there is no `EXTRA_TAGS` (that's a Makefile convenience; Windows builds by hand).
+Stack them as needed, e.g. static FFmpeg + whisper + the ONNX nodes:
+
+```powershell
+go build -tags "ffstatic,ffstatic_windows_msys2,with_whisper,with_onnx" -o mediamolder.exe .\cmd\mediamolder\
+```
+
+### Downloading models — how and when
+
+Models are **not** shipped and are loaded at **run time**, not build time: build
+with the node's tag, then download the model(s) and point an env var / param at
+them before running.
+
+| Node | Download what | How (run `.sh` in the MSYS2 shell) | Point at it with |
+| --- | --- | --- | --- |
+| `whisper_stt` | a ggml/gguf speech model | `whisper.cpp/models/download-ggml-model.sh base.en` | the node's `model` param |
+| `face_detect` / `face-detect` | YOLOv8-face + SFace `.onnx` | `./scripts/fetch-face-models.sh` (SHA-256-verified) | `MEDIAMOLDER_FACE_MODELS` or `--models-dir` |
+| `yolo_v8` | a YOLOv8 `.onnx` + labels | export from Ultralytics / your own | `model` + `labels_file` params |
+
+Models can be large and (for the face detector) carry a **copyleft** licence, so
+they are **never committed** — `fetch-face-models.sh` defaults to the git-ignored
+`testdata/face_models/`.
 
 ### whisper_stt (whisper.cpp)
 
@@ -317,6 +347,29 @@ go build -tags=with_onnx -o mediamolder.exe .\cmd\mediamolder\
 
 You also need a `.onnx` model and a labels file — see the
 [YOLOv8 Guide](../yolov8-guide.md).
+
+### face_detect (ONNX Runtime + face models)
+
+`face_detect` and the `mediamolder face-detect` CLI share the `with_onnx` tag
+with `yolo_v8` (same `onnxruntime.dll`), plus two bundled face models. Fetch the
+models in the MSYS2 shell, then build with the tag:
+
+```bash
+# In the MSYS2 MinGW64 shell, from the MediaMolder repo root:
+./scripts/fetch-face-models.sh          # fetches + SHA-256-verifies into testdata/face_models/
+```
+
+```powershell
+# Back in PowerShell:
+$env:ONNXRUNTIME_SHARED_LIBRARY_PATH = "C:\path\to\onnxruntime.dll"
+$env:MEDIAMOLDER_FACE_MODELS = "$PWD\testdata\face_models"
+go build -tags=with_onnx -o mediamolder.exe .\cmd\mediamolder\
+```
+
+The detector (YOLOv8-face) is **AGPL-3.0** and the embedder (SFace) is
+Apache-2.0; both are loaded as **data** at run time (never linked) and
+SHA-256-verified on load. MediaMolder ships neither — keep them out of any
+committed tree. See the [Face Detection Guide](../face-detection-guide.md).
 
 ### vidi_analyzer / twelvelabs_*
 

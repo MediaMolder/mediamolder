@@ -602,23 +602,27 @@ instructions, model selection, and output details.
 
 Detects faces (YOLOv8-face) in each video frame, aligns each to the canonical 112×112, and optionally embeds it (SFace) for recognition/clustering. The frame passes through unchanged; each face is emitted as a `Detection` (box + score, for generic overlay consumers) plus the richer `face.Record` slice (landmarks + optional 128-d embedding) under `Metadata.Custom["faces"]`. Compiled only with the **`with_onnx`** build tag; models are loaded as data and SHA-256-verified from `MEDIAMOLDER_FACE_MODELS` (see `scripts/fetch-face-models.sh`).
 
-| Param        | Type   | Default | Description |
-|--------------|--------|---------|-------------|
-| `every`      | int    | `1`     | Analyse every Nth video frame |
-| `conf`       | float  | `0.5`   | Detector confidence threshold (0 = package default) |
-| `embeddings` | bool   | `false` | Also compute the 128-d SFace embedding per face |
-| `models_dir` | string | `""`    | Override `MEDIAMOLDER_FACE_MODELS` |
+| Param           | Type   | Default   | Description |
+|-----------------|--------|-----------|-------------|
+| `every`         | int    | `1`       | Analyse every Nth video frame |
+| `conf`          | float  | `0.5`     | Detector confidence threshold (0 = package default) |
+| `embeddings`    | bool   | `false`   | Also compute the 128-d SFace embedding per face |
+| `models_dir`    | string | `""`      | Override `MEDIAMOLDER_FACE_MODELS` |
+| `output_file`   | string | `""`      | Absolute path; write detections to this sidecar directly |
+| `output_format` | string | `"jsonl"` | Sidecar format: `jsonl` \| `csv` \| `timecodes` |
+
+Set `output_file` and `face_detect` writes its own sidecar — no extra node — so a complete face-detection job is just an input wired into one node (an analysis-only graph: no encoder, no muxer, `"outputs": []`):
 
 ```json
 {
   "id": "faces",
   "type": "go_processor",
   "processor": "face_detect",
-  "params": { "every": 5, "conf": 0.5, "embeddings": false }
+  "params": { "every": 1, "conf": 0.5, "embeddings": true, "output_file": "/abs/faces.jsonl" }
 }
 ```
 
-Wire an `events` edge into a [`metadata_file_writer`](#metadata_file_writer) to persist a sidecar file. See the full [Face Detection Guide](face-detection-guide.md) and the [design](architecture/face-detection.md).
+A still image is a single-frame video stream, so the same node handles images and video. Alternatively, omit `output_file` and wire an `events` edge into a [`metadata_file_writer`](#metadata_file_writer). See the full [Face Detection Guide](face-detection-guide.md) and the [design](architecture/face-detection.md).
 
 ---
 

@@ -2123,8 +2123,11 @@ function FaceDetectParams({
   const every = num('every', 1);
   const conf = num('conf', 0);
   const embeddings = params['embeddings'] === true;
+  const outputFormat = str('output_format', 'jsonl');
+  const EXT: Record<string, string> = { jsonl: '.jsonl', csv: '.csv', timecodes: '.txt' };
+  const ext = EXT[outputFormat] ?? '.jsonl';
 
-  const KNOWN = new Set(['every', 'conf', 'embeddings', 'models_dir']);
+  const KNOWN = new Set(['every', 'conf', 'embeddings', 'models_dir', 'output_file', 'output_format']);
   const known = Object.fromEntries(Object.entries(params).filter(([k]) => KNOWN.has(k)));
   const overflow = Object.fromEntries(Object.entries(params).filter(([k]) => !KNOWN.has(k)));
 
@@ -2147,7 +2150,8 @@ function FaceDetectParams({
         <strong style={{ color: 'var(--text)' }}>Face detection</strong> — detect faces
         (YOLOv8-face), align each, and optionally embed them (SFace) for recognition/clustering.
         Video passes through unchanged; each face emits a box, 5-point landmarks, and an optional
-        128-d embedding. Requires a <code>with_onnx</code> build with bundled models.
+        128-d embedding. Set an output file to write detections to a sidecar directly — no
+        separate writer node needed. Requires a <code>with_onnx</code> build with bundled models.
       </div>
 
       <label style={{ marginTop: 8 }}>Analyse every Nth frame</label>
@@ -2196,6 +2200,25 @@ function FaceDetectParams({
         onChange={(e) => set('models_dir', e.target.value)}
       />
       {hint('Optional. Directory of the bundled .onnx models.')}
+
+      <label style={{ marginTop: 8 }}>Output format</label>
+      <select value={outputFormat} onChange={(e) => set('output_format', e.target.value)}>
+        <option value="jsonl">JSON Lines</option>
+        <option value="csv">CSV</option>
+        <option value="timecodes">Timecodes</option>
+      </select>
+      {hint('Sidecar format (used when an output file is set).')}
+
+      <FileField
+        label="output_file"
+        value={str('output_file')}
+        mode="save"
+        filter={ext}
+        defaultFilename={`faces${ext}`}
+        placeholder={`/path/to/faces${ext}`}
+        onChange={(val) => set('output_file', val)}
+      />
+      {hint('Optional. Write detections here directly — the graph then needs no media output.')}
 
       {Object.keys(overflow).length > 0 && (
         <>

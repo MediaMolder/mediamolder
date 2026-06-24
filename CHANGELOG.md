@@ -19,8 +19,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   the models are absent. New `face_detect` `go_processor` runs the pipeline over
   video frames (params `every` / `conf` / `embeddings` / `models_dir`), passing
   frames through and emitting per-face `Detection`s plus the rich `face.Record`
-  slice under `custom.faces`. The web GUI curates it in the palette ("Face
-  detection") with a typed Inspector panel, and `FaceRecord` mirrors `face.Record`
+  slice under `custom.faces`. It also embeds the shared `fileWriteHook`, so an
+  `output_file` / `output_format` param makes it **self-write** its detections —
+  a still-image or video face-detection job is then just an input wired into one
+  `face_detect` node with no media output (an analysis-only graph; a still image
+  decodes as a single-frame video stream, so the same node handles both). The web
+  GUI curates it in the palette ("Face detection") with a typed Inspector panel
+  (including the output-file picker), and `FaceRecord` mirrors `face.Record`
   in the frontend types. Both the processor and the real `face` pipeline are
   gated behind `with_onnx`; `make build-gui-onnx` produces a GUI single-binary
   with the node. To break an import cycle, `face` now owns its `letterbox`

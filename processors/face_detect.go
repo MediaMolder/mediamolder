@@ -23,17 +23,28 @@ import (
 //
 // Optional params:
 //
-//	"every"      — analyse every Nth video frame, default 1 (every frame).
-//	"conf"       — detector confidence threshold, default 0 (face package default, 0.5).
-//	"embeddings" — also compute the 128-d SFace embedding per face, default false.
-//	"models_dir" — directory of face models (overrides MEDIAMOLDER_FACE_MODELS).
+//	"every"         — analyse every Nth video frame, default 1 (every frame).
+//	"conf"          — detector confidence threshold, default 0 (face package default, 0.5).
+//	"embeddings"    — also compute the 128-d SFace embedding per face, default false.
+//	"models_dir"    — directory of face models (overrides MEDIAMOLDER_FACE_MODELS).
+//	"output_file"   — write detections to this absolute path (a sidecar), no extra node needed.
+//	"output_format" — sidecar format: jsonl (default), csv, timecodes.
 type FaceDetect struct {
+	hook  fileWriteHook
 	every uint64
 	conf  float64
 	embed bool
 }
 
 func (p *FaceDetect) Init(params map[string]any) error {
+	// Pull "output_file"/"output_format" out first so face_detect can self-write
+	// its detections to a sidecar — no separate metadata_file_writer node needed
+	// (mirrors the scene-change detectors).
+	params, err := p.hook.initFromParams("face_detect", params)
+	if err != nil {
+		return err
+	}
+
 	p.every = 1
 	if v, ok := params["every"].(float64); ok && v >= 1 {
 		p.every = uint64(v)
@@ -48,6 +59,7 @@ func (p *FaceDetect) Init(params map[string]any) error {
 		face.SetModelsDir(d)
 	}
 	if !face.Capable() {
+		p.hook.close() // don't leak the sidecar file opened above
 		return fmt.Errorf("face_detect: face models unavailable — set MEDIAMOLDER_FACE_MODELS or the " +
 			"\"models_dir\" param to the bundled models (see scripts/fetch-face-models.sh)")
 	}
@@ -91,10 +103,11 @@ func (p *FaceDetect) Process(frame *av.Frame, ctx ProcessorContext) (*av.Frame, 
 		Detections: dets,
 		Custom:     map[string]any{"faces": recs},
 	}
+	p.hook.write(ctx, md) // optional sidecar; a no-op unless output_file was set
 	return frame, md, nil
 }
 
-func (p *FaceDetect) Close() error { return nil }
+func (p *FaceDetect) Close() error { return p.hook.close() }
 
 func init() {
 	Register("face_detect", func() Processor { return &FaceDetect{} })

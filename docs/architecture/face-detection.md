@@ -91,7 +91,7 @@ func (f Face) ToRecord(frame uint64, pts int64, t float64) Record
         |                              |
    stdout: jsonl/csv/json      *Metadata ──► pipeline event bus
                                               |            \
-                                       GUI palette     sidecar file (metadata_file_writer)
+                                       GUI palette     sidecar file (output_file, self-written)
                                        + Inspector
                                        + RunPanel overlay
 ```
@@ -155,18 +155,29 @@ embedding. Emit **both**:
 - `Metadata.Custom["faces"]` — `[]face.Record` → carries landmarks + embedding for
   rich consumers and the GUI overlay.
 
-Used in a pipeline config with **zero schema change** (`NodeDef.Params` is free-form
-`map[string]any`, so `schema/v1.0.json` / `v1.1.json` are untouched):
+The processor embeds the shared `fileWriteHook` (as `scene_change` does), so an
+`output_file` param makes it **self-write** its detections — no `metadata_file_writer`
+node required. A complete face-detection job is then just an input wired into one
+`face_detect` node with `"outputs": []`: an **analysis-only graph** (the engine
+accepts zero outputs when every node is a `go_processor` —
+`configHasOnlyGoProcessors`, `job/config.go`). No schema change (`NodeDef.Params` is
+free-form `map[string]any`):
 
 ```json
-{ "id": "faces", "type": "go_processor", "processor": "face_detect",
-  "params": { "every": 5, "conf": 0.5, "embeddings": false },
-  "edges": [{ "from": "in0:v:0", "to": "faces:v", "type": "video" }] }
+{ "schema_version": "1.1",
+  "inputs": [{ "id": "in0", "url": "photo.jpg",
+    "streams": [{ "input_index": 0, "type": "video", "track": 0 }] }],
+  "graph": {
+    "nodes": [{ "id": "faces", "type": "go_processor", "processor": "face_detect",
+      "params": { "every": 1, "embeddings": true, "output_file": "/abs/faces.jsonl" } }],
+    "edges": [{ "from": "in0:v:0", "to": "faces:default", "type": "video" }] },
+  "outputs": [] }
 ```
 
-A sidecar file is produced by wiring an `events` edge into the existing
-`metadata_file_writer` — the same path `scene_change_*` and `whisper_stt` use; no new
-sink machinery.
+A still image decodes as a single-frame video stream, so the same node handles images
+and video (only `every` differs) — **no image-specific engine path is needed**.
+Alternatively, omit `output_file` and wire an `events` edge into a
+`metadata_file_writer`, the same path `scene_change_*` and `whisper_stt` use.
 
 ## Layer 3 — GUI
 

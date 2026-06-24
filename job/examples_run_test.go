@@ -275,6 +275,13 @@ func runExample(t *testing.T, jsonPath, name, inputAbs, _, _ string) {
 	}
 
 	// --- Verify outputs ---
+	if len(cfg.Outputs) == 0 {
+		// Analysis-only graph (e.g. face_detect writing a sidecar, all
+		// go_processor nodes with no muxer) — there is no media output to
+		// check; a clean Run above is the assertion. The sidecar itself may
+		// legitimately be empty (the BBB fixture has no human faces).
+		return
+	}
 	if strings.HasPrefix(name, "35_") {
 		for _, f := range []string{"out_1080.mp4", "out_720.mp4", "out_540.mp4", "out_360.mp4"} {
 			assertNonEmptyFile(t, filepath.Join(tmpDir, f))
