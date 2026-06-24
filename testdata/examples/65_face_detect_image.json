@@ -1,0 +1,40 @@
+{
+  "schema_version": "1.1",
+  "description": "Single-image face detection: point in0 at an image file (.jpg/.png). face_detect (wrapped by metadata_file_writer) detects each face, aligns it, and embeds it (SFace), writing faces.jsonl as JSON Lines of {frame,pts,bbox,landmarks,score,embedding}. The decoded frame is re-encoded to out.mp4 (a 1-frame video). Only the video stream is mapped, so this also works on stills with no audio. Requires a with_onnx build and bundled models (MEDIAMOLDER_FACE_MODELS).",
+  "inputs": [
+    {
+      "id": "in0",
+      "url": "{{input}}",
+      "streams": [
+        { "input_index": 0, "type": "video", "track": 0 }
+      ]
+    }
+  ],
+  "graph": {
+    "nodes": [
+      {
+        "id": "detect_faces",
+        "type": "go_processor",
+        "processor": "metadata_file_writer",
+        "params": {
+          "output_file": "faces.jsonl",
+          "inner_processor": "face_detect",
+          "every": 1,
+          "conf": 0.5,
+          "embeddings": true
+        }
+      }
+    ],
+    "edges": [
+      { "from": "in0:v:0", "to": "detect_faces:default", "type": "video" },
+      { "from": "detect_faces:default", "to": "out0:v", "type": "video" }
+    ]
+  },
+  "outputs": [
+    {
+      "id": "out0",
+      "url": "{{output}}",
+      "codec_video": "libx264"
+    }
+  ]
+}

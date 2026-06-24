@@ -199,5 +199,6 @@ relying on `auto` for short clips.
 
 ## See also
 
+- [Example 64](../testdata/examples/64_whisper_stt_json.json) — a complete job: audio into `whisper_stt`, writing a JSON transcript.
 - [Go Processor Nodes](go-processor-nodes.md)
 - [whisper.cpp](https://github.com/ggml-org/whisper.cpp)

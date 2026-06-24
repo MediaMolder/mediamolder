@@ -154,6 +154,28 @@ func runExample(t *testing.T, jsonPath, name, inputAbs, _, _ string) {
 		t.Skip("segmented shot output is not verifiable by the single-output harness")
 	}
 
+	// --- Skip: whisper_stt requires the with_whisper build tag and a model file ---
+	if strings.Contains(raw, `"whisper_stt"`) {
+		if _, err := processors.Get("whisper_stt"); err != nil {
+			t.Skip("whisper_stt processor not registered (rebuild with -tags with_whisper)")
+		}
+		if strings.Contains(raw, "/models/ggml-base.en.bin") {
+			if _, err := os.Stat("/models/ggml-base.en.bin"); err != nil {
+				t.Skip("whisper model not found at /models/ggml-base.en.bin")
+			}
+		}
+	}
+
+	// --- Skip: face_detect requires the with_onnx build tag and bundled models ---
+	if strings.Contains(raw, `"face_detect"`) {
+		if _, err := processors.Get("face_detect"); err != nil {
+			t.Skip("face_detect processor not registered (rebuild with -tags with_onnx)")
+		}
+		if os.Getenv("MEDIAMOLDER_FACE_MODELS") == "" {
+			t.Skip("face models unavailable (set MEDIAMOLDER_FACE_MODELS)")
+		}
+	}
+
 	// --- Template substitution ---
 	tmpDir := t.TempDir()
 
@@ -198,6 +220,7 @@ func runExample(t *testing.T, jsonPath, name, inputAbs, _, _ string) {
 		"scene_changes_content.jsonl", "scene_changes_adaptive.jsonl",
 		"scene_changes_hash.jsonl", "scene_changes_histogram.jsonl",
 		"scene_changes_threshold.jsonl",
+		"faces.jsonl", "transcript.json",
 	} {
 		dest := filepath.ToSlash(filepath.Join(tmpDir, meta))
 		raw = strings.ReplaceAll(raw, `"`+meta+`"`, `"`+dest+`"`)

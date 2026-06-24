@@ -1,0 +1,43 @@
+{
+  "schema_version": "1.1",
+  "description": "Video face detection: decode in.mp4 and run face_detect (wrapped by metadata_file_writer) on every 10th frame, writing faces.jsonl as JSON Lines of {frame,pts,t,bbox,landmarks,score} per detected face (embeddings off for speed). The video passes through and is re-encoded to H.264, audio is copied -> out.mp4. Requires a with_onnx build and bundled models (MEDIAMOLDER_FACE_MODELS).",
+  "inputs": [
+    {
+      "id": "in0",
+      "url": "{{input}}",
+      "streams": [
+        { "input_index": 0, "type": "video", "track": 0 },
+        { "input_index": 0, "type": "audio", "track": 0 }
+      ]
+    }
+  ],
+  "graph": {
+    "nodes": [
+      {
+        "id": "detect_faces",
+        "type": "go_processor",
+        "processor": "metadata_file_writer",
+        "params": {
+          "output_file": "faces.jsonl",
+          "inner_processor": "face_detect",
+          "every": 10,
+          "conf": 0.5,
+          "embeddings": false
+        }
+      }
+    ],
+    "edges": [
+      { "from": "in0:v:0", "to": "detect_faces:default", "type": "video" },
+      { "from": "detect_faces:default", "to": "out0:v", "type": "video" },
+      { "from": "in0:a:0", "to": "out0:a", "type": "audio" }
+    ]
+  },
+  "outputs": [
+    {
+      "id": "out0",
+      "url": "{{output}}",
+      "codec_video": "libx264",
+      "codec_audio": "copy"
+    }
+  ]
+}

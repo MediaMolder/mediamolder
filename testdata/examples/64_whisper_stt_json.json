@@ -1,0 +1,42 @@
+{
+  "schema_version": "1.1",
+  "description": "Decode in.mp4 -> route the audio stream into a whisper_stt node, which transcribes it locally (whisper.cpp, offline) and writes transcript.json (a JSON array of {start,end,text,confidence}); the audio passes through and is re-encoded to AAC while the video is stream-copied -> out.mp4. Requires a with_whisper build and a ggml model.",
+  "inputs": [
+    {
+      "id": "in0",
+      "url": "{{input}}",
+      "streams": [
+        { "input_index": 0, "type": "video", "track": 0 },
+        { "input_index": 0, "type": "audio", "track": 0 }
+      ]
+    }
+  ],
+  "graph": {
+    "nodes": [
+      {
+        "id": "stt",
+        "type": "go_processor",
+        "processor": "whisper_stt",
+        "params": {
+          "model": "/models/ggml-base.en.bin",
+          "language": "en",
+          "output_file": "transcript.json",
+          "output_format": "json"
+        }
+      }
+    ],
+    "edges": [
+      { "from": "in0:v:0", "to": "out0:v", "type": "video" },
+      { "from": "in0:a:0", "to": "stt:default", "type": "audio" },
+      { "from": "stt:default", "to": "out0:a", "type": "audio" }
+    ]
+  },
+  "outputs": [
+    {
+      "id": "out0",
+      "url": "{{output}}",
+      "codec_video": "copy",
+      "codec_audio": "aac"
+    }
+  ]
+}
