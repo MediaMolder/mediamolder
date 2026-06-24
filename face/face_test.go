@@ -255,3 +255,25 @@ func TestFaceToRecord(t *testing.T) {
 		t.Errorf("embedding not carried through: %v", got)
 	}
 }
+
+// TestLetterbox checks the forward letterbox: a target-sized canvas, the source
+// scaled to fit and centred, with black padding bars on the short axis.
+func TestLetterbox(t *testing.T) {
+	src := gradientImage(40, 20) // 2:1 aspect → scaled to 100x50 inside 100x100
+	dst := letterbox(src, 100, 100)
+	if b := dst.Bounds(); b.Dx() != 100 || b.Dy() != 100 {
+		t.Fatalf("size = %v, want 100x100", dst.Bounds())
+	}
+	// Top rows (y<25) are padding → untouched zero pixels (black, alpha 0).
+	if c := dst.RGBAAt(50, 2); c.R != 0 || c.G != 0 || c.B != 0 {
+		t.Errorf("expected black padding at top, got %v", c)
+	}
+	// Centre is content (the source centre has a non-zero gradient value).
+	if c := dst.RGBAAt(50, 50); c.R == 0 && c.G == 0 && c.B == 0 {
+		t.Errorf("expected content at centre, got black")
+	}
+	// Degenerate inputs must not panic and still return the requested size.
+	if got := letterbox(gradientImage(0, 0), 10, 10); got.Bounds().Dx() != 10 {
+		t.Errorf("degenerate source mishandled: %v", got.Bounds())
+	}
+}
