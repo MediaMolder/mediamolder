@@ -7,6 +7,28 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- **Face detection integration.** The native `face` package (YOLOv8-face detect
+  → 5-point align → SFace embed) is now reachable end-to-end. A frame-level seam
+  — `face.AnalyzeImage` / `face.DetectImage` / `face.AnalyzeImageOpts` with an
+  `Options` struct, plus the shared `face.Record` serialisation type — lets
+  callers analyse already-decoded frames (the existing path-based `face.Analyze`
+  is refactored to use it; both — and any downstream consumer — are unchanged). New
+  `mediamolder face-detect <image|video>` CLI command emits one record per face
+  to JSONL / CSV / JSON, with `--every`, `--max-frames`, `--embeddings`,
+  `--conf`, and `--models-dir`; it is in every build and degrades gracefully when
+  the models are absent. New `face_detect` `go_processor` runs the pipeline over
+  video frames (params `every` / `conf` / `embeddings` / `models_dir`), passing
+  frames through and emitting per-face `Detection`s plus the rich `face.Record`
+  slice under `custom.faces`. The web GUI curates it in the palette ("Face
+  detection") with a typed Inspector panel, and `FaceRecord` mirrors `face.Record`
+  in the frontend types. Both the processor and the real `face` pipeline are
+  gated behind `with_onnx`; `make build-gui-onnx` produces a GUI single-binary
+  with the node. To break an import cycle, `face` now owns its `letterbox`
+  helper (a verbatim, behaviour-preserving copy) instead of importing
+  `processors`, making it a leaf package. Models are loaded as data, SHA-256
+  pinned (`scripts/fetch-face-models.sh`), never linked. See
+  `docs/face-detection-guide.md` and `docs/architecture/face-detection.md`.
+
 - **`whisper_stt` speech-to-text node.** A new `go_processor` that transcribes
   an audio stream to timestamped text locally with
   [whisper.cpp](https://github.com/ggml-org/whisper.cpp) — offline, no network.

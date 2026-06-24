@@ -32,6 +32,7 @@ Everything runs in-process: no subprocesses, no network calls, no Python. Your p
 		- [`twelvelabs_searcher`](#twelvelabs_searcher)
 		- [`twelvelabs_embedder`](#twelvelabs_embedder)
 		- [`whisper_stt`](#whisper_stt)
+		- [`face_detect`](#face_detect)
 		- [`sequence_editor`](#sequence_editor)
 	- [Helper functions](#helper-functions)
 		- [Letterbox](#letterbox)
@@ -75,7 +76,7 @@ Use `go_processor` when you need to do something that FFmpeg's built-in filters 
 
 - **AI inference** — run an object detection model (YOLO, SSD), speech recogniser (Whisper), or image quality scorer (BRISQUE) on each frame.
 - **Stateful analysis** — track objects across frames, detect scene changes, compute running averages.
-- **Structured metadata** — emit detections, quality scores, or custom key-value data on the pipeline event bus so other parts of your application can react in real time.
+- **Structured metadata** — emit detections, quality scores, or custom key-value data on the event bus so other parts of your application can react in real time.
 - **Conditional forwarding** — drop frames that don't meet criteria (content gating, deduplication, silence removal).
 
 Use a regular `"filter"` node for things FFmpeg already does well (scaling, colour conversion, overlays, audio mixing, etc.). Filters are faster because they run inside libavfilter's optimised C code.
@@ -139,9 +140,9 @@ type FrameSource interface {
 
 | Method | When it runs | What to do |
 |--------|-------------|------------|
-| `Init` | Once, before the first frame arrives. | Read your config from `params`, load models, allocate buffers. Return an error to abort the pipeline. |
+| `Init` | Once, before the first frame arrives. | Read your config from `params`, load models, allocate buffers. Return an error to abort the graph. |
 | `Process` | Once per frame. | Inspect or modify the frame, run your logic, return the frame (or a new one) plus optional metadata. Return a `nil` frame to drop it. |
-| `Close` | Once, when the pipeline shuts down (even after errors). | Release resources, flush buffers, close files. |
+| `Close` | Once, when the graph shuts down (even after errors). | Release resources, flush buffers, close files. |
 
 `FrameLookahead` is optional. Implement it when a processor confirms metadata
 for an earlier frame after seeing future frames. The runtime delays downstream
@@ -168,7 +169,7 @@ You can use `MediaType` to handle video and audio frames differently, and `Frame
 
 ### Metadata
 
-If your processor produces results (detections, scores, analytics), return them as `*Metadata`. The runtime automatically publishes non-nil metadata on the pipeline event bus so the rest of your application can consume it.
+If your processor produces results (detections, scores, analytics), return them as `*Metadata`. The runtime automatically publishes non-nil metadata on the event bus so the rest of your application can consume it.
 
 ```go
 type Metadata struct {
@@ -205,7 +206,7 @@ func init() {
 }
 ```
 
-The factory is called once per `go_processor` node in the pipeline, so if your JSON config has three nodes using `"my_proc"`, three separate instances are created. Each holds its own state — no shared-state concurrency issues to worry about.
+The factory is called once per `go_processor` node in the graph, so if your JSON config has three nodes using `"my_proc"`, three separate instances are created. Each holds its own state — no shared-state concurrency issues to worry about.
 
 To see which processors are available at runtime:
 
@@ -431,9 +432,9 @@ See [docs/scene-detection.md](scene-detection.md#scene_change_histogram) for ful
 
 A sink processor that writes metadata events to a [JSON Lines](https://jsonlines.org/) file. Supports two usage modes:
 
-**Events-wiring mode** (recommended for the GUI and new pipelines): omit `inner_processor` and connect an **`events`** edge from any `go_processor` node to this node. The engine opens the output file and routes every event directly — no video path change required.
+**Events-wiring mode** (recommended for the GUI and new graphs): omit `inner_processor` and connect an **`events`** edge from any `go_processor` node to this node. The engine opens the output file and routes every event directly — no video path change required.
 
-**Wrapper mode** (legacy / JSON-authored pipelines): set `inner_processor` to the name of another registered processor. `metadata_file_writer` wraps it, intercepts its metadata, writes it to the file, and forwards both the frame and metadata to the caller. Deprecated for new graphs; prefer events-wiring.
+**Wrapper mode** (legacy / JSON-authored graphs): set `inner_processor` to the name of another registered processor. `metadata_file_writer` wraps it, intercepts its metadata, writes it to the file, and forwards both the frame and metadata to the caller. Deprecated for new graphs; prefer events-wiring.
 
 | Param              | Type   | Default      | Description |
 |--------------------|--------|--------------|-------------|
@@ -594,6 +595,30 @@ Transcribes an audio stream to timestamped text locally with [whisper.cpp](https
 
 See the full [Whisper Speech-to-Text Guide](whisper-stt-guide.md) for build
 instructions, model selection, and output details.
+
+---
+
+### `face_detect`
+
+Detects faces (YOLOv8-face) in each video frame, aligns each to the canonical 112×112, and optionally embeds it (SFace) for recognition/clustering. The frame passes through unchanged; each face is emitted as a `Detection` (box + score, for generic overlay consumers) plus the richer `face.Record` slice (landmarks + optional 128-d embedding) under `Metadata.Custom["faces"]`. Compiled only with the **`with_onnx`** build tag; models are loaded as data and SHA-256-verified from `MEDIAMOLDER_FACE_MODELS` (see `scripts/fetch-face-models.sh`).
+
+| Param        | Type   | Default | Description |
+|--------------|--------|---------|-------------|
+| `every`      | int    | `1`     | Analyse every Nth video frame |
+| `conf`       | float  | `0.5`   | Detector confidence threshold (0 = package default) |
+| `embeddings` | bool   | `false` | Also compute the 128-d SFace embedding per face |
+| `models_dir` | string | `""`    | Override `MEDIAMOLDER_FACE_MODELS` |
+
+```json
+{
+  "id": "faces",
+  "type": "go_processor",
+  "processor": "face_detect",
+  "params": { "every": 5, "conf": 0.5, "embeddings": false }
+}
+```
+
+Wire an `events` edge into a [`metadata_file_writer`](#metadata_file_writer) to persist a sidecar file. See the full [Face Detection Guide](face-detection-guide.md) and the [design](architecture/face-detection.md).
 
 ---
 
@@ -913,7 +938,7 @@ func init() {
 
 ### Engine behaviour
 
-- The engine detects `FrameSource` via a Go interface assertion at pipeline initialisation time.
+- The engine detects `FrameSource` via a Go interface assertion at graph initialisation time.
 - `Run()` is called instead of `Process()` when `len(inboundAVEdges) == 0`.
 - Frames produced by `send()` are forwarded to all downstream channels exactly as if they had come from a `Process()` return value.
 - Context cancellation is propagated via `ctx`; check `ctx.Err()` inside your read loop.
@@ -923,7 +948,7 @@ func init() {
 
 ## Metadata and the event bus
 
-Whenever your `Process()` method returns a non-nil `*Metadata`, the runtime automatically posts it to the pipeline's event bus. You don't need to do anything special — just return the metadata and it's published.
+Whenever your `Process()` method returns a non-nil `*Metadata`, the runtime automatically posts it to the event bus. You don't need to do anything special — just return the metadata and it's published.
 
 On the consuming side, any part of your application can listen for these events:
 
@@ -1002,9 +1027,9 @@ eng.Run(ctx)
 
 ## Error handling
 
-- **`Init()` error** → pipeline creation aborts (same as an invalid filter).
+- **`Init()` error** → graph creation aborts (same as an invalid filter).
 - **`Process()` error** → respects the node's `error_policy`:
-  - `"abort"` (default): pipeline stops immediately.
+  - `"abort"` (default): the graph stops immediately.
   - `"skip"`: frame is dropped, processing continues.
   - `"retry"`: frame is re-submitted up to `max_retries` times.
   - `"fallback"`: reroute to `fallback_node`.
@@ -1017,7 +1042,7 @@ eng.Run(ctx)
 A processor goes through three phases, always in this order:
 
 ```
-Pipeline starts
+Graph starts
     │
     ├─ processors.Get("name")   →  factory creates a new instance of your struct
     │
@@ -1036,7 +1061,7 @@ Important guarantees:
 - **One instance per node.** If your JSON has two `go_processor` nodes both using `"my_proc"`, each gets its own struct instance with its own state.
 - **Serial calls.** `Process()` is never called concurrently on the same instance. You don't need mutexes for per-node state.
 - **Ordering preserved.** Frames arrive in decode order. If frame 42 arrives before frame 43, your `Process()` sees them in that order.
-- **Close is guaranteed.** Even if `Process()` returns an error or the pipeline is cancelled, `Close()` still runs.
+- **Close is guaranteed.** Even if `Process()` returns an error or the graph is cancelled, `Close()` still runs.
 
 ---
 
@@ -1046,8 +1071,8 @@ Important guarantees:
 - **Use the provided helpers** (`FrameToFloat32Tensor`, `Letterbox`) instead of writing your own preprocessing. They're tested, correct, and safe for concurrent use.
 - **Drop frames by returning nil.** `return nil, md, nil` tells the runtime to consume the frame. No error, no forwarding — the frame just stops here.
 - **Batch if your model wants it.** If GPU inference is faster on N frames at once, accumulate frames in a buffer inside `Process()` and emit results when the batch is full.
-- **Check `ctx.Context` for cancellation.** If your processing is slow (e.g. large model inference), periodically check `ctx.Context.Done()` so the pipeline can shut down promptly.
-- **Keep `Init()` fast.** It runs before the pipeline starts, so slow model loading delays everything. For very large models, consider lazy-loading on the first `Process()` call.
+- **Check `ctx.Context` for cancellation.** If your processing is slow (e.g. large model inference), periodically check `ctx.Context.Done()` so the graph can shut down promptly.
+- **Keep `Init()` fast.** It runs before the graph starts, so slow model loading delays everything. For very large models, consider lazy-loading on the first `Process()` call.
 
 ---
 
@@ -1162,7 +1187,7 @@ Important guarantees:
 
 ### Custom AI processor
 
-This example shows how you'd wire a custom YOLO object detector into a pipeline. The processor itself is Go code you write; the JSON just tells MediaMolder where it sits in the graph:
+This example shows how you'd wire a custom YOLO object detector into a graph. The processor itself is Go code you write; the JSON just tells MediaMolder where it sits in the graph:
 
 ```json
 {
@@ -1199,7 +1224,7 @@ This example shows how you'd wire a custom YOLO object detector into a pipeline.
 }
 ```
 
-The `yolo_v8_detector` name must be registered in your Go code before the pipeline runs:
+The `yolo_v8_detector` name must be registered in your Go code before the graph runs:
 
 ```go
 processors.Register("yolo_v8_detector", func() processors.Processor {
@@ -1213,7 +1238,7 @@ Inside `YOLODetector.Process()`, you'd use `FrameToFloat32Tensor` to prepare the
 
 ## Vidi 2.5 multimodal analysis
 
-The `vidi_analyzer` processor integrates [Vidi 2.5](https://github.com/bytedance/vidi) — a 9B-parameter multimodal LMM — as a first-class pipeline node. It batches decoded video frames, encodes them as JPEG, and POSTs them to a FastAPI inference service. Results are published as structured `Metadata`.
+The `vidi_analyzer` processor integrates [Vidi 2.5](https://github.com/bytedance/vidi) — a 9B-parameter multimodal LMM — as a first-class graph node. It batches decoded video frames, encodes them as JPEG, and POSTs them to a FastAPI inference service. Results are published as structured `Metadata`.
 
 See the dedicated [Vidi 2.5 Guide](vidi-guide.md) for full setup instructions, Python service template, task reference, and performance tips.
 
@@ -1298,4 +1323,4 @@ The post-processing code (`ParseYOLOv8Output`, `NMS`, `IoU`) lives in `processor
 
 ## Schema version
 
-If your pipeline JSON includes any `go_processor` node, set `"schema_version": "1.1"` at the top level. Existing pipelines that only use `filter`, `encoder`, `source`, and `sink` nodes continue to work unchanged with `"1.0"`. The parser accepts both versions.
+If your graph JSON includes any `go_processor` node, set `"schema_version": "1.1"` at the top level. Existing graphs that only use `filter`, `encoder`, `source`, and `sink` nodes continue to work unchanged with `"1.0"`. The parser accepts both versions.

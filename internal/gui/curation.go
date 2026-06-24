@@ -195,6 +195,16 @@ var curatedNodes = map[string]NodeMeta{
 		Aliases:  []string{"twelvelabs", "ai", "marengo", "embedding", "vector", "clip"},
 	},
 
+	// ── Native face detection ────────────────────────────────────────
+	// YOLOv8-face detect + 5-point align + SFace embed, behind the face
+	// package's with_onnx-gated API. Registered only with the with_onnx
+	// build tag, so curation_test.go tolerates its absence (optional set).
+	// See docs/architecture/face-detection.md.
+	"face_detect": {
+		Friendly: "Face detection",
+		Aliases:  []string{"face", "faces", "detect", "recognition", "landmark", "embedding", "yolov8-face", "sface", "people"},
+	},
+
 	// ── Whisper speech-to-text ───────────────────────────────────────
 	// Local, offline transcription via whisper.cpp. Only registered when
 	// built with the with_whisper build tag, so curation_test.go tolerates

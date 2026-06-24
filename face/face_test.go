@@ -230,3 +230,28 @@ func absI(v int) int {
 	}
 	return v
 }
+
+// TestFaceToRecord verifies the CLI/processor serialisation wrapper copies the face fields
+// and stamps the stream position, and that an unembedded face omits the embedding.
+func TestFaceToRecord(t *testing.T) {
+	f := Face{
+		BBox:      [4]int{10, 20, 30, 40},
+		Landmarks: [5][2]int{{1, 2}, {3, 4}, {5, 6}, {7, 8}, {9, 10}},
+		Score:     0.9,
+	}
+	r := f.ToRecord(7, 12345, 0.5)
+	if r.Frame != 7 || r.PTS != 12345 || r.Time != 0.5 {
+		t.Errorf("position = (%d,%d,%v), want (7,12345,0.5)", r.Frame, r.PTS, r.Time)
+	}
+	if r.BBox != f.BBox || r.Landmarks != f.Landmarks || r.Score != f.Score {
+		t.Errorf("face fields not copied: %+v", r)
+	}
+	if r.Embedding != nil {
+		t.Errorf("embedding should be nil for an unembedded face, got len %d", len(r.Embedding))
+	}
+
+	f.Embedding = []float32{0.1, 0.2}
+	if got := f.ToRecord(0, 0, 0).Embedding; len(got) != 2 {
+		t.Errorf("embedding not carried through: %v", got)
+	}
+}

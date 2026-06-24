@@ -79,6 +79,8 @@ func run(args []string) error {
 		return cmdHWBench(args[1:])
 	case "go-scene-detect":
 		return cmdGoSceneDetect(args[1:])
+	case "face-detect":
+		return cmdFaceDetect(args[1:])
 	case "twelvelabs":
 		return cmdTwelveLabs(args[1:])
 	case "serve":
@@ -607,6 +609,10 @@ Commands:
                                 --stats=PATH, --downscale=N.
                          Attribution: algorithms ported from PySceneDetect by Brandon Castellano.
                          See https://github.com/Breakthrough/PySceneDetect
+  face-detect <input>    Detect (and optionally embed) faces in an image or video.
+                         Flags: --format=jsonl|csv|json, --output=PATH, --every=N,
+                                --max-frames=N, --embeddings, --conf=F, --models-dir=PATH.
+                         Requires a build with -tags with_onnx and bundled models.
   twelvelabs <subcmd>    TwelveLabs (Marengo + Pegasus) ad-hoc operations.
                          Subcommands: index, analyze, search, embed,
                                       indexes list|create|delete.

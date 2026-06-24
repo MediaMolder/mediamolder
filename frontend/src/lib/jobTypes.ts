@@ -816,3 +816,26 @@ export interface ValidationReport {
   has_errors: boolean;
   has_warnings: boolean;
 }
+
+/**
+ * FaceRecord mirrors Go's face.Record (see docs/architecture/face-detection.md):
+ * one detected face emitted by the face_detect processor under
+ * metadata.custom.faces (and by the `face-detect` CLI). bbox is [x, y, w, h] in
+ * source pixels; landmarks are [eyeL, eyeR, nose, mouthL, mouthR] as [x, y] pairs.
+ */
+export interface FaceRecord {
+  frame: number;
+  pts: number;
+  t?: number;
+  bbox: [number, number, number, number];
+  landmarks: [
+    [number, number],
+    [number, number],
+    [number, number],
+    [number, number],
+    [number, number],
+  ];
+  score: number;
+  label?: string;
+  embedding?: number[];
+}

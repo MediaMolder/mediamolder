@@ -1882,6 +1882,10 @@ function GoProcessorParams({
     return <WhisperSTTParams params={params} onChange={onChange} />;
   }
 
+  if (processorName === 'face_detect') {
+    return <FaceDetectParams params={params} onChange={onChange} />;
+  }
+
   if (processorName === 'metadata_file_writer') {
     const outputFile = typeof params['output_file'] === 'string' ? params['output_file'] : '';
     // inner_processor is preserved for backward-compat round-trip if present,
@@ -2081,6 +2085,117 @@ function WhisperSTTParams({
         onChange={(val) => set('output_file', val)}
       />
       {hint('Optional. Leave blank to emit segment events only.')}
+
+      {Object.keys(overflow).length > 0 && (
+        <>
+          <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 10 }}>Other params</div>
+          <ParamsEditor params={overflow} onChange={(next) => onChange({ ...known, ...next })} />
+        </>
+      )}
+    </>
+  );
+}
+
+/* ---------- FaceDetectParams ----------
+ * Inspector body for the face_detect go_processor: frame sampling, detector
+ * confidence, the embedding toggle, and an optional bundled-models override.
+ * Unknown keys fall through to the generic ParamsEditor. Requires a with_onnx
+ * build with bundled models. See docs/architecture/face-detection.md. */
+function FaceDetectParams({
+  params,
+  onChange,
+}: {
+  params: Record<string, unknown>;
+  onChange: (next: Record<string, unknown>) => void;
+}) {
+  const set = (key: string, value: unknown) => {
+    const next = { ...params };
+    const blank = value === '' || value === undefined || value === null || value === false;
+    if (blank) delete next[key];
+    else next[key] = value;
+    onChange(next);
+  };
+  const str = (key: string, fallback = ''): string =>
+    typeof params[key] === 'string' ? (params[key] as string) : fallback;
+  const num = (key: string, fallback: number): number =>
+    typeof params[key] === 'number' ? (params[key] as number) : fallback;
+
+  const every = num('every', 1);
+  const conf = num('conf', 0);
+  const embeddings = params['embeddings'] === true;
+
+  const KNOWN = new Set(['every', 'conf', 'embeddings', 'models_dir']);
+  const known = Object.fromEntries(Object.entries(params).filter(([k]) => KNOWN.has(k)));
+  const overflow = Object.fromEntries(Object.entries(params).filter(([k]) => !KNOWN.has(k)));
+
+  const hint = (text: string) => (
+    <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: -4, marginBottom: 8 }}>{text}</div>
+  );
+
+  const setInt = (key: string, raw: string) => {
+    const v = parseInt(raw, 10);
+    set(key, Number.isNaN(v) || v <= 0 ? undefined : v);
+  };
+  const setFloat = (key: string, raw: string) => {
+    const v = parseFloat(raw);
+    set(key, Number.isNaN(v) || v <= 0 ? undefined : v);
+  };
+
+  return (
+    <>
+      <div style={{ fontSize: 11, color: 'var(--text-dim)', marginBottom: 8 }}>
+        <strong style={{ color: 'var(--text)' }}>Face detection</strong> — detect faces
+        (YOLOv8-face), align each, and optionally embed them (SFace) for recognition/clustering.
+        Video passes through unchanged; each face emits a box, 5-point landmarks, and an optional
+        128-d embedding. Requires a <code>with_onnx</code> build with bundled models.
+      </div>
+
+      <label style={{ marginTop: 8 }}>Analyse every Nth frame</label>
+      <input
+        type="number"
+        min={1}
+        step={1}
+        value={every}
+        placeholder="1 = every frame"
+        onChange={(e) => setInt('every', e.target.value)}
+      />
+      {hint('Sub-sample video to trade accuracy for speed. 1 = every frame.')}
+
+      <label style={{ marginTop: 8 }}>Confidence threshold</label>
+      <input
+        type="number"
+        min={0}
+        max={1}
+        step={0.05}
+        value={conf}
+        placeholder="0 = default (0.5)"
+        onChange={(e) => setFloat('conf', e.target.value)}
+      />
+      {hint('Minimum detector score, 0–1. 0 uses the package default (0.5).')}
+
+      <label style={{ display: 'flex', alignItems: 'flex-start', gap: 6, marginTop: 8, cursor: 'pointer' }}>
+        <input
+          type="checkbox"
+          checked={embeddings}
+          style={{ marginTop: 2, flexShrink: 0 }}
+          onChange={(e) => set('embeddings', e.target.checked)}
+        />
+        <span>
+          Compute embeddings
+          <div style={{ fontSize: 11, color: 'var(--text-dim)', fontWeight: 'normal', marginTop: 2 }}>
+            Also run SFace to emit a 128-d recognition vector per face (slower).
+          </div>
+        </span>
+      </label>
+
+      <label style={{ marginTop: 8 }}>Models directory</label>
+      <input
+        type="text"
+        value={str('models_dir')}
+        placeholder="overrides MEDIAMOLDER_FACE_MODELS"
+        onChange={(e) => set('models_dir', e.target.value)}
+      />
+      {hint('Optional. Directory of the bundled .onnx models.')}
 
       {Object.keys(overflow).length > 0 && (
         <>

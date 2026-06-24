@@ -14,9 +14,9 @@ import (
 	"sync"
 )
 
-// EnvModelsDir is the environment variable a host (e.g. SyncsIt) sets to the directory
-// holding the bundled face models. SyncsIt ships these inside the .app and points this at
-// them, so face analysis works with nothing user-installed.
+// EnvModelsDir is the environment variable a host application sets to the directory holding
+// the bundled face models. A host application ships these and points this at them, so face
+// analysis works with nothing user-installed.
 const EnvModelsDir = "MEDIAMOLDER_FACE_MODELS"
 
 var (
