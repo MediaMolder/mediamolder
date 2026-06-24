@@ -1,6 +1,6 @@
 {
   "schema_version": "1.1",
-  "description": "Decode in.mp4 -> run YOLOv8 object detection on every video frame (CPU, COCO 80 classes) -> encode to H.264, copy audio -> write to out.mp4. Detections are emitted on the event bus. Note: if you edit this JSON manually, you must also update or remove the ffmpeg_cmd field.",
+  "description": "Decode in.mp4 -> run YOLOv8 object detection on every video frame (CPU, COCO 80 classes) -> encode to H.264, copy audio -> write to out.mp4. Detections are emitted on the event bus.",
   "ffmpeg_cmd": "# No equivalent FFmpeg command — yolo_v8 (node \"detect0\") has no FFmpeg equivalent.",
   "inputs": [
     {
