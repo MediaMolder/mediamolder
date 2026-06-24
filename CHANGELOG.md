@@ -7,6 +7,23 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- **Camera-RAW develop via LibRaw.** A new `raw` package decodes camera RAW
+  (NEF/CR2/CR3/ARW/RAF/ORF/RW2/PEF/SRW/DNG) to a full, demosaicked 8-bit sRGB
+  `*image.RGBA` through [LibRaw](https://www.libraw.org/) — real develop, not the
+  embedded JPEG preview, and not libav's black RAW render. The decoder is gated
+  behind the `with_libraw` build tag (`raw/decode_libraw.go`) with a pure-Go stub
+  (`raw/decode_stub.go`) so the default build is unaffected; it runs a fixed,
+  deterministic parameter set (camera white balance, sRGB, AHD demosaic, no
+  auto-brightness, un-oriented) so a given file + pinned LibRaw version always
+  yields the same raster. Surfaced as the `raw_decode` FrameSource graph node
+  (`processors/raw_decode.go`), the `mediamolder raw-decode` / `raw-setup`
+  commands, and a GUI palette entry + Inspector form (`GET /api/raw-capabilities`).
+  LibRaw is bundled from pinned, SHA-256-verified source and linked statically by
+  `scripts/bundle-libraw.sh` (we ship no binary); `make build-gui-libraw`. The
+  test fixture `raw/testdata/sample.dng` is a self-authored CC0 RGGB-Bayer DNG
+  (generator committed alongside it). See
+  [docs/raw-decode-guide.md](docs/raw-decode-guide.md) and
+  [docs/architecture/raw-decode.md](docs/architecture/raw-decode.md).
 - **`whisper_stt` speech-to-text node.** A new `go_processor` that transcribes
   an audio stream to timestamped text locally with
   [whisper.cpp](https://github.com/ggml-org/whisper.cpp) — offline, no network.

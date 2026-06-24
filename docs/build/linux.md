@@ -318,6 +318,23 @@ the `twelvelabs_*` nodes need a [TwelveLabs](https://twelvelabs.io) API key via
 `~/.config/mediamolder/twelvelabs.json`. See the
 [Vidi 2.5](../vidi-guide.md) and [TwelveLabs](../twelvelabs.md) guides.
 
+### raw_decode (LibRaw)
+
+Camera-RAW develop (the `raw_decode` node + `mediamolder raw-decode`). Build tag
+`with_libraw`. LibRaw is bundled — one script builds a SHA-256-pinned static lib
+from source (nothing to install beyond zlib headers, no binary shipped):
+
+```bash
+sudo apt-get install -y zlib1g-dev   # Debian/Ubuntu (Fedora: zlib-devel)
+scripts/bundle-libraw.sh             # → third_party/libraw (gitignored)
+make build-gui-libraw                # GUI single binary (static FFmpeg + static LibRaw)
+make build-libraw                    # CLI / library
+make test-libraw && ./mediamolder raw-setup
+```
+
+Linked statically — no runtime library or rpath. See
+[Camera-RAW Decode Guide](../raw-decode-guide.md).
+
 ### Combining nodes in one binary
 
 The build tags stack, so one binary can carry several nodes. Append the extra
