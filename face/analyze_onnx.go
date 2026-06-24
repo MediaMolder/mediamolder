@@ -1,0 +1,284 @@
+// Copyright (C) 2026 Thomas Vaughan
+// SPDX-License-Identifier: LGPL-2.1-or-later
+
+//go:build with_onnx
+
+package face
+
+import (
+	"fmt"
+	"image"
+	"os"
+	"sync"
+
+	"github.com/MediaMolder/MediaMolder/av"
+	"github.com/MediaMolder/MediaMolder/processors"
+	ort "github.com/yalue/onnxruntime_go"
+)
+
+// EnvONNXRuntimeLib points at the onnxruntime shared library (SyncsIt bundles it in the .app
+// and sets this). Mirrors the existing processors convention; empty ⇒ default search path.
+const EnvONNXRuntimeLib = "ONNXRUNTIME_SHARED_LIBRARY_PATH"
+
+const (
+	detectAttrs    = 5 + numLandmarks*3 // YOLOv8-face: cx,cy,w,h,score + 5×(x,y,vis) = 20
+	embedDim       = 128                // SFace embedding length
+	faceConfThresh = 0.5
+	faceIoUThresh  = 0.45
+)
+
+// pipeline holds the two ONNX sessions and their pre-allocated tensors. ONNX sessions with
+// bound tensors are not safe for concurrent Run(), so all inference is serialized on mu.
+type pipeline struct {
+	mu sync.Mutex
+
+	detectSpec     ModelSpec
+	detectNumPreds int
+	detect         *ort.AdvancedSession
+	detectIn       *ort.Tensor[float32]
+	detectOut      *ort.Tensor[float32]
+
+	embedSpec ModelSpec
+	embed     *ort.AdvancedSession
+	embedIn   *ort.Tensor[float32]
+	embedOut  *ort.Tensor[float32]
+}
+
+var (
+	initOnce sync.Once
+	pipe     *pipeline
+	initErr  error
+
+	ortInitOnce sync.Once
+	ortInitErr  error
+)
+
+// Capable reports whether the models load and the pipeline initialises (ONNX runtime present,
+// models found, SHA-256 verified). It is safe to call repeatedly — init happens once.
+func Capable() bool {
+	_, err := ensurePipeline()
+	return err == nil
+}
+
+// Analyze decodes path with MediaMolder's deterministic software decoder, detects faces with
+// YOLOv8-face, aligns each to the canonical 112×112, and embeds it with SFace. The returned
+// embeddings are L2-normalised and reproducible across machines for the same input.
+func Analyze(path string) ([]Face, error) {
+	p, err := ensurePipeline()
+	if err != nil {
+		return nil, err
+	}
+	img, err := decodeRGBA(path)
+	if err != nil {
+		return nil, err
+	}
+
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	dets, err := p.runDetect(img)
+	if err != nil {
+		return nil, err
+	}
+	faces := make([]Face, 0, len(dets))
+	for _, d := range dets {
+		aligned := alignTo112(img, d.landmarks)
+		emb, err := p.runEmbed(aligned)
+		if err != nil {
+			return nil, err
+		}
+		f := toFace(d)
+		f.Embedding = l2Normalize(emb)
+		faces = append(faces, f)
+	}
+	return faces, nil
+}
+
+func ensurePipeline() (*pipeline, error) {
+	initOnce.Do(func() { pipe, initErr = newPipeline() })
+	return pipe, initErr
+}
+
+// initONNX initialises the ONNX Runtime environment exactly once.
+func initONNX() error {
+	ortInitOnce.Do(func() {
+		if lib := os.Getenv(EnvONNXRuntimeLib); lib != "" {
+			ort.SetSharedLibraryPath(lib)
+		}
+		ortInitErr = ort.InitializeEnvironment()
+	})
+	return ortInitErr
+}
+
+func newPipeline() (*pipeline, error) {
+	if err := initONNX(); err != nil {
+		return nil, fmt.Errorf("face: onnxruntime init: %w", err)
+	}
+	dir := resolveModelsDir()
+	p := &pipeline{detectSpec: DefaultDetectSpec, embedSpec: DefaultEmbedSpec}
+
+	// Detector: input [1,3,S,S], output [1,detectAttrs,numPreds].
+	dData, err := loadVerified(dir, p.detectSpec)
+	if err != nil {
+		return nil, err
+	}
+	s := p.detectSpec.InputSize
+	if p.detectIn, err = ort.NewTensor(ort.NewShape(1, 3, int64(s), int64(s)), make([]float32, 3*s*s)); err != nil {
+		return nil, err
+	}
+	var detOutShape ort.Shape
+	if p.detectSpec.MaxDet > 0 {
+		detOutShape = ort.NewShape(1, int64(p.detectSpec.MaxDet), int64(nmsDetAttrs)) // end-to-end NMS
+	} else {
+		p.detectNumPreds = (s/8)*(s/8) + (s/16)*(s/16) + (s/32)*(s/32)
+		detOutShape = ort.NewShape(1, int64(detectAttrs), int64(p.detectNumPreds)) // raw transposed
+	}
+	if p.detectOut, err = ort.NewEmptyTensor[float32](detOutShape); err != nil {
+		p.destroy()
+		return nil, err
+	}
+	if p.detect, err = ort.NewAdvancedSessionWithONNXData(dData,
+		[]string{p.detectSpec.InputName}, []string{p.detectSpec.OutputName},
+		[]ort.Value{p.detectIn}, []ort.Value{p.detectOut}, nil); err != nil {
+		p.destroy()
+		return nil, fmt.Errorf("face: detector session: %w", err)
+	}
+
+	// Embedder: input [1,3,112,112], output [1,embedDim].
+	eData, err := loadVerified(dir, p.embedSpec)
+	if err != nil {
+		p.destroy()
+		return nil, err
+	}
+	es := p.embedSpec.InputSize
+	if p.embedIn, err = ort.NewTensor(ort.NewShape(1, 3, int64(es), int64(es)), make([]float32, 3*es*es)); err != nil {
+		p.destroy()
+		return nil, err
+	}
+	if p.embedOut, err = ort.NewEmptyTensor[float32](ort.NewShape(1, embedDim)); err != nil {
+		p.destroy()
+		return nil, err
+	}
+	if p.embed, err = ort.NewAdvancedSessionWithONNXData(eData,
+		[]string{p.embedSpec.InputName}, []string{p.embedSpec.OutputName},
+		[]ort.Value{p.embedIn}, []ort.Value{p.embedOut}, nil); err != nil {
+		p.destroy()
+		return nil, fmt.Errorf("face: embedder session: %w", err)
+	}
+	return p, nil
+}
+
+// runDetect letterboxes the frame, runs YOLOv8-face, and returns NMS-filtered detections in
+// original-frame pixel coordinates. Caller holds p.mu.
+func (p *pipeline) runDetect(img image.Image) ([]faceDetection, error) {
+	lb := processors.Letterbox(img, p.detectSpec.InputSize, p.detectSpec.InputSize)
+	copy(p.detectIn.GetData(), inputTensor(lb, p.detectSpec))
+	if err := p.detect.Run(); err != nil {
+		return nil, fmt.Errorf("face: detect: %w", err)
+	}
+	b := img.Bounds()
+	if p.detectSpec.MaxDet > 0 {
+		// End-to-end-NMS export: boxes already filtered, no faceNMS needed.
+		return parseYOLOv8FaceNMSOutput(p.detectOut.GetData(), p.detectSpec.MaxDet, p.detectSpec.InputSize,
+			faceConfThresh, b.Dx(), b.Dy()), nil
+	}
+	dets := parseYOLOv8FaceOutput(p.detectOut.GetData(), p.detectNumPreds, p.detectSpec.InputSize,
+		faceConfThresh, b.Dx(), b.Dy())
+	return faceNMS(dets, faceIoUThresh), nil
+}
+
+// runEmbed runs SFace on an aligned 112×112 crop, returning a copy of the embedding (the
+// output tensor is reused across calls). Caller holds p.mu.
+func (p *pipeline) runEmbed(aligned *image.RGBA) ([]float32, error) {
+	copy(p.embedIn.GetData(), inputTensor(aligned, p.embedSpec))
+	if err := p.embed.Run(); err != nil {
+		return nil, fmt.Errorf("face: embed: %w", err)
+	}
+	out := p.embedOut.GetData()
+	emb := make([]float32, len(out))
+	copy(emb, out)
+	return emb, nil
+}
+
+func (p *pipeline) destroy() {
+	for _, s := range []*ort.AdvancedSession{p.detect, p.embed} {
+		if s != nil {
+			s.Destroy()
+		}
+	}
+	for _, t := range []*ort.Tensor[float32]{p.detectIn, p.detectOut, p.embedIn, p.embedOut} {
+		if t != nil {
+			t.Destroy()
+		}
+	}
+}
+
+// decodeRGBA decodes the first image/video frame of path to *image.RGBA using MediaMolder's
+// deterministic software decoder (the same path behind the pixel hash) + the zero-init
+// ToRGBA, so detections and embeddings are reproducible across machines. Any decoder panic
+// becomes an error so one bad file never crashes the host.
+func decodeRGBA(path string) (img *image.RGBA, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			img, err = nil, fmt.Errorf("face: decode panicked: %v", r)
+		}
+	}()
+
+	input, err := av.OpenInput(path, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer input.Close()
+
+	vid := -1
+	for i := 0; i < input.NumStreams(); i++ {
+		si, e := input.StreamInfo(i)
+		if e != nil || si.Type != av.MediaTypeVideo {
+			continue
+		}
+		vid = i
+		break
+	}
+	if vid < 0 {
+		return nil, fmt.Errorf("face: no decodable image stream in %s", path)
+	}
+
+	dec, err := av.OpenDecoder(input, vid)
+	if err != nil {
+		return nil, err
+	}
+	defer dec.Close()
+
+	pkt, err := av.AllocPacket()
+	if err != nil {
+		return nil, err
+	}
+	defer pkt.Close()
+
+	drained := false
+	for {
+		fr, e := av.AllocFrame()
+		if e != nil {
+			return nil, e
+		}
+		if dec.ReceiveFrame(fr) == nil {
+			rgba, e := fr.ToRGBA()
+			fr.Close()
+			return rgba, e
+		}
+		fr.Close()
+
+		pkt.Unref()
+		if e := input.ReadPacket(pkt); e != nil {
+			if av.IsEOF(e) && !drained {
+				_ = dec.Flush()
+				drained = true
+				continue
+			}
+			return nil, fmt.Errorf("face: no frame decoded: %w", e)
+		}
+		if pkt.StreamIndex() == vid {
+			_ = dec.SendPacket(pkt)
+		}
+	}
+}
