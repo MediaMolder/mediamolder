@@ -1882,6 +1882,10 @@ function GoProcessorParams({
     return <WhisperSTTParams params={params} onChange={onChange} />;
   }
 
+  if (processorName === 'raw_decode') {
+    return <RawDecodeParams params={params} onChange={onChange} />;
+  }
+
   if (processorName === 'metadata_file_writer') {
     const outputFile = typeof params['output_file'] === 'string' ? params['output_file'] : '';
     // inner_processor is preserved for backward-compat round-trip if present,
@@ -1930,6 +1934,63 @@ function GoProcessorParams({
         />
       ))}
       <ParamsEditor params={restParams} onChange={(next) => onChange({ ...fileEntries.reduce<Record<string, unknown>>((acc, [k, v]) => { acc[k] = v; return acc; }, {}), ...next })} />
+    </>
+  );
+}
+
+/* ---------- RawDecodeParams ----------
+ * Inspector body for the raw_decode go_processor: a single camera-RAW input
+ * (browsed with an open dialog filtered to RAW extensions) plus a read-only
+ * summary of the fixed deterministic develop. Fetches /api/raw-capabilities to
+ * warn when this binary lacks LibRaw. Unknown keys fall through to ParamsEditor. */
+function RawDecodeParams({
+  params,
+  onChange,
+}: {
+  params: Record<string, unknown>;
+  onChange: (next: Record<string, unknown>) => void;
+}) {
+  const [capable, setCapable] = useState<boolean | null>(null);
+  useEffect(() => {
+    let alive = true;
+    fetch('/api/raw-capabilities')
+      .then((r) => r.json())
+      .then((d: { capable?: boolean }) => { if (alive) setCapable(Boolean(d.capable)); })
+      .catch(() => { if (alive) setCapable(null); });
+    return () => { alive = false; };
+  }, []);
+
+  const input = typeof params['input'] === 'string' ? (params['input'] as string) : '';
+  const KNOWN: ReadonlySet<string> = new Set(['input']);
+  const restParams = Object.fromEntries(Object.entries(params).filter(([k]) => !KNOWN.has(k)));
+  const setInput = (val: string) => {
+    const next = { ...params };
+    if (val) next['input'] = val; else delete next['input'];
+    onChange(next);
+  };
+
+  return (
+    <>
+      {capable === false && (
+        <div style={{ fontSize: 11, color: '#f59e0b', marginBottom: 8 }}>
+          This binary has no LibRaw — RAW develop will fail. Build with{' '}
+          <code>make build-gui-libraw</code> (after <code>scripts/bundle-libraw.sh</code>).
+        </div>
+      )}
+      <FileField
+        label="input"
+        value={input}
+        mode="open"
+        filter="nef,cr2,cr3,arw,raf,orf,rw2,pef,srw,dng"
+        placeholder="/path/to/photo.dng"
+        onChange={setInput}
+      />
+      <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: -4, marginBottom: 8 }}>
+        Develops a camera-RAW file to a full-resolution 8-bit sRGB frame. Fixed deterministic
+        develop: camera white balance, sRGB, AHD demosaic, no auto-brightness; orientation is left
+        to downstream nodes. A FrameSource — no graph inputs needed.
+      </div>
+      <ParamsEditor params={restParams} onChange={(next) => onChange({ ...(input ? { input } : {}), ...next })} />
     </>
   );
 }
