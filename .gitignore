@@ -81,3 +81,6 @@ docs/images/ABR.png
 mediamolder-build.log
 pipeline/ffmpeg2pass-0.log
 pipeline/ffmpeg2pass-0.log.mbtree
+
+# Fetched face models (scripts/fetch-face-models.sh) — bundled by the host app, not committed
+testdata/face_models/
