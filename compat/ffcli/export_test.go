@@ -541,8 +541,10 @@ func TestExport_GoProcessor_Unsupported(t *testing.T) {
 }
 
 func TestExport_GoProcessor_NoEquivalentNotice(t *testing.T) {
-	// Analysis-only graph (no outputs): the command IS a "no equivalent" notice,
-	// not a misleading `ffmpeg -i …` that silently omits the unsupported node.
+	// A go_processor has no FFmpeg equivalent, so the command is a single-line
+	// notice naming it — never a misleading `ffmpeg …` line — even when the graph
+	// also has a real output FFmpeg could transcode (the whole job has no
+	// faithful equivalent).
 	cfg := &job.Config{
 		SchemaVersion: "1.2",
 		Inputs:        []job.Input{{ID: "in0", URL: "a.mp4"}},
@@ -550,27 +552,20 @@ func TestExport_GoProcessor_NoEquivalentNotice(t *testing.T) {
 			Nodes: []job.NodeDef{{ID: "faces", Type: "go_processor", Processor: "face_detect"}},
 			Edges: []job.EdgeDef{{From: "in0:v:0", To: "faces:default", Type: "video"}},
 		},
+		Outputs: []job.Output{{ID: "out0", URL: "out.mp4"}},
 	}
 	r := mustExport(t, cfg)
 	if !strings.Contains(r.Command, "No equivalent FFmpeg command") || !strings.Contains(r.Command, "face_detect") {
 		t.Errorf("expected a no-equivalent notice naming face_detect; got %q", r.Command)
 	}
 	if strings.Contains(r.Command, "ffmpeg ") {
-		t.Errorf("analysis-only graph must not emit a misleading ffmpeg line; got %q", r.Command)
+		t.Errorf("must not emit a misleading ffmpeg line; got %q", r.Command)
+	}
+	if strings.Contains(r.Command, "\n") {
+		t.Errorf("notice should be a single line; got %q", r.Command)
 	}
 	if len(r.Unsupported) == 0 {
 		t.Error("expected an Unsupported entry as well")
-	}
-
-	// With a real output FFmpeg *can* do (a transcode), the notice precedes the
-	// best-effort command instead of replacing it.
-	cfg.Outputs = []job.Output{{ID: "out0", URL: "out.mp4"}}
-	r = mustExport(t, cfg)
-	if !strings.Contains(r.Command, "No equivalent FFmpeg command") {
-		t.Errorf("expected the notice to prefix the command; got %q", r.Command)
-	}
-	if !strings.Contains(r.Command, "ffmpeg ") {
-		t.Errorf("with an output, the best-effort ffmpeg line should remain; got %q", r.Command)
 	}
 }
 

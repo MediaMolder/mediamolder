@@ -35,8 +35,8 @@ import (
 type ExportResult struct {
 	// Command is the full ffmpeg command line, starting with "ffmpeg " — except
 	// when the graph uses a node with no FFmpeg equivalent (a go_processor), in
-	// which case it is, or is prefixed by, a "# No equivalent FFmpeg command …"
-	// notice (see Unsupported for the per-node detail).
+	// which case it is a single-line "# No equivalent FFmpeg command …" notice
+	// (see Unsupported for the per-node detail).
 	Command string
 	// Lines is the same command split on " \\\n  " for display purposes.
 	Lines []string
@@ -1095,20 +1095,13 @@ func (e *exporter) result() ExportResult {
 	cmd := strings.Join(args, " ")
 
 	// A graph that uses a capability with no FFmpeg equivalent (a go_processor)
-	// cannot be faithfully rendered as an ffmpeg command. Make the command say
-	// so rather than emit a misleading line. When there is still a real output
-	// (a transcode FFmpeg *can* do), keep that as a best-effort line below the
-	// notice; when there is no output (a pure analysis graph), the notice is the
-	// whole value.
+	// has no faithful ffmpeg command, so replace the would-be command with a
+	// clear notice naming the offending node(s) rather than a misleading
+	// best-effort line. (Per-node detail stays in Unsupported.)
 	if len(e.noEquiv) > 0 {
 		notice := noEquivNotice(e.noEquiv)
-		if len(e.cfg.Outputs) == 0 {
-			cmd = notice
-			lines = []string{notice}
-		} else {
-			cmd = notice + "\n" + cmd
-			lines = append([]string{notice}, lines...)
-		}
+		cmd = notice
+		lines = []string{notice}
 	}
 
 	return ExportResult{

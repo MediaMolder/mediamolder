@@ -1,6 +1,7 @@
 {
   "schema_version": "1.1",
   "description": "Decode in.mp4 -> route the audio stream into a whisper_stt node, which transcribes it locally (whisper.cpp, offline) and writes transcript.json (a JSON array of {start,end,text,confidence}); the audio passes through and is re-encoded to AAC while the video is stream-copied -> out.mp4. Requires a with_whisper build and a ggml model.",
+  "ffmpeg_cmd": "# No equivalent FFmpeg command — whisper_stt (node \"stt\") has no FFmpeg equivalent.",
   "inputs": [
     {
       "id": "in0",

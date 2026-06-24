@@ -11,11 +11,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   a node with no FFmpeg equivalent (any `go_processor` — face_detect, whisper_stt,
   yolo_v8, scene_change_mc, vidi/twelvelabs, …), `ffcli.Export` / `mediamolder
   export` / the GUI's "Export to FFmpeg" no longer emit a misleading command.
-  The command value is now a `# No equivalent FFmpeg command — <node> has no
-  FFmpeg equivalent.` notice; if the graph also has a real output FFmpeg *can*
-  produce (e.g. a transcode), that best-effort line follows the notice instead of
-  silently dropping the unsupported node. (The per-node detail remains in the
-  `Unsupported` warnings.)
+  The command value is a single-line `# No equivalent FFmpeg command — <node> has
+  no FFmpeg equivalent.` notice (naming all such nodes) rather than a best-effort
+  transcode that silently drops the unsupported work; the per-node detail remains
+  in the `Unsupported` warnings. Every shipped example that uses a `go_processor`
+  now stores this notice as its `ffmpeg_cmd` (replacing the old misleading
+  commands and the ad-hoc "not possible in ffmpeg" strings).
 
 ### Added
 

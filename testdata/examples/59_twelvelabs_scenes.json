@@ -1,7 +1,7 @@
 {
   "schema_version": "1.1",
   "description": "Detect shot boundaries, cut into one MP4 per shot, upload to TwelveLabs and index + caption each; write all metadata to JSONL files.",
-  "ffmpeg_cmd": "not possible in ffmpeg",
+  "ffmpeg_cmd": "# No equivalent FFmpeg command — these nodes have no FFmpeg equivalent: scene_change_adaptive (node \"scene\"), twelvelabs_indexer (node \"indexer\"), metadata_file_writer (node \"index_log\"), twelvelabs_analyzer (node \"caption\"), metadata_file_writer (node \"caption_log\").",
   "inputs": [{ "id": "in0", "url": "my-clip.mp4" }],
   "graph": {
     "nodes": [
