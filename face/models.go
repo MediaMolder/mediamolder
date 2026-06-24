@@ -20,24 +20,42 @@ import (
 const EnvModelsDir = "MEDIAMOLDER_FACE_MODELS"
 
 var (
-	modelsDirMu sync.RWMutex
+	cfgMu       sync.RWMutex
 	modelsDir   string // overrides EnvModelsDir when set via SetModelsDir
+	onnxLibPath string // overrides ONNXRUNTIME_SHARED_LIBRARY_PATH + auto-discovery (SetONNXLib)
 )
 
 // SetModelsDir overrides the bundled-models directory (takes precedence over EnvModelsDir).
 // Call it once at startup; passing "" clears the override and falls back to the env var.
 func SetModelsDir(dir string) {
-	modelsDirMu.Lock()
+	cfgMu.Lock()
 	modelsDir = dir
-	modelsDirMu.Unlock()
+	cfgMu.Unlock()
+}
+
+// SetONNXLib overrides the ONNX Runtime shared-library path (takes precedence over the
+// ONNXRUNTIME_SHARED_LIBRARY_PATH env var and auto-discovery). Pass "" to clear. Use this when
+// the runtime is installed somewhere non-standard; otherwise it is found automatically.
+func SetONNXLib(path string) {
+	cfgMu.Lock()
+	onnxLibPath = path
+	cfgMu.Unlock()
+}
+
+// onnxLibOverridePath returns the SetONNXLib override (read by resolveONNXLib in with_onnx builds).
+func onnxLibOverridePath() string {
+	cfgMu.RLock()
+	p := onnxLibPath
+	cfgMu.RUnlock()
+	return p
 }
 
 // resolveModelsDir returns the configured models directory: the SetModelsDir override if
 // set, else EnvModelsDir, else "" (which makes the models unavailable → Capable()==false).
 func resolveModelsDir() string {
-	modelsDirMu.RLock()
+	cfgMu.RLock()
 	d := modelsDir
-	modelsDirMu.RUnlock()
+	cfgMu.RUnlock()
 	if d != "" {
 		return d
 	}
@@ -99,6 +117,19 @@ var (
 		Scale:      1.0,       // SFace expects RGB in [0,255]
 	}
 )
+
+// CheckModels reports whether both bundled face models are present in dir and match their
+// pinned SHA-256. It is pure file IO (no ONNX runtime), so `mediamolder face-setup` can
+// validate the models even in a binary built without the with_onnx tag. nil ⇒ both are ready;
+// otherwise the error names the missing or mismatched model.
+func CheckModels(dir string) error {
+	for _, spec := range []ModelSpec{DefaultDetectSpec, DefaultEmbedSpec} {
+		if _, err := loadVerified(dir, spec); err != nil {
+			return err
+		}
+	}
+	return nil
+}
 
 // loadVerified reads spec.Filename from dir and returns its bytes only if the content hashes
 // to spec.SHA256 (when pinned). A mismatch is a hard error — a tampered or wrong model never

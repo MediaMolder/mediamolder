@@ -340,16 +340,21 @@ with `yolo_v8`, plus two bundled face models. Build with the tag, then fetch and
 point at the models:
 
 ```bash
-brew install onnxruntime
-export ONNXRUNTIME_SHARED_LIBRARY_PATH=$(brew --prefix onnxruntime)/lib/libonnxruntime.dylib
+brew install onnxruntime          # auto-discovered after install — no env var needed
 
 # Fetch + SHA-256-verify both models into the git-ignored testdata/face_models/
 ./scripts/fetch-face-models.sh
 export MEDIAMOLDER_FACE_MODELS="$PWD/testdata/face_models"
 
 go build -tags=with_onnx ./cmd/mediamolder   # add ffstatic too for a static FFmpeg link
+# Non-standard ONNX Runtime install only:
+#   export ONNXRUNTIME_SHARED_LIBRARY_PATH=/path/to/libonnxruntime.dylib   (or --ort-lib / GUI field)
 ```
 
+`face_detect` **auto-discovers** the ONNX Runtime (Homebrew prefixes,
+`/usr/local/lib`, …) by its correct `libonnxruntime.dylib` name, so a normal
+`brew install onnxruntime` needs no env var. Run `mediamolder face-setup`
+(optionally `--fetch`) to verify everything and get fix commands for any gap.
 The detector (YOLOv8-face) is **AGPL-3.0** and the embedder (SFace) is
 Apache-2.0; both are loaded as **data** at run time (never linked) and
 SHA-256-verified on load. MediaMolder ships neither — keep them out of any

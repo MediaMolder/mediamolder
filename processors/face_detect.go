@@ -27,6 +27,7 @@ import (
 //	"conf"          — detector confidence threshold, default 0 (face package default, 0.5).
 //	"embeddings"    — also compute the 128-d SFace embedding per face, default false.
 //	"models_dir"    — directory of face models (overrides MEDIAMOLDER_FACE_MODELS).
+//	"ort_lib"       — path to the ONNX Runtime shared library (else auto-discovered / env).
 //	"output_file"   — write detections to this absolute path (a sidecar), no extra node needed.
 //	"output_format" — sidecar format: jsonl (default), csv, timecodes.
 type FaceDetect struct {
@@ -58,10 +59,13 @@ func (p *FaceDetect) Init(params map[string]any) error {
 	if d, ok := params["models_dir"].(string); ok && d != "" {
 		face.SetModelsDir(d)
 	}
-	if !face.Capable() {
+	if v, ok := params["ort_lib"].(string); ok && v != "" {
+		face.SetONNXLib(v)
+	}
+	if err := face.Available(); err != nil {
 		p.hook.close() // don't leak the sidecar file opened above
-		return fmt.Errorf("face_detect: face models unavailable — set MEDIAMOLDER_FACE_MODELS or the " +
-			"\"models_dir\" param to the bundled models (see scripts/fetch-face-models.sh)")
+		return fmt.Errorf("face_detect: face analysis unavailable: %w — set MEDIAMOLDER_FACE_MODELS or "+
+			"the \"models_dir\" param to the bundled models (see scripts/fetch-face-models.sh)", err)
 	}
 	return nil
 }

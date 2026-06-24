@@ -17,6 +17,10 @@ The detect → align → embed pipeline and its models live in the
 
 ## Models & build
 
+> **Quick check:** `mediamolder face-setup` reports exactly what's missing (build
+> support, ONNX Runtime, models) and prints the command to fix each — add `--fetch`
+> to download the models. Run it any time face detection won't start.
+
 Face analysis is **gated on the `with_onnx` build tag** and two bundled ONNX models.
 The default build links a stub: `face-detect` and the `face_detect` node report that
 analysis is unavailable rather than producing wrong results.
@@ -34,14 +38,28 @@ a permissively-licensed export (e.g. YuNet, MIT) with no code change. MediaMolde
 **no binaries and no models** — you fetch them:
 
 ```bash
-scripts/fetch-face-models.sh                 # fetches + SHA-256-verifies into testdata/face_models/ (git-ignored)
+# 1. Install the ONNX Runtime. It is then auto-discovered — no env var needed:
+brew install onnxruntime                     # macOS;  Linux: your distro's onnxruntime package
+
+# 2. Fetch + SHA-256-verify the face models into the git-ignored testdata/face_models/:
+scripts/fetch-face-models.sh
 export MEDIAMOLDER_FACE_MODELS="$PWD/testdata/face_models"
-export ONNXRUNTIME_SHARED_LIBRARY_PATH=/path/to/libonnxruntime.{dylib,so}   # ONNX Runtime
+
+# Only if the ONNX Runtime is in a non-standard location (otherwise omit):
+# export ONNXRUNTIME_SHARED_LIBRARY_PATH=/path/to/libonnxruntime.dylib
 ```
 
-> Fetch into the git-ignored `testdata/face_models/` (the script's default), not
-> an arbitrary path — the models are large and the detector is copyleft-licensed,
-> so they must never land in a tracked directory.
+> **ONNX Runtime is auto-discovered.** When the library path is not set, MediaMolder
+> searches the platform's standard install locations (Homebrew prefixes,
+> `/usr/local/lib`, `/usr/lib/*-linux-gnu`, …) for the correctly-named library
+> (`libonnxruntime.dylib` on macOS, `libonnxruntime.so` on Linux). So a normal
+> `brew install onnxruntime` / distro package needs no configuration; set
+> `ONNXRUNTIME_SHARED_LIBRARY_PATH` (or the `ort_lib` param / `--ort-lib` flag / the
+> GUI's "ONNX runtime library" field) only for a non-standard install.
+
+> Fetch the models into the git-ignored `testdata/face_models/` (the script's
+> default), not an arbitrary path — they are large and the detector is
+> copyleft-licensed, so they must never land in a tracked directory.
 
 Build with the tag (ONNX Runtime is `dlopen`ed at runtime, so it is needed only to
 *run*, not to build):

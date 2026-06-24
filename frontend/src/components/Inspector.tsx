@@ -2127,7 +2127,7 @@ function FaceDetectParams({
   const EXT: Record<string, string> = { jsonl: '.jsonl', csv: '.csv', timecodes: '.txt' };
   const ext = EXT[outputFormat] ?? '.jsonl';
 
-  const KNOWN = new Set(['every', 'conf', 'embeddings', 'models_dir', 'output_file', 'output_format']);
+  const KNOWN = new Set(['every', 'conf', 'embeddings', 'models_dir', 'ort_lib', 'output_file', 'output_format']);
   const known = Object.fromEntries(Object.entries(params).filter(([k]) => KNOWN.has(k)));
   const overflow = Object.fromEntries(Object.entries(params).filter(([k]) => !KNOWN.has(k)));
 
@@ -2192,14 +2192,24 @@ function FaceDetectParams({
         </span>
       </label>
 
-      <label style={{ marginTop: 8 }}>Models directory</label>
-      <input
-        type="text"
+      <FileField
+        label="Models directory"
         value={str('models_dir')}
+        mode="directory"
         placeholder="overrides MEDIAMOLDER_FACE_MODELS"
-        onChange={(e) => set('models_dir', e.target.value)}
+        onChange={(val) => set('models_dir', val)}
       />
-      {hint('Optional. Directory of the bundled .onnx models.')}
+      {hint('Optional. Browse to the folder holding the bundled .onnx models (e.g. testdata/face_models). Overrides MEDIAMOLDER_FACE_MODELS.')}
+
+      <FileField
+        label="ONNX runtime library"
+        value={str('ort_lib')}
+        mode="open"
+        filter="dylib,so,dll"
+        placeholder="auto-discovered if installed"
+        onChange={(val) => set('ort_lib', val)}
+      />
+      {hint('Optional. Usually auto-found after installing ONNX Runtime (brew install onnxruntime). Set only for a non-standard install.')}
 
       <label style={{ marginTop: 8 }}>Output format</label>
       <select value={outputFormat} onChange={(e) => set('output_format', e.target.value)}>
@@ -4341,7 +4351,9 @@ function FileField({
   const [local, setLocal] = useState(value);
   const [open, setOpen] = useState(false);
   useEffect(() => setLocal(value), [value]);
-  const effectivePlaceholder = placeholder ?? (mode === 'save' ? '/path/to/output.mp4' : '/path/to/input.mp4');
+  const effectivePlaceholder =
+    placeholder ??
+    (mode === 'save' ? '/path/to/output.mp4' : mode === 'directory' ? '/path/to/folder' : '/path/to/input.mp4');
   return (
     <>
       <label>{label}</label>
@@ -4361,7 +4373,7 @@ function FileField({
         mode={mode}
         filter={filter}
         defaultFilename={defaultFilename}
-        initialPath={inferDir(value)}
+        initialPath={mode === 'directory' ? (value || undefined) : inferDir(value)}
         onClose={() => setOpen(false)}
         onPick={(p) => {
           setLocal(p);

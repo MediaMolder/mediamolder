@@ -7,6 +7,24 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- **Face detection setup made bulletproof.** The `face` package now
+  **auto-discovers** the ONNX Runtime shared library in the platform's standard
+  install locations (Homebrew prefixes, `/usr/local/lib`, `/usr/lib/*-linux-gnu`,
+  …) using the correctly-named library (`libonnxruntime.dylib` / `.so`), so a
+  plain `brew install onnxruntime` (or distro package) works with **no env var**.
+  A non-standard runtime can be pointed at via `face.SetONNXLib`, the new
+  `ort_lib` param on `face_detect`, the `--ort-lib` CLI flag, or the GUI's "ONNX
+  runtime library" browse field. `face.Available() error` now reports the
+  specific reason analysis is unavailable (no models dir / model SHA mismatch /
+  ONNX Runtime missing) instead of a generic message, and both the ONNX-runtime
+  and pipeline initialisation are **retried on failure** rather than latching for
+  the process lifetime — so correcting the models dir or runtime path in the
+  long-running GUI takes effect without a restart. The GUI's models-directory
+  field is now a folder browser (new `directory` mode in the file browser). New
+  `mediamolder face-setup` command diagnoses readiness (build support, ONNX
+  Runtime, models — SHA-verified) and prints the exact command to fix each gap,
+  with `--fetch` to download the models; it exits 0 only when ready.
+
 - **Face detection integration.** The native `face` package (YOLOv8-face detect
   → 5-point align → SFace embed) is now reachable end-to-end. A frame-level seam
   — `face.AnalyzeImage` / `face.DetectImage` / `face.AnalyzeImageOpts` with an

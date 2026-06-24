@@ -15,6 +15,9 @@ import "image"
 // Capable reports whether this build can analyze faces. The default build cannot.
 func Capable() bool { return false }
 
+// Available returns the reason face analysis is unavailable; always ErrUnsupported here.
+func Available() error { return ErrUnsupported }
+
 // Analyze is unavailable without the `with_onnx` build tag.
 func Analyze(path string) ([]Face, error) { return nil, ErrUnsupported }
 

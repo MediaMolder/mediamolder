@@ -17,8 +17,8 @@ import (
 	"github.com/MediaMolder/MediaMolder/av"
 	"github.com/MediaMolder/MediaMolder/compat/ffcli"
 	"github.com/MediaMolder/MediaMolder/graph"
-	"github.com/MediaMolder/MediaMolder/observability"
 	"github.com/MediaMolder/MediaMolder/job"
+	"github.com/MediaMolder/MediaMolder/observability"
 	"github.com/MediaMolder/MediaMolder/processors"
 )
 
@@ -81,6 +81,8 @@ func run(args []string) error {
 		return cmdGoSceneDetect(args[1:])
 	case "face-detect":
 		return cmdFaceDetect(args[1:])
+	case "face-setup":
+		return cmdFaceSetup(args[1:])
 	case "twelvelabs":
 		return cmdTwelveLabs(args[1:])
 	case "serve":
@@ -611,8 +613,12 @@ Commands:
                          See https://github.com/Breakthrough/PySceneDetect
   face-detect <input>    Detect (and optionally embed) faces in an image or video.
                          Flags: --format=jsonl|csv|json, --output=PATH, --every=N,
-                                --max-frames=N, --embeddings, --conf=F, --models-dir=PATH.
+                                --max-frames=N, --embeddings, --conf=F, --models-dir=PATH,
+                                --ort-lib=PATH.
                          Requires a build with -tags with_onnx and bundled models.
+  face-setup             Diagnose face-detection readiness (build, ONNX Runtime, models)
+                         and print how to fix gaps. Flags: --models-dir=PATH, --ort-lib=PATH,
+                                --fetch (download the models).
   twelvelabs <subcmd>    TwelveLabs (Marengo + Pegasus) ad-hoc operations.
                          Subcommands: index, analyze, search, embed,
                                       indexes list|create|delete.

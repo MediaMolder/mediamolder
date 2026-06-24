@@ -8,7 +8,6 @@ package face
 import (
 	"fmt"
 	"image"
-	"os"
 	"sync"
 
 	"github.com/MediaMolder/MediaMolder/av"
@@ -44,19 +43,25 @@ type pipeline struct {
 }
 
 var (
-	initOnce sync.Once
-	pipe     *pipeline
-	initErr  error
+	initMu sync.Mutex
+	pipe   *pipeline
 
-	ortInitOnce sync.Once
-	ortInitErr  error
+	// ortInitDone records that the ONNX Runtime environment is initialised. Guarded by initMu
+	// (initONNX runs only inside newPipeline, which runs only under ensurePipeline's lock).
+	ortInitDone bool
 )
 
 // Capable reports whether the models load and the pipeline initialises (ONNX runtime present,
-// models found, SHA-256 verified). It is safe to call repeatedly — init happens once.
-func Capable() bool {
+// models found, SHA-256 verified). Safe to call repeatedly; see [Available] for the reason
+// when it returns false.
+func Capable() bool { return Available() == nil }
+
+// Available returns nil when face analysis is ready, or the specific reason it is not — no
+// models directory configured, a model missing or SHA-256 mismatch, the ONNX runtime absent,
+// etc. Hosts can surface this to the user instead of a generic "unavailable".
+func Available() error {
 	_, err := ensurePipeline()
-	return err == nil
+	return err
 }
 
 // Analyze decodes path with MediaMolder's deterministic software decoder, detects faces with
@@ -132,20 +137,40 @@ func (p *pipeline) analyzeImage(img image.Image, o Options) ([]Face, error) {
 	return faces, nil
 }
 
+// ensurePipeline lazily builds the detect→embed pipeline, caching only success. A failed
+// attempt is NOT cached, so a corrected models directory (e.g. set via [SetModelsDir] after a
+// first failure in a long-running host such as the GUI) is retried on the next call instead of
+// failing permanently for the process lifetime.
 func ensurePipeline() (*pipeline, error) {
-	initOnce.Do(func() { pipe, initErr = newPipeline() })
-	return pipe, initErr
+	initMu.Lock()
+	defer initMu.Unlock()
+	if pipe != nil {
+		return pipe, nil
+	}
+	p, err := newPipeline()
+	if err != nil {
+		return nil, err
+	}
+	pipe = p
+	return pipe, nil
 }
 
-// initONNX initialises the ONNX Runtime environment exactly once.
+// initONNX initialises the ONNX Runtime environment, locating the shared library via
+// resolveONNXLib (override → env → auto-discovery). On failure it does NOT latch, so a
+// corrected path (env/param) is retried on the next attempt rather than failing for the
+// process lifetime. Caller holds initMu (via ensurePipeline → newPipeline).
 func initONNX() error {
-	ortInitOnce.Do(func() {
-		if lib := os.Getenv(EnvONNXRuntimeLib); lib != "" {
-			ort.SetSharedLibraryPath(lib)
-		}
-		ortInitErr = ort.InitializeEnvironment()
-	})
-	return ortInitErr
+	if ortInitDone {
+		return nil
+	}
+	if lib := resolveONNXLib(); lib != "" {
+		ort.SetSharedLibraryPath(lib)
+	}
+	if err := ort.InitializeEnvironment(); err != nil {
+		return err
+	}
+	ortInitDone = true
+	return nil
 }
 
 func newPipeline() (*pipeline, error) {

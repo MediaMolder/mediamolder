@@ -608,6 +608,7 @@ Detects faces (YOLOv8-face) in each video frame, aligns each to the canonical 11
 | `conf`          | float  | `0.5`     | Detector confidence threshold (0 = package default) |
 | `embeddings`    | bool   | `false`   | Also compute the 128-d SFace embedding per face |
 | `models_dir`    | string | `""`      | Override `MEDIAMOLDER_FACE_MODELS` |
+| `ort_lib`       | string | `""`      | ONNX Runtime library path (else auto-discovered / `ONNXRUNTIME_SHARED_LIBRARY_PATH`) |
 | `output_file`   | string | `""`      | Absolute path; write detections to this sidecar directly |
 | `output_format` | string | `"jsonl"` | Sidecar format: `jsonl` \| `csv` \| `timecodes` |
 

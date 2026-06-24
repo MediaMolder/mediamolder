@@ -58,6 +58,7 @@ Flags:
   --embeddings       Include the 128-d SFace embedding per face (default off)
   --conf <f>         Detector confidence threshold (0 = package default 0.5)
   --models-dir <p>   Directory of face models (overrides MEDIAMOLDER_FACE_MODELS)
+  --ort-lib <p>      Path to the ONNX Runtime shared library (else auto-discovered)
 
 `)
 	}
@@ -69,6 +70,7 @@ Flags:
 	embeddingsFlag := fs.Bool("embeddings", false, "include the 128-d embedding per face")
 	confFlag := fs.Float64("conf", 0, "detector confidence threshold (0 = default)")
 	modelsDirFlag := fs.String("models-dir", "", "directory of face models")
+	ortLibFlag := fs.String("ort-lib", "", "path to the ONNX Runtime shared library (else auto-discovered)")
 
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -82,10 +84,13 @@ Flags:
 	if *modelsDirFlag != "" {
 		face.SetModelsDir(*modelsDirFlag)
 	}
-	if !face.Capable() {
-		return fmt.Errorf("face-detect: face analysis unavailable in this build — rebuild with " +
-			"-tags with_onnx and set MEDIAMOLDER_FACE_MODELS (or --models-dir) to the bundled " +
-			"models (see scripts/fetch-face-models.sh)")
+	if *ortLibFlag != "" {
+		face.SetONNXLib(*ortLibFlag)
+	}
+	if err := face.Available(); err != nil {
+		return fmt.Errorf("face-detect: face analysis unavailable: %w — needs a -tags with_onnx "+
+			"build and bundled models via MEDIAMOLDER_FACE_MODELS or --models-dir "+
+			"(see scripts/fetch-face-models.sh)", err)
 	}
 	every := *everyFlag
 	if every == 0 {
