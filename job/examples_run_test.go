@@ -139,6 +139,21 @@ func runExample(t *testing.T, jsonPath, name, inputAbs, _, _ string) {
 		}
 	}
 
+	// --- Skip: TwelveLabs examples need a real uploaded clip + API key ---
+	// They reference a hard-coded clip (not {{input}}) and call the TwelveLabs
+	// cloud API, so they cannot run in this local harness.
+	if strings.Contains(raw, "twelvelabs") {
+		t.Skip("twelvelabs examples need a real clip and a TwelveLabs API key; not runnable in the harness")
+	}
+
+	// --- Skip: segmented-output examples (shot-%05d.mp4) ---
+	// These write one file per detected shot rather than a single out.mp4, so
+	// the single-output verification below cannot check them (and the relative
+	// pattern would litter the package directory).
+	if strings.Contains(raw, "shot-%05d") {
+		t.Skip("segmented shot output is not verifiable by the single-output harness")
+	}
+
 	// --- Template substitution ---
 	tmpDir := t.TempDir()
 
@@ -178,7 +193,12 @@ func runExample(t *testing.T, jsonPath, name, inputAbs, _, _ string) {
 	// Metadata output files → redirect to tmpDir so tests don't litter cwd.
 	// frame_metadata.txt is embedded in a filter spec (metadata=mode=print:file=…)
 	// so it must use filterTmpDir (relative path, no Windows drive-letter colon).
-	for _, meta := range []string{"frame_info.jsonl", "scene_changes.jsonl", "detections.jsonl"} {
+	for _, meta := range []string{
+		"frame_info.jsonl", "scene_changes.jsonl", "detections.jsonl",
+		"scene_changes_content.jsonl", "scene_changes_adaptive.jsonl",
+		"scene_changes_hash.jsonl", "scene_changes_histogram.jsonl",
+		"scene_changes_threshold.jsonl",
+	} {
 		dest := filepath.ToSlash(filepath.Join(tmpDir, meta))
 		raw = strings.ReplaceAll(raw, `"`+meta+`"`, `"`+dest+`"`)
 	}

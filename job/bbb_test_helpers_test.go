@@ -12,7 +12,7 @@ import (
 
 // bbbSource is the filename of the Big Buck Bunny 1080p source file.
 // It is downloaded by scripts/fetch-bbb.sh and is not tracked in git.
-const bbbSource = "BBB_1080p.avi"
+const bbbSource = "BBB_1080p.mp4"
 
 // bbbSourcePath returns the absolute path to the BBB source file and
 // skips the test if the file has not been downloaded yet.

@@ -40,7 +40,7 @@ Thumbs.db
 # Big Buck Bunny source + derived clips — downloaded by scripts/fetch-bbb.sh,
 # not stored in git. Remove the LFS pointers with:
 #   git rm --cached testdata/BBB_10sec.mp4 testdata/BBB_30sec.mp4
-/testdata/BBB_1080p.avi
+/testdata/BBB_1080p.*
 /testdata/BBB_10sec.mp4
 /testdata/BBB_30sec.mp4
 
