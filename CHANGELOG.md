@@ -5,6 +5,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Changed
+
+- **FFmpeg export is honest about capabilities FFmpeg lacks.** When a graph uses
+  a node with no FFmpeg equivalent (any `go_processor` — face_detect, whisper_stt,
+  yolo_v8, scene_change_mc, vidi/twelvelabs, …), `ffcli.Export` / `mediamolder
+  export` / the GUI's "Export to FFmpeg" no longer emit a misleading command.
+  The command value is now a `# No equivalent FFmpeg command — <node> has no
+  FFmpeg equivalent.` notice; if the graph also has a real output FFmpeg *can*
+  produce (e.g. a transcode), that best-effort line follows the notice instead of
+  silently dropping the unsupported node. (The per-node detail remains in the
+  `Unsupported` warnings.)
+
 ### Added
 
 - **Face detection setup made bulletproof.** A new shared `internal/onnxrt`

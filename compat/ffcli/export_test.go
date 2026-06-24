@@ -463,8 +463,8 @@ func TestExport_EncoderParams_NonAllowlistCodec(t *testing.T) {
 			URL:        "out.mp4",
 			CodecVideo: "libvpx-vp9",
 			EncoderParamsVideo: map[string]any{
-				"crf":     30,
-				"b:v":     "0",
+				"crf":      30,
+				"b:v":      "0",
 				"deadline": "good",
 			},
 		}},
@@ -537,6 +537,40 @@ func TestExport_GoProcessor_Unsupported(t *testing.T) {
 	r := mustExport(t, cfg)
 	if len(r.Unsupported) == 0 {
 		t.Error("expected go_processor to produce an unsupported entry")
+	}
+}
+
+func TestExport_GoProcessor_NoEquivalentNotice(t *testing.T) {
+	// Analysis-only graph (no outputs): the command IS a "no equivalent" notice,
+	// not a misleading `ffmpeg -i …` that silently omits the unsupported node.
+	cfg := &job.Config{
+		SchemaVersion: "1.2",
+		Inputs:        []job.Input{{ID: "in0", URL: "a.mp4"}},
+		Graph: job.GraphDef{
+			Nodes: []job.NodeDef{{ID: "faces", Type: "go_processor", Processor: "face_detect"}},
+			Edges: []job.EdgeDef{{From: "in0:v:0", To: "faces:default", Type: "video"}},
+		},
+	}
+	r := mustExport(t, cfg)
+	if !strings.Contains(r.Command, "No equivalent FFmpeg command") || !strings.Contains(r.Command, "face_detect") {
+		t.Errorf("expected a no-equivalent notice naming face_detect; got %q", r.Command)
+	}
+	if strings.Contains(r.Command, "ffmpeg ") {
+		t.Errorf("analysis-only graph must not emit a misleading ffmpeg line; got %q", r.Command)
+	}
+	if len(r.Unsupported) == 0 {
+		t.Error("expected an Unsupported entry as well")
+	}
+
+	// With a real output FFmpeg *can* do (a transcode), the notice precedes the
+	// best-effort command instead of replacing it.
+	cfg.Outputs = []job.Output{{ID: "out0", URL: "out.mp4"}}
+	r = mustExport(t, cfg)
+	if !strings.Contains(r.Command, "No equivalent FFmpeg command") {
+		t.Errorf("expected the notice to prefix the command; got %q", r.Command)
+	}
+	if !strings.Contains(r.Command, "ffmpeg ") {
+		t.Errorf("with an output, the best-effort ffmpeg line should remain; got %q", r.Command)
 	}
 }
 
@@ -796,4 +830,3 @@ func TestExport_GraphMaps_MultiInput(t *testing.T) {
 	requireArg(t, r.Command, "-c:v", "libx264")
 	requireArg(t, r.Command, "-c:a", "aac")
 }
-
