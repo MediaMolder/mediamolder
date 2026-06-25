@@ -1,6 +1,6 @@
 # Vidi 2.5 Multimodal Analysis Guide
 
-MediaMolder ships a built-in `vidi_analyzer` processor that connects a running [Vidi 2.5](https://github.com/bytedance/vidi) inference service to any media processing graph. It can caption scenes, answer natural-language questions about video content, ground objects to bounding boxes, and produce structured edit plans — all as structured `Metadata` on the pipeline event bus.
+MediaMolder ships a built-in `vidi_analyzer` processor that connects a running [Vidi 2.5](https://github.com/bytedance/vidi) inference service to any media processing graph. It can caption scenes, answer natural-language questions about video content, ground objects to bounding boxes, and produce structured edit plans — all as structured `Metadata` on the event bus.
 
 Because Vidi 2.5 is a 9 billion-parameter PyTorch model, it runs as a **separate Python service**. The Go processor is a thin, context-aware HTTP client that batches decoded frames and POSTs them to that service.
 
@@ -13,7 +13,7 @@ Because Vidi 2.5 is a 9 billion-parameter PyTorch model, it runs as a **separate
     - [Install](#install)
     - [FastAPI wrapper](#fastapi-wrapper)
     - [Start the service](#start-the-service)
-  - [Pipeline configuration](#pipeline-configuration)
+  - [Graph configuration](#graph-configuration)
     - [Minimal example](#minimal-example)
     - [Full parameter reference](#full-parameter-reference)
   - [Tasks](#tasks)
@@ -36,7 +36,7 @@ Because Vidi 2.5 is a 9 billion-parameter PyTorch model, it runs as a **separate
 ```
 Media file / stream
        |
-  MediaMolder pipeline (Go)
+  MediaMolder graph (Go)
        |
   vidi_analyzer node  ──── HTTP POST /infer ───► Vidi service (Python + PyTorch)
        |                  (batched JPEG frames)       |
@@ -214,7 +214,7 @@ Model loading takes 30–60 seconds on first startup (weights are read from disk
 
 ---
 
-## Pipeline configuration
+## Graph configuration
 
 ### Minimal example
 
@@ -250,7 +250,7 @@ Model loading takes 30–60 seconds on first startup (weights are read from disk
 | `buffer_frames` | int     | `8`                   | Number of decoded frames to accumulate before firing one `/infer` call. Larger batches give Vidi more temporal context but increase latency. |
 | `process_every` | int     | `1`                   | Only buffer every Nth video frame; others pass through without being sent to the service. Use this to reduce inference frequency. |
 | `jpeg_quality`  | int     | `75`                  | JPEG quality (1–100) used when encoding frames for the HTTP request. Lower values reduce payload size at the cost of image fidelity. |
-| `timeout_s`     | float   | `30`                  | Per-request HTTP timeout in seconds. The processor uses `context` cancellation, so pipeline shutdown always interrupts in-flight requests cleanly. |
+| `timeout_s`     | float   | `30`                  | Per-request HTTP timeout in seconds. The processor uses `context` cancellation, so graph shutdown always interrupts in-flight requests cleanly. |
 
 ---
 
@@ -357,7 +357,7 @@ Or chain a `metadata_file_writer` node in the graph to interleave metadata writi
 - **`buffer_frames`** — a larger buffer gives Vidi more temporal context and amortises HTTP round-trip latency. Start with `8` and increase if captions seem to miss scene context.
 - **`process_every`** — pair with a `decimate` filter node to reduce the frame rate before the `vidi_analyzer` node rather than skipping frames inside the processor. This saves the JPEG-encode cost for skipped frames.
 - **`jpeg_quality`** — `60`–`75` is usually sufficient. The dominant latency is model inference, not payload size.
-- **Dedicated service host** — run the Python service on a separate machine with a GPU and point `service_url` at it. The Go pipeline runs on the encode host with no GPU required.
+- **Dedicated service host** — run the Python service on a separate machine with a GPU and point `service_url` at it. The Go graph runs on the encode host with no GPU required.
 
 ---
 
@@ -371,4 +371,4 @@ Vidi 2.5 model weights are released under [CC-BY-NC-4.0](https://creativecommons
 
 - [Go Processor Nodes](go-processor-nodes.md) — full processor interface reference
 - [YOLOv8 Guide](yolov8-guide.md) — in-process object detection without a separate service
-- [JSON Config Reference](json-config-reference.md) — pipeline schema
+- [JSON Config Reference](json-config-reference.md) — graph schema

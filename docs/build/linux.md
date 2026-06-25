@@ -126,12 +126,28 @@ Compile FFmpeg as static archives (run once; repeat after FFmpeg upgrades):
 
 ```bash
 cd ../ffmpeg
+make distclean 2>/dev/null || true          # clear any previous (shared) build first
 ./configure --disable-shared --enable-static --enable-gpl \
             --enable-libx264 --enable-libx265 \
             --disable-doc --disable-programs
 make -j$(nproc)
 cd ../mediamolder
 ```
+
+> **`--disable-shared` is mandatory — the #1 cause of a "static" build that
+> isn't.** If the FFmpeg tree was *ever* configured with `--enable-shared`, each
+> `libav*/` dir holds **both** a `.a` archive **and** a `.so`. The linker prefers
+> the `.so`, so the `ffstatic` build links FFmpeg **dynamically** — the binary
+> then needs those libs (and their deps) at run time (`error while loading shared
+> libraries: …`). Always `make distclean` before re-`configure`-ing static-only;
+> confirm with `ls ../ffmpeg/libavcodec/*.so*` (should be empty).
+>
+> **Keep the static config minimal.** The `ffstatic` flags only add `x264`/`x265`
+> + system libs — **not** the text/scaling libs. Do **not** add `--enable-libass`,
+> `--enable-libfreetype`, `--enable-libfontconfig`, `--enable-libharfbuzz`,
+> `--enable-libfribidi`, or `--enable-libzimg` to a **static** build: they cause
+> undefined-symbol link errors. Need subtitle burn-in (libass) or zimg scaling?
+> Use a **shared** FFmpeg (Option A or B1).
 
 Build mediamolder, linking the static archives:
 
@@ -246,13 +262,34 @@ service. Install the prerequisites below **before** building or running.
 
 | Node | Build tag | Needs | Runtime env / config |
 | --- | --- | --- | --- |
-| `whisper_stt` (speech-to-text) | `with_whisper` | whisper.cpp / `libwhisper` | `model` param → ggml model path |
-| `yolo_v8` (object detection) | `with_onnx` | ONNX Runtime shared lib | `ONNXRUNTIME_SHARED_LIBRARY_PATH` |
+| `whisper_stt` (speech-to-text) | `with_whisper` | whisper.cpp / `libwhisper` + a ggml model | `model` param → ggml model path |
+| `yolo_v8` (object detection) | `with_onnx` | ONNX Runtime shared lib + a `.onnx` model | ONNX Runtime auto-discovered (or `ONNXRUNTIME_SHARED_LIBRARY_PATH`); `model` + `labels_file` params |
+| `face_detect` (face detection + embeddings) | `with_onnx` | ONNX Runtime shared lib + the two face models | ONNX Runtime auto-discovered; `MEDIAMOLDER_FACE_MODELS` |
 | `vidi_analyzer` (multimodal) | *(none)* | a running Vidi 2.5 service | `service_url` param |
 | `twelvelabs_*` (cloud understanding) | *(none)* | TwelveLabs API key | `TWELVELABS_API_KEY` |
 
 > `whisper_stt` binds **whisper.cpp** (`ggml-org/whisper.cpp`), **not** the
 > OpenAI Python `whisper` package — the latter does not produce `libwhisper`.
+>
+> `with_onnx` enables **both** `yolo_v8` **and** `face_detect` (and the
+> `mediamolder face-detect` CLI) — one tag, all ONNX nodes.
+
+### Downloading models — how and when
+
+ML models are **not** shipped with MediaMolder and are loaded at **run time**,
+not build time. The order is always: **build with the node's tag → download the
+model(s) → point an env var or param at them → run.** You only need models for
+the node you actually use.
+
+| Node | Download what | How | Point at it with |
+| --- | --- | --- | --- |
+| `whisper_stt` | a ggml/gguf speech model | `whisper.cpp/models/download-ggml-model.sh base.en` | the node's `model` param |
+| `face_detect` / `face-detect` | YOLOv8-face + SFace `.onnx` | `./scripts/fetch-face-models.sh` (SHA-256-verified) | `MEDIAMOLDER_FACE_MODELS` (a dir) or `--models-dir` |
+| `yolo_v8` | a YOLOv8 `.onnx` + labels file | export from Ultralytics / your own | the `model` + `labels_file` params |
+
+Models can be large and (for the face detector) carry a **copyleft** licence, so
+they are **never committed**. `scripts/fetch-face-models.sh` defaults to the
+git-ignored `testdata/face_models/`.
 
 ### whisper_stt (whisper.cpp)
 
@@ -296,18 +333,47 @@ are not in the MediaMolder repo root — `cd` there and retry.
 
 ### yolo_v8 (ONNX Runtime)
 
-Download a release for your architecture from the
-[ONNX Runtime releases](https://github.com/microsoft/onnxruntime/releases),
-place `libonnxruntime.so` on your library path, then:
+Install the ONNX Runtime (distro package, or a release from
+[ONNX Runtime releases](https://github.com/microsoft/onnxruntime/releases) with
+`libonnxruntime.so` in `/usr/lib` or `/usr/local/lib`), then:
 
 ```bash
-export ONNXRUNTIME_SHARED_LIBRARY_PATH=/usr/local/lib/libonnxruntime.so
-
 go build -tags=with_onnx ./cmd/mediamolder   # add ffstatic too for a static FFmpeg link
+# Non-standard install only: export ONNXRUNTIME_SHARED_LIBRARY_PATH=/path/to/libonnxruntime.so
 ```
 
+`yolo_v8` shares `face_detect`'s ONNX Runtime auto-discovery (standard library
+dirs, correct `libonnxruntime.so` name), so a normal install needs no env var.
 You also need a `.onnx` model and a labels file — see the
 [YOLOv8 Guide](../yolov8-guide.md).
+
+### face_detect (ONNX Runtime + face models)
+
+`face_detect` and the `mediamolder face-detect` CLI share the `with_onnx` tag
+with `yolo_v8`, plus two bundled face models. Build with the tag, then fetch and
+point at the models:
+
+```bash
+# Install the ONNX Runtime (distro package or onnxruntime release); it is then
+# auto-discovered in /usr/lib, /usr/local/lib, /usr/lib/*-linux-gnu — no env var needed.
+
+# Fetch + SHA-256-verify both models into the git-ignored testdata/face_models/
+./scripts/fetch-face-models.sh
+export MEDIAMOLDER_FACE_MODELS="$PWD/testdata/face_models"
+
+go build -tags=with_onnx ./cmd/mediamolder   # add ffstatic too for a static FFmpeg link
+# Non-standard ONNX Runtime install only:
+#   export ONNXRUNTIME_SHARED_LIBRARY_PATH=/path/to/libonnxruntime.so   (or --ort-lib / GUI field)
+```
+
+`face_detect` **auto-discovers** the ONNX Runtime by its correct
+`libonnxruntime.so` name in the standard library dirs, so a normal install needs
+no env var. Run `mediamolder face-setup` (optionally `--fetch`) to verify
+everything and get fix commands for any gap.
+The detector (YOLOv8-face) is **AGPL-3.0** and the embedder (SFace) is
+Apache-2.0; both are loaded as **data** at run time (never linked) and
+SHA-256-verified on load. MediaMolder ships neither — keep them out of any
+committed tree. See the [Face Detection Guide](../face-detection-guide.md).
 
 ### vidi_analyzer / twelvelabs_*
 
@@ -320,21 +386,33 @@ the `twelvelabs_*` nodes need a [TwelveLabs](https://twelvelabs.io) API key via
 
 ### Combining nodes in one binary
 
-The build tags stack, so one binary can carry several nodes. Append the extra
-node tags via `EXTRA_TAGS`:
+The build tags **stack**, so one binary can carry several optional nodes. Pass
+extra node tags to a `make` target via `EXTRA_TAGS` — **comma-separated, no
+spaces**. They are *appended* to the target's built-in tags.
 
 ```bash
-# GUI single-binary: static FFmpeg + whisper_stt + yolo_v8
+# build-gui-whisper already implies `ffstatic,with_whisper`; EXTRA_TAGS adds to that:
+
 make build-gui-whisper EXTRA_TAGS=with_onnx
+#   → ffstatic,with_whisper,with_onnx          (whisper + yolo_v8 + face_detect)
+
+# Multiple extra tags at once (comma-separated): ONNX nodes + a static libwhisper link
+make build-gui-whisper EXTRA_TAGS=with_onnx,whisperstatic
+#   → ffstatic,with_whisper,with_onnx,whisperstatic
 
 # Headless (CLI) build with the same nodes
 make build-whisper EXTRA_TAGS=with_onnx
 ```
 
-Each enabled node keeps its own runtime requirement: libwhisper for
-`whisper_stt` (resolved by the embedded rpath) and the ONNX Runtime shared
-library + `ONNXRUNTIME_SHARED_LIBRARY_PATH` for `yolo_v8` (install both per the
-sections above before running such a node).
+`with_onnx` is a **single** tag that enables every ONNX node (`yolo_v8`,
+`face_detect`, and the `face-detect` CLI) — you don't list them separately. Each
+enabled node keeps its own runtime requirement: `libwhisper` for `whisper_stt`
+(resolved by the embedded rpath), and the ONNX Runtime shared library
+(`ONNXRUNTIME_SHARED_LIBRARY_PATH`) plus `MEDIAMOLDER_FACE_MODELS` for
+`face_detect` — install/fetch those per the sections above **before** running.
+
+> Plain `go build` doesn't read `EXTRA_TAGS`; list the tags yourself, e.g.
+> `go build -tags=ffstatic,with_whisper,with_onnx ./cmd/mediamolder`.
 
 ## Troubleshooting
 
@@ -356,3 +434,14 @@ sections above before running such a node).
 - **Runtime: `error while loading shared libraries: libavcodec.so.X`** —
   your custom shared FFmpeg isn't on `LD_LIBRARY_PATH`. Either set it or
   use Option B2 (`ffstatic`) for a self-contained binary.
+- **Runtime: `error while loading shared libraries: libharfbuzz.so…` (or
+  `libass`, `libfontconfig`, …) from a "static" `ffstatic` build** — your FFmpeg
+  tree was configured `--enable-shared`, so it has both `.a` and `.so` and the
+  linker chose the `.so` (a *dynamic* link). `make distclean` in `../ffmpeg`,
+  reconfigure `--disable-shared --enable-static` **without** the text/scaling
+  libs (Option B2), rebuild it, then rebuild MediaMolder. Verify with
+  `ls ../ffmpeg/libavcodec/*.so*` (should be empty).
+- **`undefined reference to ass_*` / `hb_*` / `FcConfig*` / `zimg_*` with
+  `ffstatic`** — your static FFmpeg enabled text/scaling libs the `ffstatic`
+  flags don't link. Rebuild FFmpeg static **without** those `--enable-lib*`
+  options, or use a shared FFmpeg (Option A/B1).

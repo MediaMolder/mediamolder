@@ -24,7 +24,7 @@ function pushRecent(path: string): string[] {
   return next;
 }
 
-export type BrowseMode = 'open' | 'save';
+export type BrowseMode = 'open' | 'save' | 'directory';
 
 interface FileEntry {
   name: string;
@@ -171,6 +171,14 @@ export function FileBrowser({
       }
       return;
     }
+    if (mode === 'directory') {
+      // Pick the folder currently being viewed.
+      if (data) {
+        onPick(data.path);
+        onClose();
+      }
+      return;
+    }
     // save
     const name = filename.trim();
     if (!name || !data) return;
@@ -179,13 +187,17 @@ export function FileBrowser({
   };
 
   const canConfirm =
-    mode === 'open' ? !!selected && !selected.is_dir : filename.trim() !== '' && !!data;
+    mode === 'open'
+      ? !!selected && !selected.is_dir
+      : mode === 'directory'
+        ? !!data
+        : filename.trim() !== '' && !!data;
 
   return (
     <div className="dialog-overlay" onClick={onClose}>
       <div className="dialog" onClick={(e) => e.stopPropagation()}>
         <div className="dialog-header">
-          <h3>{title ?? (mode === 'open' ? 'Open file' : 'Save file as…')}</h3>
+          <h3>{title ?? (mode === 'open' ? 'Open file' : mode === 'directory' ? 'Select folder' : 'Save file as…')}</h3>
           <button onClick={onClose}>×</button>
         </div>
 
@@ -238,7 +250,7 @@ export function FileBrowser({
                 placeholder="/path/to/folder"
               />
               <button onClick={() => void load(pathInput)}>Go</button>
-              {mode === 'save' && (
+              {(mode === 'save' || mode === 'directory') && (
                 <button
                   onClick={() => void createFolder()}
                   disabled={!data}
@@ -260,7 +272,8 @@ export function FileBrowser({
                   onClick={() => onSelect(e)}
                   onDoubleClick={() => {
                     if (e.is_dir) void load(e.path);
-                    else {
+                    else if (mode !== 'directory') {
+                      // In directory mode a file is not a valid pick; ignore.
                       onPick(e.path);
                       onClose();
                     }
@@ -317,14 +330,16 @@ export function FileBrowser({
           <span className="hint">
             {mode === 'open'
               ? 'Double-click a file to open, or select it and click Open.'
-              : filenameHint
-                ? 'Navigate to the output folder, type a filename or pattern, and click Save.'
-                : 'Pick a folder, type a filename, and click Save.'}
+              : mode === 'directory'
+                ? 'Open the folder you want (double-click to enter), then click Select folder.'
+                : filenameHint
+                  ? 'Navigate to the output folder, type a filename or pattern, and click Save.'
+                  : 'Pick a folder, type a filename, and click Save.'}
           </span>
           <div className="spacer" />
           <button onClick={onClose}>Cancel</button>
           <button className="primary" disabled={!canConfirm} onClick={onConfirm}>
-            {mode === 'open' ? 'Open' : 'Save'}
+            {mode === 'open' ? 'Open' : mode === 'directory' ? 'Select folder' : 'Save'}
           </button>
         </div>
       </div>

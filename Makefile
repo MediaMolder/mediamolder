@@ -1,6 +1,7 @@
 .PHONY: build build-static test test-static lint bench bench-static clean \
         frontend-install frontend-dev frontend-build gui gui-dev build-gui build-gui-static \
-        check-deps build-debug build-gui-debug build-whisper test-whisper build-gui-whisper
+        check-deps build-debug build-gui-debug build-whisper test-whisper build-gui-whisper \
+        build-gui-onnx
 
 # Detect macOS: Apple ld warns about duplicate -l flags when two CGO packages
 # (av and PySceneDetect/internal) both link -lavutil and -lswscale. Pass
@@ -185,6 +186,16 @@ build-gui: check-deps frontend-build
 build-gui-static: frontend-build
 	CGO_LDFLAGS_ALLOW='.*' CGO_LDFLAGS='$(CGO_LDFLAGS_NODUP)' \
 	  go build -tags=ffstatic -o mediamolder ./cmd/mediamolder
+
+# build-gui-static + the native ONNX nodes (face_detect, yolo_v8) without
+# whisper. ONNX Runtime is loaded at runtime (dlopen), so it is not needed to
+# build — only to run a node, via ONNXRUNTIME_SHARED_LIBRARY_PATH. Face models
+# load from MEDIAMOLDER_FACE_MODELS (scripts/fetch-face-models.sh; see
+# docs/architecture/face-detection.md). Append more opt-in tags via EXTRA_TAGS.
+build-gui-onnx: frontend-build
+	CGO_LDFLAGS_ALLOW='.*' CGO_LDFLAGS='$(CGO_LDFLAGS_NODUP)' \
+	  go build -tags=ffstatic,with_onnx$(if $(EXTRA_TAGS),$(comma)$(EXTRA_TAGS)) \
+	  -o mediamolder ./cmd/mediamolder
 
 # build-gui-static + the whisper_stt node: static FFmpeg plus a dynamic
 # libwhisper (via pkg-config). Requires libwhisper installed (see

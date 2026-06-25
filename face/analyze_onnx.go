@@ -8,15 +8,14 @@ package face
 import (
 	"fmt"
 	"image"
-	"os"
 	"sync"
 
 	"github.com/MediaMolder/MediaMolder/av"
-	"github.com/MediaMolder/MediaMolder/processors"
+	"github.com/MediaMolder/MediaMolder/internal/onnxrt"
 	ort "github.com/yalue/onnxruntime_go"
 )
 
-// EnvONNXRuntimeLib points at the onnxruntime shared library (SyncsIt bundles it in the .app
+// EnvONNXRuntimeLib points at the onnxruntime shared library (a host application bundles it
 // and sets this). Mirrors the existing processors convention; empty ⇒ default search path.
 const EnvONNXRuntimeLib = "ONNXRUNTIME_SHARED_LIBRARY_PATH"
 
@@ -45,24 +44,27 @@ type pipeline struct {
 }
 
 var (
-	initOnce sync.Once
-	pipe     *pipeline
-	initErr  error
-
-	ortInitOnce sync.Once
-	ortInitErr  error
+	initMu sync.Mutex
+	pipe   *pipeline
 )
 
 // Capable reports whether the models load and the pipeline initialises (ONNX runtime present,
-// models found, SHA-256 verified). It is safe to call repeatedly — init happens once.
-func Capable() bool {
+// models found, SHA-256 verified). Safe to call repeatedly; see [Available] for the reason
+// when it returns false.
+func Capable() bool { return Available() == nil }
+
+// Available returns nil when face analysis is ready, or the specific reason it is not — no
+// models directory configured, a model missing or SHA-256 mismatch, the ONNX runtime absent,
+// etc. Hosts can surface this to the user instead of a generic "unavailable".
+func Available() error {
 	_, err := ensurePipeline()
-	return err == nil
+	return err
 }
 
 // Analyze decodes path with MediaMolder's deterministic software decoder, detects faces with
 // YOLOv8-face, aligns each to the canonical 112×112, and embeds it with SFace. The returned
-// embeddings are L2-normalised and reproducible across machines for the same input.
+// embeddings are L2-normalised and reproducible across machines for the same input. It is a
+// convenience wrapper over [AnalyzeImage] for a single still image or the first video frame.
 func Analyze(path string) ([]Face, error) {
 	p, err := ensurePipeline()
 	if err != nil {
@@ -72,42 +74,89 @@ func Analyze(path string) ([]Face, error) {
 	if err != nil {
 		return nil, err
 	}
+	return p.analyzeImage(img, Options{Embed: true})
+}
+
+// AnalyzeImage runs the full detect → align → embed pipeline on an already-decoded frame.
+// It is the frame-level seam the CLI (per video frame) and the face_detect processor build
+// on, avoiding a re-decode. Embeddings are L2-normalised and reproducible.
+func AnalyzeImage(img image.Image) ([]Face, error) {
+	return AnalyzeImageOpts(img, Options{Embed: true})
+}
+
+// DetectImage runs detection + alignment only, skipping the SFace embedding step — the faster
+// path when callers want boxes and landmarks but not recognition vectors.
+func DetectImage(img image.Image) ([]Face, error) {
+	return AnalyzeImageOpts(img, Options{Embed: false})
+}
+
+// AnalyzeImageOpts is [AnalyzeImage] with explicit [Options] (thresholds and the embed toggle).
+func AnalyzeImageOpts(img image.Image, o Options) ([]Face, error) {
+	p, err := ensurePipeline()
+	if err != nil {
+		return nil, err
+	}
+	return p.analyzeImage(img, o)
+}
+
+// analyzeImage is the shared body behind Analyze / AnalyzeImage*. Inference is serialised on
+// p.mu (ONNX sessions with bound tensors are not safe for concurrent Run()).
+func (p *pipeline) analyzeImage(img image.Image, o Options) ([]Face, error) {
+	conf := o.ConfThresh
+	if conf <= 0 {
+		conf = faceConfThresh
+	}
+	iou := o.IoUThresh
+	if iou <= 0 {
+		iou = faceIoUThresh
+	}
 
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	dets, err := p.runDetect(img)
+	dets, err := p.runDetect(img, conf, iou)
 	if err != nil {
 		return nil, err
 	}
 	faces := make([]Face, 0, len(dets))
 	for _, d := range dets {
-		aligned := alignTo112(img, d.landmarks)
-		emb, err := p.runEmbed(aligned)
-		if err != nil {
-			return nil, err
-		}
 		f := toFace(d)
-		f.Embedding = l2Normalize(emb)
+		if o.Embed {
+			aligned := alignTo112(img, d.landmarks)
+			emb, err := p.runEmbed(aligned)
+			if err != nil {
+				return nil, err
+			}
+			f.Embedding = l2Normalize(emb)
+		}
 		faces = append(faces, f)
 	}
 	return faces, nil
 }
 
+// ensurePipeline lazily builds the detect→embed pipeline, caching only success. A failed
+// attempt is NOT cached, so a corrected models directory (e.g. set via [SetModelsDir] after a
+// first failure in a long-running host such as the GUI) is retried on the next call instead of
+// failing permanently for the process lifetime.
 func ensurePipeline() (*pipeline, error) {
-	initOnce.Do(func() { pipe, initErr = newPipeline() })
-	return pipe, initErr
+	initMu.Lock()
+	defer initMu.Unlock()
+	if pipe != nil {
+		return pipe, nil
+	}
+	p, err := newPipeline()
+	if err != nil {
+		return nil, err
+	}
+	pipe = p
+	return pipe, nil
 }
 
-// initONNX initialises the ONNX Runtime environment exactly once.
+// initONNX initialises the process-global ONNX Runtime via the shared onnxrt package, passing
+// the SetONNXLib override; onnxrt handles env/auto-discovery, the single-init guard (shared with
+// yolo_v8), and retry-on-failure. Caller holds initMu (via ensurePipeline → newPipeline).
 func initONNX() error {
-	ortInitOnce.Do(func() {
-		if lib := os.Getenv(EnvONNXRuntimeLib); lib != "" {
-			ort.SetSharedLibraryPath(lib)
-		}
-		ortInitErr = ort.InitializeEnvironment()
-	})
-	return ortInitErr
+	return onnxrt.Init(onnxLibOverridePath())
 }
 
 func newPipeline() (*pipeline, error) {
@@ -169,9 +218,10 @@ func newPipeline() (*pipeline, error) {
 }
 
 // runDetect letterboxes the frame, runs YOLOv8-face, and returns NMS-filtered detections in
-// original-frame pixel coordinates. Caller holds p.mu.
-func (p *pipeline) runDetect(img image.Image) ([]faceDetection, error) {
-	lb := processors.Letterbox(img, p.detectSpec.InputSize, p.detectSpec.InputSize)
+// original-frame pixel coordinates, gated by confThresh (and iouThresh for raw exports).
+// Caller holds p.mu.
+func (p *pipeline) runDetect(img image.Image, confThresh, iouThresh float64) ([]faceDetection, error) {
+	lb := letterbox(img, p.detectSpec.InputSize, p.detectSpec.InputSize)
 	copy(p.detectIn.GetData(), inputTensor(lb, p.detectSpec))
 	if err := p.detect.Run(); err != nil {
 		return nil, fmt.Errorf("face: detect: %w", err)
@@ -180,11 +230,11 @@ func (p *pipeline) runDetect(img image.Image) ([]faceDetection, error) {
 	if p.detectSpec.MaxDet > 0 {
 		// End-to-end-NMS export: boxes already filtered, no faceNMS needed.
 		return parseYOLOv8FaceNMSOutput(p.detectOut.GetData(), p.detectSpec.MaxDet, p.detectSpec.InputSize,
-			faceConfThresh, b.Dx(), b.Dy()), nil
+			confThresh, b.Dx(), b.Dy()), nil
 	}
 	dets := parseYOLOv8FaceOutput(p.detectOut.GetData(), p.detectNumPreds, p.detectSpec.InputSize,
-		faceConfThresh, b.Dx(), b.Dy())
-	return faceNMS(dets, faceIoUThresh), nil
+		confThresh, b.Dx(), b.Dy())
+	return faceNMS(dets, iouThresh), nil
 }
 
 // runEmbed runs SFace on an aligned 112×112 crop, returning a copy of the embedding (the

@@ -1,7 +1,7 @@
 {
   "schema_version": "1.1",
   "description": "Detect shot boundaries with the adaptive detector, re-encode each shot to H.264 and write one MP4 per shot; also write scene-change metadata to a JSONL file.",
-  "ffmpeg_cmd": "not possible in ffmpeg",
+  "ffmpeg_cmd": "# No equivalent FFmpeg command — these nodes have no FFmpeg equivalent: scene_change_adaptive (node \"scene\"), metadata_file_writer (node \"metadata_file_writer\").",
   "inputs": [
     {
       "id": "in0",

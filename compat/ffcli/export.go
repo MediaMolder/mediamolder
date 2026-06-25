@@ -33,7 +33,10 @@ import (
 
 // ExportResult holds the exported FFmpeg command and any feature-parity notes.
 type ExportResult struct {
-	// Command is the full ffmpeg command line, starting with "ffmpeg ".
+	// Command is the full ffmpeg command line, starting with "ffmpeg " — except
+	// when the graph uses a node with no FFmpeg equivalent (a go_processor), in
+	// which case it is a single-line "# No equivalent FFmpeg command …" notice
+	// (see Unsupported for the per-node detail).
 	Command string
 	// Lines is the same command split on " \\\n  " for display purposes.
 	Lines []string
@@ -84,6 +87,11 @@ type exporter struct {
 	fromGraph bool       // true when sourcing views from def, not cfg
 	args      []string
 	unsup     []string
+	// noEquiv names graph nodes that have no FFmpeg equivalent (go_processor
+	// nodes such as face_detect / whisper_stt). When non-empty, result() turns
+	// the command into an explicit "no equivalent" notice instead of a
+	// misleading best-effort line.
+	noEquiv []string
 }
 
 func (e *exporter) warn(msg string) { e.unsup = append(e.unsup, msg) }
@@ -276,6 +284,16 @@ func (e *exporter) buildFilterComplex() {
 	spec, unsup := graphToFilterComplex(e.cfg)
 	for _, u := range unsup {
 		e.warn(u)
+	}
+	// Record nodes with no FFmpeg equivalent so result() can flag the command.
+	for _, n := range e.cfg.Graph.Nodes {
+		if n.Type == "go_processor" {
+			proc := n.Processor
+			if proc == "" {
+				proc = "go_processor"
+			}
+			e.noEquiv = append(e.noEquiv, fmt.Sprintf("%s (node %q)", proc, n.ID))
+		}
 	}
 	if spec != "" {
 		e.add("-filter_complex", spec)
@@ -1074,11 +1092,32 @@ func (e *exporter) result() ExportResult {
 	// Build Lines: group args into "ffmpeg \\\n  arg arg \\\n  arg arg..."
 	// For readability each flag+value pair goes on its own line.
 	lines := buildLines(args)
+	cmd := strings.Join(args, " ")
+
+	// A graph that uses a capability with no FFmpeg equivalent (a go_processor)
+	// has no faithful ffmpeg command, so replace the would-be command with a
+	// clear notice naming the offending node(s) rather than a misleading
+	// best-effort line. (Per-node detail stays in Unsupported.)
+	if len(e.noEquiv) > 0 {
+		notice := noEquivNotice(e.noEquiv)
+		cmd = notice
+		lines = []string{notice}
+	}
+
 	return ExportResult{
-		Command:     strings.Join(args, " "),
+		Command:     cmd,
 		Lines:       lines,
 		Unsupported: e.unsup,
 	}
+}
+
+// noEquivNotice renders the "no FFmpeg equivalent" message naming the offending
+// node(s). It is a shell comment so the value stays paste-safe.
+func noEquivNotice(nodes []string) string {
+	if len(nodes) == 1 {
+		return fmt.Sprintf("# No equivalent FFmpeg command — %s has no FFmpeg equivalent.", nodes[0])
+	}
+	return fmt.Sprintf("# No equivalent FFmpeg command — these nodes have no FFmpeg equivalent: %s.", strings.Join(nodes, ", "))
 }
 
 // buildLines groups the arg list into display lines. Each flag+value pair

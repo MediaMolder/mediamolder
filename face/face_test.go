@@ -230,3 +230,50 @@ func absI(v int) int {
 	}
 	return v
 }
+
+// TestFaceToRecord verifies the CLI/processor serialisation wrapper copies the face fields
+// and stamps the stream position, and that an unembedded face omits the embedding.
+func TestFaceToRecord(t *testing.T) {
+	f := Face{
+		BBox:      [4]int{10, 20, 30, 40},
+		Landmarks: [5][2]int{{1, 2}, {3, 4}, {5, 6}, {7, 8}, {9, 10}},
+		Score:     0.9,
+	}
+	r := f.ToRecord(7, 12345, 0.5)
+	if r.Frame != 7 || r.PTS != 12345 || r.Time != 0.5 {
+		t.Errorf("position = (%d,%d,%v), want (7,12345,0.5)", r.Frame, r.PTS, r.Time)
+	}
+	if r.BBox != f.BBox || r.Landmarks != f.Landmarks || r.Score != f.Score {
+		t.Errorf("face fields not copied: %+v", r)
+	}
+	if r.Embedding != nil {
+		t.Errorf("embedding should be nil for an unembedded face, got len %d", len(r.Embedding))
+	}
+
+	f.Embedding = []float32{0.1, 0.2}
+	if got := f.ToRecord(0, 0, 0).Embedding; len(got) != 2 {
+		t.Errorf("embedding not carried through: %v", got)
+	}
+}
+
+// TestLetterbox checks the forward letterbox: a target-sized canvas, the source
+// scaled to fit and centred, with black padding bars on the short axis.
+func TestLetterbox(t *testing.T) {
+	src := gradientImage(40, 20) // 2:1 aspect → scaled to 100x50 inside 100x100
+	dst := letterbox(src, 100, 100)
+	if b := dst.Bounds(); b.Dx() != 100 || b.Dy() != 100 {
+		t.Fatalf("size = %v, want 100x100", dst.Bounds())
+	}
+	// Top rows (y<25) are padding → untouched zero pixels (black, alpha 0).
+	if c := dst.RGBAAt(50, 2); c.R != 0 || c.G != 0 || c.B != 0 {
+		t.Errorf("expected black padding at top, got %v", c)
+	}
+	// Centre is content (the source centre has a non-zero gradient value).
+	if c := dst.RGBAAt(50, 50); c.R == 0 && c.G == 0 && c.B == 0 {
+		t.Errorf("expected content at centre, got black")
+	}
+	// Degenerate inputs must not panic and still return the requested size.
+	if got := letterbox(gradientImage(0, 0), 10, 10); got.Bounds().Dx() != 10 {
+		t.Errorf("degenerate source mishandled: %v", got.Bounds())
+	}
+}

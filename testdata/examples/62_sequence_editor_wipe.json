@@ -1,7 +1,7 @@
 {
   "schema_version": "1.1",
   "description": "sequence_editor timeline using libavfilter xfade transitions: three clips on one video track joined by a wipeleft and a slideright, rendered to a fixed 1280x720@30 sequence. Demonstrates that sequence_editor supports the full xfade transition set (not just cross-dissolve). Both inputs point at the same fixture here; in real use they are distinct clips.",
-  "ffmpeg_cmd": "not possible in ffmpeg",
+  "ffmpeg_cmd": "# No equivalent FFmpeg command — sequence_editor (node \"seq\") has no FFmpeg equivalent.",
   "inputs": [
     { "id": "video_a", "url": "{{input}}", "streams": [{ "input_index": 0, "type": "video", "track": 0 }] },
     { "id": "video_b", "url": "{{input}}", "streams": [{ "input_index": 0, "type": "video", "track": 0 }] }

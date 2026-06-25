@@ -1,7 +1,7 @@
 {
   "schema_version": "1.1",
   "description": "Upload a source file directly to TwelveLabs, have Pegasus summarise it, and write all metadata to JSONL files. No AV output is required.",
-  "ffmpeg_cmd": "not possible in ffmpeg",
+  "ffmpeg_cmd": "# No equivalent FFmpeg command — these nodes have no FFmpeg equivalent: twelvelabs_indexer (node \"indexer\"), metadata_file_writer (node \"index_log\"), twelvelabs_analyzer (node \"summary\"), metadata_file_writer (node \"summary_log\").",
   "inputs": [{ "id": "in0", "url": "my-clip.mp4" }],
   "graph": {
     "nodes": [

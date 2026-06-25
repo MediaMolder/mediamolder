@@ -1,7 +1,7 @@
 {
   "schema_version": "1.1",
   "description": "sequence_editor with audio: two clips on one track joined by a dissolve, rendered to a fixed 1280x720@30 sequence with a mixed 48 kHz stereo audio stream. The clip's transition auto-crossfades the audio across the same window; here the curve is overridden to equal-power (qsin). The sequence_editor is a FrameSource that opens its sources directly, so its video output routes to the H.264 encoder and its audio output to the AAC encoder — no input->node edges are wired. (Both inputs point at the same fixture here; in real use they are distinct clips.)",
-  "ffmpeg_cmd": "not possible in ffmpeg",
+  "ffmpeg_cmd": "# No equivalent FFmpeg command — sequence_editor (node \"seq\") has no FFmpeg equivalent.",
   "inputs": [
     {
       "id": "clip_a",

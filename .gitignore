@@ -82,5 +82,9 @@ mediamolder-build.log
 pipeline/ffmpeg2pass-0.log
 pipeline/ffmpeg2pass-0.log.mbtree
 
-# Fetched face models (scripts/fetch-face-models.sh) — bundled by the host app, not committed
+# Fetched face models (scripts/fetch-face-models.sh) — large + copyleft detector; never commit.
+# Match the conventional dir at any depth, and the model files by name wherever they land.
 testdata/face_models/
+**/face_models/
+yolov8n-face.onnx
+sface.onnx

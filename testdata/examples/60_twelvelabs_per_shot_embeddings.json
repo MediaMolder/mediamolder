@@ -1,7 +1,7 @@
 {
   "schema_version": "1.1",
   "description": "Per shot embeddings with the marengo3.0 model, output as JSON files; write API metadata to JSONL.",
-  "ffmpeg_cmd": "not possible in ffmpeg",
+  "ffmpeg_cmd": "# No equivalent FFmpeg command — these nodes have no FFmpeg equivalent: scene_change_adaptive (node \"scene\"), twelvelabs_embedder (node \"embed\"), metadata_file_writer (node \"embed_log\").",
   "inputs": [{ "id": "in0", "url": "input.mp4" }],
   "graph": {
     "nodes": [

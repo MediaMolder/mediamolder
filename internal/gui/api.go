@@ -498,6 +498,8 @@ func processorStreams(name string) []string {
 		return []string{"video", "audio"}
 	case "whisper_stt":
 		return []string{"audio", "events"}
+	case "face_detect":
+		return []string{"video", "events"}
 	}
 	return nil
 }
@@ -527,6 +529,8 @@ func processorDescription(name string) string {
 		return "Wrap another processor and write its metadata to a JSON Lines file."
 	case "yolo_v8":
 		return "YOLOv8 object detection (requires the with_onnx build tag)."
+	case "face_detect":
+		return "Detect faces (YOLOv8-face), align each, and optionally embed them (SFace) for recognition/clustering. Requires the with_onnx build tag and bundled models. Video passes through; emits per-face boxes, 5-point landmarks, and optional 128-d embeddings as metadata."
 	case "whisper_stt":
 		return "Local speech-to-text with whisper.cpp (requires the with_whisper build tag). Audio passes through; emits per-segment events and writes an optional SRT/VTT/JSON/TXT transcript."
 	case "twelvelabs_indexer":

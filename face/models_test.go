@@ -67,6 +67,18 @@ func TestSetModelsDirPrecedence(t *testing.T) {
 	}
 }
 
+func TestSetONNXLib(t *testing.T) {
+	defer SetONNXLib("")
+	SetONNXLib("/opt/x/libonnxruntime.dylib")
+	if got := onnxLibOverridePath(); got != "/opt/x/libonnxruntime.dylib" {
+		t.Errorf("override should be returned: got %q", got)
+	}
+	SetONNXLib("")
+	if got := onnxLibOverridePath(); got != "" {
+		t.Errorf("cleared override should be empty: got %q", got)
+	}
+}
+
 func TestInputTensorLayoutAndScale(t *testing.T) {
 	img := image.NewRGBA(image.Rect(0, 0, 2, 2))
 	img.SetRGBA(0, 0, color.RGBA{R: 255, G: 0, B: 0, A: 255}) // top-left red

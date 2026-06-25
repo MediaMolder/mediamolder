@@ -40,6 +40,17 @@ as a library; consumers import them directly with `go get`.
 The build-tag pair `av/cgo_flags.go` (default) and `av/cgo_flags_static.go`
 (`//go:build ffstatic`) is what selects between the two.
 
+> **Static builds: configure FFmpeg with `--disable-shared`.** The `ffstatic`
+> flags add a `-L` for each `../ffmpeg/libav*/` dir. If that tree was configured
+> `--enable-shared` it contains **both** `.a` and shared libs (`.dylib`/`.so`),
+> and the linker prefers the shared one — so you silently get a *dynamic* FFmpeg
+> link that needs those libs at run time. Always `make distclean` the FFmpeg tree
+> before re-`configure`-ing static-only. The `ffstatic` flags also link only
+> `x264`/`x265` (+ system libs), so a static FFmpeg must **not** enable the text
+> libs (`--enable-libass`, `--enable-libfreetype`, `--enable-libharfbuzz`,
+> `--enable-libfontconfig`, `--enable-libfribidi`, `--enable-libzimg`) — those
+> cause undefined-symbol errors. Need subtitle burn-in/zimg? Use a shared FFmpeg.
+
 ## Make targets (Unix)
 
 The `Makefile` ships these top-level targets:
@@ -51,6 +62,8 @@ The `Makefile` ships these top-level targets:
 | `make build-gui` | `mediamolder` with embedded GUI | Shared |
 | `make build-gui-static` | `mediamolder` with embedded GUI | Static |
 | `make build-whisper` / `make test-whisper` | `go build -tags=with_whisper ./...` — opt-in `whisper_stt` (needs libwhisper) | Shared |
+| `make build-gui-whisper` | GUI binary, `ffstatic,with_whisper` (+ `EXTRA_TAGS`) | Static |
+| `make build-gui-onnx` | GUI binary, `ffstatic,with_onnx` — `yolo_v8` + `face_detect`, no whisper | Static |
 | `make build-debug` | `mediamolder` + `mediamolder-build.log` | Shared |
 | `make build-gui-debug` | `mediamolder` + `mediamolder-build.log` | Shared (+ frontend) |
 | `make check-deps` | Verify gcc + FFmpeg ≥ 8.1 headers | — |
@@ -90,6 +103,7 @@ building or running, including environment variables.
 | --- | --- | --- | --- | --- |
 | `whisper_stt` (speech-to-text) | `with_whisper` | whisper.cpp → `libwhisper` | [`ggml-org/whisper.cpp`](https://github.com/ggml-org/whisper.cpp), built with CMake | `PKG_CONFIG_PATH` (locate `whisper.pc`); `model` param → ggml model path; `WHISPER_TEST_MODEL` for tests |
 | `yolo_v8` (object detection) | `with_onnx` | ONNX Runtime shared lib | [onnxruntime releases](https://github.com/microsoft/onnxruntime/releases) or a package manager | `ONNXRUNTIME_SHARED_LIBRARY_PATH` (or `ort_lib` param); `model` param → `.onnx` path |
+| `face_detect` (face detection + embeddings) | `with_onnx` | ONNX Runtime shared lib + the two face models | onnxruntime as above; models via `scripts/fetch-face-models.sh` | `ONNXRUNTIME_SHARED_LIBRARY_PATH`; `MEDIAMOLDER_FACE_MODELS` (dir) or `--models-dir` |
 | `vidi_analyzer` (multimodal) | *(none)* | Vidi 2.5 Python inference service | [`bytedance/vidi`](https://github.com/bytedance/vidi) | `service_url` param → the running service |
 | `twelvelabs_*` (cloud understanding) | *(none)* | TwelveLabs cloud API | [twelvelabs.io](https://twelvelabs.io) | `TWELVELABS_API_KEY` env (or `api_key` param / `~/.config/mediamolder/twelvelabs.json`) |
 
@@ -126,9 +140,42 @@ make build-whisper                          # custom prefix → make build-whisp
 WHISPER_TEST_MODEL="$MODEL" make test-whisper
 ```
 
+### Stacking node tags with `EXTRA_TAGS`
+
+Build tags stack, so one binary can carry several optional nodes. The
+`build-whisper` / `build-gui-whisper` targets accept `EXTRA_TAGS`, **appended**
+to their built-in tags — **comma-separated, no spaces**:
+
+```bash
+# build-gui-whisper already implies ffstatic,with_whisper.
+make build-gui-whisper EXTRA_TAGS=with_onnx                 # + yolo_v8 + face_detect
+make build-gui-whisper EXTRA_TAGS=with_onnx,whisperstatic   # + ONNX nodes + static libwhisper
+make build-whisper      EXTRA_TAGS=with_onnx                 # headless, same nodes
+```
+
+`with_onnx` is one tag that enables **all** ONNX nodes (`yolo_v8`, `face_detect`,
+and the `face-detect` CLI). A plain `go build` ignores `EXTRA_TAGS` — list the
+tags yourself: `go build -tags=ffstatic,with_whisper,with_onnx ./cmd/mediamolder`.
+
+### Models — download at run time, not build time
+
+Models are **not** shipped and are loaded at run time. Build with the node's tag,
+then download the model(s) and point an env var / param at them before running:
+
+| Node | Download | Point at it with |
+| --- | --- | --- |
+| `whisper_stt` | a ggml/gguf model (`download-ggml-model.sh`) | `model` param |
+| `face_detect` / `face-detect` | `scripts/fetch-face-models.sh` (SHA-256-verified) | `MEDIAMOLDER_FACE_MODELS` or `--models-dir` |
+| `yolo_v8` | a YOLOv8 `.onnx` + labels | `model` + `labels_file` params |
+
+Models can be large and (for the face detector) copyleft-licensed, so they are
+**never committed**; `fetch-face-models.sh` defaults to the git-ignored
+`testdata/face_models/`. See **Notes and licensing** below.
+
 Full per-node setup lives in the feature guides:
 [Whisper](whisper-stt-guide.md), [YOLOv8](yolov8-guide.md),
-[Vidi 2.5](vidi-guide.md), [TwelveLabs](twelvelabs.md).
+[Face Detection](face-detection-guide.md), [Vidi 2.5](vidi-guide.md),
+[TwelveLabs](twelvelabs.md).
 
 **Combining nodes.** The build tags stack — enable several opt-in nodes at once
 by combining them, e.g. `-tags=ffstatic,with_whisper,with_onnx` (static FFmpeg +
@@ -193,3 +240,10 @@ and `TestExamplesRun/*` (end-to-end example configs from
 - The default build uses `pkg-config`, so any FFmpeg installation that
   publishes `.pc` files (Homebrew, apt, dnf, MSYS2) will work without
   additional configuration.
+- **ML models are never shipped or committed.** They are downloaded by the
+  operator and loaded as data at run time. The default face detector
+  (YOLOv8-face) is **AGPL-3.0** and the embedder (SFace) is Apache-2.0; both are
+  loaded as data (never linked), so they don't affect the binary's licence, but
+  do **not** commit them to the repository. `scripts/fetch-face-models.sh`
+  fetches into the git-ignored `testdata/face_models/` and SHA-256-verifies each
+  file.

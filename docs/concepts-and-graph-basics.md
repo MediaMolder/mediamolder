@@ -288,7 +288,7 @@ Edges that write to this sink use `"out:v"` (video) and `"out:a"` (audio) as
 the `to` endpoint. In the GUI, sinks appear at the right edge of the canvas
 with only input pads, no output pads.
 
-There is also a **`filter_sink`** type for analyser-only pipelines where you
+There is also a **`filter_sink`** type for analyser-only graphs where you
 want to process frames but not write a file. Use `nullsink` (video) or
 `anullsink` (audio) as the filter inside a `filter_sink` node to discard
 frames at the end of a branch.
@@ -542,14 +542,14 @@ A graph is valid with **zero `inputs`** if it contains at least one
 | Node type | Destination |
 |---|---|
 | `output` (implicit) | A muxer — `outputs[i].url`. Referenced via `"out0:v"`, `"out0:a"`. |
-| `filter_sink` | A libavfilter sink filter: `nullsink`, `anullsink`. Frames are consumed and discarded — for analyser-only pipelines. |
+| `filter_sink` | A libavfilter sink filter: `nullsink`, `anullsink`. Frames are consumed and discarded — for analyser-only graphs. |
 
 A graph is valid with **zero `outputs`** if it contains at least one
 `filter_sink` node (e.g. a loudness analysis job).
 
 ### Pass-through filters vs. terminal sinks
 
-This distinction matters when building analyser pipelines:
+This distinction matters when building analyser graphs:
 
 - `null` (video) and `anull` (audio) — **pass-through filters** (one in, one
   out, no-op). Used for instrumentation or to isolate timestamps. CLI: `-vf null`.
@@ -674,7 +674,7 @@ default, smoothing over transient speed differences between stages.
 
 ## 8a. Performance monitoring
 
-MediaMolder tracks per-node performance continuously while a pipeline is running. The data is available via the `/perf` HTTP endpoint, the `/perf/stream` SSE endpoint (used by the GUI canvas overlay), and the `mediamolder perf` CLI subcommand.
+MediaMolder tracks per-node performance continuously while a graph is running. The data is available via the `/perf` HTTP endpoint, the `/perf/stream` SSE endpoint (used by the GUI canvas overlay), and the `mediamolder perf` CLI subcommand.
 
 ### Per-node snapshot
 
