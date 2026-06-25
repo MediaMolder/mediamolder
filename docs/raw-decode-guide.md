@@ -17,6 +17,7 @@ build. We ship **no binary**: the bundled LibRaw is built from pinned, SHA-256-v
 
 - [Supported formats](#supported-formats)
 - [Building with LibRaw](#building-with-libraw)
+- [Consuming the `raw` package from another Go module](#consuming-the-raw-package-from-another-go-module)
 - [CLI](#cli)
 - [Graph node (`raw_decode`)](#graph-node-raw_decode)
 - [GUI](#gui)
@@ -47,6 +48,49 @@ make build-gui-libraw
 
 LibRaw is linked **statically**, so — unlike whisper — there is no runtime library to locate and
 no rpath. Check readiness any time with `mediamolder raw-setup`.
+
+## Consuming the `raw` package from another Go module
+
+The `raw` package (import `github.com/MediaMolder/MediaMolder/raw`) is the stable boundary a
+downstream Go module codes to: `Capable()`, `IsRAW(path)`, `Decode(path) (image.Image, error)`,
+`ErrUnsupported`, `IsUniform(img)`. The **default** (`!with_libraw`) build needs nothing special —
+a normal `go get github.com/MediaMolder/MediaMolder@<version>` links the pure-Go stub
+(`Capable()==false`, `Decode → ErrUnsupported`; `IsRAW`/`IsUniform` still work), so a consumer can
+branch on `Capable()`/`IsRAW()` and fall back when RAW develop isn't built in.
+
+A **`with_libraw`** consumer has one wrinkle: the bundled LibRaw
+(`third_party/libraw/{include,lib}`) is a **build artifact** — gitignored, and therefore **absent
+from the published Go module and the module cache**. The cgo binding links it by path
+(`-I/-L ${SRCDIR}/../third_party/libraw`), and you can't run a build script inside the read-only
+module cache. So a `with_libraw` consumer builds against a **checkout** where
+`scripts/bundle-libraw.sh` has been run, wired in with a `go.work`:
+
+```bash
+# 1. In a MediaMolder checkout, build the bundled static LibRaw once (idempotent):
+git clone https://github.com/MediaMolder/mediamolder.git
+cd mediamolder && scripts/bundle-libraw.sh        # → third_party/libraw/{include,lib}
+
+# 2. In your module, point a go.work at that checkout:
+cd /path/to/your-module
+go work init
+go work use . /path/to/mediamolder
+
+# 3. Build with the tag. LibRaw links STATICALLY — it is baked into your binary,
+#    so there is nothing to ship and nothing for the user to install.
+go build -tags with_libraw ./...
+```
+
+**`CGO_LDFLAGS_ALLOW`:** the `raw` package's own flags (`-I` / `-L` / `-lraw` / `-lc++` / `-lz`)
+are in cgo's default allow-list, so building **just `./raw/...`** needs no env var. Set
+`CGO_LDFLAGS_ALLOW='.*'` when your consumer **also** links FFmpeg statically — FFmpeg's `-Wl,…`
+flags are not in the default allow-list. (The `build-gui-libraw` target and the CI `libraw` leg
+set it for that reason.)
+
+Once a tagged commit is published, pin it with `go get
+github.com/MediaMolder/MediaMolder@<commit-or-tag>` (updates `go.mod`); the `go.work` keeps
+supplying the bundled static lib for the `with_libraw` leg. Because the develop is **statically
+linked into the consumer binary**, this satisfies a "no external installs" constraint: the user
+installs nothing and the app bundle ships no separate RAW library.
 
 ## CLI
 
