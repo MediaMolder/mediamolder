@@ -50,6 +50,11 @@ const MaxFanoutTasks = 100_000
 type Orchestrator struct {
 	store state.Store
 	queue queue.Queue
+	// AllowedRoots confines file:// reads (e.g. fanout_dynamic manifests) to
+	// these operator-approved directories, set from the server's --allow-path.
+	// When empty, such reads fall back to a safe default (system temp dir + cwd)
+	// so a submitted job can never read arbitrary files like /etc/passwd.
+	AllowedRoots []string
 }
 
 // New creates an Orchestrator backed by the given store and queue.
@@ -356,7 +361,7 @@ func (o *Orchestrator) materializeFanoutDynamic(ctx context.Context, job *j.Job,
 		return nil, fmt.Errorf("fanout_dynamic: params.manifest_uri is required")
 	}
 
-	data, err := readManifestFile(manifestURI)
+	data, err := readManifestFile(manifestURI, o.manifestRoots())
 	if err != nil {
 		return nil, fmt.Errorf("fanout_dynamic: read manifest %q: %w", manifestURI, err)
 	}
@@ -485,14 +490,59 @@ func (o *Orchestrator) materializeGather(ctx context.Context, job *j.Job, stage 
 	}}, nil
 }
 
-// readManifestFile reads a manifest file from a file:// URI or a bare path.
-func readManifestFile(uri string) ([]byte, error) {
+// readManifestFile reads a fanout manifest from a file:// URI or a bare path,
+// confined to roots so a submitted job cannot read arbitrary files. The path
+// passed to the file system is re-derived from the matched root, not taken
+// directly from the request.
+func readManifestFile(uri string, roots []string) ([]byte, error) {
 	path := strings.TrimPrefix(uri, "file://")
 	path = filepath.Clean(path)
 	if !filepath.IsAbs(path) {
 		return nil, fmt.Errorf("manifest_uri must be an absolute path (got %q)", uri)
 	}
-	return os.ReadFile(path) //nolint:gosec // path is validated above
+	safe, ok := confineToRoots(path, roots)
+	if !ok {
+		return nil, fmt.Errorf("manifest_uri %q is not under an allowed directory", uri)
+	}
+	return os.ReadFile(safe)
+}
+
+// manifestRoots returns the directories a fanout manifest may be read from: the
+// operator-configured AllowedRoots, or a safe default (the system temp dir and
+// the working directory) when none are set.
+func (o *Orchestrator) manifestRoots() []string {
+	if len(o.AllowedRoots) > 0 {
+		return o.AllowedRoots
+	}
+	var roots []string
+	if tmp, err := filepath.Abs(os.TempDir()); err == nil {
+		roots = append(roots, filepath.Clean(tmp))
+	}
+	if cwd, err := os.Getwd(); err == nil {
+		roots = append(roots, filepath.Clean(cwd))
+	}
+	return roots
+}
+
+// confineToRoots reports whether path (absolute) lies within one of the
+// allow-listed root directories and, if so, returns it re-derived as
+// filepath.Join(root, rel) — a value not taken directly from the request, safe
+// to pass to the file system. Returns ("", false) when path escapes every root.
+func confineToRoots(path string, roots []string) (string, bool) {
+	cleaned := filepath.Clean(path)
+	for _, root := range roots {
+		absRoot, err := filepath.Abs(root)
+		if err != nil {
+			continue
+		}
+		absRoot = filepath.Clean(absRoot)
+		rel, err := filepath.Rel(absRoot, cleaned)
+		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+			continue
+		}
+		return filepath.Join(absRoot, rel), true
+	}
+	return "", false
 }
 
 // segmentOutputURI constructs a stable, stage-scoped output URI for the i-th
