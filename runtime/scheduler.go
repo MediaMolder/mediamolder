@@ -26,6 +26,20 @@ type Scheduler struct {
 	SampleInterval time.Duration       // edge stats sampling interval; 0 uses 500ms default
 }
 
+// maxEdgeBuffer bounds a per-edge channel buffer size. EdgeBufSizes hints derive
+// from the (possibly remote/untrusted) ExecutionPlan, so an unbounded hint would
+// let a job request an arbitrarily large channel allocation — a memory-exhaustion
+// DoS. Hints above this cap are clamped; 65536 is far beyond any real pipeline.
+const maxEdgeBuffer = 1 << 16
+
+// clampEdgeBuffer bounds an (untrusted) per-edge buffer hint to maxEdgeBuffer.
+func clampEdgeBuffer(hint int) int {
+	if hint > maxEdgeBuffer {
+		return maxEdgeBuffer
+	}
+	return hint
+}
+
 // Run launches one goroutine per node, wires them with channels, and blocks
 // until all finish or ctx is cancelled. Any node error cancels all nodes.
 func (s *Scheduler) Run(ctx context.Context, g *graph.Graph, handler NodeHandler) error {
@@ -40,7 +54,7 @@ func (s *Scheduler) Run(ctx context.Context, g *graph.Graph, handler NodeHandler
 		size := bufSize
 		if s.EdgeBufSizes != nil {
 			if hint, ok := s.EdgeBufSizes[e]; ok && hint > 0 {
-				size = hint
+				size = clampEdgeBuffer(hint)
 			}
 		}
 		edgeCh[e] = make(chan any, size)

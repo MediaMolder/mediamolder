@@ -407,22 +407,24 @@ func handleMkdir(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	abs = filepath.Clean(abs)
-	if !isWithinAnyRoot(abs, defaultRoots()) {
+	roots := defaultRoots()
+	safeAbs, ok := sanitizePathAnyRoot(abs, roots)
+	if !ok {
 		writeJSONError(w, http.StatusBadRequest, errors.New("path is outside allowed roots"))
 		return
 	}
-	info, err := os.Stat(abs)
+	info, err := os.Stat(safeAbs)
 	if err != nil || !info.IsDir() {
 		writeJSONError(w, http.StatusNotFound, errors.New("parent directory does not exist"))
 		return
 	}
-	target := filepath.Join(abs, name)
-	target = filepath.Clean(target)
-	if !isWithinAnyRoot(target, defaultRoots()) {
+	target := filepath.Clean(filepath.Join(safeAbs, name))
+	safeTarget, ok := sanitizePathAnyRoot(target, roots)
+	if !ok {
 		writeJSONError(w, http.StatusBadRequest, errors.New("target is outside allowed roots"))
 		return
 	}
-	if err := os.Mkdir(target, 0o755); err != nil {
+	if err := os.Mkdir(safeTarget, 0o755); err != nil {
 		if errors.Is(err, fs.ErrExist) {
 			writeJSONError(w, http.StatusConflict, err)
 		} else {
@@ -431,7 +433,7 @@ func handleMkdir(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(mkdirResponse{Path: target})
+	_ = json.NewEncoder(w).Encode(mkdirResponse{Path: safeTarget})
 }
 
 // fileReadWriteBodyLimit caps the request body for PUT /api/file.
@@ -583,36 +585,6 @@ func sanitizePathAnyRoot(path string, roots []string) (string, bool) {
 		return filepath.Join(root, rel), true
 	}
 	return "", false
-}
-
-// isWithinAnyRoot reports whether path resolves inside one of the supplied
-// allow-listed root directories.
-func isWithinAnyRoot(path string, roots []string) bool {
-	for _, root := range roots {
-		if isWithinRoot(path, root) {
-			return true
-		}
-	}
-	return false
-}
-
-// isWithinRoot reports whether path is equal to root or nested below it.
-func isWithinRoot(path, root string) bool {
-	absPath, err := filepath.Abs(path)
-	if err != nil {
-		return false
-	}
-	absRoot, err := filepath.Abs(root)
-	if err != nil {
-		return false
-	}
-	absPath = filepath.Clean(absPath)
-	absRoot = filepath.Clean(absRoot)
-	rel, err := filepath.Rel(absRoot, absPath)
-	if err != nil {
-		return false
-	}
-	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator)))
 }
 
 func uniqueStrings(in []string) []string {
