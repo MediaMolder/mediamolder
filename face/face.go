@@ -30,13 +30,50 @@ var ErrUnsupported = errors.New("face: analysis not available in this build")
 
 // Face is one detected face: its location, the 5 keypoints used for alignment, the detector
 // confidence, and an L2-normalised SFace embedding for clustering/recognition. The field
-// shapes mirror SyncsIt's mediamolder seam contract exactly (BBox is x, y, w, h in source
+// shapes are a stable contract for downstream consumers (BBox is x, y, w, h in source
 // pixels; Landmarks are eyes, nose, mouth corners).
 type Face struct {
 	BBox      [4]int    // x, y, w, h in source pixels
 	Landmarks [5][2]int // left eye, right eye, nose, left mouth, right mouth
 	Score     float32   // detector confidence, 0..1
 	Embedding []float32 // 128-d, L2-normalised (SFace); nil until embedded
+}
+
+// Options tunes a single [AnalyzeImageOpts] call. The zero value is valid:
+// thresholds <= 0 fall back to the package defaults (0.5 confidence, 0.45 NMS IoU)
+// and Embed is off (detect+align only — the faster path).
+type Options struct {
+	ConfThresh float64 // detector confidence threshold; <= 0 ⇒ default
+	IoUThresh  float64 // NMS IoU threshold (raw exports only); <= 0 ⇒ default
+	Embed      bool    // run the SFace embedding step; false skips it
+}
+
+// Record is a time-stamped detected face: a [Face] plus its position in a media
+// stream. It is the JSON serialisation unit shared by the `face-detect` CLI and the
+// `face_detect` pipeline processor, and is mirrored by FaceRecord in the GUI frontend.
+type Record struct {
+	Frame     uint64    `json:"frame"`
+	PTS       int64     `json:"pts"`
+	Time      float64   `json:"t,omitempty"` // seconds; omitted when the time base is unknown
+	BBox      [4]int    `json:"bbox"`        // x, y, w, h in source pixels
+	Landmarks [5][2]int `json:"landmarks"`   // left eye, right eye, nose, left/right mouth
+	Score     float32   `json:"score"`
+	Label     string    `json:"label,omitempty"`     // "" until gallery matching assigns a name
+	Embedding []float32 `json:"embedding,omitempty"` // 128-d; present only when embedded
+}
+
+// ToRecord wraps a Face with its stream position (frame index, PTS, and the PTS in
+// seconds — pass 0 for t when the time base is unknown, e.g. inside a processor).
+func (f Face) ToRecord(frame uint64, pts int64, t float64) Record {
+	return Record{
+		Frame:     frame,
+		PTS:       pts,
+		Time:      t,
+		BBox:      f.BBox,
+		Landmarks: f.Landmarks,
+		Score:     f.Score,
+		Embedding: f.Embedding,
+	}
 }
 
 const (
@@ -149,6 +186,59 @@ func parseYOLOv8FaceNMSOutput(raw []float32, maxDet, inputSize int, confThresh f
 		dets = append(dets, d)
 	}
 	return dets
+}
+
+// letterbox resizes src into a targetW×targetH RGBA, preserving aspect ratio and centring the
+// scaled image on a black background (nearest-neighbour). It is the forward transform whose
+// inverse [unletterbox] reverses; the geometry (scale, centred integer offset, rounding) must
+// stay bit-identical to that inverse, so this is a self-contained copy rather than a borrowed
+// dependency — it keeps the face package a leaf (no processors import, hence no import cycle
+// for the face_detect processor).
+func letterbox(src image.Image, targetW, targetH int) *image.RGBA {
+	srcB := src.Bounds()
+	origW := srcB.Dx()
+	origH := srcB.Dy()
+	if origW == 0 || origH == 0 {
+		return image.NewRGBA(image.Rect(0, 0, targetW, targetH))
+	}
+
+	scale := math.Min(float64(targetW)/float64(origW), float64(targetH)/float64(origH))
+	newW := int(math.Round(float64(origW) * scale))
+	newH := int(math.Round(float64(origH) * scale))
+	if newW < 1 {
+		newW = 1
+	}
+	if newH < 1 {
+		newH = 1
+	}
+
+	dst := image.NewRGBA(image.Rect(0, 0, targetW, targetH))
+	// dst is already zeroed (black) by NewRGBA.
+
+	offsetX := (targetW - newW) / 2
+	offsetY := (targetH - newH) / 2
+
+	// Nearest-neighbour resize + place at offset.
+	for dy := 0; dy < newH; dy++ {
+		srcY := srcB.Min.Y + int(float64(dy)/scale+0.5)
+		if srcY >= srcB.Max.Y {
+			srcY = srcB.Max.Y - 1
+		}
+		for dx := 0; dx < newW; dx++ {
+			srcX := srcB.Min.X + int(float64(dx)/scale+0.5)
+			if srcX >= srcB.Max.X {
+				srcX = srcB.Max.X - 1
+			}
+			r, g, b, a := src.At(srcX, srcY).RGBA()
+			dst.SetRGBA(offsetX+dx, offsetY+dy, color.RGBA{
+				R: uint8(r >> 8),
+				G: uint8(g >> 8),
+				B: uint8(b >> 8),
+				A: uint8(a >> 8),
+			})
+		}
+	}
+	return dst
 }
 
 // unletterbox returns functions mapping model-input coordinates (after a centred letterbox to

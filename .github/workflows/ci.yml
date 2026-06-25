@@ -39,15 +39,24 @@ jobs:
             build-essential nasm pkg-config \
             libx264-dev libx265-dev libvpx-dev libopus-dev \
             libass-dev libfreetype6-dev libfontconfig1-dev \
-            libharfbuzz-dev libfribidi-dev libmp3lame-dev
+            libharfbuzz-dev libfribidi-dev libmp3lame-dev \
+            ffmpeg
 
       - name: Cache FFmpeg (Linux)
         if: runner.os == 'Linux'
         id: cache-ffmpeg
         uses: actions/cache@v4
         with:
-          path: /usr/local
-          key: ffmpeg-${{ env.FFMPEG_VERSION }}-libass-lame-${{ runner.os }}
+          # Cache only FFmpeg's own artefacts, not the multi-GB /usr/local tree.
+          path: |
+            /usr/local/lib/libav*
+            /usr/local/lib/libsw*
+            /usr/local/lib/libpostproc*
+            /usr/local/lib/pkgconfig/lib*.pc
+            /usr/local/include/libav*
+            /usr/local/include/libsw*
+            /usr/local/include/libpostproc*
+          key: ffmpeg-${{ env.FFMPEG_VERSION }}-libass-lame-ffonly-${{ runner.os }}
 
       - name: Build FFmpeg from source (Linux)
         if: runner.os == 'Linux' && steps.cache-ffmpeg.outputs.cache-hit != 'true'
@@ -124,17 +133,33 @@ jobs:
       - name: Build
         run: go build ./...
 
+      # Cache the LFS objects keyed on their content hashes so `git lfs pull`
+      # only hits the network when a fixture actually changes — keeping us
+      # under GitHub's free LFS bandwidth tier across repeated CI runs.
+      - name: List LFS objects (cache key)
+        run: git lfs ls-files --long | cut -d ' ' -f1 | sort > .lfs-assets-id
+      - name: Cache LFS objects
+        uses: actions/cache@v4
+        with:
+          path: .git/lfs
+          key: lfs-${{ hashFiles('.lfs-assets-id') }}
       - name: Fetch LFS testdata (small fixtures)
         run: git lfs pull
 
+      # BBB is only needed by the Linux-only example/community suite (and the
+      # aspect/metadata e2e tests, which skip gracefully when it's absent).
+      # Transcoding it requires the ffmpeg CLI, which only the Linux jobs
+      # install — so gate the fetch to Linux and let macOS skip those tests.
       - name: Cache BBB source
+        if: runner.os == 'Linux'
         uses: actions/cache@v4
         with:
-          path: testdata/BBB_1080p.avi
-          key: bbb-1080p-stereo-avi-v1
+          path: testdata/BBB_1080p.mp4
+          key: bbb-1080p-h264-mp4-v1
 
       - name: Fetch BBB testdata source
-        run: bash scripts/fetch-bbb.sh testdata/BBB_1080p.avi
+        if: runner.os == 'Linux'
+        run: bash scripts/fetch-bbb.sh testdata/BBB_1080p.mp4
 
       - name: Test
         run: go test -race -count=1 -timeout 300s -short ./...
@@ -166,14 +191,22 @@ jobs:
             build-essential nasm pkg-config clang \
             libx264-dev libx265-dev libvpx-dev libopus-dev \
             libass-dev libfreetype6-dev libfontconfig1-dev \
-            libharfbuzz-dev libfribidi-dev libmp3lame-dev
+            libharfbuzz-dev libfribidi-dev libmp3lame-dev \
+            ffmpeg
 
       - name: Cache FFmpeg
         id: cache-ffmpeg-asan
         uses: actions/cache@v4
         with:
-          path: /usr/local
-          key: ffmpeg-${{ env.FFMPEG_VERSION }}-libass-lame-asan
+          path: |
+            /usr/local/lib/libav*
+            /usr/local/lib/libsw*
+            /usr/local/lib/libpostproc*
+            /usr/local/lib/pkgconfig/lib*.pc
+            /usr/local/include/libav*
+            /usr/local/include/libsw*
+            /usr/local/include/libpostproc*
+          key: ffmpeg-${{ env.FFMPEG_VERSION }}-libass-lame-ffonly-asan
 
       - name: Build FFmpeg from source
         if: steps.cache-ffmpeg-asan.outputs.cache-hit != 'true'
@@ -203,17 +236,27 @@ jobs:
       - name: Update linker cache
         run: sudo ldconfig
 
+      # Cache the LFS objects keyed on their content hashes so `git lfs pull`
+      # only hits the network when a fixture actually changes — keeping us
+      # under GitHub's free LFS bandwidth tier across repeated CI runs.
+      - name: List LFS objects (cache key)
+        run: git lfs ls-files --long | cut -d ' ' -f1 | sort > .lfs-assets-id
+      - name: Cache LFS objects
+        uses: actions/cache@v4
+        with:
+          path: .git/lfs
+          key: lfs-${{ hashFiles('.lfs-assets-id') }}
       - name: Fetch LFS testdata (small fixtures)
         run: git lfs pull
 
       - name: Cache BBB source
         uses: actions/cache@v4
         with:
-          path: testdata/BBB_1080p.avi
-          key: bbb-1080p-stereo-avi-v1
+          path: testdata/BBB_1080p.mp4
+          key: bbb-1080p-h264-mp4-v1
 
       - name: Fetch BBB testdata source
-        run: bash scripts/fetch-bbb.sh testdata/BBB_1080p.avi
+        run: bash scripts/fetch-bbb.sh testdata/BBB_1080p.mp4
 
       - name: Test with ASan
         # CGO_ENABLED=1 is the default; -asan instruments C and Go allocations.
@@ -227,6 +270,8 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+        with:
+          lfs: false # lint/build only — no test fixtures needed
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -246,8 +291,15 @@ jobs:
         id: cache-ffmpeg-lint
         uses: actions/cache@v4
         with:
-          path: /usr/local
-          key: ffmpeg-${{ env.FFMPEG_VERSION }}-libass-lint
+          path: |
+            /usr/local/lib/libav*
+            /usr/local/lib/libsw*
+            /usr/local/lib/libpostproc*
+            /usr/local/lib/pkgconfig/lib*.pc
+            /usr/local/include/libav*
+            /usr/local/include/libsw*
+            /usr/local/include/libpostproc*
+          key: ffmpeg-${{ env.FFMPEG_VERSION }}-libass-ffonly-lint
 
       - name: Build FFmpeg from source
         if: steps.cache-ffmpeg-lint.outputs.cache-hit != 'true'
@@ -290,6 +342,8 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+        with:
+          lfs: false # lint/build only — no test fixtures needed
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -316,8 +370,15 @@ jobs:
         id: cache-ffmpeg-gui
         uses: actions/cache@v4
         with:
-          path: /usr/local
-          key: ffmpeg-${{ env.FFMPEG_VERSION }}-libass-gui
+          path: |
+            /usr/local/lib/libav*
+            /usr/local/lib/libsw*
+            /usr/local/lib/libpostproc*
+            /usr/local/lib/pkgconfig/lib*.pc
+            /usr/local/include/libav*
+            /usr/local/include/libsw*
+            /usr/local/include/libpostproc*
+          key: ffmpeg-${{ env.FFMPEG_VERSION }}-libass-ffonly-gui
 
       - name: Build FFmpeg from source
         if: steps.cache-ffmpeg-gui.outputs.cache-hit != 'true'

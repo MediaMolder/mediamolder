@@ -9,27 +9,11 @@ import (
 	"fmt"
 	"os"
 	"strings"
-	"sync"
 
 	"github.com/MediaMolder/MediaMolder/av"
+	"github.com/MediaMolder/MediaMolder/internal/onnxrt"
 	ort "github.com/yalue/onnxruntime_go"
 )
-
-var ortOnce sync.Once
-
-// initONNXRuntime initialises the ONNX Runtime environment exactly once.
-// libPath is the path to the onnxruntime shared library (e.g.
-// libonnxruntime.so.1.24.1). If empty, the default search path is used.
-func initONNXRuntime(libPath string) error {
-	var initErr error
-	ortOnce.Do(func() {
-		if libPath != "" {
-			ort.SetSharedLibraryPath(libPath)
-		}
-		initErr = ort.InitializeEnvironment()
-	})
-	return initErr
-}
 
 // YOLOv8Detector is a go_processor that runs YOLOv8 object detection via
 // ONNX Runtime. It is only compiled when the "with_onnx" build tag is set.
@@ -114,12 +98,10 @@ func (p *YOLOv8Detector) Init(params map[string]any) error {
 		}
 	}
 
-	// ONNX Runtime init.
+	// ONNX Runtime init — shared discovery (auto-finds the library) + a single
+	// process-global init, so the "ort_lib" param or the env var are optional.
 	ortLib, _ := params["ort_lib"].(string)
-	if ortLib == "" {
-		ortLib = os.Getenv("ONNXRUNTIME_SHARED_LIBRARY_PATH")
-	}
-	if err := initONNXRuntime(ortLib); err != nil {
+	if err := onnxrt.Init(ortLib); err != nil {
 		return fmt.Errorf("yolo_v8: onnxruntime init: %w", err)
 	}
 

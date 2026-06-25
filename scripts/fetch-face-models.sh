@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Fetch the face-analysis models used by the `face` package (build tag with_onnx) and verify
-# their pinned SHA-256. Models are NOT committed; bundle the fetched files in the host app
-# (SyncsIt ships them in the .app) and point MEDIAMOLDER_FACE_MODELS at the directory.
+# their pinned SHA-256. Models are NOT committed; bundle the fetched files in the host
+# application and point MEDIAMOLDER_FACE_MODELS at the directory.
 #
 # Usage:  scripts/fetch-face-models.sh [DEST_DIR]
 # Default DEST_DIR: testdata/face_models  (gitignored)

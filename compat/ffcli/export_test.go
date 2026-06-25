@@ -463,8 +463,8 @@ func TestExport_EncoderParams_NonAllowlistCodec(t *testing.T) {
 			URL:        "out.mp4",
 			CodecVideo: "libvpx-vp9",
 			EncoderParamsVideo: map[string]any{
-				"crf":     30,
-				"b:v":     "0",
+				"crf":      30,
+				"b:v":      "0",
 				"deadline": "good",
 			},
 		}},
@@ -537,6 +537,35 @@ func TestExport_GoProcessor_Unsupported(t *testing.T) {
 	r := mustExport(t, cfg)
 	if len(r.Unsupported) == 0 {
 		t.Error("expected go_processor to produce an unsupported entry")
+	}
+}
+
+func TestExport_GoProcessor_NoEquivalentNotice(t *testing.T) {
+	// A go_processor has no FFmpeg equivalent, so the command is a single-line
+	// notice naming it — never a misleading `ffmpeg …` line — even when the graph
+	// also has a real output FFmpeg could transcode (the whole job has no
+	// faithful equivalent).
+	cfg := &job.Config{
+		SchemaVersion: "1.2",
+		Inputs:        []job.Input{{ID: "in0", URL: "a.mp4"}},
+		Graph: job.GraphDef{
+			Nodes: []job.NodeDef{{ID: "faces", Type: "go_processor", Processor: "face_detect"}},
+			Edges: []job.EdgeDef{{From: "in0:v:0", To: "faces:default", Type: "video"}},
+		},
+		Outputs: []job.Output{{ID: "out0", URL: "out.mp4"}},
+	}
+	r := mustExport(t, cfg)
+	if !strings.Contains(r.Command, "No equivalent FFmpeg command") || !strings.Contains(r.Command, "face_detect") {
+		t.Errorf("expected a no-equivalent notice naming face_detect; got %q", r.Command)
+	}
+	if strings.Contains(r.Command, "ffmpeg ") {
+		t.Errorf("must not emit a misleading ffmpeg line; got %q", r.Command)
+	}
+	if strings.Contains(r.Command, "\n") {
+		t.Errorf("notice should be a single line; got %q", r.Command)
+	}
+	if len(r.Unsupported) == 0 {
+		t.Error("expected an Unsupported entry as well")
 	}
 }
 
@@ -796,4 +825,3 @@ func TestExport_GraphMaps_MultiInput(t *testing.T) {
 	requireArg(t, r.Command, "-c:v", "libx264")
 	requireArg(t, r.Command, "-c:a", "aac")
 }
-

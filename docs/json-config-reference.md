@@ -1,6 +1,6 @@
 # JSON Config Reference
 
-MediaMolder pipelines are defined as JSON files conforming to schema v1.0, v1.1, or v1.2.
+MediaMolder graphs are defined as JSON files conforming to schema v1.0, v1.1, or v1.2.
 
 ## Top-level structure
 
@@ -12,7 +12,7 @@ MediaMolder pipelines are defined as JSON files conforming to schema v1.0, v1.1,
 | `inputs`         | array    | yes      | Input sources                            |
 | `graph`          | object   | yes      | Processing graph (nodes + edges)         |
 | `outputs`        | array    | yes      | Output sinks                             |
-| `global_options` | object   | no       | Global pipeline options                  |
+| `global_options` | object   | no       | Global graph options                  |
 | `copy_ts`        | bool     | no       | Preserve original demuxer timestamps end-to-end (FFmpeg `-copyts`). Suppresses the implicit `-ts_offset` after `-ss` and switches output-side `ss`/`to` to absolute timeline values. |
 | `filter_asset_paths` | array of string | no | Search directories for resolving relative model-file paths in filter params. See [Filter model paths](#filter-model-paths-filter_asset_paths). |
 
@@ -54,7 +54,7 @@ The optional `ffmpeg_cmd` string field stores an equivalent FFmpeg command line 
 >
 > Use `Output.metadata` to hard-code tags, or wire `metadata_reader` /
 > `metadata_writer` graph nodes for per-output control in multi-input
-> pipelines. See [Metadata routing nodes](#metadata-routing-nodes-metadata_reader--metadata_writer).
+> graphs. See [Metadata routing nodes](#metadata-routing-nodes-metadata_reader--metadata_writer).
 | `stream_loop`  | int  | no   | Number of *additional* times to rewind on EOF. `0` = no loop, `N>0` plays N+1 times, `-1` = infinite. PTS continues monotonically across iterations. (FFmpeg `-stream_loop`). |
 | `itsoffset`    | float | no  | Shift every demuxed PTS/DTS by this many seconds (may be negative). Composes additively with the `-ss` ts_offset. (FFmpeg `-itsoffset`). |
 | `read_rate`    | float | no  | Pace packet reads to (read_rate × realtime). `1.0` = native-rate (FFmpeg `-re`); `2.0` = 2× realtime. `0` (default) disables pacing. |
@@ -270,7 +270,7 @@ filter node's `params` map (keys matching `model`, `sofa`, `*_model`,
 
 1. Absolute paths — checked directly via `os.Stat`.
 2. Each directory listed in `filter_asset_paths` (in declaration order).
-3. The directory of the pipeline JSON file itself (only when loaded via
+3. The directory of the graph JSON file itself (only when loaded via
    `ParseConfigFile`; not available when the config is embedded in a
    larger JSON blob parsed by `ParseConfig`).
 4. The process working directory.
@@ -280,7 +280,7 @@ not subject to this check.
 
 If a model-bearing param cannot be resolved, `ParseConfigFile` returns
 an error naming the param, the value, and the list of directories
-searched. No error is raised when the pipeline is parsed without a
+searched. No error is raised when the graph is parsed without a
 file path (`ParseConfig`) and `filter_asset_paths` is empty.
 
 ```json
@@ -315,7 +315,7 @@ model-bearing suffix heuristic.
 | `read_rate`   | number | no      | Global default demuxer read-rate for all inputs whose own `read_rate` is unset. `1.0` mirrors FFmpeg `-re`; `0` disables pacing. |
 | `read_rate_initial_burst` | number | no | Global default for per-input `read_rate_initial_burst`. |
 | `read_rate_catchup` | number | no | Global default for per-input `read_rate_catchup`. |
-| `realtime_log_path` | string | no | When non-empty and `realtime: true`, the adaptive controller writes one JSONL record per observation tick (every 500 ms) to this file. Each record contains the full per-node `NodePerfSnapshot`, the controller's internal cool-down counters (`windows_since_adj`, `windows_since_preset`, `overshoot_windows`), and any decisions made that tick. The first line is a header record (`"type":"header"`) with all tunable constants. Use for post-hoc diagnosis of real-time performance anomalies. The file is created (or truncated) at pipeline start. Example: `"/tmp/rt_debug.jsonl"`. |
+| `realtime_log_path` | string | no | When non-empty and `realtime: true`, the adaptive controller writes one JSONL record per observation tick (every 500 ms) to this file. Each record contains the full per-node `NodePerfSnapshot`, the controller's internal cool-down counters (`windows_since_adj`, `windows_since_preset`, `overshoot_windows`), and any decisions made that tick. The first line is a header record (`"type":"header"`) with all tunable constants. Use for post-hoc diagnosis of real-time performance anomalies. The file is created (or truncated) at graph start. Example: `"/tmp/rt_debug.jsonl"`. |
 
 Per-node `params.threads` and `params.thread_type` override the global values for individual codecs. See [Threading Architecture](architecture/threading-architecture.md).
 
@@ -423,7 +423,7 @@ The `go_processor` node type enables **custom Go per-frame processing** — for 
 - `processor` must match a name registered via `processors.Register(...)`.
 - `params` are passed directly to the processor's `Init()` method.
 - Frames flow as `*av.Frame`; the processor may modify, replace, or drop them.
-- Non-nil `Metadata` returned by `Process()` is published on the pipeline event bus.
+- Non-nil `Metadata` returned by `Process()` is published on the event bus.
 
 See [Go Processor Nodes](go-processor-nodes.md) for the full guide.
 

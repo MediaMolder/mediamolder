@@ -139,6 +139,43 @@ func runExample(t *testing.T, jsonPath, name, inputAbs, _, _ string) {
 		}
 	}
 
+	// --- Skip: TwelveLabs examples need a real uploaded clip + API key ---
+	// They reference a hard-coded clip (not {{input}}) and call the TwelveLabs
+	// cloud API, so they cannot run in this local harness.
+	if strings.Contains(raw, "twelvelabs") {
+		t.Skip("twelvelabs examples need a real clip and a TwelveLabs API key; not runnable in the harness")
+	}
+
+	// --- Skip: segmented-output examples (shot-%05d.mp4) ---
+	// These write one file per detected shot rather than a single out.mp4, so
+	// the single-output verification below cannot check them (and the relative
+	// pattern would litter the package directory).
+	if strings.Contains(raw, "shot-%05d") {
+		t.Skip("segmented shot output is not verifiable by the single-output harness")
+	}
+
+	// --- Skip: whisper_stt requires the with_whisper build tag and a model file ---
+	if strings.Contains(raw, `"whisper_stt"`) {
+		if _, err := processors.Get("whisper_stt"); err != nil {
+			t.Skip("whisper_stt processor not registered (rebuild with -tags with_whisper)")
+		}
+		if strings.Contains(raw, "/models/ggml-base.en.bin") {
+			if _, err := os.Stat("/models/ggml-base.en.bin"); err != nil {
+				t.Skip("whisper model not found at /models/ggml-base.en.bin")
+			}
+		}
+	}
+
+	// --- Skip: face_detect requires the with_onnx build tag and bundled models ---
+	if strings.Contains(raw, `"face_detect"`) {
+		if _, err := processors.Get("face_detect"); err != nil {
+			t.Skip("face_detect processor not registered (rebuild with -tags with_onnx)")
+		}
+		if os.Getenv("MEDIAMOLDER_FACE_MODELS") == "" {
+			t.Skip("face models unavailable (set MEDIAMOLDER_FACE_MODELS)")
+		}
+	}
+
 	// --- Template substitution ---
 	tmpDir := t.TempDir()
 
@@ -178,7 +215,13 @@ func runExample(t *testing.T, jsonPath, name, inputAbs, _, _ string) {
 	// Metadata output files → redirect to tmpDir so tests don't litter cwd.
 	// frame_metadata.txt is embedded in a filter spec (metadata=mode=print:file=…)
 	// so it must use filterTmpDir (relative path, no Windows drive-letter colon).
-	for _, meta := range []string{"frame_info.jsonl", "scene_changes.jsonl", "detections.jsonl"} {
+	for _, meta := range []string{
+		"frame_info.jsonl", "scene_changes.jsonl", "detections.jsonl",
+		"scene_changes_content.jsonl", "scene_changes_adaptive.jsonl",
+		"scene_changes_hash.jsonl", "scene_changes_histogram.jsonl",
+		"scene_changes_threshold.jsonl",
+		"faces.jsonl", "transcript.json",
+	} {
 		dest := filepath.ToSlash(filepath.Join(tmpDir, meta))
 		raw = strings.ReplaceAll(raw, `"`+meta+`"`, `"`+dest+`"`)
 	}
@@ -232,6 +275,13 @@ func runExample(t *testing.T, jsonPath, name, inputAbs, _, _ string) {
 	}
 
 	// --- Verify outputs ---
+	if len(cfg.Outputs) == 0 {
+		// Analysis-only graph (e.g. face_detect writing a sidecar, all
+		// go_processor nodes with no muxer) — there is no media output to
+		// check; a clean Run above is the assertion. The sidecar itself may
+		// legitimately be empty (the BBB fixture has no human faces).
+		return
+	}
 	if strings.HasPrefix(name, "35_") {
 		for _, f := range []string{"out_1080.mp4", "out_720.mp4", "out_540.mp4", "out_360.mp4"} {
 			assertNonEmptyFile(t, filepath.Join(tmpDir, f))

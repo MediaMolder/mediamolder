@@ -1,0 +1,33 @@
+{
+  "schema_version": "1.1",
+  "description": "Single-image face detection. Point in0 at an image file (.jpg/.png); face_detect detects, aligns, and embeds each face and writes them to faces.jsonl. Analysis-only — an input plus one processor, no encoder or muxer (set output_file to an absolute path when running by hand). Requires a with_onnx build and bundled models (MEDIAMOLDER_FACE_MODELS).",
+  "ffmpeg_cmd": "# No equivalent FFmpeg command — face_detect (node \"detect_faces\") has no FFmpeg equivalent.",
+  "inputs": [
+    {
+      "id": "in0",
+      "url": "{{input}}",
+      "streams": [
+        { "input_index": 0, "type": "video", "track": 0 }
+      ]
+    }
+  ],
+  "graph": {
+    "nodes": [
+      {
+        "id": "detect_faces",
+        "type": "go_processor",
+        "processor": "face_detect",
+        "params": {
+          "every": 1,
+          "conf": 0.5,
+          "embeddings": true,
+          "output_file": "faces.jsonl"
+        }
+      }
+    ],
+    "edges": [
+      { "from": "in0:v:0", "to": "detect_faces:default", "type": "video" }
+    ]
+  },
+  "outputs": []
+}

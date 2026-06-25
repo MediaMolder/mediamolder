@@ -1,6 +1,6 @@
 # YOLOv8 Object Detection Guide
 
-MediaMolder ships an optional `yolo_v8` built-in processor that runs [YOLOv8](https://docs.ultralytics.com/) inference on every video frame, or every Nth video frame via [ONNX Runtime](https://onnxruntime.ai/). Detections are emitted on the pipeline event bus so downstream code can log them, trigger alerts, draw overlays, or store results.
+MediaMolder ships an optional `yolo_v8` built-in processor that runs [YOLOv8](https://docs.ultralytics.com/) inference on every video frame, or every Nth video frame via [ONNX Runtime](https://onnxruntime.ai/). Detections are emitted on the event bus so downstream code can log them, trigger alerts, draw overlays, or store results.
 
 This guide covers installation, model setup, JSON configuration, and troubleshooting.
 
@@ -13,7 +13,7 @@ This guide covers installation, model setup, JSON configuration, and troubleshoo
 		- [YOLOv8 ONNX model](#yolov8-onnx-model)
 		- [Labels file](#labels-file)
 	- [Building with ONNX support](#building-with-onnx-support)
-	- [Pipeline configuration](#pipeline-configuration)
+	- [Graph configuration](#graph-configuration)
 		- [Minimal example](#minimal-example)
 		- [Full parameter reference](#full-parameter-reference)
 	- [How it works](#how-it-works)
@@ -50,12 +50,16 @@ The `yolo_v8` processor uses [onnxruntime\_go](https://github.com/yalue/onnxrunt
 | Ubuntu / Debian | Download from [ONNX Runtime releases](https://github.com/microsoft/onnxruntime/releases) and place `libonnxruntime.so` in `/usr/local/lib` (or any path on `LD_LIBRARY_PATH`) |
 | Windows | Download the Windows zip from releases, extract `onnxruntime.dll` alongside the binary |
 
-Tell MediaMolder where to find it using **one** of:
+MediaMolder locates the library in this order:
 
 1. The `ort_lib` processor param (absolute path to the `.so` / `.dylib` / `.dll`).
 2. The `ONNXRUNTIME_SHARED_LIBRARY_PATH` environment variable.
+3. **Auto-discovery** of the standard install locations (Homebrew prefixes,
+   `/usr/local/lib`, `/usr/lib/*-linux-gnu`, …) by the correct library name.
 
-If neither is set, the Go runtime's default library search path is used.
+So on macOS/Linux a plain `brew install onnxruntime` / distro package is found with
+**no configuration** — set `ort_lib` or the env var only for a non-standard install.
+(`yolo_v8` and `face_detect` share this discovery and a single runtime init.)
 
 ### YOLOv8 ONNX model
 
@@ -122,7 +126,7 @@ Without the `with_onnx` tag, the processor is not registered and `processors.Get
 
 ---
 
-## Pipeline configuration
+## Graph configuration
 
 ### Minimal example
 
@@ -284,7 +288,7 @@ For file output configured entirely in JSON (no CLI flags), wrap `yolo_v8` with 
 
 This runs detection as normal (frame passes through, metadata reaches the event bus) **and** writes each detection to `detections.jsonl`.
 
-See [example 32](../testdata/examples/32_yolov8_metadata_to_file.json) for a complete pipeline.
+See [example 32](../testdata/examples/32_yolov8_metadata_to_file.json) for a complete graph.
 
 ---
 
@@ -398,6 +402,6 @@ Without the tag, none of the ONNX code compiles. The pure-Go post-processing (`P
 ## See also
 
 - [Go Processor Nodes](go-processor-nodes.md) — full go_processor reference
-- [JSON Config Reference](json-config-reference.md) — pipeline schema documentation
+- [JSON Config Reference](json-config-reference.md) — graph schema documentation
 - [Ultralytics Docs](https://docs.ultralytics.com/) — YOLOv8 training and export
 - [ONNX Runtime](https://onnxruntime.ai/) — inference runtime documentation

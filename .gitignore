@@ -40,7 +40,7 @@ Thumbs.db
 # Big Buck Bunny source + derived clips — downloaded by scripts/fetch-bbb.sh,
 # not stored in git. Remove the LFS pointers with:
 #   git rm --cached testdata/BBB_10sec.mp4 testdata/BBB_30sec.mp4
-/testdata/BBB_1080p.avi
+/testdata/BBB_1080p.*
 /testdata/BBB_10sec.mp4
 /testdata/BBB_30sec.mp4
 
@@ -82,8 +82,12 @@ mediamolder-build.log
 pipeline/ffmpeg2pass-0.log
 pipeline/ffmpeg2pass-0.log.mbtree
 
-# Fetched face models (scripts/fetch-face-models.sh) — bundled by the host app, not committed
+# Fetched face models (scripts/fetch-face-models.sh) — large + copyleft detector; never commit.
+# Match the conventional dir at any depth, and the model files by name wherever they land.
 testdata/face_models/
 
 # Bundled LibRaw built from pinned source (scripts/bundle-libraw.sh) — not committed (no binaries)
 third_party/
+**/face_models/
+yolov8n-face.onnx
+sface.onnx

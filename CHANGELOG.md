@@ -5,6 +5,19 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Changed
+
+- **FFmpeg export is honest about capabilities FFmpeg lacks.** When a graph uses
+  a node with no FFmpeg equivalent (any `go_processor` — face_detect, whisper_stt,
+  yolo_v8, scene_change_mc, vidi/twelvelabs, …), `ffcli.Export` / `mediamolder
+  export` / the GUI's "Export to FFmpeg" no longer emit a misleading command.
+  The command value is a single-line `# No equivalent FFmpeg command — <node> has
+  no FFmpeg equivalent.` notice (naming all such nodes) rather than a best-effort
+  transcode that silently drops the unsupported work; the per-node detail remains
+  in the `Unsupported` warnings. Every shipped example that uses a `go_processor`
+  now stores this notice as its `ffmpeg_cmd` (replacing the old misleading
+  commands and the ad-hoc "not possible in ffmpeg" strings).
+
 ### Added
 
 - **Camera-RAW develop via LibRaw.** A new `raw` package decodes camera RAW
@@ -24,6 +37,54 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   (generator committed alongside it). See
   [docs/raw-decode-guide.md](docs/raw-decode-guide.md) and
   [docs/architecture/raw-decode.md](docs/architecture/raw-decode.md).
+- **Face detection setup made bulletproof.** A new shared `internal/onnxrt`
+  package **auto-discovers** the ONNX Runtime shared library in the platform's
+  standard install locations (Homebrew prefixes, `/usr/local/lib`,
+  `/usr/lib/*-linux-gnu`, …) using the correctly-named library
+  (`libonnxruntime.dylib` / `.so`), so a plain `brew install onnxruntime` (or
+  distro package) works with **no env var**. Both `face_detect` **and** `yolo_v8`
+  use it, sharing a single process-global runtime init (which also fixes a latent
+  double-`InitializeEnvironment` error when a graph used both ONNX nodes).
+  A non-standard runtime can be pointed at via `face.SetONNXLib`, the new
+  `ort_lib` param on `face_detect`, the `--ort-lib` CLI flag, or the GUI's "ONNX
+  runtime library" browse field. `face.Available() error` now reports the
+  specific reason analysis is unavailable (no models dir / model SHA mismatch /
+  ONNX Runtime missing) instead of a generic message, and both the ONNX-runtime
+  and pipeline initialisation are **retried on failure** rather than latching for
+  the process lifetime — so correcting the models dir or runtime path in the
+  long-running GUI takes effect without a restart. The GUI's models-directory
+  field is now a folder browser (new `directory` mode in the file browser). New
+  `mediamolder face-setup` command diagnoses readiness (build support, ONNX
+  Runtime, models — SHA-verified) and prints the exact command to fix each gap,
+  with `--fetch` to download the models; it exits 0 only when ready.
+
+- **Face detection integration.** The native `face` package (YOLOv8-face detect
+  → 5-point align → SFace embed) is now reachable end-to-end. A frame-level seam
+  — `face.AnalyzeImage` / `face.DetectImage` / `face.AnalyzeImageOpts` with an
+  `Options` struct, plus the shared `face.Record` serialisation type — lets
+  callers analyse already-decoded frames (the existing path-based `face.Analyze`
+  is refactored to use it; both — and any downstream consumer — are unchanged). New
+  `mediamolder face-detect <image|video>` CLI command emits one record per face
+  to JSONL / CSV / JSON, with `--every`, `--max-frames`, `--embeddings`,
+  `--conf`, and `--models-dir`; it is in every build and degrades gracefully when
+  the models are absent. New `face_detect` `go_processor` runs the pipeline over
+  video frames (params `every` / `conf` / `embeddings` / `models_dir`), passing
+  frames through and emitting per-face `Detection`s plus the rich `face.Record`
+  slice under `custom.faces`. It also embeds the shared `fileWriteHook`, so an
+  `output_file` / `output_format` param makes it **self-write** its detections —
+  a still-image or video face-detection job is then just an input wired into one
+  `face_detect` node with no media output (an analysis-only graph; a still image
+  decodes as a single-frame video stream, so the same node handles both). The web
+  GUI curates it in the palette ("Face detection") with a typed Inspector panel
+  (including the output-file picker), and `FaceRecord` mirrors `face.Record`
+  in the frontend types. Both the processor and the real `face` pipeline are
+  gated behind `with_onnx`; `make build-gui-onnx` produces a GUI single-binary
+  with the node. To break an import cycle, `face` now owns its `letterbox`
+  helper (a verbatim, behaviour-preserving copy) instead of importing
+  `processors`, making it a leaf package. Models are loaded as data, SHA-256
+  pinned (`scripts/fetch-face-models.sh`), never linked. See
+  `docs/face-detection-guide.md` and `docs/architecture/face-detection.md`.
+
 - **`whisper_stt` speech-to-text node.** A new `go_processor` that transcribes
   an audio stream to timestamped text locally with
   [whisper.cpp](https://github.com/ggml-org/whisper.cpp) — offline, no network.

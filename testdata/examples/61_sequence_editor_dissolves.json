@@ -1,7 +1,7 @@
 {
   "schema_version": "1.1",
   "description": "Compose a timeline with the sequence_editor go_processor: three clips alternating between two sources on one video track, joined by dissolve cross-fades, rendered to a fixed 1280x720@30 sequence. The sequence_editor is a FrameSource — it opens its sources directly (referenced by input_id), so no input→node edges are wired. (Both inputs point at the same fixture here; in real use they are distinct clips.)",
-  "ffmpeg_cmd": "not possible in ffmpeg",
+  "ffmpeg_cmd": "# No equivalent FFmpeg command — sequence_editor (node \"seq\") has no FFmpeg equivalent.",
   "inputs": [
     {
       "id": "video_a",

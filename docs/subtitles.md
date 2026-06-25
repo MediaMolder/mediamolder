@@ -156,4 +156,4 @@ The `ffcli` compatibility layer maps:
 
 - **Bitmap subtitle burn-in**: DVB and PGS subtitles cannot be burned in using the text-based `subtitles` or `ass` filters. They must be overlaid with the `overlay` filter, which requires additional configuration.
 - **Container compatibility**: Not all containers support all subtitle formats. MP4 supports MOV_TEXT; MKV supports SRT, ASS, PGS, and most others.
-- **Hardware filters and subtitles**: Burning in subtitles is a CPU operation. When using hardware-accelerated pipelines, subtitle burn-in requires a hw→sw→hw transfer unless the entire filter graph runs in software.
+- **Hardware filters and subtitles**: Burning in subtitles is a CPU operation. When using hardware-accelerated graphs, subtitle burn-in requires a hw→sw→hw transfer unless the entire filter graph runs in software.

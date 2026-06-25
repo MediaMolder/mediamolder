@@ -152,7 +152,7 @@ To rotate the token: update the file and restart the server.
 
 ### 3.5 S3 inputs and outputs
 
-If your pipeline uses `s3://` URIs the server can presign them on the client's
+If your graph uses `s3://` URIs the server can presign them on the client's
 behalf so workers never need AWS credentials. Set up credentials on the server:
 
 ```bash
@@ -196,14 +196,14 @@ mediamolder serve --mode=server \
 ```
 
 ```bash
-# Client — upload a file, get back a URI, embed it in a pipeline.
+# Client — upload a file, get back a URI, embed it in a graph.
 UPLOAD_URI=$(mediamolder job upload \
   --backend=https://my-server.example.com:8443 \
   --token="$TOKEN" \
   /Users/me/footage.mp4)
 
 # $UPLOAD_URI is something like server-upload://a3f9... 
-# Use it as an input URL in your pipeline JSON.
+# Use it as an input URL in your graph JSON.
 ```
 
 The upload endpoint allocates a single-use token per file; the file is stored
@@ -520,7 +520,7 @@ Matching rules:
 
 Tier 2 propagates OpenTelemetry trace context through the queue automatically.
 The orchestrator injects the current span context into each task before
-publishing; the worker extracts it before executing the pipeline, so task spans
+publishing; the worker extracts it before executing the graph, so task spans
 appear as children of the originating job span in your trace backend.
 
 Configure your OTEL exporter before starting either process:
@@ -580,7 +580,7 @@ parameter because the browser `EventSource` API cannot set custom headers.
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `POST` | `/v1/jobs` | Submit a job (JSON body = pipeline config) |
+| `POST` | `/v1/jobs` | Submit a job (JSON body = graph config) |
 | `GET` | `/v1/jobs/{id}` | Get job status |
 | `GET` | `/v1/jobs/{id}/events` | SSE stream of job events |
 | `GET` | `/v1/jobs/{id}/artifacts` | List output artifacts |
@@ -597,7 +597,7 @@ POST /v1/jobs HTTP/1.1
 Content-Type: application/json
 Authorization: Bearer <token>
 
-{ ... pipeline config ... }
+{ ... graph config ... }
 ```
 
 Response `202 Accepted`:
