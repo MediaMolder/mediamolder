@@ -41,14 +41,24 @@ Flags:
 	fs.StringVar(&output, "o", "", "output image path (shorthand)")
 	fs.StringVar(&format, "format", "", "output format: png|jpeg")
 	fs.IntVar(&quality, "quality", 92, "JPEG quality 1-100")
-	if err := fs.Parse(args); err != nil {
-		return err
+	// Permit flags before or after the positional input: Go's flag package stops
+	// at the first non-flag, so parse iteratively, collecting positionals.
+	var positionals []string
+	for rest := args; ; {
+		if err := fs.Parse(rest); err != nil {
+			return err
+		}
+		if fs.NArg() == 0 {
+			break
+		}
+		positionals = append(positionals, fs.Arg(0))
+		rest = fs.Args()[1:]
 	}
-	if fs.NArg() != 1 {
+	if len(positionals) != 1 {
 		fs.Usage()
 		return fmt.Errorf("raw-decode: exactly one input file is required")
 	}
-	input := fs.Arg(0)
+	input := positionals[0]
 
 	if !raw.Capable() {
 		return fmt.Errorf("raw-decode: this binary has no LibRaw — camera-RAW develop is unavailable\n"+

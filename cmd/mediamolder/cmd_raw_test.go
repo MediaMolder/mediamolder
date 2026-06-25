@@ -23,6 +23,16 @@ func TestRawDecodeUnsupported(t *testing.T) {
 	}
 }
 
+// Flags may appear after the positional input (e.g. `raw-decode photo.dng -o out.png`);
+// parsing must accept that and not complain about the argument count. In the stub build the
+// capability error fires after a successful parse, proving the positional was recognised.
+func TestRawDecodeFlagsAfterInput(t *testing.T) {
+	err := cmdRawDecode([]string{"photo.dng", "-o", "out.png", "--format", "png"})
+	if err == nil || !strings.Contains(err.Error(), "with_libraw") {
+		t.Errorf("flags-after-input should parse then hit the capability error, got: %v", err)
+	}
+}
+
 func TestRawSetupNotReady(t *testing.T) {
 	if err := cmdRawSetup(nil); err == nil {
 		t.Error("raw-setup should exit non-zero without LibRaw")
