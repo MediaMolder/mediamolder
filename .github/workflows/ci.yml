@@ -438,3 +438,37 @@ jobs:
           path: mediamolder
           if-no-files-found: error
 
+  # Gated leg for camera-RAW develop. The raw package links the bundled LibRaw
+  # statically and has NO FFmpeg/ONNX dependency, so this needs only zlib for the
+  # bundle build — no FFmpeg-from-source. The default (stub) build stays green in
+  # build-and-test, which never sets with_libraw.
+  libraw:
+    name: LibRaw RAW decode (with_libraw)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+
+      - name: Install build deps
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y build-essential zlib1g-dev
+
+      - name: Cache bundled LibRaw
+        uses: actions/cache@v4
+        with:
+          path: third_party/libraw
+          key: libraw-bundle-${{ runner.os }}-${{ hashFiles('scripts/bundle-libraw.sh') }}
+
+      - name: Bundle LibRaw (pinned source, SHA-256 verified)
+        run: scripts/bundle-libraw.sh
+
+      - name: Build and test (with_libraw)
+        run: |
+          CGO_LDFLAGS_ALLOW='.*' go build -tags with_libraw ./raw/...
+          CGO_LDFLAGS_ALLOW='.*' go test -tags with_libraw -count=1 ./raw/...
+

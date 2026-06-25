@@ -165,6 +165,8 @@ For cloud-hosted video understanding — index, search, caption, and embed clips
 
 For local, offline speech-to-text, the built-in `whisper_stt` node transcribes an audio stream to timestamped subtitles (SRT/VTT/JSON/TXT) with [whisper.cpp](https://github.com/ggml-org/whisper.cpp). See [Whisper Speech-to-Text Guide](docs/whisper-stt-guide.md)
 
+For true camera-RAW develop (NEF/CR2/CR3/ARW/RAF/ORF/RW2/PEF/SRW/DNG) to a full, demosaicked 8-bit sRGB image via [LibRaw](https://www.libraw.org/) — not the camera's embedded JPEG preview, and not libav's black RAW render — use the `mediamolder raw-decode` command or the built-in `raw_decode` node inside a graph. Deterministic develop (camera white balance, sRGB, AHD); LibRaw is bundled from pinned source and linked statically. See [Camera-RAW Decode Guide](docs/raw-decode-guide.md)
+
 For native face analysis — detect faces (YOLOv8-face), align each, and optionally embed them (SFace) for recognition/clustering — use the `mediamolder face-detect` command for images/video or the built-in `face_detect` node inside a graph. Reproducible embeddings; models loaded as data, never linked. See [Face Detection Guide](docs/face-detection-guide.md)
 
 ### Video editing built in
@@ -320,6 +322,7 @@ For detailed instructions see [MacOS](docs/build/macos.md), [Windows](docs/build
 - [Vidi 2.5 multimodal analysis](docs/vidi-guide.md)
 - [TwelveLabs video understanding](docs/twelvelabs.md)
 - [Whisper speech-to-text](docs/whisper-stt-guide.md) — local, offline transcription to SRT/VTT/JSON/TXT (`whisper_stt`)
+- [Camera-RAW Decode](docs/raw-decode-guide.md) — develop NEF/CR2/CR3/ARW/RAF/ORF/RW2/PEF/SRW/DNG to 8-bit sRGB via bundled LibRaw (`raw-decode` CLI + `raw_decode` node)
 - [Face Detection](docs/face-detection-guide.md) — detect, align, and embed faces in images/video for recognition/clustering (`face-detect` CLI + `face_detect` node)
 - [Real-Time Controller](docs/realtime-controller.md) — adaptive control loop, encoder preset stepping, output buffers, `mediamolder watch`, HTTP API
 
@@ -335,6 +338,7 @@ For detailed instructions see [MacOS](docs/build/macos.md), [Windows](docs/build
 - [Observability](docs/architecture/observability.md) — Prometheus metrics, OpenTelemetry tracing, per-node performance monitoring, `mediamolder perf` CLI
 - [Graph Compilation](docs/architecture/graph-compilation.md)
 - [Video Transitions](docs/architecture/transitions.md) — native Go transition engine (wipes, slides, fades, circles, …) that replaces libavfilter `xfade`
+- [Camera-RAW Decode](docs/architecture/raw-decode.md) — LibRaw develop boundary, the three decode intents, determinism scoping, static-link rationale
 
 ### Project
 

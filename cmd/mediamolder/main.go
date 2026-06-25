@@ -79,6 +79,10 @@ func run(args []string) error {
 		return cmdHWBench(args[1:])
 	case "go-scene-detect":
 		return cmdGoSceneDetect(args[1:])
+	case "raw-decode":
+		return cmdRawDecode(args[1:])
+	case "raw-setup":
+		return cmdRawSetup(args[1:])
 	case "face-detect":
 		return cmdFaceDetect(args[1:])
 	case "face-setup":
@@ -604,6 +608,11 @@ Commands:
   list-filters           List available filters.
   list-formats           List available formats.
   list-processors        List registered go_processor processors.
+  raw-decode <input.raw> Develop a camera-RAW file (NEF/CR2/CR3/ARW/RAF/ORF/RW2/PEF/SRW/DNG)
+                         to a full-resolution 8-bit sRGB image via the bundled LibRaw.
+                         Flags: -o/--output=PATH, --format=png|jpeg, --quality=N.
+                         Requires a build with -tags with_libraw.
+  raw-setup              Diagnose camera-RAW (LibRaw) readiness and how to enable it.
   go-scene-detect <input> Detect scene changes using PySceneDetect algorithms.
                          Flags: --detector=NAME (content|adaptive|threshold|hash|histogram),
                                 --threshold=F, --luma-only, --min-scene-len=V,

@@ -380,6 +380,22 @@ the `twelvelabs_*` nodes need a [TwelveLabs](https://twelvelabs.io) API key via
 `%USERPROFILE%\.config\mediamolder\twelvelabs.json`. See the
 [Vidi 2.5](../vidi-guide.md) and [TwelveLabs](../twelvelabs.md) guides.
 
+### raw_decode (LibRaw)
+
+Camera-RAW develop (the `raw_decode` node + `mediamolder raw-decode`). Build tag
+`with_libraw`. LibRaw is bundled — `scripts/bundle-libraw.sh` builds a
+SHA-256-pinned static lib from source. Run it from an MSYS2 bash shell (it builds
+the host `x86_64` arch; the universal `lipo` step is macOS-only):
+
+```bash
+scripts/bundle-libraw.sh            # → third_party/libraw (gitignored)
+# The Makefile is Unix-only; build directly with the tag (add ffstatic as needed):
+CGO_LDFLAGS_ALLOW='.*' go build -tags with_libraw -o mediamolder.exe ./cmd/mediamolder
+```
+
+Linked statically — no runtime DLL. Confirm with `./mediamolder.exe raw-setup`.
+See [Camera-RAW Decode Guide](../raw-decode-guide.md).
+
 ### Combining nodes in one binary
 
 The build tags stack, so one binary can carry several nodes. The `Makefile` is

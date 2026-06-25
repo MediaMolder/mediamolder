@@ -106,6 +106,7 @@ building or running, including environment variables.
 | `face_detect` (face detection + embeddings) | `with_onnx` | ONNX Runtime shared lib + the two face models | onnxruntime as above; models via `scripts/fetch-face-models.sh` | `ONNXRUNTIME_SHARED_LIBRARY_PATH`; `MEDIAMOLDER_FACE_MODELS` (dir) or `--models-dir` |
 | `vidi_analyzer` (multimodal) | *(none)* | Vidi 2.5 Python inference service | [`bytedance/vidi`](https://github.com/bytedance/vidi) | `service_url` param → the running service |
 | `twelvelabs_*` (cloud understanding) | *(none)* | TwelveLabs cloud API | [twelvelabs.io](https://twelvelabs.io) | `TWELVELABS_API_KEY` env (or `api_key` param / `~/.config/mediamolder/twelvelabs.json`) |
+| `raw_decode` (camera-RAW develop) | `with_libraw` | LibRaw (bundled, static) | built from pinned source by `scripts/bundle-libraw.sh` | none — linked statically, no runtime lib; `input` param → RAW file path |
 
 > **`whisper_stt` uses whisper.cpp, not the OpenAI Python `whisper` package.**
 > The node is a cgo binding to `libwhisper`; `github.com/openai/whisper` is the
@@ -139,6 +140,29 @@ make build-whisper                          # custom prefix → make build-whisp
 # 4. Run the gated tests against the model
 WHISPER_TEST_MODEL="$MODEL" make test-whisper
 ```
+
+### Example: enable `raw_decode`
+
+LibRaw is bundled (we ship no binary). One script builds a SHA-pinned static lib
+from source; all steps run from the **MediaMolder repo root**.
+
+```bash
+# 1. Build the bundled LibRaw (downloads + SHA-256-verifies the pinned source,
+#    builds a self-contained static lib into third_party/libraw — gitignored;
+#    macOS produces a universal arm64+x86_64 archive).
+scripts/bundle-libraw.sh
+
+# 2. Build MediaMolder with the node compiled in.
+make build-libraw                 # CLI/library
+make build-gui-libraw             # GUI single binary (static FFmpeg + static LibRaw)
+
+# 3. Run the gated tests, and confirm readiness.
+make test-libraw
+./mediamolder raw-setup
+```
+
+Unlike whisper, LibRaw is linked **statically** — there is no runtime library or
+rpath. See [Camera-RAW Decode Guide](raw-decode-guide.md).
 
 ### Stacking node tags with `EXTRA_TAGS`
 
@@ -174,8 +198,8 @@ Models can be large and (for the face detector) copyleft-licensed, so they are
 
 Full per-node setup lives in the feature guides:
 [Whisper](whisper-stt-guide.md), [YOLOv8](yolov8-guide.md),
-[Face Detection](face-detection-guide.md), [Vidi 2.5](vidi-guide.md),
-[TwelveLabs](twelvelabs.md).
+[Face Detection](face-detection-guide.md), [Camera-RAW](raw-decode-guide.md),
+[Vidi 2.5](vidi-guide.md), [TwelveLabs](twelvelabs.md).
 
 **Combining nodes.** The build tags stack — enable several opt-in nodes at once
 by combining them, e.g. `-tags=ffstatic,with_whisper,with_onnx` (static FFmpeg +

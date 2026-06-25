@@ -85,6 +85,9 @@ pipeline/ffmpeg2pass-0.log.mbtree
 # Fetched face models (scripts/fetch-face-models.sh) — large + copyleft detector; never commit.
 # Match the conventional dir at any depth, and the model files by name wherever they land.
 testdata/face_models/
+
+# Bundled LibRaw built from pinned source (scripts/bundle-libraw.sh) — not committed (no binaries)
+third_party/
 **/face_models/
 yolov8n-face.onnx
 sface.onnx

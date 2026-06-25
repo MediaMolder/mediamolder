@@ -71,6 +71,7 @@ func NewServer(opts Options) (*Server, error) {
 	mux.HandleFunc("GET /api/audio-transitions", handleListAudioTransitions)
 	mux.HandleFunc("GET /api/devices", handleListDevices)
 	mux.HandleFunc("GET /api/hwaccel", handleListHWAccel)
+	mux.HandleFunc("GET /api/raw-capabilities", handleRawCapabilities)
 	mux.HandleFunc("GET /api/files", handleListDir)
 	mux.HandleFunc("POST /api/files/mkdir", handleMkdir)
 	mux.HandleFunc("GET /api/file", handleReadFile)
