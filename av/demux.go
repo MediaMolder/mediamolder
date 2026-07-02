@@ -9,6 +9,8 @@ package av
 // #include "libavutil/pixdesc.h"
 // #include "libavutil/samplefmt.h"
 // #include "libavutil/parseutils.h"
+// #include "libavutil/display.h"
+// #include <math.h>
 //
 // // Helper: get stream codec parameters for stream index i.
 // static AVCodecParameters *stream_codecpar(AVFormatContext *ctx, int i) {
@@ -44,6 +46,20 @@ package av
 // static int sample_fmt_bit_depth(int sample_fmt) {
 //     int b = av_get_bytes_per_sample((enum AVSampleFormat)sample_fmt);
 //     return b * 8;
+// }
+// // Clockwise rotation (degrees) needed to display the stream upright, from its display-matrix side
+// // data. Follows FFmpeg's own get_rotation() convention (theta = -av_display_rotation_get), normalized
+// // to [0,360). Returns 0 when there is no display matrix.
+// static int stream_display_rotation(AVFormatContext *ctx, int i) {
+//     const AVCodecParameters *cp = ctx->streams[i]->codecpar;
+//     const AVPacketSideData *sd = av_packet_side_data_get(
+//         cp->coded_side_data, cp->nb_coded_side_data, AV_PKT_DATA_DISPLAYMATRIX);
+//     if (!sd || sd->size < (int)(9 * sizeof(int32_t)))
+//         return 0;
+//     double theta = -av_display_rotation_get((const int32_t *)sd->data);
+//     theta = fmod(theta, 360.0);
+//     if (theta < 0) theta += 360.0;
+//     return (int)lround(theta) % 360;
 // }
 import "C"
 
@@ -110,6 +126,7 @@ type StreamInfo struct {
 	TimeBase           [2]int // {num, den}
 	Duration           int64  // in stream timebase units
 	StartTime          int64  // in stream timebase units (AV_NOPTS_VALUE if unknown)
+	Rotation           int    // clockwise degrees to display upright, from the display matrix (0 if none)
 }
 
 // InputFormatContext opens a media file for reading and demuxing.
@@ -229,6 +246,7 @@ func (f *InputFormatContext) StreamInfo(i int) (StreamInfo, error) {
 		TimeBase:           [2]int{int(tb.num), int(tb.den)},
 		Duration:           int64(C.stream_duration(f.p, C.int(i))),
 		StartTime:          int64(C.stream_start_time(f.p, C.int(i))),
+		Rotation:           int(C.stream_display_rotation(f.p, C.int(i))),
 	}, nil
 }
 
