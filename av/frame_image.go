@@ -123,3 +123,22 @@ func FrameSceneScore(a, b *Frame) (float64, error) {
 	}
 	return mafd, nil
 }
+
+// Sharpness returns the variance of the Laplacian of the frame's luma (Y) plane — the classic focus
+// measure. Higher is sharper; a motion-blurred or defocused frame scores low. For planar YUV it reads
+// the Y plane directly (zero conversion); other pixel formats fall back to a GRAY8 conversion. The raw
+// value scales with resolution and contrast, so compare it only between frames of the same clip/size
+// (e.g. to pick the crispest frame in a window). Returns an error for a nil or zero-dimension frame.
+func (f *Frame) Sharpness() (float64, error) {
+	if f == nil || f.p == nil {
+		return 0, fmt.Errorf("av: Sharpness called on nil frame")
+	}
+	if f.Width() <= 0 || f.Height() <= 0 {
+		return 0, fmt.Errorf("av: Sharpness: invalid frame dimensions %d×%d", f.Width(), f.Height())
+	}
+	v := float64(C.frame_luma_lapvar(f.p))
+	if v < 0 {
+		return 0, fmt.Errorf("av: Sharpness: computation failed")
+	}
+	return v, nil
+}

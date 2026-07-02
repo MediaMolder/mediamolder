@@ -26,6 +26,22 @@ package av
 //         }
 //     }
 // }
+//
+// // fill_y_checker writes a 1px checkerboard (0/255) to plane 0 (Y) — maximal high-frequency content.
+// static void fill_y_checker(AVFrame *f) {
+//     for (int y = 0; y < f->height; y++) {
+//         uint8_t *row = f->data[0] + y * f->linesize[0];
+//         for (int x = 0; x < f->width; x++) row[x] = ((x ^ y) & 1) ? 255 : 0;
+//     }
+// }
+//
+// // fill_y_flat writes a constant value to plane 0 (Y) — zero high-frequency content.
+// static void fill_y_flat(AVFrame *f, uint8_t v) {
+//     for (int y = 0; y < f->height; y++) {
+//         uint8_t *row = f->data[0] + y * f->linesize[0];
+//         for (int x = 0; x < f->width; x++) row[x] = v;
+//     }
+// }
 import "C"
 
 import "testing"
@@ -52,3 +68,11 @@ func NewTestFrame(t *testing.T, w, h, pixFmt int) *Frame {
 func FillTestFrameRGB24(f *Frame, r, g, b uint8) {
 	C.fill_rgb24(f.p, C.uint8_t(r), C.uint8_t(g), C.uint8_t(b))
 }
+
+// FillTestFrameYChecker writes a 1px checkerboard to a planar-YUV frame's Y plane (maximal
+// high-frequency content — a "perfectly sharp" frame for a sharpness test).
+func FillTestFrameYChecker(f *Frame) { C.fill_y_checker(f.p) }
+
+// FillTestFrameYFlat writes a constant value to a planar-YUV frame's Y plane (no high-frequency
+// content — a "fully blurred/flat" frame for a sharpness test).
+func FillTestFrameYFlat(f *Frame, v uint8) { C.fill_y_flat(f.p, C.uint8_t(v)) }

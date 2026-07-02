@@ -175,6 +175,61 @@ static double frame_luma_sad(const AVFrame *a, const AVFrame *b) {
     return (double)sad * 100.0 / (double)count / 255.0;
 }
 
+// lapvar_8bit computes the variance of the discrete 4-neighbour Laplacian over an 8-bit
+// single-channel image — the classic focus/sharpness measure (high = sharp/high-frequency,
+// low = motion-blurred/defocused). Interior pixels only (a 1-px border is skipped). Returns
+// the variance (>= 0); a flat or too-small image returns 0.
+static double lapvar_8bit(const uint8_t *src, ptrdiff_t stride, int width, int height) {
+    if (width < 3 || height < 3) return 0.0;
+    double sum = 0.0, sumsq = 0.0;
+    uint64_t n = 0;
+    for (int y = 1; y < height - 1; y++) {
+        const uint8_t *row = src + (ptrdiff_t)y * stride;
+        const uint8_t *up  = row - stride;
+        const uint8_t *dn  = row + stride;
+        for (int x = 1; x < width - 1; x++) {
+            int lap = 4 * (int)row[x] - (int)row[x - 1] - (int)row[x + 1] - (int)up[x] - (int)dn[x];
+            double l = (double)lap;
+            sum += l;
+            sumsq += l * l;
+            n++;
+        }
+    }
+    if (n == 0) return 0.0;
+    double mean = sum / (double)n;
+    double var = sumsq / (double)n - mean * mean;
+    return var < 0.0 ? 0.0 : var; // guard tiny negatives from FP rounding
+}
+
+// frame_luma_lapvar returns the variance of the Laplacian of the frame's luma (Y) plane — a
+// focus/sharpness measure. Higher is sharper; a motion-blurred or defocused frame scores low.
+// YUV planar frames use plane 0 directly (zero conversion); other formats fall back to a GRAY8
+// swscale. Returns -1.0 on error.
+static double frame_luma_lapvar(const AVFrame *f) {
+    if (!f || f->width <= 0 || f->height <= 0)
+        return -1.0;
+    int w = f->width, h = f->height;
+
+    if (is_yuv_planar(f->format)) {
+        int luma_w = av_image_get_linesize(f->format, w, 0);
+        if (luma_w <= 0) return -1.0;
+        return lapvar_8bit(f->data[0], f->linesize[0], luma_w, h);
+    }
+
+    struct SwsContext *sws = sws_getContext(
+        w, h, f->format, w, h, AV_PIX_FMT_GRAY8, SWS_BILINEAR, NULL, NULL, NULL);
+    if (!sws) return -1.0;
+    uint8_t *buf = (uint8_t *)av_malloc((size_t)w * h);
+    if (!buf) { sws_freeContext(sws); return -1.0; }
+    uint8_t *dst[4] = { buf, NULL, NULL, NULL };
+    int dst_ls[4] = { w, 0, 0, 0 };
+    sws_scale(sws, (const uint8_t *const *)f->data, f->linesize, 0, h, dst, dst_ls);
+    double v = lapvar_8bit(buf, w, w, h);
+    av_free(buf);
+    sws_freeContext(sws);
+    return v;
+}
+
 static int get_frame_pix_fmt(const AVFrame *frame) {
     return frame->format;
 }
