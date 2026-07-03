@@ -20,17 +20,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
-- **GPU-accelerated face inference (DirectML).** The `face` package's ONNX
-  detector and embedder sessions now run on the **DirectML** execution provider
-  by default — any Direct3D 12 GPU on Windows (NVIDIA/AMD/Intel) — with an
-  automatic, clean fall-back to the CPU provider when DirectML isn't available
-  (non-Windows, a CPU-only onnxruntime build, or no compatible GPU), so face
-  analysis always works. `MEDIAMOLDER_FACE_EP=cpu` forces the CPU provider (the
-  right choice when the host ships the CPU-only onnxruntime), and the new
-  `face.ActiveExecutionProvider()` reports which provider is live so a host can
-  surface "GPU" vs "CPU" to the user. Note: real acceleration requires a
-  DirectML-enabled `onnxruntime.dll` at `ONNXRUNTIME_SHARED_LIBRARY_PATH`; with
-  the plain CPU build the provider append fails and inference stays on CPU.
+- **GPU-accelerated face inference (CUDA / DirectML).** The `face` package's ONNX
+  detector and embedder sessions now run on a GPU execution provider, selected by
+  `MEDIAMOLDER_FACE_EP`: `cuda` (NVIDIA), `directml` (any Direct3D 12 GPU on
+  Windows — NVIDIA/AMD/Intel), `cpu`, or the default `auto` (try CUDA, then
+  DirectML, then CPU). Every path falls back cleanly to the CPU provider when the
+  GPU one isn't available (a CPU-only onnxruntime build, no compatible GPU), so
+  face analysis always works, and `face.ActiveExecutionProvider()` reports which
+  provider is live so a host can surface "GPU" vs "CPU" to the user. Real
+  acceleration requires an onnxruntime built with the chosen provider at
+  `ONNXRUNTIME_SHARED_LIBRARY_PATH` — the CUDA (`…-gpu`) build for CUDA (plus the
+  CUDA/cuDNN runtime), a DirectML build for DirectML; a single build carries at
+  most one GPU provider, and with the plain CPU build inference stays on CPU.
 
 - **Camera-RAW develop via LibRaw.** A new `raw` package decodes camera RAW
   (NEF/CR2/CR3/ARW/RAF/ORF/RW2/PEF/SRW/DNG) to a full, demosaicked 8-bit sRGB

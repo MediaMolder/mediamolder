@@ -9,8 +9,8 @@ import "testing"
 
 // TestFaceSessionOptionsForceCPU covers the EnvFaceEP opt-out: "cpu" (any case, trimmed) must
 // short-circuit to nil options and the "cpu" provider WITHOUT touching the ONNX runtime — the
-// deterministic path a host uses when it ships the CPU-only onnxruntime build. The DirectML
-// branch is exercised end-to-end by the integration test's provider selection.
+// deterministic path a host uses when it ships the CPU-only onnxruntime build. The CUDA/DirectML
+// branches are exercised end-to-end by the integration test's provider selection.
 func TestFaceSessionOptionsForceCPU(t *testing.T) {
 	for _, v := range []string{"cpu", "CPU", " cpu "} {
 		t.Setenv(EnvFaceEP, v)
@@ -22,5 +22,13 @@ func TestFaceSessionOptionsForceCPU(t *testing.T) {
 		if provider != "cpu" {
 			t.Errorf("%q: provider = %q, want cpu", v, provider)
 		}
+	}
+}
+
+// TestAppendProviderUnknown pins the guard for an unrecognised provider name (defensive; the
+// switch in faceSessionOptions never passes one, but tryProviders must not silently succeed).
+func TestAppendProviderUnknown(t *testing.T) {
+	if err := appendProvider(nil, "nope"); err == nil {
+		t.Fatal("appendProvider(unknown) = nil, want an error")
 	}
 }

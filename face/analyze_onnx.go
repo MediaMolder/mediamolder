@@ -21,12 +21,19 @@ import (
 // and sets this). Mirrors the existing processors convention; empty ⇒ default search path.
 const EnvONNXRuntimeLib = "ONNXRUNTIME_SHARED_LIBRARY_PATH"
 
-// EnvFaceEP selects the ONNX execution provider for face inference. Unset (or "directml"/"auto")
-// tries the DirectML GPU provider — any Direct3D 12 GPU on Windows — and falls back to CPU when
-// the loaded runtime or the machine can't provide it; "cpu" forces the CPU provider (deterministic,
-// and the correct choice when the bundled runtime is the CPU-only onnxruntime build). Note that
-// DirectML also requires a DirectML-enabled onnxruntime.dll at ONNXRUNTIME_SHARED_LIBRARY_PATH: with
-// the plain CPU build the provider append fails and inference cleanly stays on CPU.
+// EnvFaceEP selects the ONNX execution provider for face inference:
+//
+//	""/"auto"   best available — try CUDA, then DirectML, then CPU
+//	"cuda"      NVIDIA CUDA only, else CPU
+//	"directml"  DirectML (any Direct3D 12 GPU on Windows) only, else CPU
+//	"cpu"       force the CPU provider (deterministic; the right choice with a CPU-only runtime)
+//
+// A GPU provider only actually engages when the onnxruntime build at ONNXRUNTIME_SHARED_LIBRARY_PATH
+// was compiled with it (the CUDA "…-gpu" build for CUDA, a DirectML build for DirectML). With the
+// plain CPU build the provider append fails and inference cleanly stays on CPU — so a host chooses
+// its GPU by which onnxruntime it bundles, and this never breaks a CPU-only setup. A single
+// onnxruntime build carries at most one GPU provider, so the auto order simply picks whichever the
+// bundled runtime offers.
 const EnvFaceEP = "MEDIAMOLDER_FACE_EP"
 
 const (
@@ -183,36 +190,64 @@ func ActiveExecutionProvider() string {
 	return pipe.provider
 }
 
-// faceSessionOptions builds the session options shared by the detector and embedder. Per EnvFaceEP
-// it tries the DirectML GPU provider by default (device 0) and returns options with it appended;
-// "cpu" — or any failure to enable DirectML (non-Windows, a CPU-only onnxruntime build, no
-// compatible GPU) — yields nil options, i.e. the default CPU provider, so face analysis always
-// works. The caller owns the returned options and must Destroy them (nil-guarded) once both
-// sessions are created; onnxruntime copies the options into each session.
+// faceSessionOptions builds the session options shared by the detector and embedder, selecting the
+// execution provider per EnvFaceEP (default: best available). It returns options with the first
+// working GPU provider appended, or nil options — i.e. the default CPU provider — when the request
+// is "cpu" or every GPU attempt fails (a CPU-only onnxruntime build, no compatible GPU), so face
+// analysis always works. The caller owns the returned options and must Destroy them (nil-guarded)
+// once both sessions are created; onnxruntime copies the options into each session.
 func faceSessionOptions() (opts *ort.SessionOptions, provider string) {
-	if strings.EqualFold(strings.TrimSpace(os.Getenv(EnvFaceEP)), "cpu") {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(EnvFaceEP))) {
+	case "cpu":
 		return nil, "cpu"
+	case "cuda":
+		return tryProviders("cuda")
+	case "directml":
+		return tryProviders("directml")
+	default: // "", "auto", or anything unrecognised: whichever the bundled runtime offers
+		return tryProviders("cuda", "directml")
 	}
-	o, err := ort.NewSessionOptions()
-	if err != nil {
-		return nil, "cpu"
+}
+
+// tryProviders returns options with the first named provider that initialises against the loaded
+// runtime, in order; if all fail (or none is named) it yields nil options = the CPU provider.
+func tryProviders(names ...string) (*ort.SessionOptions, string) {
+	for _, name := range names {
+		o, err := ort.NewSessionOptions()
+		if err != nil {
+			return nil, "cpu"
+		}
+		if appendProvider(o, name) == nil {
+			return o, name
+		}
+		o.Destroy() // this provider isn't in the loaded build/machine — try the next
 	}
-	// DirectML's documented constraints: sequential execution with memory-pattern optimisation
-	// disabled. Set them before appending the provider; any failure falls back to CPU.
-	if err := o.SetExecutionMode(ort.ExecutionModeSequential); err != nil {
-		o.Destroy()
-		return nil, "cpu"
+	return nil, "cpu"
+}
+
+// appendProvider appends the named GPU execution provider to o, returning the onnxruntime error
+// when the loaded build lacks it (so the caller falls back). CUDA uses device 0's default options;
+// DirectML first applies its documented constraints (sequential execution, memory-pattern off).
+func appendProvider(o *ort.SessionOptions, name string) error {
+	switch name {
+	case "cuda":
+		cuda, err := ort.NewCUDAProviderOptions()
+		if err != nil {
+			return err
+		}
+		defer cuda.Destroy()
+		return o.AppendExecutionProviderCUDA(cuda)
+	case "directml":
+		if err := o.SetExecutionMode(ort.ExecutionModeSequential); err != nil {
+			return err
+		}
+		if err := o.SetMemPattern(false); err != nil {
+			return err
+		}
+		return o.AppendExecutionProviderDirectML(0)
+	default:
+		return fmt.Errorf("face: unknown execution provider %q", name)
 	}
-	if err := o.SetMemPattern(false); err != nil {
-		o.Destroy()
-		return nil, "cpu"
-	}
-	if err := o.AppendExecutionProviderDirectML(0); err != nil {
-		// No DirectML on this runtime build or machine — fall back to CPU rather than fail.
-		o.Destroy()
-		return nil, "cpu"
-	}
-	return o, "directml"
 }
 
 func newPipeline() (*pipeline, error) {
