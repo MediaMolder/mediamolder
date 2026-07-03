@@ -8,6 +8,8 @@ package face
 import (
 	"fmt"
 	"image"
+	"os"
+	"strings"
 	"sync"
 
 	"github.com/MediaMolder/MediaMolder/av"
@@ -18,6 +20,14 @@ import (
 // EnvONNXRuntimeLib points at the onnxruntime shared library (a host application bundles it
 // and sets this). Mirrors the existing processors convention; empty ⇒ default search path.
 const EnvONNXRuntimeLib = "ONNXRUNTIME_SHARED_LIBRARY_PATH"
+
+// EnvFaceEP selects the ONNX execution provider for face inference. Unset (or "directml"/"auto")
+// tries the DirectML GPU provider — any Direct3D 12 GPU on Windows — and falls back to CPU when
+// the loaded runtime or the machine can't provide it; "cpu" forces the CPU provider (deterministic,
+// and the correct choice when the bundled runtime is the CPU-only onnxruntime build). Note that
+// DirectML also requires a DirectML-enabled onnxruntime.dll at ONNXRUNTIME_SHARED_LIBRARY_PATH: with
+// the plain CPU build the provider append fails and inference cleanly stays on CPU.
+const EnvFaceEP = "MEDIAMOLDER_FACE_EP"
 
 const (
 	detectAttrs    = 5 + numLandmarks*3 // YOLOv8-face: cx,cy,w,h,score + 5×(x,y,vis) = 20
@@ -41,6 +51,8 @@ type pipeline struct {
 	embed     *ort.AdvancedSession
 	embedIn   *ort.Tensor[float32]
 	embedOut  *ort.Tensor[float32]
+
+	provider string // the active execution provider both sessions run on: "directml" or "cpu"
 }
 
 var (
@@ -159,12 +171,66 @@ func initONNX() error {
 	return onnxrt.Init(onnxLibOverridePath())
 }
 
+// ActiveExecutionProvider reports which ONNX execution provider face inference is running on
+// ("directml" for GPU, "cpu" for the software provider), or "" when the pipeline has not been
+// initialised yet. Hosts can surface this so a user knows whether the GPU is in use.
+func ActiveExecutionProvider() string {
+	initMu.Lock()
+	defer initMu.Unlock()
+	if pipe == nil {
+		return ""
+	}
+	return pipe.provider
+}
+
+// faceSessionOptions builds the session options shared by the detector and embedder. Per EnvFaceEP
+// it tries the DirectML GPU provider by default (device 0) and returns options with it appended;
+// "cpu" — or any failure to enable DirectML (non-Windows, a CPU-only onnxruntime build, no
+// compatible GPU) — yields nil options, i.e. the default CPU provider, so face analysis always
+// works. The caller owns the returned options and must Destroy them (nil-guarded) once both
+// sessions are created; onnxruntime copies the options into each session.
+func faceSessionOptions() (opts *ort.SessionOptions, provider string) {
+	if strings.EqualFold(strings.TrimSpace(os.Getenv(EnvFaceEP)), "cpu") {
+		return nil, "cpu"
+	}
+	o, err := ort.NewSessionOptions()
+	if err != nil {
+		return nil, "cpu"
+	}
+	// DirectML's documented constraints: sequential execution with memory-pattern optimisation
+	// disabled. Set them before appending the provider; any failure falls back to CPU.
+	if err := o.SetExecutionMode(ort.ExecutionModeSequential); err != nil {
+		o.Destroy()
+		return nil, "cpu"
+	}
+	if err := o.SetMemPattern(false); err != nil {
+		o.Destroy()
+		return nil, "cpu"
+	}
+	if err := o.AppendExecutionProviderDirectML(0); err != nil {
+		// No DirectML on this runtime build or machine — fall back to CPU rather than fail.
+		o.Destroy()
+		return nil, "cpu"
+	}
+	return o, "directml"
+}
+
 func newPipeline() (*pipeline, error) {
 	if err := initONNX(); err != nil {
 		return nil, fmt.Errorf("face: onnxruntime init: %w", err)
 	}
 	dir := resolveModelsDir()
 	p := &pipeline{detectSpec: DefaultDetectSpec, embedSpec: DefaultEmbedSpec}
+
+	// Choose the execution provider once and share the options across both sessions; DirectML by
+	// default (GPU), CPU otherwise. onnxruntime copies the options into each session, so they are
+	// safe to destroy after both are created.
+	opts, provider := faceSessionOptions()
+	if opts != nil {
+		defer opts.Destroy()
+	}
+	p.provider = provider
+	fmt.Fprintf(os.Stderr, "face: onnx execution provider: %s\n", provider)
 
 	// Detector: input [1,3,S,S], output [1,detectAttrs,numPreds].
 	dData, err := loadVerified(dir, p.detectSpec)
@@ -188,7 +254,7 @@ func newPipeline() (*pipeline, error) {
 	}
 	if p.detect, err = ort.NewAdvancedSessionWithONNXData(dData,
 		[]string{p.detectSpec.InputName}, []string{p.detectSpec.OutputName},
-		[]ort.Value{p.detectIn}, []ort.Value{p.detectOut}, nil); err != nil {
+		[]ort.Value{p.detectIn}, []ort.Value{p.detectOut}, opts); err != nil {
 		p.destroy()
 		return nil, fmt.Errorf("face: detector session: %w", err)
 	}
@@ -210,7 +276,7 @@ func newPipeline() (*pipeline, error) {
 	}
 	if p.embed, err = ort.NewAdvancedSessionWithONNXData(eData,
 		[]string{p.embedSpec.InputName}, []string{p.embedSpec.OutputName},
-		[]ort.Value{p.embedIn}, []ort.Value{p.embedOut}, nil); err != nil {
+		[]ort.Value{p.embedIn}, []ort.Value{p.embedOut}, opts); err != nil {
 		p.destroy()
 		return nil, fmt.Errorf("face: embedder session: %w", err)
 	}

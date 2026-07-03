@@ -29,3 +29,6 @@ func DetectImage(img image.Image) ([]Face, error) { return nil, ErrUnsupported }
 
 // AnalyzeImageOpts is unavailable without the `with_onnx` build tag.
 func AnalyzeImageOpts(img image.Image, o Options) ([]Face, error) { return nil, ErrUnsupported }
+
+// ActiveExecutionProvider reports the ONNX execution provider in use; this build has none.
+func ActiveExecutionProvider() string { return "" }

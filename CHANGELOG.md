@@ -20,6 +20,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- **GPU-accelerated face inference (DirectML).** The `face` package's ONNX
+  detector and embedder sessions now run on the **DirectML** execution provider
+  by default — any Direct3D 12 GPU on Windows (NVIDIA/AMD/Intel) — with an
+  automatic, clean fall-back to the CPU provider when DirectML isn't available
+  (non-Windows, a CPU-only onnxruntime build, or no compatible GPU), so face
+  analysis always works. `MEDIAMOLDER_FACE_EP=cpu` forces the CPU provider (the
+  right choice when the host ships the CPU-only onnxruntime), and the new
+  `face.ActiveExecutionProvider()` reports which provider is live so a host can
+  surface "GPU" vs "CPU" to the user. Note: real acceleration requires a
+  DirectML-enabled `onnxruntime.dll` at `ONNXRUNTIME_SHARED_LIBRARY_PATH`; with
+  the plain CPU build the provider append fails and inference stays on CPU.
+
 - **Camera-RAW develop via LibRaw.** A new `raw` package decodes camera RAW
   (NEF/CR2/CR3/ARW/RAF/ORF/RW2/PEF/SRW/DNG) to a full, demosaicked 8-bit sRGB
   `*image.RGBA` through [LibRaw](https://www.libraw.org/) — real develop, not the
