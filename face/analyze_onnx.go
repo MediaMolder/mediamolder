@@ -26,14 +26,20 @@ const EnvONNXRuntimeLib = "ONNXRUNTIME_SHARED_LIBRARY_PATH"
 //	""/"auto"   best available — try CUDA, then DirectML, then CPU
 //	"cuda"      NVIDIA CUDA only, else CPU
 //	"directml"  DirectML (any Direct3D 12 GPU on Windows) only, else CPU
+//	"coreml"    Apple CoreML (Neural Engine / GPU on Apple silicon) only, else CPU
 //	"cpu"       force the CPU provider (deterministic; the right choice with a CPU-only runtime)
 //
 // A GPU provider only actually engages when the onnxruntime build at ONNXRUNTIME_SHARED_LIBRARY_PATH
-// was compiled with it (the CUDA "…-gpu" build for CUDA, a DirectML build for DirectML). With the
-// plain CPU build the provider append fails and inference cleanly stays on CPU — so a host chooses
-// its GPU by which onnxruntime it bundles, and this never breaks a CPU-only setup. A single
-// onnxruntime build carries at most one GPU provider, so the auto order simply picks whichever the
-// bundled runtime offers.
+// was compiled with it (the CUDA "…-gpu" build for CUDA, a DirectML build for DirectML, a CoreML
+// build for CoreML). With the plain CPU build the provider append fails and inference cleanly stays
+// on CPU — so a host chooses its GPU by which onnxruntime it bundles, and this never breaks a
+// CPU-only setup. A single onnxruntime build carries at most one GPU provider, so the auto order
+// simply picks whichever the bundled runtime offers.
+//
+// CoreML is opt-in only — it is deliberately NOT in the auto order. Its Neural-Engine/GPU path runs
+// in reduced precision, so embeddings can differ slightly from the CPU path; a host enables it
+// explicitly once it has confirmed downstream use (clustering, dedup) tolerates that shift. With
+// EnvFaceEP unset, an Apple-silicon host therefore stays on the deterministic CPU provider.
 const EnvFaceEP = "MEDIAMOLDER_FACE_EP"
 
 const (
@@ -59,7 +65,7 @@ type pipeline struct {
 	embedIn   *ort.Tensor[float32]
 	embedOut  *ort.Tensor[float32]
 
-	provider string // the active execution provider both sessions run on: "directml" or "cpu"
+	provider string // the active execution provider both sessions run on: "cuda"/"directml"/"coreml" or "cpu"
 }
 
 var (
@@ -179,8 +185,8 @@ func initONNX() error {
 }
 
 // ActiveExecutionProvider reports which ONNX execution provider face inference is running on
-// ("directml" for GPU, "cpu" for the software provider), or "" when the pipeline has not been
-// initialised yet. Hosts can surface this so a user knows whether the GPU is in use.
+// ("cuda"/"directml"/"coreml" for GPU, "cpu" for the software provider), or "" when the pipeline
+// has not been initialised yet. Hosts can surface this so a user knows whether the GPU is in use.
 func ActiveExecutionProvider() string {
 	initMu.Lock()
 	defer initMu.Unlock()
@@ -197,15 +203,30 @@ func ActiveExecutionProvider() string {
 // analysis always works. The caller owns the returned options and must Destroy them (nil-guarded)
 // once both sessions are created; onnxruntime copies the options into each session.
 func faceSessionOptions() (opts *ort.SessionOptions, provider string) {
-	switch strings.ToLower(strings.TrimSpace(os.Getenv(EnvFaceEP))) {
+	names := providersFor(os.Getenv(EnvFaceEP))
+	if len(names) == 0 {
+		return nil, "cpu" // "cpu" (or the deterministic opt-out): default options, runtime untouched
+	}
+	return tryProviders(names...)
+}
+
+// providersFor maps an EnvFaceEP value to the execution providers to try, in order: a single named
+// GPU provider, or the auto order (CUDA then DirectML) when unset/unrecognised. An empty slice means
+// "force the CPU provider". CoreML is returned ONLY when explicitly requested — never in the auto
+// order — so an unset Apple-silicon host stays on the deterministic CPU path (see EnvFaceEP). Pure,
+// so the routing (and that opt-in invariant) is unit-tested without touching the ONNX runtime.
+func providersFor(env string) []string {
+	switch strings.ToLower(strings.TrimSpace(env)) {
 	case "cpu":
-		return nil, "cpu"
+		return nil
 	case "cuda":
-		return tryProviders("cuda")
+		return []string{"cuda"}
 	case "directml":
-		return tryProviders("directml")
-	default: // "", "auto", or anything unrecognised: whichever the bundled runtime offers
-		return tryProviders("cuda", "directml")
+		return []string{"directml"}
+	case "coreml":
+		return []string{"coreml"}
+	default:
+		return []string{"cuda", "directml"}
 	}
 }
 
@@ -245,6 +266,11 @@ func appendProvider(o *ort.SessionOptions, name string) error {
 			return err
 		}
 		return o.AppendExecutionProviderDirectML(0)
+	case "coreml":
+		// MLComputeUnits=ALL lets CoreML place each op on the CPU, GPU, or Neural Engine. The
+		// append fails (→ CPU fallback) on any runtime without the CoreML provider — non-Apple
+		// platforms, or a CPU-only build — so this is safe to request anywhere.
+		return o.AppendExecutionProviderCoreMLV2(map[string]string{"MLComputeUnits": "ALL"})
 	default:
 		return fmt.Errorf("face: unknown execution provider %q", name)
 	}
