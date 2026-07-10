@@ -98,6 +98,11 @@ func (m MediaType) String() string {
 }
 
 // StreamInfo describes a single stream in an input container.
+//
+// Grid-coded HEIF/AVIF caveat: a video stream may be one TILE of a larger canvas whose
+// true geometry lives in a tile-grid stream group — decode loops that pick "the" video
+// stream must consult (*InputFormatContext).TileGrids first, or a 4032x3024 smartphone
+// photo decodes as a single 512x512 tile.
 type StreamInfo struct {
 	Index              int
 	Type               MediaType
