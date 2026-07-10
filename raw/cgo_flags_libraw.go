@@ -17,4 +17,5 @@ package raw
 // #cgo LDFLAGS: -L${SRCDIR}/../third_party/libraw/lib -lraw
 // #cgo darwin LDFLAGS: -lc++ -lz -lm
 // #cgo linux LDFLAGS: -lstdc++ -lz -lm
+// #cgo windows LDFLAGS: -lstdc++ -lz -lm -lws2_32
 import "C"

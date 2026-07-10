@@ -30,7 +30,13 @@ mkdir -p "$WORK"
 TARBALL="$WORK/LibRaw-${VERSION}.tar.gz"
 
 verify() { # <file> <sha256>
-    local got; got="$(shasum -a 256 "$1" | awk '{print $1}')"
+    # macOS ships shasum (perl); MSYS2/mingw (the Windows daemon toolchain) ships sha256sum.
+    local got
+    if command -v sha256sum >/dev/null 2>&1; then
+        got="$(sha256sum "$1" | awk '{print $1}')"
+    else
+        got="$(shasum -a 256 "$1" | awk '{print $1}')"
+    fi
     [[ "$got" == "$2" ]] || { echo "SHA-256 mismatch for $1:" >&2; echo "  got  $got" >&2; echo "  want $2" >&2; return 1; }
     echo "verified $(basename "$1")"
 }
