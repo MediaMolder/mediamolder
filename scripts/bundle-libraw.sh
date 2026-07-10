@@ -5,8 +5,10 @@
 # way `make build-gui-libraw` expects. Mirrors scripts/fetch-face-models.sh.
 #
 # It is built static, with jpeg/jasper/lcms/openmp OFF (a faithful sRGB develop needs none of
-# them) and zlib ON (deflate-compressed DNG), so the link is self-contained (-lraw -lc++ -lz).
-# On macOS it builds arm64 + x86_64 and lipos them into a universal archive.
+# them) and zlib ON (deflate-compressed DNG), so the link is self-contained (see the per-platform
+# LDFLAGS in raw/cgo_flags_libraw.go). On macOS it builds arm64 + x86_64 and lipos them into a
+# universal archive. On Windows, run from the SAME MSYS2 environment (MINGW64/UCRT64) the daemon
+# builds with, so the archive's CRT matches the cgo toolchain.
 #
 # Usage:  scripts/bundle-libraw.sh
 # Keep the version + SHA below in sync with raw/pins.go (LibRawVersion / LibRawSourceSHA256).
@@ -26,11 +28,29 @@ if [[ -f "$DEST/lib/libraw.a" && -f "$DEST/include/libraw/libraw.h" ]]; then
     exit 0
 fi
 
+# On Windows the archive must be compiled by the same CRT/toolchain flavor cgo links with — a
+# plain-MSYS gcc produces a cygwin-runtime archive that fails the later go build with cryptic
+# undefined __imp_* references. Warn early instead.
+case "$(uname -s)" in
+    MINGW*|MSYS*)
+        if [[ "${MSYSTEM:-MSYS}" == "MSYS" ]]; then
+            echo "warning: run this from the MSYS2 MinGW64 (or UCRT64) shell — the plain MSYS shell's gcc" >&2
+            echo "         builds a cygwin-runtime archive that the daemon's cgo link cannot use." >&2
+        fi
+        ;;
+esac
+
 mkdir -p "$WORK"
 TARBALL="$WORK/LibRaw-${VERSION}.tar.gz"
 
 verify() { # <file> <sha256>
-    local got; got="$(shasum -a 256 "$1" | awk '{print $1}')"
+    # macOS ships shasum (perl); MSYS2/mingw (the Windows daemon toolchain) ships sha256sum.
+    local got
+    if command -v sha256sum >/dev/null 2>&1; then
+        got="$(sha256sum "$1" | awk '{print $1}')"
+    else
+        got="$(shasum -a 256 "$1" | awk '{print $1}')"
+    fi
     [[ "$got" == "$2" ]] || { echo "SHA-256 mismatch for $1:" >&2; echo "  got  $got" >&2; echo "  want $2" >&2; return 1; }
     echo "verified $(basename "$1")"
 }

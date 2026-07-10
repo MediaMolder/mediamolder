@@ -14,7 +14,12 @@ mkdir -p "$DEST"
 verify() {
     local f="$1" want="$2"
     local got
-    got="$(shasum -a 256 "$f" | awk '{print $1}')"
+    # macOS ships shasum (perl); MSYS2/mingw and Git Bash ship sha256sum (bundle-libraw.sh twin).
+    if command -v sha256sum >/dev/null 2>&1; then
+        got="$(sha256sum "$f" | awk '{print $1}')"
+    else
+        got="$(shasum -a 256 "$f" | awk '{print $1}')"
+    fi
     if [[ "$got" != "$want" ]]; then
         echo "SHA-256 mismatch for $f:" >&2
         echo "  got  $got" >&2
