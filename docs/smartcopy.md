@@ -39,6 +39,17 @@ everywhere else):
 }
 ```
 
+### In the GUI
+
+Drag **Copy → Smart copy (video)** from the palette between an input's video
+pin and an output. The node's properties panel exposes the full boundary
+encoder (rate control, preset, tune, profile/level, raw `x264-params` /
+`x265-params`), an optional **Boundary encoder** override, and a **Global
+header** toggle. Set the trim window (Start / Duration / End) on the connected
+output's **Timing** section — it applies to every stream of that output.
+
+### In JSON
+
 The **target is identical to the source** in codec, resolution, frame
 rate, pixel format, sample aspect ratio, profile/level and bit rate — you
 opt into that by choosing `smartcopy`. No scaling, fps change, or codec

@@ -14,7 +14,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   rate, pixel format, SAR, profile/level and bit rate. The trim window is
   given via the output's `options.ss`/`t`/`to`; optional boundary-encoder
   quality knobs (crf/preset/…) via `encoder_params_video`. New graph node
-  kind `smartcopy` (`graph.KindSmartCopy`). See [docs/smartcopy.md](docs/smartcopy.md).
+  kind `smartcopy` (`graph.KindSmartCopy`). Full GUI support: a **Smart copy
+  (video)** palette entry and a properties panel exposing the boundary encoder
+  (rate control, preset, tune, profile/level, raw params), an encoder override,
+  and a global-header toggle. See [docs/smartcopy.md](docs/smartcopy.md).
 
 ### Changed
 

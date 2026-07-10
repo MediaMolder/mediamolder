@@ -404,6 +404,7 @@ export function nodeDisplayLabel(n: NodeDef): string {
     if (m) return m[1];
     return 'copy';
   }
+  if (n.type === 'smartcopy') return 'smart copy';
   return n.id;
 }
 
@@ -479,7 +480,7 @@ export function configToFlow(cfg: JobConfig, opts: ConvertOptions = {}): {
       // handles for processors like the scene detectors that only handle
       // video, when loading a graph that was saved before pin metadata
       // was stored in the config.
-      ...((n.type === 'copy' || n.type === 'go_processor')
+      ...((n.type === 'copy' || n.type === 'smartcopy' || n.type === 'go_processor')
         ? { streams: inferCopyStreams(n.id, cfg.graph.edges) }
         : {}),
     };
@@ -675,7 +676,7 @@ export function flowToConfig(
   // The runtime warns when both are present, and the shorthands are meaningless
   // once an explicit encoder node exists.
   const encoderNodeIds = new Set(
-    graphNodes.filter((n) => n.type === 'encoder' || n.type === 'copy').map((n) => n.id),
+    graphNodes.filter((n) => n.type === 'encoder' || n.type === 'copy' || n.type === 'smartcopy').map((n) => n.id),
   );
   for (const e of graphEdges) {
     const fromHead = e.from.split(':')[0];

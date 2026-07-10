@@ -116,24 +116,12 @@ func TestSmartCopyInteriorByteIdentical(t *testing.T) {
 	if endSec <= startSec {
 		t.Skipf("insufficient keyframe spread (start=%.3f end=%.3f)", startSec, endSec)
 	}
-	startPTS := secToTB(startSec, tb)
-	endPTS := secToTB(endSec, tb)
-
-	// First interior keyframe = first kf >= startPTS; tail keyframe = last kf
-	// <= endPTS. Packets with pts in [firstInteriorKF, tailKF) are interior.
-	var firstInteriorKF, tailKF int64 = -1, -1
-	for _, k := range kf {
-		if k >= startPTS && firstInteriorKF < 0 {
-			firstInteriorKF = k
-		}
-		if k <= endPTS {
-			tailKF = k
-		}
-	}
-	if firstInteriorKF < 0 || tailKF < 0 || firstInteriorKF >= tailKF {
+	if hasInteriorGOP(kf, secToTB(startSec, tb), secToTB(endSec, tb)) == false {
 		t.Skipf("no interior GOPs between cuts")
 	}
 
+	// codec_video: "smartcopy" shorthand (the common JSON authoring form):
+	// expandImplicitEncoders creates the smartcopy node and stamps the window.
 	tmp := t.TempDir()
 	outPath := filepath.ToSlash(filepath.Join(tmp, "clip.mp4"))
 	cfgJSON := fmt.Sprintf(`{
@@ -154,6 +142,81 @@ func TestSmartCopyInteriorByteIdentical(t *testing.T) {
       }]
     }`, filepath.ToSlash(src), outPath, startSec, endSec)
 
+	runAndVerifySmartCopy(t, cfgJSON, outPath, srcPkts, tb, startSec)
+}
+
+// TestSmartCopyExplicitNode exercises the GUI round-trip form: an explicit
+// graph node of type "smartcopy" (not the codec_video shorthand), with the
+// output's codec_video stripped and the trim window on the output options.
+// stampSmartCopyTiming must stamp the window onto the explicit node, and
+// expandImplicitEncoders must not re-wrap it.
+func TestSmartCopyExplicitNode(t *testing.T) {
+	src := filepath.Join("..", "testdata", "BBB_1080p.mp4")
+	if _, err := os.Stat(src); err != nil {
+		t.Skipf("testdata/BBB_1080p.mp4 missing; run: bash scripts/fetch-bbb.sh")
+	}
+	srcPkts, tb := probeVideoPackets(t, src)
+	var kf []int64
+	for _, p := range srcPkts {
+		if p.key {
+			kf = append(kf, p.pts)
+		}
+	}
+	if len(kf) < 8 {
+		t.Skipf("source has only %d keyframes", len(kf))
+	}
+	i0 := len(kf) / 3
+	i1 := i0 + 4
+	startSec := (tbToSec(kf[i0], tb) + tbToSec(kf[i0+1], tb)) / 2
+	endSec := (tbToSec(kf[i1], tb) + tbToSec(kf[i1+1], tb)) / 2
+
+	tmp := t.TempDir()
+	outPath := filepath.ToSlash(filepath.Join(tmp, "clip.mp4"))
+	// Explicit "smartcopy" node with a boundary-encoder param; output carries
+	// no codec_video (GUI strips the shorthand) and the window in options.
+	cfgJSON := fmt.Sprintf(`{
+      "schema_version": "1.0",
+      "copy_ts": true,
+      "inputs": [{"id": "in0", "url": %q, "streams": [
+        {"input_index": 0, "type": "video", "track": 0},
+        {"input_index": 0, "type": "audio", "track": 0}
+      ]}],
+      "graph": {
+        "nodes": [{"id": "sc_v", "type": "smartcopy", "params": {"crf": "20"}}],
+        "edges": [
+          {"from": "in0:v:0", "to": "sc_v", "type": "video"},
+          {"from": "sc_v", "to": "out0", "type": "video"},
+          {"from": "in0:a:0", "to": "out0:a", "type": "audio"}
+        ]
+      },
+      "outputs": [{
+        "id": "out0", "url": %q,
+        "codec_audio": "copy",
+        "options": {"ss": "%.6f", "to": "%.6f"}
+      }]
+    }`, filepath.ToSlash(src), outPath, startSec, endSec)
+
+	runAndVerifySmartCopy(t, cfgJSON, outPath, srcPkts, tb, startSec)
+}
+
+// hasInteriorGOP reports whether at least one whole GOP sits inside the window.
+func hasInteriorGOP(kf []int64, startPTS, endPTS int64) bool {
+	var firstInteriorKF, tailKF int64 = -1, -1
+	for _, k := range kf {
+		if k >= startPTS && firstInteriorKF < 0 {
+			firstInteriorKF = k
+		}
+		if k <= endPTS {
+			tailKF = k
+		}
+	}
+	return firstInteriorKF >= 0 && tailKF >= 0 && firstInteriorKF < tailKF
+}
+
+// runAndVerifySmartCopy runs cfgJSON and asserts the interior is copied
+// byte-for-byte while only the boundary GOPs are re-encoded.
+func runAndVerifySmartCopy(t *testing.T, cfgJSON, outPath string, srcPkts []probedPkt, tb [2]int, startSec float64) {
+	t.Helper()
 	cfg, err := ParseConfig([]byte(cfgJSON))
 	if err != nil {
 		t.Fatalf("ParseConfig: %v", err)
@@ -166,7 +229,6 @@ func TestSmartCopyInteriorByteIdentical(t *testing.T) {
 		t.Fatalf("Run: %v", err)
 	}
 
-	// --- Verify ---
 	outPkts, otb := probeVideoPackets(t, outPath)
 	if len(outPkts) == 0 {
 		t.Fatalf("output has no video packets")
@@ -181,15 +243,13 @@ func TestSmartCopyInteriorByteIdentical(t *testing.T) {
 		t.Errorf("first output pts %.3fs is before requested start %.3fs", got, startSec)
 	}
 
-	// The muxer re-anchors output timestamps, so match by payload rather
-	// than PTS: a copied interior packet's bytes appear verbatim in the
-	// source; a re-encoded boundary packet's bytes do not. This directly
-	// proves the interior is stream-copied, not transcoded.
+	// Match by payload (the muxer re-anchors timestamps): copied interior
+	// packets appear verbatim in the source; re-encoded boundary packets do
+	// not. This proves the interior is stream-copied, not transcoded.
 	srcSet := make(map[string]struct{}, len(srcPkts))
 	for _, p := range srcPkts {
 		srcSet[string(p.data)] = struct{}{}
 	}
-
 	copied, reencoded := 0, 0
 	for _, p := range outPkts {
 		if _, ok := srcSet[string(p.data)]; ok {
@@ -198,20 +258,15 @@ func TestSmartCopyInteriorByteIdentical(t *testing.T) {
 			reencoded++
 		}
 	}
-	_ = bytes.Equal // retained for clarity of intent
+	_ = bytes.Equal
 	if copied == 0 {
 		t.Fatalf("no output packets are byte-identical to the source — interior was not stream-copied")
 	}
 	if reencoded == 0 {
-		t.Errorf("no re-encoded boundary packets; cuts may not have landed mid-GOP (start=%.3f end=%.3f)", startSec, endSec)
+		t.Errorf("no re-encoded boundary packets; cuts may not have landed mid-GOP")
 	}
-	// The re-encoded region must be small — at most the head+tail GOPs. With
-	// mid-GOP cuts that is well under half the output.
 	if reencoded >= copied {
-		t.Fatalf("re-encoded %d >= copied %d packets — smartcopy re-encoded too much (expected only boundary GOPs)", reencoded, copied)
+		t.Fatalf("re-encoded %d >= copied %d packets — smartcopy re-encoded too much", reencoded, copied)
 	}
-	t.Logf("smartcopy: %d interior packets copied byte-identical, %d boundary packets re-encoded; window [%.3f, %.3f]s",
-		copied, reencoded, startSec, endSec)
-	_ = firstInteriorKF
-	_ = tailKF
+	t.Logf("smartcopy: %d interior copied byte-identical, %d boundary re-encoded", copied, reencoded)
 }

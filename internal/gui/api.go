@@ -86,6 +86,21 @@ func handleListNodes(w http.ResponseWriter, _ *http.Request) {
 		})
 	}
 
+	// Smart-copy (video) — frame-accurate trim that copies interior GOPs
+	// byte-for-byte and re-encodes only the boundary GOPs the cut points land
+	// in. Video-only; the trim window is set on the connected output's Timing
+	// section, and the boundary-encoder quality is set on this node.
+	out = append(out, NodeCatalogEntry{
+		Category:    "Copy",
+		Type:        "smartcopy",
+		Name:        "smartcopy_video",
+		Label:       "Smart copy (video)",
+		Description: "Frame-accurate trim: copy interior GOPs unchanged, re-encode only the boundary GOPs at the cut points. Source and target video parameters are identical.",
+		Streams:     []string{"video"},
+		NumInputs:   1,
+		NumOutputs:  1,
+	})
+
 	// Filters from libavfilter — only 1→1 in the palette; multi-IO filters
 	// (overlay, split, etc.) can be added by editing JSON directly.
 	for _, f := range av.ListFilters() {

@@ -113,6 +113,7 @@ func configToGraphDef(cfg *Config) *graph.Def {
 	}
 	expandHWFilterMappings(cfg, def)
 	expandImplicitEncoders(cfg, def)
+	stampSmartCopyTiming(cfg, def)
 	rewriteGoProcessorCopyEdges(def)
 	spliceAudioMergeForMultiInputEncoders(def)
 	spliceAudioAdaptersForEncoders(def)
@@ -172,6 +173,62 @@ var audioEncoderRequirements = map[string]audioEncoderRequirement{
 // user-supplied node IDs. The pass runs after expandImplicitEncoders and
 // before spliceAudioAdaptersForEncoders so the resulting single-input
 // encoder edge still gets the aformat/asetnsamples adapter when needed.
+// stampSmartCopyTiming stamps the trim window (smartcopy_start_us/end_us) onto
+// every smartcopy node that lacks it, reading the window from the ss/t/to
+// options of the output the node feeds. expandImplicitEncoders already stamps
+// nodes it creates from a codec_video:"smartcopy" shorthand; this covers
+// explicit smartcopy nodes (e.g. authored in the GUI) that it skips.
+func stampSmartCopyTiming(cfg *Config, def *graph.Def) {
+	outByID := make(map[string]*Output, len(cfg.Outputs))
+	for i := range cfg.Outputs {
+		outByID[cfg.Outputs[i].ID] = &cfg.Outputs[i]
+	}
+	head := func(ref string) string {
+		if i := strings.IndexByte(ref, ':'); i >= 0 {
+			return ref[:i]
+		}
+		return ref
+	}
+	for i := range def.Nodes {
+		n := &def.Nodes[i]
+		if n.Type != "smartcopy" {
+			continue
+		}
+		if n.Params != nil {
+			if _, ok := n.Params["smartcopy_start_us"]; ok {
+				continue // already stamped (shorthand path)
+			}
+		}
+		var out *Output
+		for _, e := range def.Edges {
+			if head(e.From) == n.ID {
+				if o := outByID[head(e.To)]; o != nil {
+					out = o
+					break
+				}
+			}
+		}
+		if out == nil {
+			continue
+		}
+		ot, terr := resolveOutputTiming(out.Options, nil)
+		if terr != nil {
+			continue
+		}
+		if n.Params == nil {
+			n.Params = map[string]any{}
+		}
+		start := int64(0)
+		if ot.haveStart {
+			start = ot.startUS
+		}
+		n.Params["smartcopy_start_us"] = start
+		if ot.recordingUS != noLimitUS {
+			n.Params["smartcopy_end_us"] = start + ot.recordingUS
+		}
+	}
+}
+
 func spliceAudioMergeForMultiInputEncoders(def *graph.Def) {
 	head := func(ref string) string {
 		if i := strings.IndexByte(ref, ':'); i >= 0 {
@@ -584,10 +641,11 @@ func expandImplicitEncoders(cfg *Config, def *graph.Def) {
 		if !ok {
 			continue
 		}
-		// Already encoded: source is a graph encoder node, or already a
-		// stream-copy node (which forwards demuxer packets directly to the
-		// muxer). Inputs and filter nodes fall through to the splice below.
-		if n, ok := nodeByID[fromID]; ok && (n.Type == "encoder" || n.Type == "copy") {
+		// Already encoded: source is a graph encoder node, an existing
+		// stream-copy node (forwards demuxer packets directly to the muxer),
+		// or an explicit smartcopy node (GUI-authored). Inputs and filter
+		// nodes fall through to the splice below.
+		if n, ok := nodeByID[fromID]; ok && (n.Type == "encoder" || n.Type == "copy" || n.Type == "smartcopy") {
 			continue
 		}
 		var codec string

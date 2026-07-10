@@ -404,22 +404,38 @@ func buildBoundaryEncoderOptions(si av.StreamInfo, srcTB [2]int, params map[stri
 
 	globalHeader := smartParamBool(params, "smartcopy_global_header", true)
 
+	// Pass every non-reserved node param through to the encoder as an AVOption,
+	// so the GUI's encoder controls (crf/preset/tune/profile/level/b/g/
+	// x264-params/…) apply to the boundary re-encode. Reserved keys are the
+	// smartcopy-specific ones and the trim window.
+	reserved := map[string]bool{
+		"smartcopy_encoder": true, "smartcopy_global_header": true,
+		"smartcopy_start_us": true, "smartcopy_end_us": true,
+		"codec": true, "ss": true, "t": true, "to": true,
+		// Structural fields must stay identical to the source so the
+		// re-encoded boundary stays compatible with the copied interior —
+		// they are taken from the source stream, never a GUI override.
+		"pix_fmt": true, "s": true, "r": true, "g": true,
+		"width": true, "height": true, "sar": true, "aspect": true,
+	}
 	extra := map[string]string{}
-	// Sensible visually-lossless default; only 1–2 GOPs are re-encoded.
-	extra["crf"] = "18"
-	extra["preset"] = "medium"
 	for k, v := range params {
-		switch k {
-		case "crf", "preset", "tune", "profile", "level", "bitrate", "qp", "x264-params", "x265-params":
-			if sv := smartAnyToString(v); sv != "" {
-				extra[k] = sv
-			}
+		if reserved[k] {
+			continue
+		}
+		if sv := smartAnyToString(v); sv != "" {
+			extra[k] = sv
 		}
 	}
-	// bitrate/qp/profile/level handled via typed fields or ExtraOpts below.
-	delete(extra, "bitrate")
-	delete(extra, "profile")
-	delete(extra, "level")
+	// Default to a visually-lossless quality target when the user set no rate
+	// control (only 1–2 GOPs are re-encoded, so continuity matters more than
+	// exact size).
+	if extra["crf"] == "" && extra["qp"] == "" && extra["b"] == "" && extra["bitrate"] == "" {
+		extra["crf"] = "18"
+	}
+	if extra["preset"] == "" {
+		extra["preset"] = "medium"
+	}
 
 	opts := av.EncoderOptions{
 		CodecName:         name,

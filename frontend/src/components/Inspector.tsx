@@ -1403,9 +1403,10 @@ function resolveUpstreamCodecs(
           }
           break;
         }
-        if (def.type === 'copy') {
-          // Stream copy: muxer writes the inbound codec_id straight through.
-          // Nothing to resolve - leave undefined.
+        if (def.type === 'copy' || def.type === 'smartcopy') {
+          // Stream copy / smart copy: the muxer writes the inbound codec_id
+          // straight through (smartcopy keeps the source codec too). Nothing
+          // to resolve — leave undefined.
           break;
         }
       }
@@ -1771,13 +1772,114 @@ function NodeForm({ def, onChange, padHints, hwDevices = [], inputIds = [] }: { 
         </div>
       )}
       {def.type === 'encoder' && <EncoderForm def={def} onChange={onChange} />}
+      {def.type === 'smartcopy' && <SmartCopyForm def={def} onChange={onChange} />}
       {isFilter && <FilterForm def={def} onChange={onChange} padHints={padHints} />}
       {def.type !== 'encoder' && !isFilter && def.type === 'go_processor' && (
         <GoProcessorParams processorName={def.processor} params={def.params ?? {}} inputIds={inputIds} onChange={(p) => onChange({ ...def, params: p })} />
       )}
-      {def.type !== 'encoder' && !isFilter && def.type !== 'go_processor' && (
+      {def.type !== 'encoder' && def.type !== 'smartcopy' && !isFilter && def.type !== 'go_processor' && (
         <ParamsEditor params={def.params ?? {}} onChange={(p) => onChange({ ...def, params: p })} />
       )}
+    </>
+  );
+}
+
+/* ---------- Smart-copy (frame-accurate trim) node form ---------- */
+
+// Reserved keys that are not boundary-encoder AVOptions.
+const SMARTCOPY_RESERVED = new Set([
+  'smartcopy_encoder',
+  'smartcopy_global_header',
+  'smartcopy_start_us',
+  'smartcopy_end_us',
+  'codec',
+]);
+
+function SmartCopyForm({ def, onChange }: { def: NodeDef; onChange: (next: NodeDef) => void }) {
+  const params = def.params ?? {};
+  const encName = (params.smartcopy_encoder as string | undefined)?.trim() || 'libx264';
+  const globalHeader = params.smartcopy_global_header;
+
+  // Edit a smartcopy-specific param directly (merges into def.params).
+  const setSmartParam = (key: string, value: unknown) => {
+    const next: Record<string, unknown> = { ...params };
+    if (value === '' || value === undefined) delete next[key];
+    else next[key] = value;
+    onChange({ ...def, params: next });
+  };
+
+  // Shim NodeDef so EncoderForm can render the full boundary-encoder UI
+  // (rate control, preset, tune, profile/level, raw params) against the
+  // chosen encoder. The smartcopy-specific keys are hidden from the shim.
+  const shimParams: Record<string, unknown> = { codec: encName };
+  for (const [k, v] of Object.entries(params)) {
+    if (SMARTCOPY_RESERVED.has(k)) continue;
+    shimParams[k] = v;
+  }
+  const shimDef: NodeDef = { ...def, type: 'encoder', params: shimParams };
+
+  // Map EncoderForm changes back onto the smartcopy node: keep every quality
+  // param it set (minus the shim `codec`) and re-attach the smartcopy keys.
+  const handleEncoderChange = (next: NodeDef) => {
+    const merged: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(next.params ?? {})) {
+      if (k === 'codec') continue;
+      merged[k] = v;
+    }
+    if (params.smartcopy_encoder !== undefined) merged.smartcopy_encoder = params.smartcopy_encoder;
+    if (params.smartcopy_global_header !== undefined) merged.smartcopy_global_header = params.smartcopy_global_header;
+    onChange({ ...def, params: merged });
+  };
+
+  return (
+    <>
+      <div
+        style={{
+          fontSize: 11,
+          color: 'var(--text-dim)',
+          background: 'var(--surface-2, rgba(127,127,127,0.08))',
+          border: '1px solid var(--border, rgba(127,127,127,0.2))',
+          borderRadius: 6,
+          padding: '8px 10px',
+          margin: '4px 0 12px',
+          lineHeight: 1.45,
+        }}
+      >
+        <b>Smart copy</b> re-encodes only the GOPs the trim cut points land in and
+        copies every whole interior GOP byte-for-byte. Set the trim window
+        (<code>Start</code>/<code>Duration</code>/<code>End</code>) on the connected{' '}
+        <b>output</b>’s Timing section. Source and target video parameters
+        (codec, size, frame rate, pixel format, SAR, profile) are identical; the
+        controls below tune only the re-encoded boundary GOPs.
+      </div>
+
+      <Field
+        label="Boundary encoder"
+        value={(params.smartcopy_encoder as string | undefined) ?? ''}
+        placeholder="auto from source (e.g. libx264)"
+        onChange={(v) => setSmartParam('smartcopy_encoder', v.trim())}
+      />
+
+      <EncoderForm def={shimDef} onChange={handleEncoderChange} />
+
+      <label
+        style={{ display: 'flex', alignItems: 'flex-start', gap: 6, marginTop: 10, cursor: 'pointer' }}
+      >
+        <input
+          type="checkbox"
+          checked={globalHeader === undefined ? true : globalHeader !== false}
+          onChange={(e) => setSmartParam('smartcopy_global_header', e.target.checked)}
+          style={{ marginTop: 2, flexShrink: 0 }}
+        />
+        <span>
+          Global header (<code>smartcopy_global_header</code>)
+          <div style={{ fontSize: 11, color: 'var(--text-dim)', fontWeight: 'normal', marginTop: 2 }}>
+            Place codec parameter sets in the container header (avcC/hvcC) rather
+            than in-band. Required for MP4/MOV; leave on unless the container
+            needs in-band parameter sets (e.g. MPEG-TS).
+          </div>
+        </span>
+      </label>
     </>
   );
 }
