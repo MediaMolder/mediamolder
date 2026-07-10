@@ -384,8 +384,11 @@ the `twelvelabs_*` nodes need a [TwelveLabs](https://twelvelabs.io) API key via
 
 Camera-RAW develop (the `raw_decode` node + `mediamolder raw-decode`). Build tag
 `with_libraw`. LibRaw is bundled — `scripts/bundle-libraw.sh` builds a
-SHA-256-pinned static lib from source. Run it from an MSYS2 bash shell (it builds
-the host `x86_64` arch; the universal `lipo` step is macOS-only):
+SHA-256-pinned static lib from source. Run it from the **MSYS2 MinGW64 shell**
+(the same environment §prereqs installs the toolchain into — the archive's CRT
+must match the gcc that cgo links with; the plain MSYS shell's gcc builds a
+cygwin-runtime archive that fails the go link, and the script warns if it sees
+one). It builds the host `x86_64` arch; the universal `lipo` step is macOS-only:
 
 ```bash
 scripts/bundle-libraw.sh            # → third_party/libraw (gitignored)
@@ -393,7 +396,9 @@ scripts/bundle-libraw.sh            # → third_party/libraw (gitignored)
 CGO_LDFLAGS_ALLOW='.*' go build -tags with_libraw -o mediamolder.exe ./cmd/mediamolder
 ```
 
-Linked statically — no runtime DLL. Confirm with `./mediamolder.exe raw-setup`.
+LibRaw itself links statically — it adds **no** MinGW runtime DLLs (no libraw.dll, no
+libstdc++-6.dll, no zlib1.dll) beyond the libav DLLs + libwinpthread every cgo build here
+already imports. Confirm with `./mediamolder.exe raw-setup`.
 See [Camera-RAW Decode Guide](../raw-decode-guide.md).
 
 ### Combining nodes in one binary

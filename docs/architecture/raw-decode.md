@@ -75,14 +75,17 @@ ONNX-Runtime one:
   `scripts/bundle-libraw.sh` at **bundle time**: the pinned source tarball is verified before it
   is built. We ship no binary; the script builds a self-contained static `libraw.a`
   (jpeg/jasper/lcms/openmp off, zlib on) — on macOS a `lipo`'d arm64+x86_64 universal archive —
-  and the `with_libraw` cgo flags link `-lraw -lc++ -lz`.
+  and the `with_libraw` cgo flags link it per platform (`raw/cgo_flags_libraw.go`): `-lraw` plus
+  `-lc++ -lz` on darwin, `-lstdc++ -lz` on linux, and on windows a `-Wl,-Bstatic` window forcing
+  static libstdc++/zlib plus `-lws2_32`, so no MinGW runtime DLLs are imported.
 
 ## Determinism, scoped
 
 A develop is reproducible **for a given platform + pinned LibRaw version**: same file ⇒ same
 bytes across runs (tested in `raw/integration_libraw_test.go`). Cross-architecture byte-identity
-is *desirable and recorded* (the CI `libraw` leg exercises Linux/amd64; local runs cover macOS)
-but **not load-bearing**, because dedup never uses LibRaw. Bumping the pinned version is a
+is *desirable and recorded* (the CI `libraw` leg exercises Linux/amd64; local runs cover macOS
+and, since the mingw port, Windows/amd64) but **not load-bearing**, because dedup never uses
+LibRaw. Bumping the pinned version is a
 documented "exports may differ" event with no effect on any preview-based hash.
 
 ## Phase 2 (future): transparent source develop
