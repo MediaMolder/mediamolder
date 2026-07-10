@@ -5,6 +5,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Added
+
+- **Smart-cut trimming (`codec_video: "smartcopy"`).** Frame-accurate clip
+  trimming that re-encodes only the GOP(s) the cut points land in and
+  stream-copies every whole GOP in between byte-for-byte — the interior is
+  never re-degraded. The target keeps the source's codec, resolution, frame
+  rate, pixel format, SAR, profile/level and bit rate. The trim window is
+  given via the output's `options.ss`/`t`/`to`; optional boundary-encoder
+  quality knobs (crf/preset/…) via `encoder_params_video`. New graph node
+  kind `smartcopy` (`graph.KindSmartCopy`). See [docs/smartcopy.md](docs/smartcopy.md).
+
 ### Changed
 
 - **FFmpeg export is honest about capabilities FFmpeg lacks.** When a graph uses

@@ -47,6 +47,18 @@ import "C"
 
 import "unsafe"
 
+// DefaultEncoderForCodecID returns the name of libavcodec's default encoder
+// for the given AVCodecID (e.g. AV_CODEC_ID_H264 → "libx264"), or "" when no
+// encoder for that codec is built in. Wraps avcodec_find_encoder so smartcopy
+// can re-encode boundary GOPs with an encoder matching the source codec.
+func DefaultEncoderForCodecID(id uint32) string {
+	codec := C.avcodec_find_encoder(C.enum_AVCodecID(id))
+	if codec == nil {
+		return ""
+	}
+	return C.GoString(codec.name)
+}
+
 // FindEncoder reports whether the named encoder is available in this build.
 func FindEncoder(name string) bool {
 	cName := C.CString(name)

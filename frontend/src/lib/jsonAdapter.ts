@@ -281,25 +281,34 @@ export function materializeImplicitEncoders(cfg: JobConfig): JobConfig {
       continue;
     }
 
+    // smartcopy (frame-accurate trim: copy interior GOPs, re-encode boundary
+    // GOPs) is video-only and materialises to a distinct node type. It
+    // behaves like copy at the muxer but carries the boundary-encoder params.
+    const isSmartCopy = codec === 'smartcopy' && e.type === 'video';
+    const isCopy = codec === 'copy';
+
     let encId: string;
-    if (codec === 'copy') {
+    if (isCopy) {
       // Match the id shape produced by dragging a Copy palette entry
       // (`copy_video`, `copy_audio`, …) so materialised stream-copy
       // nodes look identical to user-spawned ones in the canvas.
       encId = `copy_${e.type}_${toHead}`;
+    } else if (isSmartCopy) {
+      encId = `smartcopy_${e.type}_${toHead}`;
     } else {
       encId = `auto_enc_${toHead}_${e.type}`;
     }
     let suffix = 1;
     while (usedIds.has(encId)) {
-      const base = codec === 'copy'
+      const base = isCopy
         ? `copy_${e.type}_${toHead}`
+        : isSmartCopy
+        ? `smartcopy_${e.type}_${toHead}`
         : `auto_enc_${toHead}_${e.type}`;
       encId = `${base}_${suffix++}`;
     }
     usedIds.add(encId);
 
-    const isCopy = codec === 'copy';
     const extraParams: Record<string, unknown> | undefined =
       e.type === 'video' ? out.encoder_params_video
       : e.type === 'audio' ? out.encoder_params_audio
@@ -308,6 +317,14 @@ export function materializeImplicitEncoders(cfg: JobConfig): JobConfig {
     let params: Record<string, unknown> | undefined;
     if (isCopy) {
       params = undefined;
+    } else if (isSmartCopy) {
+      params = {};
+      if (extraParams) {
+        for (const [k, v] of Object.entries(extraParams)) {
+          if (k === 'codec') continue;
+          params[k] = v;
+        }
+      }
     } else {
       params = { codec };
       if (extraParams) {
@@ -319,7 +336,7 @@ export function materializeImplicitEncoders(cfg: JobConfig): JobConfig {
     }
     const encoderNode: NodeDef = {
       id: encId,
-      type: isCopy ? 'copy' : 'encoder',
+      type: isCopy ? 'copy' : isSmartCopy ? 'smartcopy' : 'encoder',
       params,
     };
     nodes.push(encoderNode);

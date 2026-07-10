@@ -173,6 +173,11 @@ type sinkResources struct {
 	// the output anchors at PTS 0 (mirroring of_streamcopy's
 	// `pts -= ts_offset`); when true, original timestamps survive.
 	copyTS bool
+	// hasSmartCopyIn is true when at least one inbound edge comes from a
+	// smartcopy node. Such outputs never fire a global `-to` stop (the
+	// smartcopy node needs the demux to run past the window end to finish
+	// the tail GOP); sibling copy streams drop out-of-window packets instead.
+	hasSmartCopyIn bool
 	// maxFileSize is the configured `-fs` limit in bytes (0 = unlimited).
 	maxFileSize int64
 	// shortest, when true, stops every stream of this output as soon
@@ -516,6 +521,8 @@ func (r *graphRunner) handle(ctx context.Context, node *graph.Node, ins []<-chan
 		return r.handleGoProcessor(ctx, node, ins, outs)
 	case graph.KindCopy:
 		return r.handleCopy(ctx, node, ins, outs)
+	case graph.KindSmartCopy:
+		return r.handleSmartCopy(ctx, node, ins, outs)
 	case graph.KindFilterSource:
 		return r.handleFilterSource(ctx, node, outs)
 	case graph.KindFilterSink:

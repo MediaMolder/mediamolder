@@ -45,6 +45,7 @@ const (
 	KindSink                           // mux
 	KindGoProcessor                    // custom Go per-frame processor
 	KindCopy                           // stream copy: forward demuxer packets to muxer
+	KindSmartCopy                      // smart-cut: copy interior GOPs, re-encode boundary GOPs (frame-accurate trim)
 	KindMetadataReader                 // read container/stream metadata or chapters from a source (Wave 2 #11)
 	KindMetadataWriter                 // write container/stream metadata or chapters into a sink (Wave 2 #11)
 	KindFilterSource                   // libavfilter source filter (color, testsrc, sine — 0 inbound) (Wave 7 #36)
@@ -65,6 +66,8 @@ func (k NodeKind) String() string {
 		return "go_processor"
 	case KindCopy:
 		return "copy"
+	case KindSmartCopy:
+		return "smartcopy"
 	case KindMetadataReader:
 		return "metadata_reader"
 	case KindMetadataWriter:
@@ -410,6 +413,8 @@ func parseNodeKind(s string) (NodeKind, error) {
 		return KindGoProcessor, nil
 	case "copy":
 		return KindCopy, nil
+	case "smartcopy":
+		return KindSmartCopy, nil
 	case "metadata_reader":
 		return KindMetadataReader, nil
 	case "metadata_writer":

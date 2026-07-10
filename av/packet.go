@@ -59,6 +59,15 @@ func (pkt *Packet) StreamIndex() int { return int(pkt.p.stream_index) }
 // Size returns the packet data size in bytes.
 func (pkt *Packet) Size() int { return int(pkt.p.size) }
 
+// Data returns a copy of the packet's payload bytes. Returns nil for an
+// empty packet. The copy is owned by the caller and outlives the packet.
+func (pkt *Packet) Data() []byte {
+	if pkt.p == nil || pkt.p.data == nil || pkt.p.size <= 0 {
+		return nil
+	}
+	return C.GoBytes(unsafe.Pointer(pkt.p.data), pkt.p.size)
+}
+
 // PTS returns the packet presentation timestamp.
 func (pkt *Packet) PTS() int64 { return int64(pkt.p.pts) }
 

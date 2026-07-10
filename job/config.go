@@ -1586,6 +1586,20 @@ func validate(cfg *Config) error {
 		if out.AudioSync < 0 {
 			return fmt.Errorf("output %q: invalid audio_sync %d (must be >= 0)", out.ID, out.AudioSync)
 		}
+		// smartcopy (frame-accurate trim: copy interior GOPs, re-encode only
+		// the boundary GOPs) is a video-only codec. It requires a trim window
+		// (ss/t/to) and, because source and target must be identical, forbids
+		// stream-changing options on the same output.
+		if out.CodecAudio == "smartcopy" || out.CodecSubtitle == "smartcopy" {
+			return fmt.Errorf("output %q: codec \"smartcopy\" is only valid for video (codec_video)", out.ID)
+		}
+		if out.CodecVideo == "smartcopy" {
+			hasSS := out.Options["ss"] != nil
+			hasEnd := out.Options["t"] != nil || out.Options["to"] != nil
+			if !hasSS && !hasEnd {
+				return fmt.Errorf("output %q: codec_video \"smartcopy\" requires a trim window (options.ss and/or options.t/to)", out.ID)
+			}
+		}
 		if out.MaxFileSize < 0 {
 			return fmt.Errorf("output %q: invalid max_file_size %d (must be >= 0)", out.ID, out.MaxFileSize)
 		}
