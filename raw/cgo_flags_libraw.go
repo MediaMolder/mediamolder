@@ -17,4 +17,14 @@ package raw
 // #cgo LDFLAGS: -L${SRCDIR}/../third_party/libraw/lib -lraw
 // #cgo darwin LDFLAGS: -lc++ -lz -lm
 // #cgo linux LDFLAGS: -lstdc++ -lz -lm
+// #cgo windows LDFLAGS: -static-libgcc -Wl,-Bstatic -lstdc++ -lz -lwinpthread -Wl,-Bdynamic -lm -lws2_32
 import "C"
+
+// Windows note: plain -lstdc++/-lz would resolve to MinGW IMPORT libs and leave the binary
+// dynamically importing libstdc++-6.dll/zlib1.dll — dead on any machine without MSYS2's bin dir
+// on PATH. The -Wl,-Bstatic window forces the static archives (libstdc++.a, libz.a) so LibRaw
+// adds no MinGW runtime DLLs beyond what every cgo build here already carries; -lws2_32 covers
+// LibRaw's winsock references (a system DLL, fine to import). gcc's implicit trailing -lpthread
+// still imports libwinpthread-1.dll — accepted: the av package's libav DLLs make a Windows
+// binary dynamic regardless, and host applications that bundle mediamolder already stage the
+// transitive DLL closure (objdump -p), which carries winpthread automatically.
