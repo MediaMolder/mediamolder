@@ -857,12 +857,12 @@ func expandImplicitEncoders(cfg *Config, def *graph.Def) {
 			nodeParams = nil
 			encInt = nil
 		}
-		if codec == "smartcopy" && e.Type == "video" {
-			// Smart-cut node: copies interior GOPs verbatim and re-encodes
-			// only the boundary GOPs the trim window's edges land in. The
-			// trim window (from the output's ss/t/to) is stamped in
-			// microseconds; the encoder-quality params carried in
-			// EncoderParamsVideo (crf/preset/...) flow through nodeParams.
+		if codec == "smartcopy" && (e.Type == "video" || e.Type == "audio") {
+			// Smart-cut node: copies the interior verbatim and re-encodes only
+			// the boundary the trim window's edges land in (GOPs for video;
+			// per-packet samples for audio). The trim window (from the output's
+			// ss/t/to) is stamped in microseconds; encoder-quality params
+			// carried in EncoderParams* flow through nodeParams.
 			nodeType = "smartcopy"
 			encInt = nil
 			if nodeParams == nil {

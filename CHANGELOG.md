@@ -18,6 +18,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   (video)** palette entry and a properties panel exposing the boundary encoder
   (rate control, preset, tune, profile/level, raw params), an encoder override,
   and a global-header toggle. See [docs/smartcopy.md](docs/smartcopy.md).
+- **Smart copy for PCM audio (`codec_audio: "smartcopy"`).** Sample-accurate,
+  lossless audio trimming: interior packets are copied verbatim and only the
+  boundary packets are byte-sliced at the exact sample. PCM only; compressed
+  audio is rejected with guidance to use a `codec_audio` encoder (sample-accurate
+  re-encode) or `copy` (packet-accurate). New `Smart copy (audio, PCM)` palette
+  entry.
 
 ### Changed
 

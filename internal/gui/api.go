@@ -101,6 +101,21 @@ func handleListNodes(w http.ResponseWriter, _ *http.Request) {
 		NumOutputs:  1,
 	})
 
+	// Smart-copy (audio) — sample-accurate PCM trim: copy interior packets
+	// verbatim, byte-slice only the boundary packets at the exact sample.
+	// Compressed audio is not supported (use a codec_audio encoder for a
+	// sample-accurate re-encode).
+	out = append(out, NodeCatalogEntry{
+		Category:    "Copy",
+		Type:        "smartcopy",
+		Name:        "smartcopy_audio",
+		Label:       "Smart copy (audio, PCM)",
+		Description: "Sample-accurate trim for PCM audio: copy interior packets unchanged, byte-slice only the boundary packets at the exact sample. Lossless; PCM only.",
+		Streams:     []string{"audio"},
+		NumInputs:   1,
+		NumOutputs:  1,
+	})
+
 	// Filters from libavfilter — only 1→1 in the palette; multi-IO filters
 	// (overlay, split, etc.) can be added by editing JSON directly.
 	for _, f := range av.ListFilters() {

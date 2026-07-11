@@ -9,6 +9,7 @@ import (
 	"log"
 	"math"
 	"strconv"
+	"strings"
 
 	"github.com/MediaMolder/MediaMolder/av"
 	"github.com/MediaMolder/MediaMolder/graph"
@@ -67,6 +68,11 @@ func (r *graphRunner) handleSmartCopy(ctx context.Context, node *graph.Node, ins
 		endPTS = base + usToTB(paramInt64(node.Params, "smartcopy_end_us"), srcTB)
 	}
 
+	// Audio uses a per-packet, sample-accurate path (no GOPs).
+	if si.Type == av.MediaTypeAudio {
+		return r.handleSmartAudioCopy(ctx, node, ins[0], outs, t, srcIdx, srcTB, si, startPTS, endPTS)
+	}
+
 	encOpts, err := buildBoundaryEncoderOptions(si, srcTB, node.Params)
 	if err != nil {
 		return fmt.Errorf("smartcopy node %q: %w", node.ID, err)
@@ -103,6 +109,95 @@ func (r *graphRunner) handleSmartCopy(ctx context.Context, node *graph.Node, ins
 	}
 	// Flush the final buffered GOP (its trailing boundary is EOF).
 	return sc.finish()
+}
+
+// handleSmartAudioCopy implements sample-accurate audio smart-copy: interior
+// audio packets (fully inside the window) are copied verbatim, and the packet(s)
+// straddling each edge are sliced to the exact sample. Every audio packet is
+// independently decodable, so there is no GOP classification — the unit is one
+// packet.
+//
+// Only PCM is supported: it is byte-sliceable at any sample with no decode,
+// no encoder priming, and no container edit-list surgery. Compressed audio
+// (AAC/FLAC/…) would need per-stream priming / gapless handling — use
+// codec_audio:<encoder> for a sample-accurate full re-encode (which auto-
+// inserts atrim), or codec_audio:"copy" for a packet-accurate copy.
+func (r *graphRunner) handleSmartAudioCopy(ctx context.Context, node *graph.Node, in <-chan any, outs []chan<- any, t *NodePerfTracker, srcIdx int, srcTB [2]int, si av.StreamInfo, startPTS, endPTS int64) error {
+	encName := av.DefaultEncoderForCodecID(si.CodecID)
+	if !strings.HasPrefix(encName, "pcm_") {
+		return fmt.Errorf("smartcopy node %q: audio codec %q is not supported for smart audio copy (only PCM is byte-sliceable without re-encode). Use codec_audio:<encoder> for a sample-accurate re-encode, or codec_audio:\"copy\" for a packet-accurate copy", node.ID, encName)
+	}
+	frameBytes := av.BytesPerSample(si.SampleFmt) * si.Channels
+	if frameBytes <= 0 {
+		return fmt.Errorf("smartcopy node %q: cannot determine PCM frame size (sample_fmt=%d channels=%d)", node.ID, si.SampleFmt, si.Channels)
+	}
+
+	// Reuse the video state's fan-out + DTS-monotonic send.
+	sc := &smartCopyState{node: node, ctx: ctx, outs: outs, t: t, srcIdx: srcIdx, srcTB: srcTB, lastDTS: math.MinInt64}
+
+	for {
+		v, cancelled := perfReceive(ctx, in, t)
+		if cancelled {
+			break
+		}
+		pkt, ok := v.(*av.Packet)
+		if !ok {
+			return fmt.Errorf("smartcopy node %q: expected *av.Packet, got %T", node.ID, v)
+		}
+		if pkt.StreamIndex() != srcIdx {
+			pkt.Close()
+			continue
+		}
+		pPTS, pDur := pkt.PTS(), pkt.Duration()
+		nSamples := int64(pkt.Size()) / int64(frameBytes)
+		if pPTS == av.NoPTSValue || pPTS == math.MinInt64 || pDur <= 0 || nSamples <= 0 {
+			pkt.Close() // cannot place this packet on the sample timeline
+			continue
+		}
+		pEnd := pPTS + pDur
+		switch {
+		case pEnd <= startPTS || pPTS >= endPTS:
+			pkt.Close() // wholly outside the window
+		case pPTS >= startPTS && pEnd <= endPTS:
+			if err := sc.send(pkt); err != nil { // interior: copy verbatim
+				return err
+			}
+		default:
+			// Boundary: slice the packet to the exact sample sub-range.
+			keepStart, keepEnd := startPTS, endPTS
+			if pPTS > keepStart {
+				keepStart = pPTS
+			}
+			if pEnd < keepEnd {
+				keepEnd = pEnd
+			}
+			firstSample := (keepStart - pPTS) * nSamples / pDur
+			lastSample := (keepEnd - pPTS) * nSamples / pDur
+			if lastSample <= firstSample {
+				pkt.Close()
+				continue
+			}
+			data := pkt.Data()
+			off, end := firstSample*int64(frameBytes), lastSample*int64(frameBytes)
+			if off < 0 || end > int64(len(data)) {
+				pkt.Close()
+				continue
+			}
+			np, err := av.NewPacketFromBytes(data[off:end])
+			pkt.Close()
+			if err != nil {
+				return fmt.Errorf("smartcopy node %q: slice boundary packet: %w", node.ID, err)
+			}
+			np.SetStreamIndex(srcIdx)
+			np.SetPTS(keepStart)
+			np.SetDTS(keepStart)
+			np.SetDuration(keepEnd - keepStart)
+			if err := sc.send(np); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 // smartCopyState carries the per-run GOP state machine for handleSmartCopy.

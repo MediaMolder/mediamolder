@@ -94,6 +94,32 @@ the output.
 Audio, subtitle and data streams on the same output are stream-copied and
 trimmed to the same window at the muxer (packet-accurate; ~1 audio frame).
 
+## Audio (`codec_audio: "smartcopy"`)
+
+Smart copy also applies to **audio**, sample-accurately. Because every audio
+packet is independently decodable, there are no GOPs: interior packets (fully
+inside the window) are copied verbatim and only the packet(s) straddling each
+edge are sliced to the exact sample.
+
+**PCM only.** PCM is byte-sliceable at any sample with no decode, no encoder
+priming, and no container edit-list surgery, so the result is lossless, the
+interior is byte-identical, and the cut is exact:
+
+```json
+{
+  "codec_audio": "smartcopy",
+  "options": { "ss": "12.5", "to": "48.2" }
+}
+```
+
+Compressed audio (AAC/FLAC/Opus/…) is **rejected** with a clear error: seamless
+boundary re-encode would require per-codec priming / gapless handling (per-stream
+pre-skip for Opus/Vorbis, edit lists for AAC). For those, use
+`codec_audio: <encoder>` — a re-encoded audio stream with an `ss`/`t`/`to`
+window is trimmed sample-accurately via an auto-inserted `atrim` filter (see
+[json-config-reference.md](json-config-reference.md)) — or `codec_audio: "copy"`
+for a packet-accurate (~21 ms) lossless copy.
+
 ## Limitations
 
 - Video parameters are identical source→target by design.
