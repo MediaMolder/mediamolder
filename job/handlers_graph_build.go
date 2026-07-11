@@ -116,6 +116,7 @@ func configToGraphDef(cfg *Config) *graph.Def {
 	stampSmartCopyTiming(cfg, def)
 	rewriteGoProcessorCopyEdges(def)
 	spliceAudioMergeForMultiInputEncoders(def)
+	spliceAudioTrimForOutputs(cfg, def)
 	spliceAudioAdaptersForEncoders(def)
 	spliceAudioSyncForOutputs(cfg, def)
 	// Loudnorm two-pass shuttle: walk loudnorm filter nodes and stamp
@@ -364,6 +365,119 @@ func spliceAudioAdaptersForEncoders(def *graph.Def) {
 					By:     "spliceAudioAdaptersForEncoders",
 					From:   dstNode.ID,
 					Reason: "audio sample-fmt + frame-size adapter for encoder " + codec,
+				},
+			},
+		}
+		def.Nodes = append(def.Nodes, filtNode)
+		nodeByID[filtID] = filtNode
+		added = append(added, graph.EdgeDef{From: e.From, To: filtID, Type: "audio"})
+		e.From = filtID
+	}
+	def.Edges = append(def.Edges, added...)
+}
+
+// spliceAudioTrimForOutputs makes output-side audio trimming SAMPLE-accurate
+// when the audio is re-encoded. FFmpeg's `-ss`/`-t`/`-to` on a re-encoded
+// audio stream is sample-accurate because an `atrim` filter is inserted into
+// the filter graph (fftools/ffmpeg_filter.c::insert_trim); a plain copy stream
+// is only packet-accurate. MediaMolder's sink applies the output window at
+// packet granularity, so re-encoded audio is off by up to one packet (~21 ms)
+// at each edge. This pass inserts `atrim=start=S:end=E,asetpts=PTS-STARTPTS`
+// in front of every audio encoder whose output declares a trim window, so the
+// exact boundary sample is selected and the stream is rebased to zero. The
+// sink then skips its own output-timing on that channel (see sinkWriter
+// internalTrim) because the atrim already trimmed and rebased it.
+//
+// Runs before the audio adapter / sync splices so `atrim` sits upstream-most
+// (trim → resample → reframe → encode). Synthetic node IDs use "__atrim__".
+func spliceAudioTrimForOutputs(cfg *Config, def *graph.Def) {
+	// Resolve each output's audio trim window once.
+	type window struct {
+		haveStart   bool
+		startUS     int64
+		recordingUS int64
+	}
+	winByOutput := make(map[string]window, len(cfg.Outputs))
+	for _, out := range cfg.Outputs {
+		ot, err := resolveOutputTiming(out.Options, nil)
+		if err != nil {
+			continue
+		}
+		if !ot.haveStart && ot.recordingUS == noLimitUS {
+			continue // no trim window
+		}
+		winByOutput[out.ID] = window{ot.haveStart, ot.startUS, ot.recordingUS}
+	}
+	if len(winByOutput) == 0 {
+		return
+	}
+	nodeByID := make(map[string]graph.NodeDef, len(def.Nodes))
+	for _, n := range def.Nodes {
+		nodeByID[n.ID] = n
+	}
+	head := func(ref string) string {
+		if i := strings.IndexByte(ref, ':'); i >= 0 {
+			return ref[:i]
+		}
+		return ref
+	}
+	var added []graph.EdgeDef
+	for i := range def.Edges {
+		e := &def.Edges[i]
+		if e.Type != "audio" {
+			continue
+		}
+		enc, ok := nodeByID[head(e.To)]
+		if !ok || enc.Type != "encoder" {
+			continue // only re-encoded audio; copy/smartcopy handled elsewhere
+		}
+		// The encoder feeds an output with a trim window?
+		var win window
+		found := false
+		for _, se := range def.Edges {
+			if se.Type == "audio" && head(se.From) == enc.ID {
+				if w, ok := winByOutput[head(se.To)]; ok {
+					win, found = w, true
+				}
+				break
+			}
+		}
+		if !found {
+			continue
+		}
+		// Idempotency: skip if the immediate upstream is already our atrim.
+		if src, ok := nodeByID[head(e.From)]; ok && strings.HasPrefix(src.ID, "__atrim__") {
+			continue
+		}
+		spec := "atrim="
+		if win.haveStart {
+			spec += fmt.Sprintf("start=%.6f", float64(win.startUS)/1e6)
+		}
+		if win.recordingUS != noLimitUS {
+			endUS := win.recordingUS
+			if win.haveStart {
+				endUS += win.startUS
+			}
+			if win.haveStart {
+				spec += ":"
+			}
+			spec += fmt.Sprintf("end=%.6f", float64(endUS)/1e6)
+		}
+		// No asetpts: keep the source PTS so the sink's normal output-timing
+		// (drop-below-start + shift-to-zero) rebases the stream, exactly as it
+		// does for any trimmed re-encode. atrim only refines the boundary to
+		// the exact sample; the sink's packet drop then removes nothing real.
+
+		filtID := fmt.Sprintf("__atrim__%s_%d", enc.ID, i)
+		filtNode := graph.NodeDef{
+			ID:     filtID,
+			Type:   "filter",
+			Filter: spec,
+			Internal: graph.Internal{
+				Generated: &graph.GeneratedNode{
+					By:     "spliceAudioTrimForOutputs",
+					From:   enc.ID,
+					Reason: "sample-accurate audio output trim",
 				},
 			},
 		}

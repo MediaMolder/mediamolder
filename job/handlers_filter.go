@@ -193,9 +193,17 @@ func (r *graphRunner) handleSimpleFilter(ctx context.Context, node *graph.Node, 
 		f := v.(*av.Frame)
 		if err := fg.PushFrame(f); err != nil {
 			f.Close()
-			return err
+			// EOF/EAGAIN from the buffersrc means the filter chain has decided
+			// it is finished (e.g. `atrim` reached its `end`). Keep receiving
+			// and discarding upstream frames so the source does not block on a
+			// full channel; a fatal error still aborts. Mirrors the multi-input
+			// PushFrameAt handling above.
+			if !av.IsEOF(err) && !av.IsEAgain(err) {
+				return err
+			}
+		} else {
+			f.Close()
 		}
-		f.Close()
 		if err := pull(); err != nil {
 			return err
 		}

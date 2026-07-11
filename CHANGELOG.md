@@ -21,6 +21,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Changed
 
+- **Re-encoded audio output trimming is now sample-accurate.** When an output
+  has a trim window (`options.ss`/`t`/`to`) and its audio is re-encoded, an
+  `atrim` filter is auto-inserted in front of the audio encoder (mirroring
+  FFmpeg's filter-graph trim), so the cut lands on the exact sample instead of
+  the nearest packet (previously off by up to ~21 ms per edge). Stream-copy
+  audio stays packet-accurate. Also fixes `handleSimpleFilter` to treat a
+  buffersrc EOF (a filter deciding it is done, e.g. `atrim` reaching its `end`)
+  as graceful rather than a fatal error.
+
 - **FFmpeg export is honest about capabilities FFmpeg lacks.** When a graph uses
   a node with no FFmpeg equivalent (any `go_processor` — face_detect, whisper_stt,
   yolo_v8, scene_change_mc, vidi/twelvelabs, …), `ffcli.Export` / `mediamolder
