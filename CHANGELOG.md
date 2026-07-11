@@ -22,8 +22,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   lossless audio trimming: interior packets are copied verbatim and only the
   boundary packets are byte-sliced at the exact sample. PCM only; compressed
   audio is rejected with guidance to use a `codec_audio` encoder (sample-accurate
-  re-encode) or `copy` (packet-accurate). New `Smart copy (audio, PCM)` palette
-  entry.
+  re-encode) or `copy` (packet-accurate). Full GUI support: a `Smart copy (audio,
+  PCM)` palette entry and a dedicated properties panel (no tunable parameters —
+  PCM boundary slicing has no encoder — pointing to the output's Timing section
+  for the window).
 
 ### Changed
 

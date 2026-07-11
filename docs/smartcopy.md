@@ -48,6 +48,11 @@ encoder (rate control, preset, tune, profile/level, raw `x264-params` /
 header** toggle. Set the trim window (Start / Duration / End) on the connected
 output's **Timing** section — it applies to every stream of that output.
 
+For audio, drag **Copy → Smart copy (audio, PCM)** between an input's audio pin
+and an output. Its panel has no tunable parameters (PCM boundary slicing has no
+encoder); it just confirms the PCM-only, sample-accurate, lossless behaviour and
+points to the output's **Timing** section for the window.
+
 ### In JSON
 
 The **target is identical to the source** in codec, resolution, frame

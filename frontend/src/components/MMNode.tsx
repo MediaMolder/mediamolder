@@ -453,7 +453,9 @@ export function describeKind(kind: string, supported: readonly string[]): string
     case 'copy':
       return single ? `${cap(single)} stream copy` : 'Stream copy';
     case 'smartcopy':
-      return 'Smart copy (frame-accurate trim)';
+      return single === 'audio'
+        ? 'Smart copy (sample-accurate audio trim)'
+        : 'Smart copy (frame-accurate trim)';
     case 'filter_source':
       return single ? `${cap(single)} virtual source` : 'Virtual source';
     case 'filter_sink':

@@ -128,6 +128,7 @@ export function Inspector({ node, nodes, edges, onChange, onDelete, onSelectNode
       {ref.kind === 'node' && (
         <NodeForm
           def={ref.def}
+          streams={node.data.streams}
           padHints={resolveUpstreamPad(nodes, edges, node.id)}
           hwDevices={hwDevices}
           inputIds={nodes.filter((n) => n.data.kind === 'input').map((n) => n.data.label)}
@@ -1694,7 +1695,7 @@ function TagField({
 }
 
 /* ---------- Graph node form ---------- */
-function NodeForm({ def, onChange, padHints, hwDevices = [], inputIds = [] }: { def: NodeDef; onChange: (next: NodeDef) => void; padHints?: Record<string, number>; hwDevices?: HardwareDevice[]; inputIds?: string[] }) {
+function NodeForm({ def, onChange, streams, padHints, hwDevices = [], inputIds = [] }: { def: NodeDef; onChange: (next: NodeDef) => void; streams?: string[]; padHints?: Record<string, number>; hwDevices?: HardwareDevice[]; inputIds?: string[] }) {
   const isFilter =
     def.type === 'filter' || def.type === 'filter_source' || def.type === 'filter_sink';
   // Show the device picker only for hardware-accelerated filters (scale_cuda,
@@ -1772,7 +1773,13 @@ function NodeForm({ def, onChange, padHints, hwDevices = [], inputIds = [] }: { 
         </div>
       )}
       {def.type === 'encoder' && <EncoderForm def={def} onChange={onChange} />}
-      {def.type === 'smartcopy' && <SmartCopyForm def={def} onChange={onChange} />}
+      {def.type === 'smartcopy' && (
+        <SmartCopyForm
+          def={def}
+          onChange={onChange}
+          isAudio={!!streams?.includes('audio') && !streams?.includes('video')}
+        />
+      )}
       {isFilter && <FilterForm def={def} onChange={onChange} padHints={padHints} />}
       {def.type !== 'encoder' && !isFilter && def.type === 'go_processor' && (
         <GoProcessorParams processorName={def.processor} params={def.params ?? {}} inputIds={inputIds} onChange={(p) => onChange({ ...def, params: p })} />
@@ -1795,7 +1802,40 @@ const SMARTCOPY_RESERVED = new Set([
   'codec',
 ]);
 
-function SmartCopyForm({ def, onChange }: { def: NodeDef; onChange: (next: NodeDef) => void }) {
+// SmartAudioCopyForm is the properties panel for an audio smartcopy node.
+// PCM boundary slicing has no encoder — there are no tunable parameters — so the
+// panel just explains the behaviour and points to the output's Timing section.
+function SmartAudioCopyForm() {
+  return (
+    <div
+      style={{
+        fontSize: 11,
+        color: 'var(--text-dim)',
+        background: 'var(--surface-2, rgba(127,127,127,0.08))',
+        border: '1px solid var(--border, rgba(127,127,127,0.2))',
+        borderRadius: 6,
+        padding: '8px 10px',
+        margin: '4px 0 12px',
+        lineHeight: 1.45,
+      }}
+    >
+      <b>Smart copy (audio)</b> trims sample-accurately: interior packets are
+      copied verbatim and only the boundary packets are byte-sliced at the exact
+      sample. The result is lossless with a byte-identical interior. Set the trim
+      window (<code>Start</code>/<code>Duration</code>/<code>End</code>) on the
+      connected <b>output</b>’s Timing section.
+      <div style={{ marginTop: 6 }}>
+        <b>PCM only.</b> Compressed audio (AAC/FLAC/Opus/…) is not supported —
+        use a <code>codec_audio</code> encoder for a sample-accurate re-encode,
+        or a plain audio <b>Copy</b> node for a packet-accurate (~21&nbsp;ms)
+        lossless copy. There are no tunable parameters for this node.
+      </div>
+    </div>
+  );
+}
+
+function SmartCopyForm({ def, onChange, isAudio = false }: { def: NodeDef; onChange: (next: NodeDef) => void; isAudio?: boolean }) {
+  if (isAudio) return <SmartAudioCopyForm />;
   const params = def.params ?? {};
   const encName = (params.smartcopy_encoder as string | undefined)?.trim() || 'libx264';
   const globalHeader = params.smartcopy_global_header;
