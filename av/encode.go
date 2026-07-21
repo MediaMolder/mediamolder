@@ -43,6 +43,7 @@ import "C"
 
 import (
 	"fmt"
+	"strings"
 	"unsafe"
 )
 
@@ -254,6 +255,20 @@ func OpenEncoder(opts EncoderOptions) (*EncoderContext, error) {
 	for k, v := range opts.ExtraOpts {
 		ck := C.CString(k)
 		cv := C.CString(v)
+		C.av_dict_set(&dict, ck, cv, 0)
+		C.free(unsafe.Pointer(ck))
+		C.free(unsafe.Pointer(cv))
+	}
+
+	// VideoToolbox encoders default to hardware-only (allow_sw=0): avcodec_open2 then
+	// hard-fails with "Cannot create compression session" on any host without a usable
+	// hardware encode session — a headless/virtualized macOS runner, a host whose HW
+	// encoder is absent or busy. allow_sw=1 lets VideoToolbox fall back to its own
+	// software encoder (it still prefers hardware when present), so encode degrades in
+	// speed instead of failing outright. Only defaulted when the caller hasn't set it.
+	if _, set := opts.ExtraOpts["allow_sw"]; !set && strings.HasSuffix(opts.CodecName, "_videotoolbox") {
+		ck := C.CString("allow_sw")
+		cv := C.CString("1")
 		C.av_dict_set(&dict, ck, cv, 0)
 		C.free(unsafe.Pointer(ck))
 		C.free(unsafe.Pointer(cv))
