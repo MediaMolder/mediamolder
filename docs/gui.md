@@ -109,7 +109,12 @@ in-app help dialog.
    * **Copy** — stream-copy nodes (one per media type) that forward demuxer
      packets straight to the muxer with no decode / encode. Use these for
      lossless remux or "merge tracks from two files" jobs. The destination
-     container must accept the source codec.
+     container must accept the source codec. This category also holds the
+     **Smart copy** nodes — *Smart copy (video)* (frame-accurate trim: copies
+     interior GOPs, re-encodes only the boundary GOPs) and *Smart copy (audio,
+     PCM)* (sample-accurate, lossless PCM trim) — which trim to an exact point
+     while re-touching only the boundary. Set the window on the output's
+     **Timing** section. See [Smart-cut trimming](smartcopy.md).
    * **Processors** — Go-side custom blocks that operate on decoded frames.
      Ships with frame analysis helpers (`frame_counter`, `frame_info`), the
      built-in `scene_change` detector (mirrors FFmpeg `scdet`), five

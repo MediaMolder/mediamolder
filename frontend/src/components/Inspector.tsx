@@ -128,6 +128,7 @@ export function Inspector({ node, nodes, edges, onChange, onDelete, onSelectNode
       {ref.kind === 'node' && (
         <NodeForm
           def={ref.def}
+          streams={node.data.streams}
           padHints={resolveUpstreamPad(nodes, edges, node.id)}
           hwDevices={hwDevices}
           inputIds={nodes.filter((n) => n.data.kind === 'input').map((n) => n.data.label)}
@@ -1403,9 +1404,10 @@ function resolveUpstreamCodecs(
           }
           break;
         }
-        if (def.type === 'copy') {
-          // Stream copy: muxer writes the inbound codec_id straight through.
-          // Nothing to resolve - leave undefined.
+        if (def.type === 'copy' || def.type === 'smartcopy') {
+          // Stream copy / smart copy: the muxer writes the inbound codec_id
+          // straight through (smartcopy keeps the source codec too). Nothing
+          // to resolve — leave undefined.
           break;
         }
       }
@@ -1693,7 +1695,7 @@ function TagField({
 }
 
 /* ---------- Graph node form ---------- */
-function NodeForm({ def, onChange, padHints, hwDevices = [], inputIds = [] }: { def: NodeDef; onChange: (next: NodeDef) => void; padHints?: Record<string, number>; hwDevices?: HardwareDevice[]; inputIds?: string[] }) {
+function NodeForm({ def, onChange, streams, padHints, hwDevices = [], inputIds = [] }: { def: NodeDef; onChange: (next: NodeDef) => void; streams?: string[]; padHints?: Record<string, number>; hwDevices?: HardwareDevice[]; inputIds?: string[] }) {
   const isFilter =
     def.type === 'filter' || def.type === 'filter_source' || def.type === 'filter_sink';
   // Show the device picker only for hardware-accelerated filters (scale_cuda,
@@ -1771,13 +1773,153 @@ function NodeForm({ def, onChange, padHints, hwDevices = [], inputIds = [] }: { 
         </div>
       )}
       {def.type === 'encoder' && <EncoderForm def={def} onChange={onChange} />}
+      {def.type === 'smartcopy' && (
+        <SmartCopyForm
+          def={def}
+          onChange={onChange}
+          isAudio={!!streams?.includes('audio') && !streams?.includes('video')}
+        />
+      )}
       {isFilter && <FilterForm def={def} onChange={onChange} padHints={padHints} />}
       {def.type !== 'encoder' && !isFilter && def.type === 'go_processor' && (
         <GoProcessorParams processorName={def.processor} params={def.params ?? {}} inputIds={inputIds} onChange={(p) => onChange({ ...def, params: p })} />
       )}
-      {def.type !== 'encoder' && !isFilter && def.type !== 'go_processor' && (
+      {def.type !== 'encoder' && def.type !== 'smartcopy' && !isFilter && def.type !== 'go_processor' && (
         <ParamsEditor params={def.params ?? {}} onChange={(p) => onChange({ ...def, params: p })} />
       )}
+    </>
+  );
+}
+
+/* ---------- Smart-copy (frame-accurate trim) node form ---------- */
+
+// Reserved keys that are not boundary-encoder AVOptions.
+const SMARTCOPY_RESERVED = new Set([
+  'smartcopy_encoder',
+  'smartcopy_global_header',
+  'smartcopy_start_us',
+  'smartcopy_end_us',
+  'codec',
+]);
+
+// SmartAudioCopyForm is the properties panel for an audio smartcopy node.
+// PCM boundary slicing has no encoder — there are no tunable parameters — so the
+// panel just explains the behaviour and points to the output's Timing section.
+function SmartAudioCopyForm() {
+  return (
+    <div
+      style={{
+        fontSize: 11,
+        color: 'var(--text-dim)',
+        background: 'var(--surface-2, rgba(127,127,127,0.08))',
+        border: '1px solid var(--border, rgba(127,127,127,0.2))',
+        borderRadius: 6,
+        padding: '8px 10px',
+        margin: '4px 0 12px',
+        lineHeight: 1.45,
+      }}
+    >
+      <b>Smart copy (audio)</b> trims sample-accurately: interior packets are
+      copied verbatim and only the boundary packets are byte-sliced at the exact
+      sample. The result is lossless with a byte-identical interior. Set the trim
+      window (<code>Start</code>/<code>Duration</code>/<code>End</code>) on the
+      connected <b>output</b>’s Timing section.
+      <div style={{ marginTop: 6 }}>
+        <b>PCM only.</b> Compressed audio (AAC/FLAC/Opus/…) is not supported —
+        use a <code>codec_audio</code> encoder for a sample-accurate re-encode,
+        or a plain audio <b>Copy</b> node for a packet-accurate (~21&nbsp;ms)
+        lossless copy. There are no tunable parameters for this node.
+      </div>
+    </div>
+  );
+}
+
+function SmartCopyForm({ def, onChange, isAudio = false }: { def: NodeDef; onChange: (next: NodeDef) => void; isAudio?: boolean }) {
+  if (isAudio) return <SmartAudioCopyForm />;
+  const params = def.params ?? {};
+  const encName = (params.smartcopy_encoder as string | undefined)?.trim() || 'libx264';
+  const globalHeader = params.smartcopy_global_header;
+
+  // Edit a smartcopy-specific param directly (merges into def.params).
+  const setSmartParam = (key: string, value: unknown) => {
+    const next: Record<string, unknown> = { ...params };
+    if (value === '' || value === undefined) delete next[key];
+    else next[key] = value;
+    onChange({ ...def, params: next });
+  };
+
+  // Shim NodeDef so EncoderForm can render the full boundary-encoder UI
+  // (rate control, preset, tune, profile/level, raw params) against the
+  // chosen encoder. The smartcopy-specific keys are hidden from the shim.
+  const shimParams: Record<string, unknown> = { codec: encName };
+  for (const [k, v] of Object.entries(params)) {
+    if (SMARTCOPY_RESERVED.has(k)) continue;
+    shimParams[k] = v;
+  }
+  const shimDef: NodeDef = { ...def, type: 'encoder', params: shimParams };
+
+  // Map EncoderForm changes back onto the smartcopy node: keep every quality
+  // param it set (minus the shim `codec`) and re-attach the smartcopy keys.
+  const handleEncoderChange = (next: NodeDef) => {
+    const merged: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(next.params ?? {})) {
+      if (k === 'codec') continue;
+      merged[k] = v;
+    }
+    if (params.smartcopy_encoder !== undefined) merged.smartcopy_encoder = params.smartcopy_encoder;
+    if (params.smartcopy_global_header !== undefined) merged.smartcopy_global_header = params.smartcopy_global_header;
+    onChange({ ...def, params: merged });
+  };
+
+  return (
+    <>
+      <div
+        style={{
+          fontSize: 11,
+          color: 'var(--text-dim)',
+          background: 'var(--surface-2, rgba(127,127,127,0.08))',
+          border: '1px solid var(--border, rgba(127,127,127,0.2))',
+          borderRadius: 6,
+          padding: '8px 10px',
+          margin: '4px 0 12px',
+          lineHeight: 1.45,
+        }}
+      >
+        <b>Smart copy</b> re-encodes only the GOPs the trim cut points land in and
+        copies every whole interior GOP byte-for-byte. Set the trim window
+        (<code>Start</code>/<code>Duration</code>/<code>End</code>) on the connected{' '}
+        <b>output</b>’s Timing section. Source and target video parameters
+        (codec, size, frame rate, pixel format, SAR, profile) are identical; the
+        controls below tune only the re-encoded boundary GOPs.
+      </div>
+
+      <Field
+        label="Boundary encoder"
+        value={(params.smartcopy_encoder as string | undefined) ?? ''}
+        placeholder="auto from source (e.g. libx264)"
+        onChange={(v) => setSmartParam('smartcopy_encoder', v.trim())}
+      />
+
+      <EncoderForm def={shimDef} onChange={handleEncoderChange} />
+
+      <label
+        style={{ display: 'flex', alignItems: 'flex-start', gap: 6, marginTop: 10, cursor: 'pointer' }}
+      >
+        <input
+          type="checkbox"
+          checked={globalHeader === undefined ? true : globalHeader !== false}
+          onChange={(e) => setSmartParam('smartcopy_global_header', e.target.checked)}
+          style={{ marginTop: 2, flexShrink: 0 }}
+        />
+        <span>
+          Global header (<code>smartcopy_global_header</code>)
+          <div style={{ fontSize: 11, color: 'var(--text-dim)', fontWeight: 'normal', marginTop: 2 }}>
+            Place codec parameter sets in the container header (avcC/hvcC) rather
+            than in-band. Required for MP4/MOV; leave on unless the container
+            needs in-band parameter sets (e.g. MPEG-TS).
+          </div>
+        </span>
+      </label>
     </>
   );
 }

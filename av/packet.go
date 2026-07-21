@@ -3,6 +3,7 @@
 
 package av
 
+// #include <string.h>
 // #include "libavcodec/packet.h"
 //
 // static void packet_rescale_ts(AVPacket *pkt,
@@ -35,6 +36,30 @@ func AllocPacket() (*Packet, error) {
 	return pkt, nil
 }
 
+// NewPacketFromBytes allocates a packet with a fresh, self-owned buffer holding
+// a copy of data. Used by smartcopy audio to emit a sample-sliced boundary
+// packet (e.g. a PCM sub-range). The caller sets stream index / PTS / DTS /
+// duration and must Close() the packet.
+func NewPacketFromBytes(data []byte) (*Packet, error) {
+	p := C.av_packet_alloc()
+	if p == nil {
+		return nil, &Err{Code: -12, Message: "av_packet_alloc: out of memory"}
+	}
+	if len(data) > 0 {
+		if ret := C.av_new_packet(p, C.int(len(data))); ret < 0 {
+			C.av_packet_free(&p)
+			return nil, newErr(ret)
+		}
+		C.memcpy(unsafe.Pointer(p.data), unsafe.Pointer(&data[0]), C.size_t(len(data)))
+	}
+	pkt := &Packet{p: p}
+	leakTrack(unsafe.Pointer(p), "AVPacket")
+	return pkt, nil
+}
+
+// SetDuration sets the packet duration (in the packet's stream time_base units).
+func (pkt *Packet) SetDuration(d int64) { pkt.p.duration = C.int64_t(d) }
+
 // Close unrefs the packet data and frees the AVPacket.
 func (pkt *Packet) Close() error {
 	if pkt.p != nil {
@@ -58,6 +83,15 @@ func (pkt *Packet) StreamIndex() int { return int(pkt.p.stream_index) }
 
 // Size returns the packet data size in bytes.
 func (pkt *Packet) Size() int { return int(pkt.p.size) }
+
+// Data returns a copy of the packet's payload bytes. Returns nil for an
+// empty packet. The copy is owned by the caller and outlives the packet.
+func (pkt *Packet) Data() []byte {
+	if pkt.p == nil || pkt.p.data == nil || pkt.p.size <= 0 {
+		return nil
+	}
+	return C.GoBytes(unsafe.Pointer(pkt.p.data), pkt.p.size)
+}
 
 // PTS returns the packet presentation timestamp.
 func (pkt *Packet) PTS() int64 { return int64(pkt.p.pts) }

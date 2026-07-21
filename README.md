@@ -180,6 +180,13 @@ transitions composited by a [native Go engine](docs/architecture/transitions.md)
 auto-coupled to each cut. Build it as a spreadsheet-style table in the GUI or as
 declarative JSON. See the [Video Editing Guide](docs/video-editing-guide.md).
 
+### Frame-accurate trimming without a full re-encode
+
+Cut a clip to exact in/out points while re-encoding only the GOP(s) the cuts
+land in — every whole GOP between them is stream-copied byte-for-byte, so the
+interior is never re-degraded. Set `codec_video: "smartcopy"` on an output with
+an `ss`/`t`/`to` window. See the [Smart-cut Trimming Guide](docs/smartcopy.md).
+
 ### Hardware acceleration — any platform, properly
 
  MediaMolder makes hardware acceleration *safe and understandable*. See [hardware-acceleration.md](docs/hardware-acceleration.md)

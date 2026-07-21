@@ -177,31 +177,44 @@ func (w *sinkWriter) processOne(i int, pkt *av.Packet, dstTB [2]int, rs *sinkRes
 	}
 	ptsUS, hasPTS := ptsToMicros(pkt.PTS(), dstTB)
 
-	// When no output-side -ss is configured and copyTS is false, drop any
-	// packet arriving with a negative PTS. After an input-side -ss seek the
-	// source shifts every packet by ts_offset so the keyframe that landed
-	// just before the seek point gets a small negative PTS; writing it to
-	// the muxer shortens the video track relative to audio, causing A/V
-	// duration mismatches. Mirrors of_streamcopy's ts_copy_start=0 guard
-	// in fftools/ffmpeg_mux.c: when !copy_ts the ts_copy_start defaults to
-	// 0 and packets with pts < 0 are silently dropped.
-	if !w.sink.copyTS && w.startUS == int64(av.NoPTSValue) && hasPTS && ptsUS < 0 {
-		return false, false, nil
-	}
+	// smartcopy channels carry their trim window internally (the smartcopy
+	// node keeps only in-window frames and re-encodes the boundary GOPs), so
+	// the sink must NOT apply output-side ss/to to them — doing so would drop
+	// the re-encoded boundary packets. The node also needs the source to demux
+	// past the window end to complete the tail GOP, so a smartcopy output
+	// never fires a global `-to` stop: sibling copy streams (audio/subtitle)
+	// drop out-of-window packets instead, and the pipeline runs to EOF.
+	smartCh := i < len(w.node.Inbound) && w.node.Inbound[i].From != nil &&
+		w.node.Inbound[i].From.Kind == graph.KindSmartCopy
+	if !smartCh {
+		// When no output-side -ss is configured and copyTS is false, drop any
+		// packet arriving with a negative PTS. After an input-side -ss seek the
+		// source shifts every packet by ts_offset so the keyframe that landed
+		// just before the seek point gets a small negative PTS; writing it to
+		// the muxer shortens the video track relative to audio, causing A/V
+		// duration mismatches. Mirrors of_streamcopy's ts_copy_start=0 guard
+		// in fftools/ffmpeg_mux.c: when !copy_ts the ts_copy_start defaults to
+		// 0 and packets with pts < 0 are silently dropped.
+		if !w.sink.copyTS && w.startUS == int64(av.NoPTSValue) && hasPTS && ptsUS < 0 {
+			return false, false, nil
+		}
 
-	// Output-side `-ss`: drop packets below the configured start.
-	// Mirrors of_streamcopy's `if (dts < of->start_time) return EAGAIN`.
-	if w.startUS != int64(av.NoPTSValue) && hasPTS && ptsUS < w.startUS {
-		return false, false, nil
-	}
-	// Output-side `-t`/`-to`: stop when any kept packet reaches the end.
-	// Mirrors `check_recording_time`'s `av_compare_ts >= 0` => stop.
-	if w.stopUS != noLimitUS && hasPTS && ptsUS >= w.stopUS {
-		return false, true, nil
-	}
-	// `-shortest`: stop once another channel has closed at a lower PTS.
-	if w.shortestReached(ptsUS, hasPTS) {
-		return false, false, nil
+		// Output-side `-ss`: drop packets below the configured start.
+		// Mirrors of_streamcopy's `if (dts < of->start_time) return EAGAIN`.
+		if w.startUS != int64(av.NoPTSValue) && hasPTS && ptsUS < w.startUS {
+			return false, false, nil
+		}
+		// Output-side `-t`/`-to`: stop when any kept packet reaches the end.
+		// Mirrors `check_recording_time`'s `av_compare_ts >= 0` => stop. On a
+		// smartcopy output, drop (non-global) instead of stopping so the tail
+		// GOP can finish; otherwise stop the whole sink.
+		if w.stopUS != noLimitUS && hasPTS && ptsUS >= w.stopUS {
+			return false, !w.sink.hasSmartCopyIn, nil
+		}
+		// `-shortest`: stop once another channel has closed at a lower PTS.
+		if w.shortestReached(ptsUS, hasPTS) {
+			return false, false, nil
+		}
 	}
 
 	// Shift kept packets so the output file anchors at PTS 0
@@ -815,7 +828,7 @@ func (r *graphRunner) rotateSegment(w *sinkWriter, out *Output, newURL string) e
 			}
 			outIdx = idx
 			newRescales[i] = &sinkRescale{srcTB: enc.TimeBase(), dstTB: newMuxer.StreamTimeBase(outIdx)}
-		case graph.KindCopy:
+		case graph.KindCopy, graph.KindSmartCopy:
 			srcInput, srcIdx, srcTB, cpErr := r.copySourceFor(from)
 			if cpErr != nil {
 				newMuxer.Abort()
@@ -1119,7 +1132,11 @@ func (r *graphRunner) openSink(_ *graph.Graph, node *graph.Node) (*sinkResources
 			// packets (whose PTS is in encoder TB) misinterpreted by the
 			// muxer in the new TB. We rescale per-packet to compensate.
 			rescales[i] = &sinkRescale{srcTB: enc.TimeBase(), dstTB: muxer.StreamTimeBase(outIdx)}
-		case graph.KindCopy:
+		case graph.KindCopy, graph.KindSmartCopy:
+			// smartcopy registers exactly like copy: the output stream is
+			// wired from the source codecpar (extradata = source), and the
+			// smartcopy node emits packets — copied interior and re-encoded
+			// boundary alike — in the source stream time_base.
 			srcInput, srcIdx, srcTB, err := r.copySourceFor(from)
 			if err != nil {
 				muxer.Abort()
@@ -1446,15 +1463,25 @@ func (r *graphRunner) openSink(_ *graph.Graph, node *graph.Node) (*sinkResources
 		rs.dstTB = muxer.StreamTimeBase(i)
 	}
 
+	hasSmartCopyIn := false
+	for _, e := range node.Inbound {
+		if e.From != nil && e.From.Kind == graph.KindSmartCopy {
+			hasSmartCopyIn = true
+			break
+		}
+	}
 	sr := &sinkResources{
-		muxer:         muxer,
-		cfg:           *out,
-		streamRescale: rescales,
-		streamBSF:     streamBSF,
-		timing:        outTiming,
-		copyTS:        r.cfg != nil && r.cfg.CopyTS,
-		maxFileSize:   out.MaxFileSize,
-		shortest:      out.Shortest || r.hasCopyTrimPath(node),
+		muxer:          muxer,
+		cfg:            *out,
+		streamRescale:  rescales,
+		streamBSF:      streamBSF,
+		timing:         outTiming,
+		copyTS:         r.cfg != nil && r.cfg.CopyTS,
+		hasSmartCopyIn: hasSmartCopyIn,
+		maxFileSize:    out.MaxFileSize,
+		// A smartcopy output must run to EOF (see hasSmartCopyIn); never
+		// auto-enable -shortest for it.
+		shortest:      out.Shortest || (!hasSmartCopyIn && r.hasCopyTrimPath(node)),
 		shortestPTSus: noLimitUS,
 		preroll:       r.buildPreroll(out, rescales),
 	}

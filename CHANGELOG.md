@@ -5,7 +5,38 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Added
+
+- **Smart-cut trimming (`codec_video: "smartcopy"`).** Frame-accurate clip
+  trimming that re-encodes only the GOP(s) the cut points land in and
+  stream-copies every whole GOP in between byte-for-byte — the interior is
+  never re-degraded. The target keeps the source's codec, resolution, frame
+  rate, pixel format, SAR, profile/level and bit rate. The trim window is
+  given via the output's `options.ss`/`t`/`to`; optional boundary-encoder
+  quality knobs (crf/preset/…) via `encoder_params_video`. New graph node
+  kind `smartcopy` (`graph.KindSmartCopy`). Full GUI support: a **Smart copy
+  (video)** palette entry and a properties panel exposing the boundary encoder
+  (rate control, preset, tune, profile/level, raw params), an encoder override,
+  and a global-header toggle. See [docs/smartcopy.md](docs/smartcopy.md).
+- **Smart copy for PCM audio (`codec_audio: "smartcopy"`).** Sample-accurate,
+  lossless audio trimming: interior packets are copied verbatim and only the
+  boundary packets are byte-sliced at the exact sample. PCM only; compressed
+  audio is rejected with guidance to use a `codec_audio` encoder (sample-accurate
+  re-encode) or `copy` (packet-accurate). Full GUI support: a `Smart copy (audio,
+  PCM)` palette entry and a dedicated properties panel (no tunable parameters —
+  PCM boundary slicing has no encoder — pointing to the output's Timing section
+  for the window).
+
 ### Changed
+
+- **Re-encoded audio output trimming is now sample-accurate.** When an output
+  has a trim window (`options.ss`/`t`/`to`) and its audio is re-encoded, an
+  `atrim` filter is auto-inserted in front of the audio encoder (mirroring
+  FFmpeg's filter-graph trim), so the cut lands on the exact sample instead of
+  the nearest packet (previously off by up to ~21 ms per edge). Stream-copy
+  audio stays packet-accurate. Also fixes `handleSimpleFilter` to treat a
+  buffersrc EOF (a filter deciding it is done, e.g. `atrim` reaching its `end`)
+  as graceful rather than a fatal error.
 
 - **FFmpeg export is honest about capabilities FFmpeg lacks.** When a graph uses
   a node with no FFmpeg equivalent (any `go_processor` — face_detect, whisper_stt,

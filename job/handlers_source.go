@@ -79,7 +79,10 @@ func (r *graphRunner) handleSource(ctx context.Context, node *graph.Node, outs [
 		if !ok {
 			continue
 		}
-		if e.To != nil && e.To.Kind == graph.KindCopy {
+		if e.To != nil && (e.To.Kind == graph.KindCopy || e.To.Kind == graph.KindSmartCopy) {
+			// smartcopy, like copy, receives the raw elementary bitstream;
+			// the smartcopy node itself decodes/re-encodes only the boundary
+			// GOPs. The source stays a plain demuxer for this stream.
 			streamIdxToCopyChans[streamIdx] = append(streamIdxToCopyChans[streamIdx], i)
 		} else {
 			streamIdxToFrameChans[streamIdx] = append(streamIdxToFrameChans[streamIdx], i)
@@ -703,7 +706,7 @@ func (r *graphRunner) openSource(cfg Input, srcNode *graph.Node, decOpts av.Deco
 		for _, e := range srcNode.Outbound {
 			t := string(e.Type)
 			seenAny[t] = true
-			if e.To == nil || e.To.Kind != graph.KindCopy {
+			if e.To == nil || (e.To.Kind != graph.KindCopy && e.To.Kind != graph.KindSmartCopy) {
 				seenNonCopy[t] = true
 			}
 		}

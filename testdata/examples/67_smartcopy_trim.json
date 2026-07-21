@@ -1,0 +1,52 @@
+{
+  "schema_version": "1.0",
+  "description": "Frame-accurate trim with smart copy: keep the clip from 2s to 8s, re-encoding only the GOP(s) the cut points land in and stream-copying every whole GOP in between byte-for-byte. Audio is stream-copied and trimmed to the same window. Source and target video parameters (codec, size, frame rate, pixel format, SAR, profile) are identical. The trim window is set on the output's options (ss/to). smartcopy has no single-command FFmpeg equivalent — the manual recipe is a segment + concat pipeline.",
+  "ffmpeg_cmd": "# No equivalent FFmpeg command — smartcopy (output \"out0\") re-encodes only the boundary GOPs and stream-copies the interior; FFmpeg has no built-in smart-cut.",
+  "inputs": [
+    {
+      "id": "in0",
+      "url": "{{input}}",
+      "map_metadata": true,
+      "map_chapters": true,
+      "streams": [
+        {
+          "input_index": 0,
+          "type": "video",
+          "track": 0
+        },
+        {
+          "input_index": 0,
+          "type": "audio",
+          "track": 0
+        }
+      ]
+    }
+  ],
+  "graph": {
+    "nodes": [],
+    "edges": [
+      {
+        "from": "in0:v:0",
+        "to": "out0:v",
+        "type": "video"
+      },
+      {
+        "from": "in0:a:0",
+        "to": "out0:a",
+        "type": "audio"
+      }
+    ]
+  },
+  "outputs": [
+    {
+      "id": "out0",
+      "url": "{{output}}",
+      "codec_video": "smartcopy",
+      "codec_audio": "copy",
+      "options": {
+        "ss": "2",
+        "to": "8"
+      }
+    }
+  ]
+}

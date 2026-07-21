@@ -86,6 +86,36 @@ func handleListNodes(w http.ResponseWriter, _ *http.Request) {
 		})
 	}
 
+	// Smart-copy (video) — frame-accurate trim that copies interior GOPs
+	// byte-for-byte and re-encodes only the boundary GOPs the cut points land
+	// in. Video-only; the trim window is set on the connected output's Timing
+	// section, and the boundary-encoder quality is set on this node.
+	out = append(out, NodeCatalogEntry{
+		Category:    "Copy",
+		Type:        "smartcopy",
+		Name:        "smartcopy_video",
+		Label:       "Smart copy (video)",
+		Description: "Frame-accurate trim: copy interior GOPs unchanged, re-encode only the boundary GOPs at the cut points. Source and target video parameters are identical.",
+		Streams:     []string{"video"},
+		NumInputs:   1,
+		NumOutputs:  1,
+	})
+
+	// Smart-copy (audio) — sample-accurate PCM trim: copy interior packets
+	// verbatim, byte-slice only the boundary packets at the exact sample.
+	// Compressed audio is not supported (use a codec_audio encoder for a
+	// sample-accurate re-encode).
+	out = append(out, NodeCatalogEntry{
+		Category:    "Copy",
+		Type:        "smartcopy",
+		Name:        "smartcopy_audio",
+		Label:       "Smart copy (audio, PCM)",
+		Description: "Sample-accurate trim for PCM audio: copy interior packets unchanged, byte-slice only the boundary packets at the exact sample. Lossless; PCM only.",
+		Streams:     []string{"audio"},
+		NumInputs:   1,
+		NumOutputs:  1,
+	})
+
 	// Filters from libavfilter — only 1→1 in the palette; multi-IO filters
 	// (overlay, split, etc.) can be added by editing JSON directly.
 	for _, f := range av.ListFilters() {

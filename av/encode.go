@@ -60,6 +60,14 @@ type EncoderOptions struct {
 	FrameRate [2]int // {num, den}
 	GOPSize   int
 
+	// Profile and Level, when non-zero, stamp AVCodecContext.profile and
+	// AVCodecContext.level directly (FF_PROFILE_* / codec-specific level).
+	// Used by smartcopy to make re-encoded boundary GOPs emit parameter
+	// sets compatible with the copied interior's source extradata. A
+	// negative value (e.g. FF_LEVEL_UNKNOWN == -99) is treated as unset.
+	Profile int
+	Level   int
+
 	// TimeBase, if set with TimeBase[1] > 0, is used as the encoder's
 	// time_base instead of the default 1/FrameRate. This is required when
 	// the encoder is fed by a filter graph whose buffersink advertises a
@@ -178,6 +186,12 @@ func OpenEncoder(opts EncoderOptions) (*EncoderContext, error) {
 		}
 		if opts.GOPSize > 0 {
 			ctx.gop_size = C.int(opts.GOPSize)
+		}
+		if opts.Profile > 0 {
+			ctx.profile = C.int(opts.Profile)
+		}
+		if opts.Level > 0 {
+			ctx.level = C.int(opts.Level)
 		}
 		if opts.SampleAspectRatio[1] > 0 {
 			ctx.sample_aspect_ratio = C.AVRational{

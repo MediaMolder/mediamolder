@@ -186,7 +186,7 @@ between them, see [Graph Basics](concepts-and-graph-basics.md).
 | `encoder_params_video`    | object | no | Codec-specific options forwarded to the implicit video encoder (`crf`, `preset`, …). |
 | `encoder_params_audio`    | object | no | Codec-specific options forwarded to the implicit audio encoder. |
 | `encoder_params_subtitle` | object | no | Codec-specific options forwarded to the implicit subtitle encoder. |
-| `options`        | object | no       | Muxer options. Includes per-output timing flags `ss` (start), `t` (duration), `to` (end), accepting seconds or `HH:MM:SS[.ms]`. These restrict what the muxer writes (the full source still flows through the graph), which is the typical place to trim a stream-copy job. Surfaced as the **Timing** section on the Output form in the GUI. |
+| `options`        | object | no       | Muxer options. Includes per-output timing flags `ss` (start), `t` (duration), `to` (end), accepting seconds or `HH:MM:SS[.ms]`. These restrict what the muxer writes (the full source still flows through the graph), which is the typical place to trim a stream-copy job. Surfaced as the **Timing** section on the Output form in the GUI. For a **re-encoded audio** stream the trim is **sample-accurate**: an `atrim` filter is auto-inserted in front of the encoder (mirroring FFmpeg's filter-graph trim), so the boundary lands on the exact sample rather than the nearest packet (~21 ms). Stream-copy audio remains packet-accurate. |
 
 ### StreamSpec
 
