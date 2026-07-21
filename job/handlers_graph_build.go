@@ -392,12 +392,7 @@ func spliceAudioAdaptersForEncoders(def *graph.Def) {
 // (trim → resample → reframe → encode). Synthetic node IDs use "__atrim__".
 func spliceAudioTrimForOutputs(cfg *Config, def *graph.Def) {
 	// Resolve each output's audio trim window once.
-	type window struct {
-		haveStart   bool
-		startUS     int64
-		recordingUS int64
-	}
-	winByOutput := make(map[string]window, len(cfg.Outputs))
+	winByOutput := make(map[string]outputTiming, len(cfg.Outputs))
 	for _, out := range cfg.Outputs {
 		ot, err := resolveOutputTiming(out.Options, nil)
 		if err != nil {
@@ -406,7 +401,7 @@ func spliceAudioTrimForOutputs(cfg *Config, def *graph.Def) {
 		if !ot.haveStart && ot.recordingUS == noLimitUS {
 			continue // no trim window
 		}
-		winByOutput[out.ID] = window{ot.haveStart, ot.startUS, ot.recordingUS}
+		winByOutput[out.ID] = ot
 	}
 	if len(winByOutput) == 0 {
 		return
@@ -432,7 +427,7 @@ func spliceAudioTrimForOutputs(cfg *Config, def *graph.Def) {
 			continue // only re-encoded audio; copy/smartcopy handled elsewhere
 		}
 		// The encoder feeds an output with a trim window?
-		var win window
+		var win outputTiming
 		found := false
 		for _, se := range def.Edges {
 			if se.Type == "audio" && head(se.From) == enc.ID {
