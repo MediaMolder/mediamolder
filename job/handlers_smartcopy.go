@@ -38,6 +38,10 @@ func (r *graphRunner) handleSmartCopy(ctx context.Context, node *graph.Node, ins
 		return fmt.Errorf("smartcopy node %q: expected 1 input / >=1 output, got %d/%d", node.ID, len(ins), len(outs))
 	}
 	t := perfTrackerFrom(ctx)
+	// Registered before the first error return: every path out of this
+	// handler (bad params, an unsupported codec, a mid-run failure) must
+	// release the packets the source already queued on the inbound edge.
+	defer drainPackets(ins[0])
 
 	// Resolve the upstream source input + stream index + time_base by
 	// tracing this node's inbound edge back to the source (same helper the
@@ -94,6 +98,11 @@ func (r *graphRunner) handleSmartCopy(ctx context.Context, node *graph.Node, ins
 	}
 
 	in := ins[0]
+	defer func() {
+		closeAll(sc.cur)
+		closeAll(sc.prev)
+		sc.cur, sc.prev = nil, nil
+	}()
 	for {
 		v, cancelled := perfReceive(ctx, in, t)
 		if cancelled {
@@ -123,6 +132,8 @@ func (r *graphRunner) handleSmartCopy(ctx context.Context, node *graph.Node, ins
 // codec_audio:<encoder> for a sample-accurate full re-encode (which auto-
 // inserts atrim), or codec_audio:"copy" for a packet-accurate copy.
 func (r *graphRunner) handleSmartAudioCopy(ctx context.Context, node *graph.Node, in <-chan any, outs []chan<- any, t *NodePerfTracker, srcIdx int, srcTB [2]int, si av.StreamInfo, startPTS, endPTS int64) error {
+	defer drainPackets(in) // rejecting a codec below still leaves queued packets
+
 	encName := av.DefaultEncoderForCodecID(si.CodecID)
 	if !strings.HasPrefix(encName, "pcm_") {
 		return fmt.Errorf("smartcopy node %q: audio codec %q is not supported for smart audio copy (only PCM is byte-sliceable without re-encode). Use codec_audio:<encoder> for a sample-accurate re-encode, or codec_audio:\"copy\" for a packet-accurate copy", node.ID, encName)
@@ -307,8 +318,9 @@ func (s *smartCopyState) classify(gStart, gEnd int64) error {
 
 // emitCopy forwards interior-GOP packets unchanged.
 func (s *smartCopyState) emitCopy(pkts []*av.Packet) error {
-	for _, p := range pkts {
+	for i, p := range pkts {
 		if err := s.send(p); err != nil {
+			closeAll(pkts[i+1:]) // send owns p; the rest are still ours
 			return err
 		}
 	}
@@ -464,6 +476,10 @@ func (s *smartCopyState) send(pkt *av.Packet) error {
 		}
 		s.lastDTS = dts
 	}
+	if len(s.outs) == 0 {
+		pkt.Close()
+		return nil
+	}
 	for i, out := range s.outs {
 		p := pkt
 		if i < len(s.outs)-1 {
@@ -585,6 +601,20 @@ func smartAnyToString(v any) string {
 		return strconv.FormatInt(int64(f), 10)
 	}
 	return fmt.Sprintf("%v", v)
+}
+
+// drainPackets unrefs every packet still queued on in. A smartcopy handler
+// that leaves its receive loop early (context cancel, or an error further
+// down) would otherwise abandon the packets the source already handed off,
+// and each one holds an AVPacket plus its buffer. The scheduler closes a
+// node's output channels once its handler returns, so the upstream close
+// always arrives and this terminates.
+func drainPackets(in <-chan any) {
+	for v := range in {
+		if p, ok := v.(*av.Packet); ok {
+			p.Close()
+		}
+	}
 }
 
 func closeAll(pkts []*av.Packet) {
