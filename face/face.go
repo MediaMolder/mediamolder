@@ -37,6 +37,10 @@ type Face struct {
 	Landmarks [5][2]int // left eye, right eye, nose, left mouth, right mouth
 	Score     float32   // detector confidence, 0..1
 	Embedding []float32 // 128-d, L2-normalised (SFace); nil until embedded
+	// No-reference quality of the aligned face crop, both in [0,1]. Set when the face is embedded
+	// (the aligned crop is in hand); 0 on a detect-only pass. See quality.go.
+	Sharpness float32 // focus: log-scaled variance-of-Laplacian of the luma
+	Exposure  float32 // light level: mid-gray-peaked mean luma, clipping-penalized
 }
 
 // Options tunes a single [AnalyzeImageOpts] call. The zero value is valid:

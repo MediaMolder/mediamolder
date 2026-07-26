@@ -153,6 +153,8 @@ func (p *pipeline) analyzeImage(img image.Image, o Options) ([]Face, error) {
 				return nil, err
 			}
 			f.Embedding = l2Normalize(emb)
+			// Same aligned crop the embedder used — measure its focus + exposure for ~free.
+			f.Sharpness, f.Exposure = cropMetrics(aligned)
 		}
 		faces = append(faces, f)
 	}
