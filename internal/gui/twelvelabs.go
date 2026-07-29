@@ -11,7 +11,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/MediaMolder/MediaMolder/internal/twelvelabs"
+	"github.com/MediaMolder/MediaMolder/twelvelabs"
 )
 
 // twelvelabsClientFactory builds a *twelvelabs.Client from the request.

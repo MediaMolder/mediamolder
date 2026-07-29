@@ -16,7 +16,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/MediaMolder/MediaMolder/internal/twelvelabs"
+	"github.com/MediaMolder/MediaMolder/twelvelabs"
 )
 
 // embedderMockServer simulates POST /embed/tasks (multipart) and

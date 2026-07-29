@@ -12,7 +12,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/MediaMolder/MediaMolder/internal/twelvelabs"
+	"github.com/MediaMolder/MediaMolder/twelvelabs"
 )
 
 func newTLAPIMock(t *testing.T) *httptest.Server {

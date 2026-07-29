@@ -4,7 +4,7 @@ Status: **In progress** · Owner: AI/ML processor track · Target branch: `twelv
 References: [TwelveLabs v1.3 API](https://docs.twelvelabs.io/v1.3/api-reference/introduction) · [`vidi_analyzer`](../vidi-guide.md) (existing reference pattern) · [Go Processor Nodes](../go-processor-nodes.md)
 
 Implementation progress:
-- ✅ Phase 1 — REST client skeleton (`internal/twelvelabs`).
+- ✅ Phase 1 — REST client skeleton (`twelvelabs`).
 - ✅ Phase 2 — indexes + tasks API surface.
 - ✅ Phase 3 — analyze + search + embed API surface.
 - ✅ Phase 4 — `segment_on_metadata` validation in `pipeline`.
@@ -15,7 +15,7 @@ Implementation progress:
 - ✅ Phase 7 — `mediamolder twelvelabs` CLI subcommand
   (`cmd/mediamolder/cmd_twelvelabs.go`).
 - ✅ Phase 8 — `/api/twelvelabs/*` HTTP routes
-  (`internal/gui/twelvelabs.go`, shared `internal/twelvelabs/auth.go`).
+  (`internal/gui/twelvelabs.go`, shared `twelvelabs/auth.go`).
 - ✅ Phase 9 — GUI palette curation (friendly names, aliases,
   descriptions, event-stream metadata) in `internal/gui/curation.go`
   and `internal/gui/api.go`; the four `twelvelabs_*` nodes now surface
@@ -89,7 +89,7 @@ decode/re-encode cycle. This is the cheapest and highest-quality path.
   │           │                          │                       │                │
   │           │ (file path)              │                       │                │
   │           ▼                          ▼                       ▼                │
-  │   (no decode)         internal/twelvelabs (client)    Metadata on event bus   │
+  │   (no decode)         twelvelabs (client)    Metadata on event bus   │
   │                                      │                                        │
   └──────────────────────────────────────┼────────────────────────────────────────┘
                                          ▼
@@ -114,7 +114,7 @@ to produce the per-shot files; the indexer never sees raw frames.
   │                                          twelvelabs_indexer ─► twelvelabs_analyzer       │
   │                                                       │                  │               │
   │                                                       ▼                  ▼               │
-  │                                          internal/twelvelabs (client)  Metadata          │
+  │                                          twelvelabs (client)  Metadata          │
   │                                                       │                                  │
   └───────────────────────────────────────────────────────┼──────────────────────────────────┘
                                                           ▼
@@ -136,7 +136,7 @@ via `--metadata-out`, the GUI live panel, or downstream graph nodes.
 
 ### Code layers
 
-- **`internal/twelvelabs/`** — pure-Go REST client, no MediaMolder imports.
+- **`twelvelabs/`** — pure-Go REST client, no MediaMolder imports.
   Reusable from CLI commands, processors, and tests.
 - **`processors/twelvelabs_*.go`** — three thin `go_processor` nodes
   (`twelvelabs_indexer`, `twelvelabs_analyzer`, `twelvelabs_searcher`) that
@@ -167,7 +167,7 @@ graph and takes a path directly.
   varying length). `video_id` is keyed by source filename, not by arrival
   order, so downstream analyzer events stay correctly attributed.
 
-## 4. Go client — `internal/twelvelabs`
+## 4. Go client — `twelvelabs`
 
 ```go
 package twelvelabs
@@ -463,7 +463,7 @@ mediamolder twelvelabs indexes create --name demo --models marengo3.0,pegasus1.5
 ```
 
 Implementation: `cmd/mediamolder/cmd_twelvelabs.go`, using the same
-`internal/twelvelabs` client. Flags map 1:1 to client structs. Output is
+`twelvelabs` client. Flags map 1:1 to client structs. Output is
 JSON by default, with `--format=table` for human-readable.
 
 Authentication precedence: `--api-key` flag → `TWELVELABS_API_KEY` env
@@ -646,7 +646,7 @@ database integration is out of scope for v1.
 
 ## 9. Testing strategy
 
-### 9.1 Unit tests — `internal/twelvelabs/`
+### 9.1 Unit tests — `twelvelabs/`
 
 - `client_test.go` — every method against `httptest.Server` fixtures.
 - `retry_test.go` — 429 with `Retry-After`, 5xx burst, context cancel.
@@ -686,7 +686,7 @@ Mirroring `vidi_analyzer_test.go`:
 Tagged `//go:build integration` and skipped by default:
 
 ```bash
-go test -tags=integration -run TestTwelveLabsLive ./internal/twelvelabs/
+go test -tags=integration -run TestTwelveLabsLive ./twelvelabs/
 ```
 
 Requires `TWELVELABS_API_KEY` and a small fixture (`testdata/clip.mp4`,
@@ -737,7 +737,7 @@ Requires `TWELVELABS_API_KEY` and a small fixture (`testdata/clip.mp4`,
 Ordered list of commits. Each ends green on `go test ./... && (cd frontend && npm test)`.
 
 1. ✅ **`feat(internal/twelvelabs): REST client skeleton`**
-   - `internal/twelvelabs/{client,types,errors,retry}.go` + unit tests.
+   - `twelvelabs/{client,types,errors,retry}.go` + unit tests.
    - No MediaMolder imports.
 2. ✅ **`feat(internal/twelvelabs): indexes + tasks endpoints`**
    - `CreateIndex`, `ListIndexes`, `DeleteIndex`, `CreateIndexTask`,

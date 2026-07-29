@@ -16,7 +16,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/MediaMolder/MediaMolder/internal/twelvelabs"
+	"github.com/MediaMolder/MediaMolder/twelvelabs"
 )
 
 // indexerMockServer simulates the TwelveLabs REST surface used by
