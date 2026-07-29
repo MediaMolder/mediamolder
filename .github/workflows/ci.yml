@@ -63,7 +63,15 @@ jobs:
       - name: Build FFmpeg from source (Linux)
         if: runner.os == 'Linux' && steps.cache-ffmpeg.outputs.cache-hit != 'true'
         run: |
-          curl -fsSL https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.xz | tar xJ
+          fetch() { curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 --connect-timeout 30 "$1" -o "$2"; }
+          if fetch "https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.xz" ffmpeg.tar.xz; then
+            tar xJf ffmpeg.tar.xz
+          else
+            echo "ffmpeg.org unreachable; falling back to GitHub mirror" >&2
+            fetch "https://github.com/FFmpeg/FFmpeg/archive/refs/tags/n${FFMPEG_VERSION}.tar.gz" ffmpeg.tar.gz
+            tar xzf ffmpeg.tar.gz
+            mv "FFmpeg-n${FFMPEG_VERSION}" "ffmpeg-${FFMPEG_VERSION}"
+          fi
           cd ffmpeg-${FFMPEG_VERSION}
           ./configure \
             --prefix=/usr/local \
@@ -107,7 +115,15 @@ jobs:
         env:
           PKG_CONFIG_PATH: /opt/homebrew/lib/pkgconfig
         run: |
-          curl -fsSL https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.xz | tar xJ
+          fetch() { curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 --connect-timeout 30 "$1" -o "$2"; }
+          if fetch "https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.xz" ffmpeg.tar.xz; then
+            tar xJf ffmpeg.tar.xz
+          else
+            echo "ffmpeg.org unreachable; falling back to GitHub mirror" >&2
+            fetch "https://github.com/FFmpeg/FFmpeg/archive/refs/tags/n${FFMPEG_VERSION}.tar.gz" ffmpeg.tar.gz
+            tar xzf ffmpeg.tar.gz
+            mv "FFmpeg-n${FFMPEG_VERSION}" "ffmpeg-${FFMPEG_VERSION}"
+          fi
           cd ffmpeg-${FFMPEG_VERSION}
           ./configure \
             --prefix=/usr/local/ffmpeg \
@@ -213,7 +229,15 @@ jobs:
       - name: Build FFmpeg from source
         if: steps.cache-ffmpeg-asan.outputs.cache-hit != 'true'
         run: |
-          curl -fsSL https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.xz | tar xJ
+          fetch() { curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 --connect-timeout 30 "$1" -o "$2"; }
+          if fetch "https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.xz" ffmpeg.tar.xz; then
+            tar xJf ffmpeg.tar.xz
+          else
+            echo "ffmpeg.org unreachable; falling back to GitHub mirror" >&2
+            fetch "https://github.com/FFmpeg/FFmpeg/archive/refs/tags/n${FFMPEG_VERSION}.tar.gz" ffmpeg.tar.gz
+            tar xzf ffmpeg.tar.gz
+            mv "FFmpeg-n${FFMPEG_VERSION}" "ffmpeg-${FFMPEG_VERSION}"
+          fi
           cd ffmpeg-${FFMPEG_VERSION}
           ./configure \
             --prefix=/usr/local \
@@ -306,7 +330,15 @@ jobs:
       - name: Build FFmpeg from source
         if: steps.cache-ffmpeg-lint.outputs.cache-hit != 'true'
         run: |
-          curl -fsSL https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.xz | tar xJ
+          fetch() { curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 --connect-timeout 30 "$1" -o "$2"; }
+          if fetch "https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.xz" ffmpeg.tar.xz; then
+            tar xJf ffmpeg.tar.xz
+          else
+            echo "ffmpeg.org unreachable; falling back to GitHub mirror" >&2
+            fetch "https://github.com/FFmpeg/FFmpeg/archive/refs/tags/n${FFMPEG_VERSION}.tar.gz" ffmpeg.tar.gz
+            tar xzf ffmpeg.tar.gz
+            mv "FFmpeg-n${FFMPEG_VERSION}" "ffmpeg-${FFMPEG_VERSION}"
+          fi
           cd ffmpeg-${FFMPEG_VERSION}
           ./configure \
             --prefix=/usr/local \
@@ -385,7 +417,15 @@ jobs:
       - name: Build FFmpeg from source
         if: steps.cache-ffmpeg-gui.outputs.cache-hit != 'true'
         run: |
-          curl -fsSL https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.xz | tar xJ
+          fetch() { curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 --connect-timeout 30 "$1" -o "$2"; }
+          if fetch "https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.xz" ffmpeg.tar.xz; then
+            tar xJf ffmpeg.tar.xz
+          else
+            echo "ffmpeg.org unreachable; falling back to GitHub mirror" >&2
+            fetch "https://github.com/FFmpeg/FFmpeg/archive/refs/tags/n${FFMPEG_VERSION}.tar.gz" ffmpeg.tar.gz
+            tar xzf ffmpeg.tar.gz
+            mv "FFmpeg-n${FFMPEG_VERSION}" "ffmpeg-${FFMPEG_VERSION}"
+          fi
           cd ffmpeg-${FFMPEG_VERSION}
           ./configure \
             --prefix=/usr/local \
