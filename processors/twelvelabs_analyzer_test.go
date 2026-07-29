@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/MediaMolder/MediaMolder/internal/twelvelabs"
+	"github.com/MediaMolder/MediaMolder/twelvelabs"
 )
 
 // analyzerMockServer simulates POST /tasks, GET /tasks/{id}, and POST /analyze.

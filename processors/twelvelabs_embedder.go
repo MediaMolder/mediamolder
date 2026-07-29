@@ -15,7 +15,7 @@ import (
 	"time"
 
 	"github.com/MediaMolder/MediaMolder/av"
-	"github.com/MediaMolder/MediaMolder/internal/twelvelabs"
+	"github.com/MediaMolder/MediaMolder/twelvelabs"
 )
 
 // TwelveLabsEmbedder is an event-driven processor that requests Marengo

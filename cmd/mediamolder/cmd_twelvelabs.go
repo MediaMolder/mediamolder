@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/MediaMolder/MediaMolder/internal/twelvelabs"
+	"github.com/MediaMolder/MediaMolder/twelvelabs"
 )
 
 // twelvelabsConfigFile mirrors twelvelabs.DefaultConfigPath so existing

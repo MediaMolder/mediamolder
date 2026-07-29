@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/MediaMolder/MediaMolder/av"
-	"github.com/MediaMolder/MediaMolder/internal/twelvelabs"
+	"github.com/MediaMolder/MediaMolder/twelvelabs"
 )
 
 // TwelveLabsSearcher is a processor that periodically runs a Marengo search

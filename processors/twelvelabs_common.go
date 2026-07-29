@@ -15,7 +15,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/MediaMolder/MediaMolder/internal/twelvelabs"
+	"github.com/MediaMolder/MediaMolder/twelvelabs"
 )
 
 // tlClientFromParams builds a *twelvelabs.Client from the standard auth
