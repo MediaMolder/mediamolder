@@ -37,13 +37,36 @@ mkdir -p "$(dirname "$DEST")"
 SRC="${DEST%.*}.src.avi"   # the downloaded original; removed after a successful transcode
 
 if [[ ! -f "$SRC" ]]; then
+    # fetch_resumable: curl with resume (-C -), looping while the file is still GROWING.
+    # web.archive.org serves this file but cuts each HTTP/1.1 connection after ~100 MB
+    # (h2 aborts even earlier with curl error 92), so a single-shot fetch can never
+    # finish — resumed connections stitch the whole file. Three consecutive attempts
+    # with no growth ⇒ the source is genuinely dead (e.g. the 404ing primary), give up
+    # and try the next mirror. Success = curl exit 0, i.e. the server completed the
+    # final range; the transcode below is the content validator.
+    fetch_resumable() {
+        local url="$1" out="$2" stall=0 size=0 newsize
+        while :; do
+            if curl -fL --http1.1 -C - "$url" -o "$out"; then
+                return 0
+            fi
+            newsize=$(stat -f%z "$out" 2>/dev/null || stat -c%s "$out" 2>/dev/null || echo 0)
+            if [[ "$newsize" -gt "$size" ]]; then
+                stall=0
+                size="$newsize"
+            else
+                stall=$((stall + 1))
+            fi
+            [[ "$stall" -ge 3 ]] && return 1
+            echo "retrying (resume at ${newsize} bytes)" >&2
+            sleep 3
+        done
+    }
+
     ok=""
     for url in "${URLS[@]}"; do
         echo "Downloading Big Buck Bunny 1080p stereo (~733 MB) ← $url"
-        # --http1.1: web.archive.org over h2 aborts large transfers from CI runners with
-        # curl error 92 (stream not closed cleanly); --retry-all-errors covers exactly
-        # those non-transient-looking failures that ARE transient there.
-        if curl -fL --http1.1 --retry 5 --retry-all-errors --retry-delay 5 "$url" -o "${SRC}.tmp"; then
+        if fetch_resumable "$url" "${SRC}.tmp"; then
             ok=1
             break
         fi
