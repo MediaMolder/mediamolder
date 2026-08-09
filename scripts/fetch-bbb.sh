@@ -16,11 +16,17 @@
 set -euo pipefail
 
 DEST="${1:-testdata/BBB_1080p.mp4}"
-# Primary: the Blender original. Fallback: the SAME file's archived bytes (a pinned Wayback
-# snapshot, id_ = raw content) — download.blender.org started answering 403/404 to CI in
-# 2026-08, and the tests seek to fixed offsets so only this exact cut is acceptable (the
-# 2013 "sunflower" remaster is a different edit). Same hardening pattern as the FFmpeg
-# source fallback (PR #58).
+
+# PRIMARY: the pre-transcoded artifact this script would produce, hosted as the
+# bbb-testdata-v1 release asset and pin-verified — the upstream sources rotted out from
+# under CI in 2026-08 (download.blender.org answers 403/404; web.archive.org rate-limits
+# large transfers to a crawl). Big Buck Bunny is (c) 2008 Blender Foundation /
+# www.bigbuckbunny.org, CC-BY 3.0 — redistribution of the transcode with attribution is
+# permitted (see the release notes). FALLBACK: download the original and transcode
+# locally, exactly as before; the tests seek fixed offsets, so only this exact cut is
+# acceptable (the 2013 "sunflower" remaster is a different edit).
+MP4_URL="https://github.com/MediaMolder/MediaMolder/releases/download/bbb-testdata-v1/BBB_1080p.mp4"
+MP4_SHA="b7bea3d0be5ea34deb8f0c3e3cf3a26e7758fb7ac7e9f62d7f0cdf73a8737717"
 URLS=(
     "https://download.blender.org/peach/bigbuckbunny_movies/big_buck_bunny_1080p_stereo.avi"
     "https://web.archive.org/web/20230708170654id_/https://download.blender.org/peach/bigbuckbunny_movies/big_buck_bunny_1080p_stereo.avi"
@@ -30,6 +36,29 @@ if [[ -f "$DEST" ]]; then
     echo "Already present: $DEST"
     exit 0
 fi
+
+# sha256 <file> — prints the digest (shasum on macOS, sha256sum elsewhere).
+sha256() {
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "$1" | awk '{print $1}'
+    else
+        shasum -a 256 "$1" | awk '{print $1}'
+    fi
+}
+
+# The pre-transcoded release asset: one fast, pin-verified download; done.
+mkdir -p "$(dirname "$DEST")"
+echo "Downloading pre-transcoded BBB test source (~367 MB) ← $MP4_URL"
+if curl -fL --retry 3 --retry-delay 5 "$MP4_URL" -o "${DEST}.tmp"; then
+    got="$(sha256 "${DEST}.tmp")"
+    if [[ "$got" == "$MP4_SHA" ]]; then
+        mv "${DEST}.tmp" "$DEST"
+        echo "Done: $DEST (release asset, sha verified)"
+        exit 0
+    fi
+    echo "release asset sha mismatch (got $got); falling back to source transcode" >&2
+fi
+rm -f "${DEST}.tmp"
 
 command -v ffmpeg >/dev/null 2>&1 || { echo "error: ffmpeg not found on PATH" >&2; exit 1; }
 
