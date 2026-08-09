@@ -12,6 +12,9 @@ import (
 	ort "github.com/yalue/onnxruntime_go"
 )
 
+// visNumClasses is the model's output channel count ([1,S,S,visNumClasses] logits).
+const visNumClasses = 6
+
 // The visibility model is a LAZY, OPTIONAL third session: hosts whose model bundles
 // predate it keep full detect/embed capability ([Capable] is unchanged), and the session
 // is only built — and its 16 MB only loaded — on the first [AssessFaceVisibility] call.

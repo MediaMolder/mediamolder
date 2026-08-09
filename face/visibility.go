@@ -25,9 +25,6 @@ const (
 	visClassFaceSkin   = 3
 	visClassClothes    = 4
 	visClassOther      = 5 // accessories etc.
-
-	// visNumClasses is the model's output channel count.
-	visNumClasses = 6
 )
 
 const (

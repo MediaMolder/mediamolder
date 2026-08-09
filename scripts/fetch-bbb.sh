@@ -16,7 +16,15 @@
 set -euo pipefail
 
 DEST="${1:-testdata/BBB_1080p.mp4}"
-URL="https://download.blender.org/peach/bigbuckbunny_movies/big_buck_bunny_1080p_stereo.avi"
+# Primary: the Blender original. Fallback: the SAME file's archived bytes (a pinned Wayback
+# snapshot, id_ = raw content) — download.blender.org started answering 403/404 to CI in
+# 2026-08, and the tests seek to fixed offsets so only this exact cut is acceptable (the
+# 2013 "sunflower" remaster is a different edit). Same hardening pattern as the FFmpeg
+# source fallback (PR #58).
+URLS=(
+    "https://download.blender.org/peach/bigbuckbunny_movies/big_buck_bunny_1080p_stereo.avi"
+    "https://web.archive.org/web/20230708170654id_/https://download.blender.org/peach/bigbuckbunny_movies/big_buck_bunny_1080p_stereo.avi"
+)
 
 if [[ -f "$DEST" ]]; then
     echo "Already present: $DEST"
@@ -29,8 +37,17 @@ mkdir -p "$(dirname "$DEST")"
 SRC="${DEST%.*}.src.avi"   # the downloaded original; removed after a successful transcode
 
 if [[ ! -f "$SRC" ]]; then
-    echo "Downloading Big Buck Bunny 1080p stereo (~733 MB) → $SRC"
-    curl -fL --retry 3 --retry-delay 5 "$URL" -o "${SRC}.tmp"
+    ok=""
+    for url in "${URLS[@]}"; do
+        echo "Downloading Big Buck Bunny 1080p stereo (~733 MB) ← $url"
+        if curl -fL --retry 3 --retry-delay 5 "$url" -o "${SRC}.tmp"; then
+            ok=1
+            break
+        fi
+        echo "source failed, trying the next mirror" >&2
+        rm -f "${SRC}.tmp"
+    done
+    [[ -n "$ok" ]] || { echo "error: every BBB source failed" >&2; exit 1; }
     mv "${SRC}.tmp" "$SRC"
 fi
 
