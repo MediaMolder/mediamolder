@@ -118,6 +118,31 @@ var (
 	}
 )
 
+// DefaultVisibilitySpec is the face-region visibility (portrait multiclass segmentation)
+// model: MediaPipe Multiclass Segmentation (Google, Apache-2.0 per its model card),
+// converted from the published TFLite to ONNX with an NCHW input (see
+// scripts/convert-visibility-model.sh for the reproducible recipe + provenance). Verified
+// by ONNX graph inspection: input input_29 [1,3,256,256], output Identity [1,256,256,6]
+// (spatial-last LOGITS — argmax needs no activation), classes background/hair/body-skin/
+// face-skin/clothes/other. Expects RGB in [0,1]. OPTIONAL: hosts that don't bundle it keep
+// full detect/embed capability; only AssessFaceVisibility needs it.
+var DefaultVisibilitySpec = ModelSpec{
+	Filename:   "selfie_multiclass_256x256.onnx",
+	SHA256:     "5b9a144822d3bf829eca6317084d383864e803bb0cc9dec914ba18bbfcaf4dba",
+	InputName:  "input_29",
+	OutputName: "Identity",
+	InputSize:  256,
+	Scale:      1.0 / 255.0,
+}
+
+// CheckVisibilityModel reports whether the OPTIONAL visibility model is present in dir and
+// matches its pin. Deliberately separate from CheckModels: a bundle without it is still a
+// fully capable detect/embed installation.
+func CheckVisibilityModel(dir string) error {
+	_, err := loadVerified(dir, DefaultVisibilitySpec)
+	return err
+}
+
 // CheckModels reports whether both bundled face models are present in dir and match their
 // pinned SHA-256. It is pure file IO (no ONNX runtime), so `mediamolder face-setup` can
 // validate the models even in a binary built without the with_onnx tag. nil ⇒ both are ready;

@@ -33,3 +33,16 @@ func TestStubContract(t *testing.T) {
 		}
 	}
 }
+
+// TestVisibilityStubContract pins the default-build visibility seam: the same
+// ErrUnsupported sentinel, a zero fraction, and no panic — so downstream callers treat
+// "unavailable" and "not yet assessed" identically.
+func TestVisibilityStubContract(t *testing.T) {
+	if err := VisibilityAvailable(); !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("VisibilityAvailable = %v, want ErrUnsupported", err)
+	}
+	occ, err := AssessFaceVisibility(image.NewRGBA(image.Rect(0, 0, 4, 4)), [4]int{1, 1, 2, 2})
+	if !errors.Is(err, ErrUnsupported) || occ != 0 {
+		t.Fatalf("AssessFaceVisibility = (%v, %v), want (0, ErrUnsupported)", occ, err)
+	}
+}

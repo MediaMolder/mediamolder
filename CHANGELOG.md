@@ -7,6 +7,19 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- **Face-region visibility (occlusion) assessment.** `face.AssessFaceVisibility(img,
+  bbox)` returns how much of a detected face is covered by something in front of it
+  (a hand, a glass, another person) as a fraction in [0,1] — measured, not inferred: a
+  portrait multiclass-segmentation model (MediaPipe Multiclass Segmentation, Apache-2.0,
+  converted to ONNX — `scripts/convert-visibility-model.sh` is the reproducible recipe)
+  labels a head-context crop, and anything inside the face box that is not face-skin or
+  hair is coverage. The model is an OPTIONAL third session: bundles without it keep full
+  detect/embed capability (`face.VisibilityAvailable` / `face.CheckVisibilityModel`
+  report its own state), it loads lazily on first use, and it runs on the deterministic
+  CPU provider — same input, same fraction, on every machine. Fetched + pin-verified by
+  `scripts/fetch-face-models.sh` (hosted as the `face-visibility-model-v1` release
+  asset). Default builds return `ErrUnsupported` as usual.
+
 - **Smart-cut trimming (`codec_video: "smartcopy"`).** Frame-accurate clip
   trimming that re-encodes only the GOP(s) the cut points land in and
   stream-copies every whole GOP in between byte-for-byte — the interior is

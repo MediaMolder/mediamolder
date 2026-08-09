@@ -118,3 +118,49 @@ func TestAnalyzeImageSeam(t *testing.T) {
 		}
 	}
 }
+
+// TestVisibilityIntegration runs detect → visibility against the bundled models: every
+// detected face in the fixture must yield a deterministic occlusion fraction in [0,1].
+// Gated like TestAnalyzeIntegration; additionally skips (with the reason) when the model
+// bundle predates the OPTIONAL visibility model — detect/embed capability must not imply it.
+func TestVisibilityIntegration(t *testing.T) {
+	if resolveModelsDir() == "" {
+		t.Skip("set MEDIAMOLDER_FACE_MODELS to run the face integration test")
+	}
+	imgPath := os.Getenv("MEDIAMOLDER_FACE_TEST_IMAGE")
+	if imgPath == "" {
+		t.Skip("set MEDIAMOLDER_FACE_TEST_IMAGE to a photo with a known face")
+	}
+	if !Capable() {
+		t.Skipf("face pipeline not capable for %q", resolveModelsDir())
+	}
+	if err := VisibilityAvailable(); err != nil {
+		t.Skipf("visibility model not bundled: %v", err)
+	}
+
+	img, err := decodeRGBA(imgPath)
+	if err != nil {
+		t.Fatalf("decodeRGBA: %v", err)
+	}
+	faces, err := DetectImage(img)
+	if err != nil {
+		t.Fatalf("DetectImage: %v", err)
+	}
+	if len(faces) == 0 {
+		t.Fatal("no faces detected in the fixture")
+	}
+	for i, f := range faces {
+		occ, err := AssessFaceVisibility(img, f.BBox)
+		if err != nil {
+			t.Fatalf("face %d: AssessFaceVisibility: %v", i, err)
+		}
+		if occ < 0 || occ > 1 {
+			t.Errorf("face %d: occlusion = %v, want [0,1]", i, occ)
+		}
+		again, err := AssessFaceVisibility(img, f.BBox)
+		if err != nil || again != occ {
+			t.Errorf("face %d: non-deterministic occlusion: %v then %v (err %v)", i, occ, again, err)
+		}
+		t.Logf("face %d bbox %v occlusion %.3f", i, f.BBox, occ)
+	}
+}

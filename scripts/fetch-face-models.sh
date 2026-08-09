@@ -57,3 +57,14 @@ fetch \
     "06b941fd5792be624ad18f2df9ede0a021c4df165dd418204d978c20fd555928"
 
 echo "Done. Set MEDIAMOLDER_FACE_MODELS=$DEST to enable the face pipeline."
+
+# --- Face-region visibility (OPTIONAL) -------------------------------------------------------
+# MediaPipe Multiclass Segmentation (Google, Apache-2.0 per its model card), converted from
+# the published TFLite to ONNX (NCHW input) — scripts/convert-visibility-model.sh is the
+# reproducible recipe. Hosted as a MediaMolder release asset because Google publishes only
+# the TFLite. Verified I/O: input_29[1,3,256,256] → Identity[1,256,256,6]. A bundle without
+# this model is still fully detect/embed capable; only AssessFaceVisibility needs it.
+fetch \
+    "https://github.com/MediaMolder/MediaMolder/releases/download/face-visibility-model-v1/selfie_multiclass_256x256.onnx" \
+    "$DEST/selfie_multiclass_256x256.onnx" \
+    "5b9a144822d3bf829eca6317084d383864e803bb0cc9dec914ba18bbfcaf4dba"
