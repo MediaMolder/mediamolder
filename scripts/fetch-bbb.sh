@@ -40,7 +40,10 @@ if [[ ! -f "$SRC" ]]; then
     ok=""
     for url in "${URLS[@]}"; do
         echo "Downloading Big Buck Bunny 1080p stereo (~733 MB) ← $url"
-        if curl -fL --retry 3 --retry-delay 5 "$url" -o "${SRC}.tmp"; then
+        # --http1.1: web.archive.org over h2 aborts large transfers from CI runners with
+        # curl error 92 (stream not closed cleanly); --retry-all-errors covers exactly
+        # those non-transient-looking failures that ARE transient there.
+        if curl -fL --http1.1 --retry 5 --retry-all-errors --retry-delay 5 "$url" -o "${SRC}.tmp"; then
             ok=1
             break
         fi
