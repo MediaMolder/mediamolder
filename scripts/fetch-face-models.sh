@@ -68,3 +68,22 @@ fetch \
     "https://github.com/MediaMolder/MediaMolder/releases/download/face-visibility-model-v1/selfie_multiclass_256x256.onnx" \
     "$DEST/selfie_multiclass_256x256.onnx" \
     "5b9a144822d3bf829eca6317084d383864e803bb0cc9dec914ba18bbfcaf4dba"
+
+# --- Facial expression (OPTIONAL) ------------------------------------------------------------
+# MediaPipe Face Landmarker cascade (Google, Apache-2.0 per the FaceMesh V2 + Blendshape V2
+# model cards): dense landmarks + blendshape coefficients, converted from the published
+# TFLite to ONNX — scripts/convert-expression-models.sh is the recipe (and explains why the
+# releases, not re-conversion bytes, are the pinned artifacts). Hosted as MediaMolder release
+# assets because Google publishes only the bundled .task. Verified I/O:
+#   input_12[1,3,256,256] → Identity[1,1,1,1434] + Identity_1[1,1,1,1]
+#   serving_default_input_points:0[1,146,2] → StatefulPartitionedCall:0[52]
+# A bundle without these is still fully detect/embed capable; only AssessFaceExpression
+# needs them.
+fetch \
+    "https://github.com/MediaMolder/MediaMolder/releases/download/face-expression-model-v1/face_landmarks_detector.onnx" \
+    "$DEST/face_landmarks_detector.onnx" \
+    "3e824fb93ac4cc39a0cf3b448008311988f6b8dc3e8ecd8665a1daa1303ff635"
+fetch \
+    "https://github.com/MediaMolder/MediaMolder/releases/download/face-expression-model-v1/face_blendshapes.onnx" \
+    "$DEST/face_blendshapes.onnx" \
+    "f6bd15b960a55057dbbf05bb2f32d757c67e651b15c9c13d4d5d744ca03dd3aa"

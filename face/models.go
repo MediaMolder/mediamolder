@@ -135,6 +135,54 @@ var DefaultVisibilitySpec = ModelSpec{
 	Scale:      1.0 / 255.0,
 }
 
+// DefaultExpressionMeshSpec / DefaultExpressionBlendshapesSpec are the facial-expression
+// cascade: MediaPipe Face Landmarker's dense-landmark model + blendshape model (Google,
+// Apache-2.0 per the FaceMesh V2 and Blendshape V2 model cards), converted from the
+// published TFLite (float16 — the only precision Google ships) to ONNX; see
+// scripts/convert-expression-models.sh for the recipe, provenance, and the
+// equivalence-not-bytes reproducibility note. Verified by ONNX graph inspection + numeric
+// parity against the TFLite source:
+//
+//	face_landmarks_detector.onnx  input_12 [1,3,256,256] RGB in [0,1] →
+//	    Identity [1,1,1,1434] (478×(x,y,z), crop-pixel space) ·
+//	    Identity_1 [1,1,1,1] (face-presence LOGIT) · (a third, unused output is not bound)
+//	face_blendshapes.onnx  serving_default_input_points:0 [1,146,2] (landmark points; the
+//	    model normalises scale/rotation/translation internally) →
+//	    StatefulPartitionedCall:0 [52] (coefficients in [0,1])
+//
+// OPTIONAL: hosts that don't bundle them keep full detect/embed(/visibility) capability;
+// only AssessFaceExpression needs them.
+var (
+	DefaultExpressionMeshSpec = ModelSpec{
+		Filename:   "face_landmarks_detector.onnx",
+		SHA256:     "3e824fb93ac4cc39a0cf3b448008311988f6b8dc3e8ecd8665a1daa1303ff635",
+		InputName:  "input_12",
+		OutputName: "Identity",
+		InputSize:  256,
+		Scale:      1.0 / 255.0,
+	}
+	DefaultExpressionBlendshapesSpec = ModelSpec{
+		Filename:   "face_blendshapes.onnx",
+		SHA256:     "f6bd15b960a55057dbbf05bb2f32d757c67e651b15c9c13d4d5d744ca03dd3aa",
+		InputName:  "serving_default_input_points:0",
+		OutputName: "StatefulPartitionedCall:0",
+		// Not an image model — its input is a [1,146,2] landmark tensor, so InputSize,
+		// Scale and the other preprocessing fields do not apply.
+	}
+)
+
+// CheckExpressionModels reports whether the OPTIONAL expression models are both present in
+// dir and match their pins. Deliberately separate from CheckModels (the CheckVisibilityModel
+// stance): a bundle without them is still a fully capable detect/embed installation.
+func CheckExpressionModels(dir string) error {
+	for _, spec := range []ModelSpec{DefaultExpressionMeshSpec, DefaultExpressionBlendshapesSpec} {
+		if _, err := loadVerified(dir, spec); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // CheckVisibilityModel reports whether the OPTIONAL visibility model is present in dir and
 // matches its pin. Deliberately separate from CheckModels: a bundle without it is still a
 // fully capable detect/embed installation.

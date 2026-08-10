@@ -73,6 +73,18 @@ type pipeline struct {
 	visIn   *ort.Tensor[float32]
 	visOut  *ort.Tensor[float32]
 
+	// Optional expression sessions (expression_onnx.go): dense landmarks + blendshapes.
+	// Built lazily on first use — both or neither — under the same convention as vis.
+	exprMeshSpec ModelSpec
+	exprBSSpec   ModelSpec
+	exprMesh     *ort.AdvancedSession
+	exprMeshIn   *ort.Tensor[float32]
+	exprMeshOut  *ort.Tensor[float32]
+	exprMeshPres *ort.Tensor[float32]
+	exprBS       *ort.AdvancedSession
+	exprBSIn     *ort.Tensor[float32]
+	exprBSOut    *ort.Tensor[float32]
+
 	provider string // the active execution provider both sessions run on: "cuda"/"directml"/"coreml" or "cpu"
 }
 
@@ -291,7 +303,10 @@ func newPipeline() (*pipeline, error) {
 		return nil, fmt.Errorf("face: onnxruntime init: %w", err)
 	}
 	dir := resolveModelsDir()
-	p := &pipeline{detectSpec: DefaultDetectSpec, embedSpec: DefaultEmbedSpec, visSpec: DefaultVisibilitySpec}
+	p := &pipeline{
+		detectSpec: DefaultDetectSpec, embedSpec: DefaultEmbedSpec, visSpec: DefaultVisibilitySpec,
+		exprMeshSpec: DefaultExpressionMeshSpec, exprBSSpec: DefaultExpressionBlendshapesSpec,
+	}
 
 	// Choose the execution provider once and share the options across both sessions; DirectML by
 	// default (GPU), CPU otherwise. onnxruntime copies the options into each session, so they are
@@ -388,12 +403,13 @@ func (p *pipeline) runEmbed(aligned *image.RGBA) ([]float32, error) {
 }
 
 func (p *pipeline) destroy() {
-	for _, s := range []*ort.AdvancedSession{p.detect, p.embed, p.vis} {
+	for _, s := range []*ort.AdvancedSession{p.detect, p.embed, p.vis, p.exprMesh, p.exprBS} {
 		if s != nil {
 			s.Destroy()
 		}
 	}
-	for _, t := range []*ort.Tensor[float32]{p.detectIn, p.detectOut, p.embedIn, p.embedOut, p.visIn, p.visOut} {
+	for _, t := range []*ort.Tensor[float32]{p.detectIn, p.detectOut, p.embedIn, p.embedOut, p.visIn, p.visOut,
+		p.exprMeshIn, p.exprMeshOut, p.exprMeshPres, p.exprBSIn, p.exprBSOut} {
 		if t != nil {
 			t.Destroy()
 		}
