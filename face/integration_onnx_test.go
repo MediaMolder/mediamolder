@@ -119,6 +119,58 @@ func TestAnalyzeImageSeam(t *testing.T) {
 	}
 }
 
+// TestExpressionIntegration runs detect → expression against the bundled models: every
+// detected face in the fixture must yield deterministic blendshape coefficients in [0,1]
+// with a presence at or above the assessment threshold (a real detected face the model then
+// disowns would mean the crop geometry is wrong). Gated like TestAnalyzeIntegration;
+// additionally skips when the model bundle predates the OPTIONAL expression models.
+func TestExpressionIntegration(t *testing.T) {
+	if resolveModelsDir() == "" {
+		t.Skip("set MEDIAMOLDER_FACE_MODELS to run the face integration test")
+	}
+	imgPath := os.Getenv("MEDIAMOLDER_FACE_TEST_IMAGE")
+	if imgPath == "" {
+		t.Skip("set MEDIAMOLDER_FACE_TEST_IMAGE to a photo with a known face")
+	}
+	if !Capable() {
+		t.Skipf("face pipeline not capable for %q", resolveModelsDir())
+	}
+	if err := ExpressionAvailable(); err != nil {
+		t.Skipf("expression models not bundled: %v", err)
+	}
+
+	img, err := decodeRGBA(imgPath)
+	if err != nil {
+		t.Fatalf("decodeRGBA: %v", err)
+	}
+	faces, err := DetectImage(img)
+	if err != nil {
+		t.Fatalf("DetectImage: %v", err)
+	}
+	if len(faces) == 0 {
+		t.Fatal("no faces detected in the fixture")
+	}
+	for i, f := range faces {
+		e, err := AssessFaceExpression(img, f.BBox, f.Landmarks)
+		if err != nil {
+			t.Fatalf("face %d: AssessFaceExpression: %v", i, err)
+		}
+		if e.Presence < exprPresenceThresh || e.Presence > 1 {
+			t.Errorf("face %d: presence = %v, want [%v,1]", i, e.Presence, exprPresenceThresh)
+		}
+		for c, v := range e.Blendshapes {
+			if v < 0 || v > 1 {
+				t.Errorf("face %d: coefficient %s = %v, want [0,1]", i, BlendshapeNames[c], v)
+			}
+		}
+		again, err := AssessFaceExpression(img, f.BBox, f.Landmarks)
+		if err != nil || again != e {
+			t.Errorf("face %d: non-deterministic expression (err %v)", i, err)
+		}
+		t.Logf("face %d bbox %v presence %.3f smile %.3f eyesOpen %.3f", i, f.BBox, e.Presence, e.Smile, e.EyesOpen)
+	}
+}
+
 // TestVisibilityIntegration runs detect → visibility against the bundled models: every
 // detected face in the fixture must yield a deterministic occlusion fraction in [0,1].
 // Gated like TestAnalyzeIntegration; additionally skips (with the reason) when the model
