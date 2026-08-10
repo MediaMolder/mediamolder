@@ -17,6 +17,12 @@ import (
 // tongue-out score, is deliberately not bound — the upstream pipeline drops it too.)
 const exprMeshPresenceOutput = "Identity_1"
 
+// exprPresenceThresh gates on the landmark model's face-presence confidence (after
+// sigmoid; the upstream pipeline's default detection-confidence threshold). Below it,
+// AssessFaceExpression returns ErrNoFace rather than hallucinated coefficients. Lives
+// beside its only consumer so the default (model-less) build stays lint-clean.
+const exprPresenceThresh = 0.5
+
 // The expression models are LAZY, OPTIONAL sessions four and five: hosts whose model
 // bundles predate them keep full detect/embed(/visibility) capability, and the sessions are
 // only built — and their ~7 MB only loaded — on the first [AssessFaceExpression] call.

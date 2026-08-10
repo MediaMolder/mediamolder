@@ -37,11 +37,6 @@ const (
 	// face bbox × this. Matches the upstream pipeline's ROI expansion (1.5× ≈ 25% margin
 	// around the face), which the model was trained against.
 	exprContext = 1.5
-
-	// exprPresenceThresh gates on the landmark model's face-presence confidence (after
-	// sigmoid; the upstream pipeline's default detection-confidence threshold). Below it,
-	// AssessFaceExpression returns ErrNoFace rather than hallucinated coefficients.
-	exprPresenceThresh = 0.5
 )
 
 // Blendshape coefficient indices (the model's output order; see BlendshapeNames for all 52).
