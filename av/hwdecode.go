@@ -210,6 +210,14 @@ func (d *HWDecoderContext) ReceiveFrame(f *Frame) error {
 	return nil
 }
 
+// FlushBuffers resets the decoder's internal state (avcodec_flush_buffers) without
+// draining it — the post-seek reset that leaves the decoder ready for packets from the
+// new position. Mirrors DecoderContext.FlushBuffers, so seek-and-decode loops can drive
+// a hardware decoder through the same interface as a software one.
+func (d *HWDecoderContext) FlushBuffers() {
+	C.avcodec_flush_buffers(d.p)
+}
+
 // Flush sends a nil packet to drain buffered frames.
 func (d *HWDecoderContext) Flush() error {
 	return d.SendPacket(nil)
