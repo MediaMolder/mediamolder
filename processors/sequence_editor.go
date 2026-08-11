@@ -213,8 +213,7 @@ type SequenceEditor struct {
 	// a time and evict a reader once its last covering clip has passed, keeping
 	// at most ~2 decoders open during a transition window (the O(1)-frame memory
 	// model the removed xfade_sequence processor used).
-	readers   map[string]*clipReader
-	lastFrame *av.Frame // last successfully sent frame (used for hold/freeze on timeline gaps)
+	readers map[string]*clipReader
 
 	// audioReaders mirrors readers for the audio half: one independent demuxer
 	// + decoder + resampler per source URL (see sequence_audio.go). A reader
@@ -448,10 +447,6 @@ func (se *SequenceEditor) Close() error {
 		ar.close()
 	}
 	se.audioReaders = nil
-	if se.lastFrame != nil {
-		se.lastFrame.Close()
-		se.lastFrame = nil
-	}
 	if se.sequenceLog != nil {
 		se.sequenceLog.Close()
 		se.sequenceLog = nil
@@ -759,17 +754,15 @@ func (se *SequenceEditor) render(ctx context.Context, emitVideo func(*av.Frame) 
 			// causing the encoder/muxer to treat the stream as 1 fps over ~3895 s.
 			pts := int64(t*float64(tbDen)/float64(tbNum) + 0.5)
 			outFrame.SetPTS(pts)
+			// emitVideo transfers ownership: the frame crosses a channel to the encoder
+			// node's goroutine, which frees it after encoding. Nothing here may touch
+			// outFrame after a successful send — the hold/freeze clone that used to be
+			// taken at this point raced that free (av_frame_clone on a freed frame), and
+			// the clone was never read anyway: holds are served by the clip readers.
 			if err := emitVideo(outFrame); err != nil {
 				outFrame.Close()
 				se.emitSequenceLog(i, t, pts, logAction, logLayers, logHeldFrom, logNotes, false)
 				return err
-			}
-			// remember a clone for future hold/freeze gaps (we own the clone)
-			if se.lastFrame != nil {
-				se.lastFrame.Close()
-			}
-			if cl, cerr := outFrame.Clone(); cerr == nil {
-				se.lastFrame = cl
 			}
 
 			if contentThisFrame && chosen != nil {
@@ -1371,7 +1364,7 @@ func (se *SequenceEditor) convertFrame(native *av.Frame, r *clipReader) *av.Fram
 	// produce output on the first Pull after Push, but the first frame can require
 	// several Pull attempts while the filter configures itself (see the "changing
 	// video frame properties on the fly" warnings). Keep pulling on EAGAIN for a
-	// while before giving up (caller will then hold the previous lastFrame).
+	// while before giving up (the caller then holds its previous frame).
 	for attempt := 0; attempt < 16; attempt++ {
 		cf, aerr := av.AllocFrame()
 		if aerr != nil {
