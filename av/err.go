@@ -14,9 +14,11 @@ package av
 //
 // static int averror_eagain(void) { return AVERROR(EAGAIN); }
 // static int averror_eof(void)    { return AVERROR_EOF; }
+// static int averror_exit(void)   { return AVERROR_EXIT; }
 import "C"
 
 import (
+	"errors"
 	"fmt"
 	"unsafe"
 )
@@ -53,6 +55,17 @@ var ErrEOF = &Err{Code: int(C.averror_eof()), Message: "end of file"}
 func IsEOF(err error) bool {
 	if e, ok := err.(*Err); ok {
 		return e.Code == int(C.averror_eof())
+	}
+	return false
+}
+
+// IsInterrupted reports whether err is AVERROR_EXIT — a blocking libav call
+// aborted by the interrupt callback, e.g. a resilient input's watchdog
+// deadline expiring (OpenInputResilient / SetReadDeadline).
+func IsInterrupted(err error) bool {
+	var e *Err
+	if errors.As(err, &e) {
+		return e.Code == int(C.averror_exit())
 	}
 	return false
 }

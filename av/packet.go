@@ -5,6 +5,7 @@ package av
 
 // #include <string.h>
 // #include "libavcodec/packet.h"
+// #include "mm_packet_guard.h"
 //
 // static void packet_rescale_ts(AVPacket *pkt,
 //                                int src_num, int src_den,
@@ -60,21 +61,31 @@ func NewPacketFromBytes(data []byte) (*Packet, error) {
 // SetDuration sets the packet duration (in the packet's stream time_base units).
 func (pkt *Packet) SetDuration(d int64) { pkt.p.duration = C.int64_t(d) }
 
-// Close unrefs the packet data and frees the AVPacket.
+// Close unrefs the packet data and frees the AVPacket. Guarded: a packet whose
+// struct a demuxer left structurally inconsistent is scrubbed (its buffers
+// abandoned, not freed through poisoned pointers) before the free — see
+// mm_packet_guard.c. av_packet_free unrefs internally, so an unguarded Close
+// on such a packet dies exactly like an unguarded Unref.
 func (pkt *Packet) Close() error {
 	if pkt.p != nil {
 		leakUntrack(unsafe.Pointer(pkt.p))
-		C.av_packet_free(&pkt.p)
+		if C.mm_packet_free_guarded(&pkt.p) != 0 {
+			scrubbedPackets.Add(1)
+		}
 		pkt.p = nil
 	}
 	return nil
 }
 
 // Unref releases the packet's buffer references without freeing the struct,
-// making the packet ready for reuse.
+// making the packet ready for reuse. Guarded: a structurally inconsistent
+// packet is scrubbed instead of unreffed, leaking its buffer rather than
+// dereferencing poison — see mm_packet_guard.c.
 func (pkt *Packet) Unref() {
 	if pkt.p != nil {
-		C.av_packet_unref(pkt.p)
+		if C.mm_packet_unref_guarded(pkt.p) != 0 {
+			scrubbedPackets.Add(1)
+		}
 	}
 }
 
@@ -157,6 +168,14 @@ func ClonePacket(src *Packet) (*Packet, error) {
 	}
 	leakTrack(unsafe.Pointer(c), "AVPacket")
 	return &Packet{p: c}, nil
+}
+
+// IsCorrupt reports whether the demuxer flagged this packet's payload as
+// damaged (AV_PKT_FLAG_CORRUPT). Such a packet is structurally safe to handle
+// — unref, free, even decode — but its bytes are not to be trusted; analysis
+// passes should skip it (ForEachPacket does so automatically).
+func (pkt *Packet) IsCorrupt() bool {
+	return pkt != nil && pkt.p != nil && pkt.p.flags&C.AV_PKT_FLAG_CORRUPT != 0
 }
 
 // IsKeyFrame reports whether the packet has the AV_PKT_FLAG_KEY flag set.
