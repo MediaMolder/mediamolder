@@ -156,6 +156,26 @@ func TestGuardedUnrefSurvivesPoisonedPacket(t *testing.T) {
 	}
 }
 
+// TestOddOffsetDataIsNotPoison pins the legal mpegts/PES shape: a packet whose
+// data pointer sits at an odd byte offset into its buffer (data = buf->data + n
+// with an odd header length n) is well-formed, and the guard must not scrub it.
+// An alignment check on data would quietly abandon healthy camera captures —
+// only pointer-to-struct fields (buf, side_data, opaque_ref) are alignment-
+// checked.
+func TestOddOffsetDataIsNotPoison(t *testing.T) {
+	pkt, err := NewPacketFromBytes(make([]byte, 64))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pkt.Close()
+	offsetPacketDataForTest(pkt)
+	before := ScrubbedPacketCount()
+	pkt.Unref() // a scrub here would mean upstream abandons a healthy file
+	if got := ScrubbedPacketCount(); got != before {
+		t.Fatalf("odd-offset data was scrubbed as poison (count %d -> %d)", before, got)
+	}
+}
+
 // TestGuardedCloseSurvivesPoisonedPacket: av_packet_free unrefs internally, so
 // a deferred Close crashes on the same poison unless it shares the guard.
 func TestGuardedCloseSurvivesPoisonedPacket(t *testing.T) {

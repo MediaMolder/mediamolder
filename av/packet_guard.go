@@ -23,3 +23,8 @@ func ScrubbedPacketCount() int64 { return scrubbedPackets.Load() }
 // a real crash (all-ones buffer pointer, negative size) so tests can prove the
 // guarded unref/free paths survive it.
 func poisonPacketForTest(pkt *Packet) { C.mm_packet_poison_for_test(pkt.p) }
+
+// offsetPacketDataForTest shifts pkt's data pointer one byte into its buffer —
+// the legal shape mpegts/PES demuxers produce with odd header lengths — so
+// tests can prove odd-offset data is never mistaken for poison.
+func offsetPacketDataForTest(pkt *Packet) { C.mm_packet_offset_data_for_test(pkt.p) }

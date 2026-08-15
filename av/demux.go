@@ -187,6 +187,10 @@ const (
 // Deliberately NOT set: err_detect. Aggressive error detection turns tolerable
 // damage into open failures, which is the wrong trade for analysis paths that
 // want whatever frames are recoverable.
+//
+// Caller keys replace defaults wholesale — in particular a caller-supplied
+// "fflags" REPLACES "+discardcorrupt" rather than merging with it; a caller
+// overriding fflags must restate it if wanted.
 func resilientDefaults() map[string]string {
 	return map[string]string{
 		"fflags":          "+discardcorrupt",
@@ -493,7 +497,13 @@ func (f *InputFormatContext) ForEachPacket(fn func(*Packet) error) error {
 }
 
 // SeekFile seeks to the nearest keyframe at targetTS (in AV_TIME_BASE units).
+// On an input opened with OpenInputResilient the seek is bounded by the same
+// read deadline as ReadPacket — a damaged index can wedge a seek exactly like
+// a read, and extract-at-timestamp paths seek before their first read.
 func (f *InputFormatContext) SeekFile(targetTS int64) error {
+	if f.deadline != nil && f.readTimeout > 0 {
+		C.mm_arm_deadline(f.deadline, C.int64_t(f.readTimeout/time.Microsecond))
+	}
 	ret := C.avformat_seek_file(f.p, -1, C.INT64_MIN, C.int64_t(targetTS), C.INT64_MAX, 0)
 	return newErr(ret)
 }

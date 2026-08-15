@@ -33,6 +33,15 @@ func (e *Err) Error() string {
 	return fmt.Sprintf("averror(%d): %s", e.Code, e.Message)
 }
 
+// Is reports whether target is an *Err with the same code, so errors.Is
+// matches sentinel errors like ErrPoisonedPacket by code rather than only by
+// pointer identity — a wrapped or re-constructed equal-coded error still
+// compares equal.
+func (e *Err) Is(target error) bool {
+	t, ok := target.(*Err)
+	return ok && t.Code == e.Code
+}
+
 // newErr converts a negative AVERROR int from C into an *Err.
 // Returns nil if code >= 0 (success).
 func newErr(code C.int) error {

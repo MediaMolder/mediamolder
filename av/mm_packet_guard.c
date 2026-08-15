@@ -30,22 +30,33 @@
  * structural corruption, not data. */
 #define MM_PACKET_SIZE_CAP (1 << 30)
 
-/* NULL is fine; a sentinel pattern, a null-page value, or a misaligned value
- * cannot be a live heap allocation. */
-static int mm_ptr_poisoned(const void *p) {
+/* NULL is fine; a sentinel pattern or a null-page value cannot be a live
+ * allocation. Deliberately NO alignment test here: this variant is for
+ * pkt->data, which is a byte offset into a buffer, not a heap object —
+ * mpegts/PES demuxers routinely set data = buf->data + n with an odd header
+ * length n, and flagging that as poison would scrub well-formed packets and
+ * abandon healthy files. */
+static int mm_data_ptr_poisoned(const void *p) {
     uintptr_t v = (uintptr_t)p;
     if (v == 0) return 0;
-    if (v == UINTPTR_MAX) return 1;               /* the observed fault pattern */
-    if (v < 4096) return 1;                       /* inside the null page */
-    if ((v & (sizeof(void *) - 1)) != 0) return 1; /* heap pointers are aligned */
+    if (v == UINTPTR_MAX) return 1; /* the observed fault pattern */
+    if (v < 4096) return 1;         /* inside the null page */
     return 0;
+}
+
+/* For pointer-to-struct fields (buf, side_data, opaque_ref), which are heap
+ * allocations and therefore also pointer-aligned. */
+static int mm_ptr_poisoned(const void *p) {
+    return mm_data_ptr_poisoned(p) ||
+           (((uintptr_t)p & (sizeof(void *) - 1)) != 0);
 }
 
 int mm_packet_consistent(const AVPacket *pkt) {
     if (!pkt) return 0;
     if (pkt->size < 0 || pkt->size > MM_PACKET_SIZE_CAP) return 0;
     if (pkt->size > 0 && pkt->data == NULL) return 0;
-    if (mm_ptr_poisoned(pkt->buf) || mm_ptr_poisoned(pkt->data) ||
+    if (mm_data_ptr_poisoned(pkt->data)) return 0;
+    if (mm_ptr_poisoned(pkt->buf) ||
         mm_ptr_poisoned(pkt->side_data) || mm_ptr_poisoned(pkt->opaque_ref))
         return 0;
     if (pkt->side_data_elems < 0 || pkt->side_data_elems > 1024) return 0;
@@ -83,7 +94,12 @@ int mm_packet_free_guarded(AVPacket **pkt) {
 
 int mm_read_frame_guarded(AVFormatContext *ctx, AVPacket *pkt) {
     int ret = av_read_frame(ctx, pkt);
-    if (ret < 0) return ret; /* libav >= 5 guarantees pkt is blank on error */
+    if (ret < 0) {
+        /* libav >= 5 documents pkt as blank on error; verifying costs less
+         * than trusting, and a scrub here spares the caller's next Unref. */
+        if (!mm_packet_consistent(pkt)) mm_packet_scrub(pkt);
+        return ret;
+    }
     if (!mm_packet_consistent(pkt) ||
         pkt->stream_index < 0 ||
         (unsigned)pkt->stream_index >= ctx->nb_streams) {
@@ -112,4 +128,10 @@ void mm_packet_poison_for_test(AVPacket *pkt) {
     pkt->buf = (AVBufferRef *)UINTPTR_MAX;
     pkt->data = (uint8_t *)UINTPTR_MAX;
     pkt->size = -1;
+}
+
+void mm_packet_offset_data_for_test(AVPacket *pkt) {
+    if (!pkt || !pkt->data || pkt->size < 2) return;
+    pkt->data += 1; /* the legal mpegts/PES shape: data = buf->data + odd n */
+    pkt->size -= 1;
 }

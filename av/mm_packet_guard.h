@@ -55,4 +55,9 @@ void mm_arm_deadline(int64_t *deadline_us_box, int64_t timeout_us);
  * unref/free survives what a bare av_packet_unref does not. */
 void mm_packet_poison_for_test(AVPacket *pkt);
 
+/* Test hook: shift pkt->data one byte into its buffer — the legal shape
+ * mpegts/PES demuxers produce with odd header lengths — so tests can prove
+ * an odd-offset data pointer is never mistaken for poison. */
+void mm_packet_offset_data_for_test(AVPacket *pkt);
+
 #endif /* MM_PACKET_GUARD_H */
