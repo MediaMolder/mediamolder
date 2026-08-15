@@ -38,8 +38,11 @@ int mm_packet_free_guarded(AVPacket **pkt);
 /* av_read_frame plus a post-read consistency check: on success the packet must
  * be internally consistent and its stream_index must name a real stream.
  * Returns MM_ERR_POISONED_PACKET (and scrubs the packet, leaving it safe to
- * reuse or free) when the demuxer's "success" fails those checks. */
-int mm_read_frame_guarded(AVFormatContext *ctx, AVPacket *pkt);
+ * reuse or free) when the demuxer's "success" fails those checks. *scrubbed
+ * (optional) is set to 1 whenever a scrub happened — on the poisoned-success
+ * path AND on an error return that left the packet inconsistent — so callers
+ * counting scrubs see both. */
+int mm_read_frame_guarded(AVFormatContext *ctx, AVPacket *pkt, int *scrubbed);
 
 /* AVIO interrupt callback keyed on a monotonic deadline (av_gettime_relative
  * microseconds) stored in the opaque int64_t box. 0 in the box = disarmed.

@@ -446,9 +446,12 @@ func (f *InputFormatContext) ReadPacket(pkt *Packet) error {
 	if f.deadline != nil && f.readTimeout > 0 {
 		C.mm_arm_deadline(f.deadline, C.int64_t(f.readTimeout/time.Microsecond))
 	}
-	ret := C.mm_read_frame_guarded(f.p, pkt.raw())
-	if ret == C.MM_ERR_POISONED_PACKET {
+	var scrubbed C.int
+	ret := C.mm_read_frame_guarded(f.p, pkt.raw(), &scrubbed)
+	if scrubbed != 0 {
 		scrubbedPackets.Add(1)
+	}
+	if ret == C.MM_ERR_POISONED_PACKET {
 		return ErrPoisonedPacket
 	}
 	return newErr(ret)

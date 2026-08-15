@@ -92,18 +92,25 @@ int mm_packet_free_guarded(AVPacket **pkt) {
     return scrubbed;
 }
 
-int mm_read_frame_guarded(AVFormatContext *ctx, AVPacket *pkt) {
+int mm_read_frame_guarded(AVFormatContext *ctx, AVPacket *pkt, int *scrubbed) {
+    if (scrubbed) *scrubbed = 0;
     int ret = av_read_frame(ctx, pkt);
     if (ret < 0) {
         /* libav >= 5 documents pkt as blank on error; verifying costs less
-         * than trusting, and a scrub here spares the caller's next Unref. */
-        if (!mm_packet_consistent(pkt)) mm_packet_scrub(pkt);
+         * than trusting, and a scrub here spares the caller's next Unref.
+         * Reported via *scrubbed so hosts counting scrubs for quarantine
+         * also see "read failed and left poison". */
+        if (!mm_packet_consistent(pkt)) {
+            mm_packet_scrub(pkt);
+            if (scrubbed) *scrubbed = 1;
+        }
         return ret;
     }
     if (!mm_packet_consistent(pkt) ||
         pkt->stream_index < 0 ||
         (unsigned)pkt->stream_index >= ctx->nb_streams) {
         mm_packet_scrub(pkt);
+        if (scrubbed) *scrubbed = 1;
         return MM_ERR_POISONED_PACKET;
     }
     return 0;
