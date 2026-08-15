@@ -14,9 +14,11 @@ package av
 //
 // static int averror_eagain(void) { return AVERROR(EAGAIN); }
 // static int averror_eof(void)    { return AVERROR_EOF; }
+// static int averror_exit(void)   { return AVERROR_EXIT; }
 import "C"
 
 import (
+	"errors"
 	"fmt"
 	"unsafe"
 )
@@ -29,6 +31,15 @@ type Err struct {
 
 func (e *Err) Error() string {
 	return fmt.Sprintf("averror(%d): %s", e.Code, e.Message)
+}
+
+// Is reports whether target is an *Err with the same code, so errors.Is
+// matches sentinel errors like ErrPoisonedPacket by code rather than only by
+// pointer identity — a wrapped or re-constructed equal-coded error still
+// compares equal.
+func (e *Err) Is(target error) bool {
+	t, ok := target.(*Err)
+	return ok && t.Code == e.Code
 }
 
 // newErr converts a negative AVERROR int from C into an *Err.
@@ -53,6 +64,17 @@ var ErrEOF = &Err{Code: int(C.averror_eof()), Message: "end of file"}
 func IsEOF(err error) bool {
 	if e, ok := err.(*Err); ok {
 		return e.Code == int(C.averror_eof())
+	}
+	return false
+}
+
+// IsInterrupted reports whether err is AVERROR_EXIT — a blocking libav call
+// aborted by the interrupt callback, e.g. a resilient input's watchdog
+// deadline expiring (OpenInputResilient / SetReadDeadline).
+func IsInterrupted(err error) bool {
+	var e *Err
+	if errors.As(err, &e) {
+		return e.Code == int(C.averror_exit())
 	}
 	return false
 }
