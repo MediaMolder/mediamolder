@@ -54,6 +54,12 @@ type WhisperSTT struct {
 	outputFile   string
 	outputFormat string
 
+	// Resampler-rebuild bookkeeping. A rebuild throws away the SwrContext's delay
+	// line, so every one of them is a potential discontinuity in the audio handed to
+	// the model — a diagnostic worth counting rather than inferring from bad output.
+	resamplerRebuilds int
+	rebuildErrs       []error
+
 	emit MetadataEmitter
 }
 
@@ -169,6 +175,10 @@ func (p *WhisperSTT) accumulate(frame *av.Frame) error {
 	if err := p.resampleAppend(in); err != nil {
 		// The input parameters changed since the resampler was built: rebuild
 		// from the current frame and retry once.
+		p.resamplerRebuilds++
+		if len(p.rebuildErrs) < 8 { // a sample is enough to classify; do not grow unbounded
+			p.rebuildErrs = append(p.rebuildErrs, err)
+		}
 		p.resampler.Close()
 		p.resampler = nil
 		if err := p.buildResampler(in); err != nil {
@@ -181,6 +191,15 @@ func (p *WhisperSTT) accumulate(frame *av.Frame) error {
 	return nil
 }
 
+// ResamplerRebuilds reports how many times the resampler was torn down and rebuilt
+// mid-stream, and a sample of the errors that triggered it. Each rebuild discards the
+// SwrContext's internal delay line, so a nonzero count on a stream whose format never
+// actually changes means the audio handed to the model carries that many
+// discontinuities. Exposed for diagnostics and regression tests.
+func (p *WhisperSTT) ResamplerRebuilds() (int, []error) {
+	return p.resamplerRebuilds, p.rebuildErrs
+}
+
 func (p *WhisperSTT) buildResampler(in *av.Frame) error {
 	r, err := av.NewResampler(av.ResamplerOptions{
 		InSampleRate:  in.SampleRate(),
@@ -189,6 +208,16 @@ func (p *WhisperSTT) buildResampler(in *av.Frame) error {
 		OutSampleRate: av.WhisperSampleRate,
 		OutSampleFmt:  av.SampleFmtFLTP,
 		OutChannels:   1,
+		// Whisper expects audio normalized to ±1.0 — the range its training data lives in.
+		// libswresample leaves rematrix_maxval UNBOUNDED for float output, so the default
+		// stereo → mono downmix is energy-preserving (1/√2 per channel) and hands the model
+		// audio √2 louder than the source, peaking past 1.0. That is not a subtle quality
+		// loss: on a stereo tape capture it drove the decoder out of distribution and into
+		// repetition loops — one phrase emitted 1,236 times across 30 minutes — while the
+		// same file downmixed amplitude-preserving transcribed correctly. Reproduced exactly
+		// by feeding whisper the correct audio scaled by √2 (1,238 repeats), so the gain is
+		// the whole cause, not a symptom.
+		RematrixMaxval: 1.0,
 	})
 	if err != nil {
 		return fmt.Errorf("whisper_stt: resampler: %w", err)
