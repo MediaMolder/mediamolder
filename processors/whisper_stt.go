@@ -95,9 +95,7 @@ func (p *WhisperSTT) Init(params map[string]any) error {
 	if n, ok := numToInt(params["beam_size"]); ok {
 		p.opts.BeamSize = n
 	}
-	if err := applyMaxContext(params, &p.opts); err != nil {
-		return err
-	}
+	applyMaxContext(params, &p.opts)
 	if b, ok := params["word_timestamps"].(bool); ok {
 		p.opts.WordTimestamps = b
 	}
@@ -127,6 +125,16 @@ func (p *WhisperSTT) Init(params map[string]any) error {
 		if _, err := sanitizeOutputPath(p.outputFile); err != nil {
 			return err
 		}
+	}
+	// Options LAST, once every param has been read, because the rules are about
+	// COMBINATIONS: max_context 0 is only invalid alongside initial_prompt, and the two
+	// are parsed several statements apart. Validating where max_context is read would
+	// inspect a prompt that has not been assigned yet and wave the pair through — Full()
+	// would then reject it, but only after Init loaded the model and Process decoded the
+	// entire file to PCM. Same reason the sidecar path is checked here: fail before the
+	// many-minute work, not after.
+	if err := p.opts.Validate(); err != nil {
+		return fmt.Errorf("whisper_stt: %w", err)
 	}
 
 	model, err := av.NewWhisperModel(modelPath)
@@ -209,22 +217,15 @@ func (p *WhisperSTT) ResamplerRebuilds() (int, []error) {
 
 // applyMaxContext maps the optional "max_context" param onto opts. Absent leaves whisper.cpp's
 // default; present is honoured verbatim INCLUDING 0, which is the value that disables the
-// cross-window prompt feedback (see av.WhisperOptions.MaxTextCtx). Split out from Init so the
-// mapping is testable without loading a model — the interesting cases are all rejections, and
-// they must be reachable in a unit test.
-func applyMaxContext(params map[string]any, opts *av.WhisperOptions) error {
-	n, ok := numToInt(params["max_context"])
-	if !ok {
-		return nil
+// cross-window prompt feedback (see av.WhisperOptions.MaxTextCtx).
+//
+// Mapping only — validation is deliberately NOT here. The rules concern combinations with
+// fields parsed later in Init, so checking at the point of assignment would read a half-built
+// WhisperOptions. Init calls opts.Validate() once, after everything is set.
+func applyMaxContext(params map[string]any, opts *av.WhisperOptions) {
+	if n, ok := numToInt(params["max_context"]); ok {
+		opts.MaxTextCtx = &n
 	}
-	opts.MaxTextCtx = &n
-	// Reuse the av-layer rules rather than restating them, so the processor and the direct
-	// API can never disagree about what is valid.
-	if err := opts.Validate(); err != nil {
-		opts.MaxTextCtx = nil
-		return fmt.Errorf("whisper_stt: %w", err)
-	}
-	return nil
 }
 
 func (p *WhisperSTT) buildResampler(in *av.Frame) error {

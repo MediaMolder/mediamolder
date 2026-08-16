@@ -112,7 +112,9 @@ type WhisperOptions struct {
 
 	// MaxTextCtx caps how many tokens of ALREADY-DECODED text are fed back as the prompt
 	// for the next 30-second window (whisper.cpp `n_max_text_ctx`, the CLI's -mc). nil
-	// leaves whisper.cpp's default of 16384; 0 disables the feedback entirely.
+	// leaves whisper.cpp's default of 16384 — note the model clamps that to n_text_ctx/2,
+	// so the history actually carried is ~224 tokens on the large models, not 16384.
+	// 0 disables the feedback entirely.
 	//
 	// A pointer, not an int, precisely because 0 is the interesting value: it cannot double
 	// as "unset" the way Threads<=0 can, and a plain int would silently change behaviour for
@@ -150,11 +152,17 @@ func (o WhisperOptions) Validate() error {
 			"is delivered through, so the prompt would be silently ignored — set MaxTextCtx to a " +
 			"positive value (>= 2), or drop InitialPrompt")
 	case n == 1:
-		// whisper.cpp 1.8.4 computes a take-count of (max_prompt_ctx - 1 - 1) and indexes
-		// backwards from prompt_past.end() by it; at 1 that is -1, walking past end(). The
-		// domain is {0} union [2, inf).
-		return fmt.Errorf("whisper: MaxTextCtx 1 is not a usable value (whisper.cpp reads out of " +
-			"bounds); use 0 to disable context or >= 2")
+		// One token of history is useless — too little to condition on, but still enough to
+		// keep the feedback path open. It is also the value that goes out of bounds if
+		// carry_initial_prompt is ever plumbed: whisper.cpp takes
+		// min(max_prompt_ctx - n_take0 - 1, size) tokens from the end of prompt_past, and once
+		// n_take0 >= 1 (carry_initial_prompt with a non-empty carried prompt) that count is
+		// negative and the iterator walks past end(). With carry_initial_prompt false — the
+		// only path exposed today — n_take0 is 0 and 1 merely inserts nothing. Reject it now
+		// so the domain is a clean {0} union [2, inf) before that flag can arrive.
+		return fmt.Errorf("whisper: MaxTextCtx 1 is not a usable value (too little history to " +
+			"condition on, and unsafe if carry_initial_prompt is enabled); use 0 to disable " +
+			"context or >= 2")
 	}
 	return nil
 }
@@ -244,12 +252,9 @@ func (m *WhisperModel) Full(ctx context.Context, samples []float32, opts Whisper
 		threads = runtime.NumCPU()
 	}
 
-	maxTextCtx := -1 // negative => leave whisper.cpp's default
+	maxTextCtx := -1 // negative => leave whisper.cpp's default (Validate rejects negatives above)
 	if opts.MaxTextCtx != nil {
 		maxTextCtx = *opts.MaxTextCtx
-		if maxTextCtx < 0 {
-			maxTextCtx = 0 // an explicit negative means "no context", not "default"
-		}
 	}
 
 	ret := C.mm_whisper_run(m.ctx,

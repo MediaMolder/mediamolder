@@ -573,9 +573,10 @@ Transcribes an audio stream to timestamped text locally with [whisper.cpp](https
 | `language`        | string | `"auto"`       | Source language hint (`auto` detects) |
 | `task`            | string | `"transcribe"` | `transcribe` \| `translate` (to English) |
 | `beam_size`       | int    | `0`            | `0`/`1` greedy; `>1` beam search |
+| `max_context`     | int    | *(whisper default)* | Tokens of previously-decoded text prompting the next 30 s window; `0` disables it (stops long-form repetition loops). Domain `{0} ∪ [2, ∞)` |
 | `word_timestamps` | bool   | `false`        | Request token-level timestamps |
 | `threads`         | int    | `NumCPU()`     | Inference threads |
-| `initial_prompt`  | string | `""`           | Context/biasing prompt |
+| `initial_prompt`  | string | `""`           | Context/biasing prompt. **Incompatible with `max_context: 0`** |
 | `output_file`     | string | `""`           | Sidecar path; empty = events only |
 | `output_format`   | string | `"srt"`        | `srt` \| `vtt` \| `json` \| `txt` |
 

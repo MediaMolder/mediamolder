@@ -6,6 +6,8 @@
 package processors
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -18,15 +20,13 @@ import (
 // have made Go's zero value mean "disable", silently changing behaviour for every existing caller
 // the day the field was added; hence the pointer, and hence this test.
 //
-// Deliberately exercises applyMaxContext rather than Init: Init loads the model as its last step,
-// which aborts the process outright when ggml has no compute backend beside the test binary. The
-// mapping and its rejections are the interesting part and they are reachable without a model.
+// This covers the MAPPING only; the rejections live in Validate and are driven through Init by
+// TestWhisperSTTInitRejectsBadMaxContext, because their ordering relative to other params is the
+// part that can regress.
 func TestApplyMaxContext(t *testing.T) {
 	t.Run("absent leaves the library default", func(t *testing.T) {
 		var opts av.WhisperOptions
-		if err := applyMaxContext(map[string]any{}, &opts); err != nil {
-			t.Fatalf("applyMaxContext: %v", err)
-		}
+		applyMaxContext(map[string]any{}, &opts)
 		if opts.MaxTextCtx != nil {
 			t.Fatalf("MaxTextCtx = %d, want nil — omitting the param must not override whisper.cpp",
 				*opts.MaxTextCtx)
@@ -35,9 +35,7 @@ func TestApplyMaxContext(t *testing.T) {
 
 	t.Run("zero is honoured, not treated as unset", func(t *testing.T) {
 		var opts av.WhisperOptions
-		if err := applyMaxContext(map[string]any{"max_context": 0}, &opts); err != nil {
-			t.Fatalf("applyMaxContext: %v", err)
-		}
+		applyMaxContext(map[string]any{"max_context": 0}, &opts)
 		if opts.MaxTextCtx == nil {
 			t.Fatal("max_context 0 was dropped — that is the value which disables the prompt lock")
 		}
@@ -48,54 +46,78 @@ func TestApplyMaxContext(t *testing.T) {
 
 	t.Run("a positive value passes through", func(t *testing.T) {
 		var opts av.WhisperOptions
-		if err := applyMaxContext(map[string]any{"max_context": 64}, &opts); err != nil {
-			t.Fatalf("applyMaxContext: %v", err)
-		}
+		applyMaxContext(map[string]any{"max_context": 64}, &opts)
 		if opts.MaxTextCtx == nil || *opts.MaxTextCtx != 64 {
 			t.Fatalf("MaxTextCtx = %v, want 64", opts.MaxTextCtx)
 		}
 	})
 
-	// The rejections below all describe things whisper.cpp ACCEPTS and then mishandles in
-	// silence. Each leaves the option unset so a caller that ignores the error is not left
-	// holding a value the engine would misuse.
+}
+
+// TestWhisperSTTInitRejectsBadMaxContext drives Init, not applyMaxContext, because the ORDER is
+// the thing under test. "max_context" is read several statements before "initial_prompt", so
+// validating at the point of assignment would inspect a prompt that is still empty and wave the
+// invalid pair through — Init would load the model and Process would decode the whole file to
+// PCM before Full() finally rejected it. Init must fail fast, like the sidecar-path check does.
+//
+// These cases return before Init reaches av.NewWhisperModel, so the test needs no model and no
+// ggml compute backend beside the test binary (loading one aborts the process outright).
+func TestWhisperSTTInitRejectsBadMaxContext(t *testing.T) {
+	// Any stat-able file: Init checks existence long before it tries to load anything.
+	model := filepath.Join(t.TempDir(), "model.bin")
+	if err := os.WriteFile(model, []byte("not a real model"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
 	for _, tc := range []struct {
 		name   string
 		params map[string]any
-		opts   av.WhisperOptions
 		want   string
 	}{
 		{
-			name:   "negative is rejected",
+			name:   "negative",
 			params: map[string]any{"max_context": -1},
 			want:   "invalid",
 		},
 		{
-			name:   "one is rejected (whisper.cpp reads out of bounds)",
+			name:   "one",
 			params: map[string]any{"max_context": 1},
-			want:   "out of",
+			want:   "not a usable value",
 		},
 		{
-			name:   "zero with an initial prompt is rejected, not silently dropped",
-			params: map[string]any{"max_context": 0},
-			opts:   av.WhisperOptions{InitialPrompt: "names: Frank, Elana"},
+			// The regression this test exists for.
+			name:   "zero alongside an initial prompt, parsed AFTER max_context",
+			params: map[string]any{"max_context": 0, "initial_prompt": "names: Frank, Elana"},
 			want:   "silently ignored",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			opts := tc.opts
-			err := applyMaxContext(tc.params, &opts)
+			p := &WhisperSTT{}
+			tc.params["model"] = model
+			err := p.Init(tc.params)
 			if err == nil {
-				t.Fatal("want an error, got nil")
+				p.Close()
+				t.Fatal("Init accepted an invalid max_context — it must fail before the model " +
+					"is loaded and the file decoded, not at Full()")
 			}
 			if !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("error %q does not mention %q", err, tc.want)
 			}
-			if opts.MaxTextCtx != nil {
-				t.Fatalf("a rejected value was left applied: %d", *opts.MaxTextCtx)
-			}
 		})
 	}
+
+	// The valid pair must still get through this far (it fails later, on the fake model).
+	t.Run("zero without a prompt reaches the model load", func(t *testing.T) {
+		p := &WhisperSTT{}
+		err := p.Init(map[string]any{"model": model, "max_context": 0})
+		if err == nil {
+			p.Close()
+			t.Fatal("expected the fake model to fail loading")
+		}
+		if strings.Contains(err.Error(), "silently ignored") || strings.Contains(err.Error(), "invalid") {
+			t.Fatalf("max_context 0 on its own must be valid, got: %v", err)
+		}
+	})
 }
 
 // TestWhisperOptionsValidateAllowsSaneValues guards the boundary of the {0} ∪ [2,∞) domain, so a

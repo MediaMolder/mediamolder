@@ -118,14 +118,50 @@ Route a decoded audio stream into a `whisper_stt` node. Minimal example:
 | `language`        | string | `"auto"`           | Source language hint; `auto` detects |
 | `task`            | string | `"transcribe"`     | `transcribe` or `translate` (to English) |
 | `beam_size`       | int    | `0`                | `0`/`1` greedy; `>1` beam search |
+| `max_context`     | int    | *(whisper default)* | Tokens of previously-decoded text prompting the next 30 s window. `0` disables it — see below. Domain `{0} ∪ [2, ∞)` |
 | `word_timestamps` | bool   | `false`            | Request token-level timestamps |
 | `threads`         | int    | `NumCPU()`         | Inference threads |
-| `initial_prompt`  | string | `""`               | Context/biasing prompt |
+| `initial_prompt`  | string | `""`               | Context/biasing prompt. **Incompatible with `max_context: 0`** |
 | `output_file`     | string | `""`               | Sidecar path; empty = events only |
 | `output_format`   | string | `"srt"`            | `srt` \| `vtt` \| `json` \| `txt` |
 
 The audio stream is automatically resampled to whisper's required 16 kHz mono
 float32, regardless of the source rate, format, or channel count.
+
+## `max_context` — long-form repetition
+
+Whisper's encoder sees 30 seconds. Longer audio is decoded as a chain of windows
+inside a single pass and, by default, each window is prompted with the text
+decoded from the previous one. That feedback path is what produces the familiar
+long-form failure: one line locks in and repeats to the end of the file.
+
+Setting `max_context: 0` severs it. Measured on a 48-minute stereo tape capture,
+worst verbatim repeat:
+
+| audio | default | `max_context: 0` |
+|---|---|---|
+| clean | 57 | 26 |
+| the same file, ≤1 LSB different | 1,250 | 27 |
+| deliberately scaled by √2 | 1,238 | 15 |
+
+Landing in the same band regardless of the audio is the signature of removing a
+feedback path rather than moving a threshold — and the ≤1 LSB row shows why: the
+decoder is chaotically sensitive on marginal input, so no amount of cleaner audio
+conversion is "clean enough" while the feedback is live.
+
+It is **not** the default, because the cost is real: cross-window context helps
+phrasing, and disabling it produced ~9% fewer unique lines on clean audio.
+Batch transcription of whole recordings generally wants `0`; streaming callers,
+whose every call is already a short window, do not.
+
+Two combinations are rejected rather than silently mishandled:
+
+- **`max_context: 0` with `initial_prompt`.** The prompt is delivered through the
+  same history that `0` disables, so it would be accepted and discarded without a
+  word. Use `max_context: 2` or higher if you need a biasing prompt.
+- **`max_context: 1`.** Too little history to condition on while still keeping the
+  feedback path open, and out of bounds inside whisper.cpp if `carry_initial_prompt`
+  is ever enabled. The usable domain is `{0} ∪ [2, ∞)`.
 
 ## Output formats
 
