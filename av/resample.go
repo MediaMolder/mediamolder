@@ -11,7 +11,8 @@ package av
 //
 // static int swr_setup(SwrContext *swr,
 //                      int out_sample_rate, int out_sample_fmt, int out_channels,
-//                      int in_sample_rate, int in_sample_fmt, int in_channels) {
+//                      int in_sample_rate, int in_sample_fmt, int in_channels,
+//                      double rematrix_maxval) {
 //     AVChannelLayout in_chl = {0}, out_chl = {0};
 //     av_channel_layout_default(&in_chl, in_channels);
 //     av_channel_layout_default(&out_chl, out_channels);
@@ -28,6 +29,10 @@ package av
 //     if (ret < 0) return ret;
 //     ret = av_opt_set_sample_fmt(swr, "out_sample_fmt", (enum AVSampleFormat)out_sample_fmt, 0);
 //     if (ret < 0) return ret;
+//     if (rematrix_maxval > 0) {
+//         ret = av_opt_set_double(swr, "rematrix_maxval", rematrix_maxval, 0);
+//         if (ret < 0) return ret;
+//     }
 //     av_channel_layout_uninit(&in_chl);
 //     av_channel_layout_uninit(&out_chl);
 //     return swr_init(swr);
@@ -47,6 +52,18 @@ type ResamplerOptions struct {
 	OutSampleRate int
 	OutSampleFmt  int // AVSampleFormat
 	OutChannels   int
+
+	// RematrixMaxval caps the downmix matrix so a channel-count reduction cannot exceed
+	// full scale. 0 (the zero value) leaves libswresample's default, which is NOT the same
+	// for every output format: 1.0 for integer output, but UNBOUNDED for float. A stereo →
+	// mono downmix to float therefore uses the energy-preserving coefficients (1/√2 per
+	// channel) instead of the amplitude-preserving ones (1/2), and the result is louder
+	// than the source by √2 — about +3 dB — with peaks past ±1.0.
+	//
+	// That is a defensible default for a processing chain that normalizes later, and a
+	// silent trap for one that feeds a consumer expecting normalized audio. Set 1.0 to get
+	// the same amplitude-preserving downmix the ffmpeg CLI performs.
+	RematrixMaxval float64
 }
 
 // Resampler wraps a libswresample SwrContext for audio format conversion.
@@ -65,7 +82,8 @@ func NewResampler(opts ResamplerOptions) (*Resampler, error) {
 
 	ret := C.swr_setup(swr,
 		C.int(opts.OutSampleRate), C.int(opts.OutSampleFmt), C.int(opts.OutChannels),
-		C.int(opts.InSampleRate), C.int(opts.InSampleFmt), C.int(opts.InChannels))
+		C.int(opts.InSampleRate), C.int(opts.InSampleFmt), C.int(opts.InChannels),
+		C.double(opts.RematrixMaxval))
 	if ret < 0 {
 		C.swr_free(&swr)
 		return nil, fmt.Errorf("swr_init: %w", newErr(ret))
