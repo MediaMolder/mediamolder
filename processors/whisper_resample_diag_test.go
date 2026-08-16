@@ -23,8 +23,13 @@ import (
 //
 // Motivation: a long tape-capture AVI (PCM s16 stereo @32 kHz) produced transcripts that
 // collapsed into one phrase repeated 1,236 times, while the SAME decoder+model given a
-// pre-extracted 16 kHz mono WAV of the same file did not. Right duration, wrong content
-// points at the conversion in between, and this measures it instead of guessing.
+// pre-extracted 16 kHz mono WAV of the same file did not. That pointed at the conversion in
+// between, and this measures it instead of guessing — which is the point of keeping it.
+//
+// What it FOUND was a real √2 downmix gain (fixed). What it did NOT find was the cause of the
+// loops: they survived that fix. The decoder turns out to be chaotically sensitive on marginal
+// audio — a ≤1 LSB difference flips the outcome — so this harness is for verifying the audio is
+// what we think it is, NOT for attributing transcript quality to it.
 //
 //	MM_DIAG_AUDIO=/path/tape.avi MM_DIAG_PCM_OUT=/tmp/mm.wav \
 //	  go test -tags with_whisper ./processors/ -run ResampleDiag -v

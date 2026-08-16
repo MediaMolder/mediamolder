@@ -31,6 +31,10 @@ package processors
 //	"language"        — source language hint, default "auto" (detect)
 //	"task"            — "transcribe" (default) or "translate" (to English)
 //	"beam_size"       — 0/1 greedy (default), >1 beam search
+//	"max_context"     — tokens of previously-decoded text fed back as the next window's
+//	                    prompt (whisper.cpp n_max_text_ctx / CLI -mc). Unset leaves
+//	                    whisper.cpp's 16384; 0 disables the feedback and is what stops
+//	                    long-form repetition loops. See WhisperOptions.MaxTextCtx.
 //	"word_timestamps" — request token-level timestamps, default false
 //	"threads"         — inference threads, default runtime.NumCPU()
 //	"initial_prompt"  — context/biasing prompt
@@ -90,6 +94,9 @@ func (p *WhisperSTT) Init(params map[string]any) error {
 	}
 	if n, ok := numToInt(params["beam_size"]); ok {
 		p.opts.BeamSize = n
+	}
+	if err := applyMaxContext(params, &p.opts); err != nil {
+		return err
 	}
 	if b, ok := params["word_timestamps"].(bool); ok {
 		p.opts.WordTimestamps = b
@@ -200,6 +207,26 @@ func (p *WhisperSTT) ResamplerRebuilds() (int, []error) {
 	return p.resamplerRebuilds, p.rebuildErrs
 }
 
+// applyMaxContext maps the optional "max_context" param onto opts. Absent leaves whisper.cpp's
+// default; present is honoured verbatim INCLUDING 0, which is the value that disables the
+// cross-window prompt feedback (see av.WhisperOptions.MaxTextCtx). Split out from Init so the
+// mapping is testable without loading a model — the interesting cases are all rejections, and
+// they must be reachable in a unit test.
+func applyMaxContext(params map[string]any, opts *av.WhisperOptions) error {
+	n, ok := numToInt(params["max_context"])
+	if !ok {
+		return nil
+	}
+	opts.MaxTextCtx = &n
+	// Reuse the av-layer rules rather than restating them, so the processor and the direct
+	// API can never disagree about what is valid.
+	if err := opts.Validate(); err != nil {
+		opts.MaxTextCtx = nil
+		return fmt.Errorf("whisper_stt: %w", err)
+	}
+	return nil
+}
+
 func (p *WhisperSTT) buildResampler(in *av.Frame) error {
 	r, err := av.NewResampler(av.ResamplerOptions{
 		InSampleRate:  in.SampleRate(),
@@ -208,15 +235,18 @@ func (p *WhisperSTT) buildResampler(in *av.Frame) error {
 		OutSampleRate: av.WhisperSampleRate,
 		OutSampleFmt:  av.SampleFmtFLTP,
 		OutChannels:   1,
-		// Whisper expects audio normalized to ±1.0 — the range its training data lives in.
-		// libswresample leaves rematrix_maxval UNBOUNDED for float output, so the default
-		// stereo → mono downmix is energy-preserving (1/√2 per channel) and hands the model
-		// audio √2 louder than the source, peaking past 1.0. That is not a subtle quality
-		// loss: on a stereo tape capture it drove the decoder out of distribution and into
-		// repetition loops — one phrase emitted 1,236 times across 30 minutes — while the
-		// same file downmixed amplitude-preserving transcribed correctly. Reproduced exactly
-		// by feeding whisper the correct audio scaled by √2 (1,238 repeats), so the gain is
-		// the whole cause, not a symptom.
+		// Match whisper.cpp's own reference loader, which decodes to mono through an
+		// averaging downmix and so never leaves ±1.0 — the range whisper's training data
+		// lives in. libswresample instead leaves rematrix_maxval UNBOUNDED for float output,
+		// making the default stereo → mono downmix energy-preserving (1/√2 per channel) and
+		// handing the model audio √2 louder than the source, peaking past 1.0.
+		//
+		// Correctness/parity is the whole justification. An earlier version of this comment
+		// claimed the gain caused the long-form repetition loops; that was wrong and the
+		// measurement that falsified it is worth keeping: the loops SURVIVED this fix
+		// unchanged. Scaling correct audio by √2 does reproduce a loop, but so does a ≤1 LSB
+		// perturbation — the decoder is chaotically sensitive on marginal input, and the
+		// actual driver is cross-window prompt feedback (see WhisperOptions.MaxTextCtx).
 		RematrixMaxval: 1.0,
 	})
 	if err != nil {
