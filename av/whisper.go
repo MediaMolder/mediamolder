@@ -52,7 +52,7 @@ package av
 //                           int strategy, int n_threads, int translate,
 //                           const char *language, int token_timestamps,
 //                           int beam_size, const char *initial_prompt,
-//                           uintptr_t user_data) {
+//                           int max_text_ctx, uintptr_t user_data) {
 //     struct whisper_full_params p =
 //         whisper_full_default_params((enum whisper_sampling_strategy)strategy);
 //     p.n_threads        = n_threads;
@@ -68,6 +68,11 @@ package av
 //     }
 //     if (initial_prompt != NULL && initial_prompt[0] != '\0') {
 //         p.initial_prompt = initial_prompt;
+//     }
+//     // Negative means "leave whisper.cpp's default" — 0 is a MEANINGFUL value here
+//     // (it disables cross-window prompting), so it cannot double as "unset".
+//     if (max_text_ctx >= 0) {
+//         p.n_max_text_ctx = max_text_ctx;
 //     }
 //     p.progress_callback           = mm_progress_cb;
 //     p.progress_callback_user_data = (void *)user_data;
@@ -104,6 +109,62 @@ type WhisperOptions struct {
 	BeamSize       int    // <=1 greedy; >1 beam search
 	WordTimestamps bool   // request token-level timestamps
 	InitialPrompt  string // optional context/biasing prompt
+
+	// MaxTextCtx caps how many tokens of ALREADY-DECODED text are fed back as the prompt
+	// for the next 30-second window (whisper.cpp `n_max_text_ctx`, the CLI's -mc). nil
+	// leaves whisper.cpp's default of 16384 — note the model clamps that to n_text_ctx/2,
+	// so the history actually carried is ~224 tokens on the large models, not 16384.
+	// 0 disables the feedback entirely.
+	//
+	// A pointer, not an int, precisely because 0 is the interesting value: it cannot double
+	// as "unset" the way Threads<=0 can, and a plain int would silently change behaviour for
+	// every existing caller the moment this field was added.
+	//
+	// Why it matters: whisper decodes long audio as a sliding window and, by default,
+	// prompts each window with the previous window's text. On long or noisy recordings one
+	// bad line becomes the next window's prompt and locks — the well-known Whisper long-form
+	// repetition failure, where a single sentence repeats until end of file. Measured on a
+	// 48-minute tape capture: worst verbatim repeat 1,250 at the default, 27 with 0. The
+	// trade is real — cross-window context genuinely helps phrasing, and disabling it cost
+	// ~9% unique lines on clean audio — which is why this is an option and not a new default.
+	// Batch transcription of whole files generally wants 0; streaming/interactive callers,
+	// where each call is already a short window, generally do not.
+	MaxTextCtx *int
+}
+
+// Validate rejects option combinations whisper.cpp accepts and then silently mishandles.
+// Both cases below fail QUIETLY inside whisper_full — the caller gets a plausible transcript
+// and no indication that what they asked for was discarded — so refusing up front is the only
+// way the API can be honest.
+func (o WhisperOptions) Validate() error {
+	if o.MaxTextCtx == nil {
+		return nil
+	}
+	switch n := *o.MaxTextCtx; {
+	case n < 0:
+		return fmt.Errorf("whisper: MaxTextCtx %d is invalid (use nil for the default, 0 to disable context)", n)
+	case n == 0 && o.InitialPrompt != "":
+		// InitialPrompt reaches the decoder ONLY through the same prompt-history path that
+		// n_max_text_ctx gates, so 0 discards it entirely — verified by identical output with
+		// and without a prompt at MaxTextCtx 0. Erroring beats honouring one and dropping the
+		// other without saying so.
+		return fmt.Errorf("whisper: MaxTextCtx 0 disables the prompt history that InitialPrompt " +
+			"is delivered through, so the prompt would be silently ignored — set MaxTextCtx to a " +
+			"positive value (>= 2), or drop InitialPrompt")
+	case n == 1:
+		// One token of history is useless — too little to condition on, but still enough to
+		// keep the feedback path open. It is also the value that goes out of bounds if
+		// carry_initial_prompt is ever plumbed: whisper.cpp takes
+		// min(max_prompt_ctx - n_take0 - 1, size) tokens from the end of prompt_past, and once
+		// n_take0 >= 1 (carry_initial_prompt with a non-empty carried prompt) that count is
+		// negative and the iterator walks past end(). With carry_initial_prompt false — the
+		// only path exposed today — n_take0 is 0 and 1 merely inserts nothing. Reject it now
+		// so the domain is a clean {0} union [2, inf) before that flag can arrive.
+		return fmt.Errorf("whisper: MaxTextCtx 1 is not a usable value (too little history to " +
+			"condition on, and unsafe if carry_initial_prompt is enabled); use 0 to disable " +
+			"context or >= 2")
+	}
+	return nil
 }
 
 // WhisperSegment is one transcribed span returned by Full.
@@ -160,6 +221,9 @@ func (m *WhisperModel) Full(ctx context.Context, samples []float32, opts Whisper
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	if err := opts.Validate(); err != nil {
+		return nil, err
+	}
 
 	cb := &whisperCallbacks{ctx: ctx, progress: progress}
 	h := cgo.NewHandle(cb)
@@ -188,11 +252,16 @@ func (m *WhisperModel) Full(ctx context.Context, samples []float32, opts Whisper
 		threads = runtime.NumCPU()
 	}
 
+	maxTextCtx := -1 // negative => leave whisper.cpp's default (Validate rejects negatives above)
+	if opts.MaxTextCtx != nil {
+		maxTextCtx = *opts.MaxTextCtx
+	}
+
 	ret := C.mm_whisper_run(m.ctx,
 		(*C.float)(unsafe.Pointer(&samples[0])), C.int(len(samples)),
 		C.int(strategy), C.int(threads), boolToCInt(opts.Translate),
 		cLang, boolToCInt(opts.WordTimestamps),
-		C.int(opts.BeamSize), cPrompt, C.uintptr_t(h))
+		C.int(opts.BeamSize), cPrompt, C.int(maxTextCtx), C.uintptr_t(h))
 	if ret != 0 {
 		if err := ctx.Err(); err != nil {
 			return nil, err
