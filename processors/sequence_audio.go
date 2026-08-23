@@ -194,17 +194,25 @@ type audioReader struct {
 	servedSamples int64 // absolute source sample index served/discarded so far
 	eof           bool
 
-	tb      [2]int // audio stream time base, for placing a decoded frame after a seek
-	landing bool   // a seek happened; the next decoded frame's PTS fixes servedSamples
-	noSeek  bool   // this source gave no usable PTS after a seek: decode-and-discard only
-	packets int64  // packets demuxed so far (diagnostics; tests pin the seek with it)
-	dropped int    // consecutive decoded frames the resampler refused
+	tb            [2]int // audio stream time base, for placing a decoded frame after a seek
+	landing       bool   // a seek happened; the next decoded frame's PTS fixes servedSamples
+	landingFrames int    // decoded frames seen while landing that carried no PTS
+	noSeek        bool   // this source gave no usable PTS after a seek: decode-and-discard only
+	packets       int64  // packets demuxed so far (diagnostics; tests pin the seek with it)
+	dropped       int    // consecutive decoded frames the resampler refused
 }
 
-// seekSlackSec is how far before the requested time a seek aims, so a
+// seekSlackSec is how far before the requested time a seek first aims, so a
 // keyframe-granular landing still precedes the target and the remainder is
-// decoded and discarded exactly.
+// decoded and discarded exactly. A landing past the target doubles the slack
+// up to maxSeekSlackSec before the reader gives up on seeking this source.
 const seekSlackSec = 1.0
+const maxSeekSlackSec = 8.0
+
+// maxLandingFrames bounds how many decoded frames a seek may wait for one
+// that carries a PTS. A source that never stamps one would otherwise be
+// decoded to EOF "while landing" — the whole-file read again, on the new path.
+const maxLandingFrames = 64
 
 // seekMinAheadSec is the forward distance below which decode-and-discard beats
 // a seek (it keeps the decoder warm and the position exact).
@@ -285,11 +293,12 @@ func (ar *audioReader) close() {
 // audio. Source positioning is forward-only: clips play at 1x from source_in,
 // so the first call positions on the prefix and subsequent calls continue.
 //
-// A far jump (a clip whose source_in is minutes into the file, or a fresh
-// reader) seeks the demuxer to just before the target and decodes the rest
-// exactly; a near one decodes and discards. Before the seek existed, a clip
-// placed at source_in=T decoded T seconds of audio — and on an interleaved
-// container that demuxes T seconds of video too — before its first sample.
+// Positioning is a demuxer seek to just before the target followed by an
+// exact decode-and-discard of the remainder when the jump is far (a clip
+// whose source_in is minutes into the file, a fresh reader); a near hop is
+// decode-and-discard only, which keeps the decoder warm and the position
+// exact. On an interleaved container every second skipped by decoding is a
+// second of video demuxed too, which is what the seek avoids.
 func (ar *audioReader) getSamples(srcSec float64, n int) (*av.Frame, error) {
 	if ar == nil || ar.audIdx < 0 {
 		return nil, nil
@@ -319,28 +328,36 @@ func (ar *audioReader) seekTo(srcSec float64) {
 	if ar.noSeek || ar.demux == nil || ar.tb[1] <= 0 {
 		return
 	}
-	target := srcSec - seekSlackSec
-	if target < 0 {
-		target = 0
-	}
-	if !ar.reposition(target) {
-		return
-	}
-	// Decode until the first frame places us (ingest clears landing).
-	for ar.landing && !ar.eof {
-		ar.pump()
-	}
 	want := int64(srcSec*float64(ar.outRate) + 0.5)
-	if ar.landing || ar.servedSamples > want {
-		// No PTS to trust, or the seek landed past the target (a coarse index):
-		// rewind to the start and let discard do the whole prefix, once.
-		ar.noSeek = true
-		ar.landing = false
-		if ar.reposition(0) {
-			ar.servedSamples = 0
-			ar.landing = false
+	for slack := seekSlackSec; slack <= maxSeekSlackSec; slack *= 2 {
+		target := srcSec - slack
+		if target < 0 {
+			target = 0
 		}
+		if !ar.reposition(target) {
+			return // the demuxer refused the seek; reposition marked noSeek
+		}
+		// Decode until the first frame places us (ingest clears landing) —
+		// bounded: a source that never stamps a PTS must not be decoded to EOF.
+		for ar.landing && !ar.eof && ar.landingFrames < maxLandingFrames {
+			ar.pump()
+		}
+		if ar.landing {
+			break // no PTS within the bound: this source cannot anchor a seek
+		}
+		if ar.servedSamples <= want || target == 0 {
+			// Landed at or before the target (discard covers the rest), or the
+			// source simply starts later than asked — both are the position.
+			return
+		}
+		// Landed past the target: a coarse index or a long GOP. Aim earlier.
 	}
+	// Fall back to decode-from-start, once; never retry the seek on this source.
+	ar.noSeek = true
+	if ar.reposition(0) {
+		ar.servedSamples = 0
+	}
+	ar.landing = false
 }
 
 // reposition seeks the demuxer to sec, flushes the decoder, and empties the
@@ -359,6 +376,7 @@ func (ar *audioReader) reposition(sec float64) bool {
 	ar.buf, ar.head = nil, 0
 	ar.eof = false
 	ar.dropped = 0
+	ar.landingFrames = 0
 	ar.landing = true
 	return true
 }
@@ -418,12 +436,16 @@ func (ar *audioReader) ingest(inF *av.Frame) {
 	if ar.landing {
 		// First frame after a seek: its PTS is where the source actually is.
 		// Samples before this frame are behind us; discard() covers the rest.
-		if pts := inF.PTS(); pts >= 0 && ar.tb[1] > 0 {
-			sec := float64(pts) * float64(ar.tb[0]) / float64(ar.tb[1])
-			ar.servedSamples = int64(sec*float64(ar.outRate) + 0.5)
-			ar.landing = false
+		pts := inF.PTS()
+		if pts < 0 || ar.tb[1] <= 0 {
+			// No PTS: this frame's samples belong to an unknown position, so
+			// they are not appended. seekTo bounds how long this may go on.
+			ar.landingFrames++
+			return
 		}
-		// No PTS: stay "landing"; seekTo notices and falls back.
+		sec := float64(pts) * float64(ar.tb[0]) / float64(ar.tb[1])
+		ar.servedSamples = int64(sec*float64(ar.outRate) + 0.5)
+		ar.landing = false
 	}
 	// Pin the frame's channel layout to its channel count. PCM decoders (WAV,
 	// DV/AVI captures) often leave the layout unspecified; libswresample then
