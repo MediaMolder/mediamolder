@@ -193,7 +193,37 @@ type audioReader struct {
 
 	servedSamples int64 // absolute source sample index served/discarded so far
 	eof           bool
+
+	tb            [2]int // audio stream time base, for placing a decoded frame after a seek
+	landing       bool   // a seek happened; the next decoded frame's PTS fixes servedSamples
+	landingFrames int    // decoded frames seen while landing that carried no PTS
+	noSeek        bool   // this source gave no usable PTS after a seek: decode-and-discard only
+	packets       int64  // packets demuxed so far (diagnostics; tests pin the seek with it)
+	dropped       int    // consecutive decoded frames the resampler refused
 }
+
+// seekSlackSec is how far before the requested time a seek first aims, so a
+// keyframe-granular landing still precedes the target and the remainder is
+// decoded and discarded exactly. A landing past the target doubles the slack
+// up to maxSeekSlackSec before the reader gives up on seeking this source.
+const seekSlackSec = 1.0
+const maxSeekSlackSec = 8.0
+
+// maxLandingFrames bounds how many decoded frames a seek may wait for one
+// that carries a PTS. A source that never stamps one would otherwise be
+// decoded to EOF "while landing" — the whole-file read again, on the new path.
+const maxLandingFrames = 64
+
+// seekMinAheadSec is the forward distance below which decode-and-discard beats
+// a seek (it keeps the decoder warm and the position exact).
+const seekMinAheadSec = 2.0
+
+// maxDroppedFrames bounds how many consecutive decoded frames the resampler may
+// refuse before the reader gives up on the source. Without a bound, a source
+// whose frames never convert makes fill() demux the file to EOF looking for
+// samples that never come — on an interleaved multi-GB container that is the
+// whole file, read for nothing, and the output is silence anyway.
+const maxDroppedFrames = 16
 
 // openAudioReader opens url for audio decoding. A file with no audio stream
 // yields a reader with audIdx < 0 that getSamples reports as silent (the caller
@@ -204,13 +234,15 @@ func openAudioReader(url string, outRate, outCh int) *audioReader {
 		return nil
 	}
 	audIdx := -1
+	var tb [2]int
 	for i := 0; i < demux.NumStreams(); i++ {
 		if info, e := demux.StreamInfo(i); e == nil && info.Type == av.MediaTypeAudio {
 			audIdx = i
+			tb = info.TimeBase
 			break
 		}
 	}
-	ar := &audioReader{url: url, demux: demux, audIdx: audIdx, outRate: outRate, outCh: outCh}
+	ar := &audioReader{url: url, demux: demux, audIdx: audIdx, outRate: outRate, outCh: outCh, tb: tb}
 	if audIdx < 0 {
 		demux.Close()
 		ar.demux = nil
@@ -259,12 +291,22 @@ func (ar *audioReader) close() {
 // getSamples returns n fltp samples beginning at source time srcSec, decoding
 // forward as needed. Returns nil (caller serves silence) for a file with no
 // audio. Source positioning is forward-only: clips play at 1x from source_in,
-// so the first call discards the prefix and subsequent calls continue.
+// so the first call positions on the prefix and subsequent calls continue.
+//
+// Positioning is a demuxer seek to just before the target followed by an
+// exact decode-and-discard of the remainder when the jump is far (a clip
+// whose source_in is minutes into the file, a fresh reader); a near hop is
+// decode-and-discard only, which keeps the decoder warm and the position
+// exact. On an interleaved container every second skipped by decoding is a
+// second of video demuxed too, which is what the seek avoids.
 func (ar *audioReader) getSamples(srcSec float64, n int) (*av.Frame, error) {
 	if ar == nil || ar.audIdx < 0 {
 		return nil, nil
 	}
 	want := int64(srcSec*float64(ar.outRate) + 0.5)
+	if want-ar.servedSamples > int64(seekMinAheadSec*float64(ar.outRate)) {
+		ar.seekTo(srcSec)
+	}
 	if want > ar.servedSamples {
 		ar.discard(want - ar.servedSamples)
 		ar.servedSamples = want
@@ -275,6 +317,68 @@ func (ar *audioReader) getSamples(srcSec float64, n int) (*av.Frame, error) {
 	f := ar.pop(n)
 	ar.servedSamples += int64(n)
 	return f, nil
+}
+
+// seekTo moves the demuxer to seekSlackSec before srcSec and lets the first
+// decoded frame's PTS fix the reader's absolute position, so the caller's
+// discard covers exactly the remainder. Sources that hand back no PTS after a
+// seek (or land past the target) fall back to decoding from the start — the
+// behaviour every source had before — and are not retried.
+func (ar *audioReader) seekTo(srcSec float64) {
+	if ar.noSeek || ar.demux == nil || ar.tb[1] <= 0 {
+		return
+	}
+	want := int64(srcSec*float64(ar.outRate) + 0.5)
+	for slack := seekSlackSec; slack <= maxSeekSlackSec; slack *= 2 {
+		target := srcSec - slack
+		if target < 0 {
+			target = 0
+		}
+		if !ar.reposition(target) {
+			return // the demuxer refused the seek; reposition marked noSeek
+		}
+		// Decode until the first frame places us (ingest clears landing) —
+		// bounded: a source that never stamps a PTS must not be decoded to EOF.
+		for ar.landing && !ar.eof && ar.landingFrames < maxLandingFrames {
+			ar.pump()
+		}
+		if ar.landing {
+			break // no PTS within the bound: this source cannot anchor a seek
+		}
+		if ar.servedSamples <= want || target == 0 {
+			// Landed at or before the target (discard covers the rest), or the
+			// source simply starts later than asked — both are the position.
+			return
+		}
+		// Landed past the target: a coarse index or a long GOP. Aim earlier.
+	}
+	// Fall back to decode-from-start, once; never retry the seek on this source.
+	ar.noSeek = true
+	if ar.reposition(0) {
+		ar.servedSamples = 0
+	}
+	ar.landing = false
+}
+
+// reposition seeks the demuxer to sec, flushes the decoder, and empties the
+// FIFO and the resampler (whose delay line belongs to the old position). The
+// next decoded frame re-anchors servedSamples via its PTS (landing).
+func (ar *audioReader) reposition(sec float64) bool {
+	if err := ar.demux.SeekFile(int64(sec * 1e6)); err != nil {
+		ar.noSeek = true
+		return false
+	}
+	ar.dec.FlushBuffers()
+	if ar.resampler != nil {
+		ar.resampler.Close()
+		ar.resampler = nil
+	}
+	ar.buf, ar.head = nil, 0
+	ar.eof = false
+	ar.dropped = 0
+	ar.landingFrames = 0
+	ar.landing = true
+	return true
 }
 
 func (ar *audioReader) avail() int {
@@ -303,6 +407,7 @@ func (ar *audioReader) pump() {
 		ar.eof = true
 		return
 	}
+	ar.packets++
 	if ar.pkt.StreamIndex() != ar.audIdx {
 		return
 	}
@@ -328,6 +433,25 @@ func (ar *audioReader) pump() {
 // appends its samples to the FIFO, building the resampler lazily from the first
 // frame's actual format.
 func (ar *audioReader) ingest(inF *av.Frame) {
+	if ar.landing {
+		// First frame after a seek: its PTS is where the source actually is.
+		// Samples before this frame are behind us; discard() covers the rest.
+		pts := inF.PTS()
+		if pts < 0 || ar.tb[1] <= 0 {
+			// No PTS: this frame's samples belong to an unknown position, so
+			// they are not appended. seekTo bounds how long this may go on.
+			ar.landingFrames++
+			return
+		}
+		sec := float64(pts) * float64(ar.tb[0]) / float64(ar.tb[1])
+		ar.servedSamples = int64(sec*float64(ar.outRate) + 0.5)
+		ar.landing = false
+	}
+	// Pin the frame's channel layout to its channel count. PCM decoders (WAV,
+	// DV/AVI captures) often leave the layout unspecified; libswresample then
+	// refuses every frame as INPUT_CHANGED against the layout it inferred, and
+	// a reader that never appends a sample demuxes the file to EOF — silently.
+	inF.SetAudioParams(inF.SampleFmt(), inF.Channels(), inF.SampleRate())
 	if ar.resampler == nil {
 		rs, err := av.NewResampler(av.ResamplerOptions{
 			InSampleRate:  inF.SampleRate(),
@@ -338,6 +462,7 @@ func (ar *audioReader) ingest(inF *av.Frame) {
 			OutChannels:   ar.outCh,
 		})
 		if err != nil {
+			ar.noteDropped()
 			return
 		}
 		ar.resampler = rs
@@ -351,9 +476,21 @@ func (ar *audioReader) ingest(inF *av.Frame) {
 	// destination's format/layout/rate to be set first.
 	out.SetAudioParams(av.SampleFmtFLTP, ar.outCh, ar.outRate)
 	if err := ar.resampler.ConvertFrame(out, inF); err != nil {
+		ar.noteDropped()
 		return
 	}
+	ar.dropped = 0
 	ar.appendFrame(out)
+}
+
+// noteDropped counts a decoded frame the resampler refused. Past
+// maxDroppedFrames in a row the source is declared exhausted: the caller pads
+// silence from here, and fill() stops demuxing a file that yields nothing.
+func (ar *audioReader) noteDropped() {
+	ar.dropped++
+	if ar.dropped >= maxDroppedFrames {
+		ar.eof = true
+	}
 }
 
 // drainResampler flushes any samples buffered inside the resampler at EOS.

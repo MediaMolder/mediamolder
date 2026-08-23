@@ -25,6 +25,7 @@ package av
 // static int   mm_frame_sample_rate(const AVFrame *f)     { return f->sample_rate; }
 // static void  mm_frame_set_sample_rate(AVFrame *f, int r){ f->sample_rate = r; }
 // static int   mm_frame_channels(const AVFrame *f)        { return f->ch_layout.nb_channels; }
+// static int   mm_frame_layout_specified(const AVFrame *f){ return f->ch_layout.order != AV_CHANNEL_ORDER_UNSPEC; }
 // static int   mm_frame_sample_fmt(const AVFrame *f)      { return f->format; }
 // static int   mm_sample_fmt_from_name(const char *name)  { return av_get_sample_fmt(name); }
 // static int   mm_bytes_per_sample(int fmt)               { return av_get_bytes_per_sample((enum AVSampleFormat)fmt); }
@@ -130,6 +131,18 @@ func (f *Frame) Channels() int {
 		return 0
 	}
 	return int(C.mm_frame_channels(f.p))
+}
+
+// ChannelLayoutSpecified reports whether the frame's channel layout names an
+// order (a mask, custom, or ambisonic), as opposed to AV_CHANNEL_ORDER_UNSPEC —
+// a bare channel count, which is what PCM decoders (WAV, DV/AVI captures)
+// commonly deliver and what libswresample refuses as INPUT_CHANGED unless the
+// consumer pins a layout first (SetAudioParams).
+func (f *Frame) ChannelLayoutSpecified() bool {
+	if f == nil || f.p == nil {
+		return false
+	}
+	return C.mm_frame_layout_specified(f.p) != 0
 }
 
 // SampleFmt returns the frame's AVSampleFormat (audio only).
