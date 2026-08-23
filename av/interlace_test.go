@@ -16,7 +16,9 @@ func TestClassifyInterlace(t *testing.T) {
 		{"idet combing tff", InterlaceReport{Frames: 48, IdetTFF: 30, IdetBFF: 2, IdetProgressive: 6}, FieldTopFirst, "idet"},
 		{"idet combing bff", InterlaceReport{Frames: 48, IdetTFF: 1, IdetBFF: 33, IdetProgressive: 4}, FieldBottomFirst, "idet"},
 		{"idet mostly undetermined: unknown", InterlaceReport{Frames: 48, IdetTFF: 3, IdetProgressive: 2}, FieldUnknown, ""},
-		{"idet tie: unknown", InterlaceReport{Frames: 10, IdetTFF: 5, IdetProgressive: 5}, FieldUnknown, ""},
+		{"idet interlaced-vs-progressive tie: unknown", InterlaceReport{Frames: 10, IdetTFF: 5, IdetProgressive: 5}, FieldUnknown, ""},
+		{"flag parity tie 24/24: interlaced but parity unknown", InterlaceReport{Frames: 48, Flagged: 48, FlagTFF: 24, FlagBFF: 24}, FieldUnknown, ""},
+		{"idet parity tie 13/13: unknown", InterlaceReport{Frames: 30, IdetTFF: 13, IdetBFF: 13, IdetProgressive: 2}, FieldUnknown, ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -43,6 +45,22 @@ func TestFieldOrderFromCodecAndCodecpar(t *testing.T) {
 	}
 	if _, ok := fieldOrderFromCodecpar(0); ok {
 		t.Fatal("AV_FIELD_UNKNOWN must not answer")
+	}
+	// AVFieldOrder is coded-then-displayed; the mapping must follow DISPLAYED order:
+	// TT and BT show the top field first, BB and TB the bottom (yes, TB → bff).
+	for _, tc := range []struct {
+		v    int
+		want FieldOrder
+	}{
+		{fieldOrderProgressive, FieldProgressive},
+		{fieldOrderTT, FieldTopFirst},
+		{fieldOrderBT, FieldTopFirst},
+		{fieldOrderBB, FieldBottomFirst},
+		{fieldOrderTB, FieldBottomFirst},
+	} {
+		if o, ok := fieldOrderFromCodecpar(tc.v); !ok || o != tc.want {
+			t.Fatalf("fieldOrderFromCodecpar(%d) = %v/%v, want %v", tc.v, o, ok, tc.want)
+		}
 	}
 	if o := FieldBottomFirst; !o.Interlaced() || o.String() != "bff" {
 		t.Fatalf("bff: interlaced=%v string=%q", o.Interlaced(), o)
@@ -173,5 +191,42 @@ func TestDetectInterlaceFromContentWhenUnflagged(t *testing.T) {
 	}
 	if rep.Order != FieldTopFirst {
 		t.Fatalf("tinterlace interleave_top is top field first; idet said %v (%+v)", rep.Order, rep)
+	}
+}
+
+// The bottom-first weave must come out bff on both paths — a mapper that answered "tff" for
+// anything interlaced would pass every top-first test.
+func TestDetectInterlaceBottomFirst(t *testing.T) {
+	frames := lavfiFrames(t, "mandelbrot=size=320x240:rate=60,tinterlace=mode=interleave_bottom", 48)
+	defer closeFrames(frames)
+	if frames[0].Interlaced() {
+		rep := detectFrames(t, frames, 30)
+		if rep.Order != FieldBottomFirst || rep.Source != "frames" {
+			t.Fatalf("flagged bottom weave = %v via %q (%+v), want bff via frames", rep.Order, rep.Source, rep)
+		}
+	}
+	for _, f := range frames {
+		f.SetFieldFlags(false, false)
+	}
+	rep := detectFrames(t, frames, 30)
+	if rep.Order != FieldBottomFirst || rep.Source != "idet" {
+		t.Fatalf("unflagged bottom weave = %v via %q (%+v), want bff via idet", rep.Order, rep.Source, rep)
+	}
+}
+
+// One live DetectInterlace end to end, over a lavfi input: open → codecpar silent → decode →
+// flags decide. Everything above drives the detector's pieces; this drives the entry point.
+func TestDetectInterlaceLive(t *testing.T) {
+	in, err := OpenInputWithFormat("mandelbrot=size=320x240:rate=60,tinterlace=mode=interleave_top", "lavfi", nil)
+	if err != nil {
+		t.Skipf("lavfi input unavailable: %v", err)
+	}
+	defer in.Close()
+	rep, err := DetectInterlace(in, 0, 30)
+	if err != nil {
+		t.Fatalf("DetectInterlace: %v", err)
+	}
+	if rep.Order != FieldTopFirst || rep.Frames == 0 {
+		t.Fatalf("live detect = %+v, want tff from decoded frames", rep)
 	}
 }

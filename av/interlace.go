@@ -8,20 +8,8 @@ import (
 )
 
 // Interlace detection: is this video stream two fields per picture, and which field is
-// displayed first? The answer drives a deinterlacer (bwdif / yadif) that must be told the
-// parity, because many sources do not signal it — a DV tape capture in an AVI has an
-// "unknown" codecpar field order, and content re-encoded without field signalling has
-// progressive-looking flags over combed pictures.
-//
-// DetectInterlace answers from the cheapest reliable source, in order:
-//
-//  1. codecpar (the container / bitstream headers), when it says anything;
-//  2. the decoder's per-frame flags over the first frames (DV, MPEG-2, interlaced H.264 set
-//     AV_FRAME_FLAG_INTERLACED + TOP_FIELD_FIRST from the bitstream);
-//  3. the idet filter's content analysis of those same frames (combing between fields),
-//     for sources that carry interlaced pictures without saying so;
-//  4. the codec's own convention: DV is interlaced by format — NTSC (480 lines) bottom field
-//     first, PAL (576 lines) top field first.
+// DISPLAYED first? The answer drives a deinterlacer (bwdif / yadif) that must be told the
+// parity, because many sources do not signal it.
 
 // FieldOrder is the detected field structure of a video stream.
 type FieldOrder int
@@ -67,10 +55,16 @@ type InterlaceReport struct {
 // seconds of most material, enough for idet's history to settle.
 const DefaultInterlaceFrames = 48
 
-// DetectInterlace classifies video stream streamIndex of input. It reads packets from the
-// input's CURRENT position (open a fresh input, or seek first) and decodes up to maxFrames
-// frames with the software decoder only when the headers are silent. The input is left
-// positioned after the frames it consumed.
+// DetectInterlace classifies video stream streamIndex of input, from the cheapest source
+// that knows: the codecpar field order when the headers say anything; else the decoder's
+// per-frame flags over the first frames; else idet's combing analysis of those same frames;
+// else the codec's own rule (DV: NTSC 480 lines bff, PAL 576 tff). The report says which
+// source decided and carries the tallies.
+//
+// Contract: packets are read from the input's CURRENT position (open a fresh input or seek
+// first) with the software decoder, only when the headers are silent, and the input is left
+// where the read stopped. Anything short of clear evidence is FieldUnknown — a deinterlacer
+// is never applied on a guess.
 func DetectInterlace(input *InputFormatContext, streamIndex, maxFrames int) (InterlaceReport, error) {
 	var rep InterlaceReport
 	if input == nil {
@@ -130,14 +124,26 @@ func DetectInterlace(input *InputFormatContext, streamIndex, maxFrames int) (Int
 	return rep, nil
 }
 
+// The AVFieldOrder header values, importable by tests (cgo is unavailable in _test.go).
+var (
+	fieldOrderProgressive = int(C.AV_FIELD_PROGRESSIVE)
+	fieldOrderTT          = int(C.AV_FIELD_TT)
+	fieldOrderBB          = int(C.AV_FIELD_BB)
+	fieldOrderTB          = int(C.AV_FIELD_TB)
+	fieldOrderBT          = int(C.AV_FIELD_BT)
+)
+
 // fieldOrderFromCodecpar maps an AVFieldOrder header value to an answer, when it has one.
+// AVFieldOrder names CODED order then DISPLAYED order: TT top/top, BB bottom/bottom, TB top
+// coded but BOTTOM displayed first, BT bottom coded but TOP displayed first. The deinterlacer
+// wants displayed order, so TB is bff and BT is tff — not the other way around.
 func fieldOrderFromCodecpar(v int) (FieldOrder, bool) {
 	switch v {
-	case int(C.AV_FIELD_PROGRESSIVE):
+	case fieldOrderProgressive:
 		return FieldProgressive, true
-	case int(C.AV_FIELD_TT), int(C.AV_FIELD_TB):
+	case fieldOrderTT, fieldOrderBT:
 		return FieldTopFirst, true
-	case int(C.AV_FIELD_BB), int(C.AV_FIELD_BT):
+	case fieldOrderBB, fieldOrderTB:
 		return FieldBottomFirst, true
 	}
 	return FieldUnknown, false
@@ -266,20 +272,29 @@ func classifyInterlace(r InterlaceReport) (FieldOrder, string) {
 		return FieldUnknown, ""
 	}
 	if r.Flagged*2 >= r.Frames {
-		if r.FlagBFF > r.FlagTFF {
+		// The stream is interlaced by its own flags; a TFF-vs-BFF tie still
+		// means the parity is not known, and a guessed parity deinterlaces on
+		// the wrong foot — worse than not deinterlacing at all.
+		switch {
+		case r.FlagBFF > r.FlagTFF:
 			return FieldBottomFirst, "frames"
+		case r.FlagTFF > r.FlagBFF:
+			return FieldTopFirst, "frames"
 		}
-		return FieldTopFirst, "frames"
+		return FieldUnknown, ""
 	}
 	decided := r.IdetTFF + r.IdetBFF + r.IdetProgressive
 	if decided*2 >= r.Frames && decided > 0 {
 		interlaced := r.IdetTFF + r.IdetBFF
 		switch {
 		case interlaced > r.IdetProgressive:
-			if r.IdetBFF > r.IdetTFF {
+			switch {
+			case r.IdetBFF > r.IdetTFF:
 				return FieldBottomFirst, "idet"
+			case r.IdetTFF > r.IdetBFF:
+				return FieldTopFirst, "idet"
 			}
-			return FieldTopFirst, "idet"
+			return FieldUnknown, "" // interlaced, parity tied: not known
 		case r.IdetProgressive > interlaced:
 			return FieldProgressive, "idet"
 		}
