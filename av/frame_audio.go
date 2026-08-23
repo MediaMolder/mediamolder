@@ -133,7 +133,6 @@ func (f *Frame) Channels() int {
 	return int(C.mm_frame_channels(f.p))
 }
 
-// SampleFmt returns the frame's AVSampleFormat (audio only).
 // ChannelLayoutSpecified reports whether the frame's channel layout names an
 // order (a mask, custom, or ambisonic), as opposed to AV_CHANNEL_ORDER_UNSPEC —
 // a bare channel count, which is what PCM decoders (WAV, DV/AVI captures)
@@ -146,6 +145,7 @@ func (f *Frame) ChannelLayoutSpecified() bool {
 	return C.mm_frame_layout_specified(f.p) != 0
 }
 
+// SampleFmt returns the frame's AVSampleFormat (audio only).
 func (f *Frame) SampleFmt() int {
 	if f == nil || f.p == nil {
 		return 0
