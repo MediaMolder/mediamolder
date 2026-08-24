@@ -401,19 +401,21 @@ type packetJSON struct {
 }
 
 type jsonWriter struct {
-	w       *bufio.Writer
-	codec   string
-	opts    Options
-	jsonl   bool
-	col     *collector
-	filter  unitFilter
-	st      stats
-	gate    packetGate
-	started bool
-	inPkts  bool
-	first   bool
-	curPkt  PacketInfo
-	err     error
+	w           *bufio.Writer
+	codec       string
+	opts        Options
+	jsonl       bool
+	col         *collector
+	colElements bool // detail wants element sections at all
+	filter      unitFilter
+	st          stats
+	gate        packetGate
+	started     bool
+	inPkts      bool
+	first       bool
+	curPkt      PacketInfo
+	includeCur  bool
+	err         error
 }
 
 func newJSONWriter(w io.Writer, opts Options) *jsonWriter {
@@ -427,7 +429,8 @@ func newJSONWriter(w io.Writer, opts Options) *jsonWriter {
 		gate:   newPacketGate(opts),
 		first:  true,
 	}
-	jw.col.elements = opts.Detail != "summary"
+	jw.colElements = opts.Detail != "summary"
+	jw.col.elements = jw.colElements
 	return jw
 }
 
@@ -458,7 +461,10 @@ func (jw *jsonWriter) BeginStream(src Source) error {
 	return jw.err
 }
 
-func (jw *jsonWriter) BeginExtradata() { jw.col.reset() }
+func (jw *jsonWriter) BeginExtradata() {
+	jw.col.reset()
+	jw.col.elements = jw.colElements
+}
 
 func (jw *jsonWriter) EndExtradata(frag *cbs.Fragment, err error) error {
 	jw.st.addFragment(frag)
@@ -490,17 +496,21 @@ func (jw *jsonWriter) EndExtradata(frag *cbs.Fragment, err error) error {
 
 func (jw *jsonWriter) Done() bool { return jw.gate.done() }
 
+// BeginPacket decides inclusion (same point as the text writer, so the
+// two formats can never drift on range semantics) and skips element
+// collection for excluded packets; parsing still runs for codec state.
 func (jw *jsonWriter) BeginPacket(pkt PacketInfo) {
 	jw.col.reset()
 	jw.curPkt = pkt
+	jw.includeCur = jw.gate.include(pkt.Index)
+	jw.col.elements = jw.colElements && jw.includeCur
 }
 
 func (jw *jsonWriter) EndPacket(frag *cbs.Fragment, err error) error {
 	jw.st.Packets++
 	jw.st.addFragment(frag)
-	included := jw.gate.include(jw.curPkt.Index)
-	jw.gate.note(jw.curPkt.Index, included)
-	if !included {
+	jw.gate.note(jw.curPkt.Index, jw.includeCur)
+	if !jw.includeCur {
 		return jw.err
 	}
 
@@ -628,6 +638,7 @@ type textWriter struct {
 	opts     Options
 	st       stats
 	gate     packetGate
+	curIdx   int64
 	suppress bool
 }
 
@@ -673,8 +684,8 @@ func (tw *textWriter) EndExtradata(frag *cbs.Fragment, err error) error {
 // BeginPacket prints the packet line exactly as trace_headers.c does,
 // unless the packet falls outside the MaxPackets / Range window.
 func (tw *textWriter) BeginPacket(pkt PacketInfo) {
+	tw.curIdx = pkt.Index
 	included := tw.gate.include(pkt.Index)
-	tw.gate.note(pkt.Index, included)
 	tw.suppress = !included
 	if !included {
 		return
@@ -705,6 +716,7 @@ func (tw *textWriter) BeginPacket(pkt PacketInfo) {
 }
 
 func (tw *textWriter) EndPacket(frag *cbs.Fragment, err error) error {
+	tw.gate.note(tw.curIdx, !tw.suppress)
 	tw.suppress = false
 	tw.st.Packets++
 	tw.st.addFragment(frag)
