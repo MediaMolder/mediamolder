@@ -70,6 +70,12 @@ func (f *Frame) PTS() int64 { return int64(f.p.pts) }
 // SetPTS sets the presentation timestamp.
 func (f *Frame) SetPTS(pts int64) { f.p.pts = C.int64_t(pts) }
 
+// BestEffortTimestamp returns AVFrame.best_effort_timestamp (stream timebase
+// units): the frame's pts when the codec provides one, otherwise libavcodec's
+// guess from the packet dts. Containers that store only decode timestamps
+// (AVI) decode frames whose PTS() is NOPTS while this is the real position.
+func (f *Frame) BestEffortTimestamp() int64 { return int64(f.p.best_effort_timestamp) }
+
 // IsKeyFrame reports whether AV_FRAME_FLAG_KEY is set on this frame.
 func (f *Frame) IsKeyFrame() bool { return f.p.flags&C.AV_FRAME_FLAG_KEY != 0 }
 

@@ -316,6 +316,24 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   `internal/server`. Docs: `docs/remote-server.md`, `docs/openapi-server.yaml`.
 
 ### Fixed
+- **`sequence_editor` video positions clips with a demuxer seek, not a
+  decode of the whole prefix.** The video clip reader reached `source_in` by
+  decoding from the start of the file and counting frames at the nominal
+  rate, so a clip minutes into a large capture cost minutes of decode before
+  its first frame (a window one hour into a 2 h DV-in-AVI capture took
+  ~2m24s to produce its first frame; it now takes well under a second). The
+  reader now mirrors the audio reader's positioning: a fresh reader or a far
+  forward jump seeks to just before the target, the first decoded frame's
+  `best_effort_timestamp` re-anchors the absolute frame position (bounded —
+  a source that never stamps one falls back to decode-from-start once and is
+  not retried), and only the remainder is decoded and discarded. Landing
+  past the target (coarse index, long GOP) widens the seek slack and
+  retries. Near hops and continuations keep the warm-decoder
+  decode-and-discard path unchanged. New `av.Frame.BestEffortTimestamp()`
+  exposes libavcodec's `best_effort_timestamp` — containers that store only
+  decode timestamps (AVI tape captures) decode every frame with `pts ==
+  NOPTS`, and anchoring must still work there. Tests:
+  [processors/sequence_editor_seek_test.go](processors/sequence_editor_seek_test.go).
 - **`Frame.ToRGBA` / `ToBGR24` were non-deterministic for some frame widths.**
   `frame_to_rgba` / `frame_to_bgr24` allocated the swscale destination with
   `av_malloc` (uninitialized), and `sws_scale` does not write every byte of that
