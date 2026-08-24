@@ -161,6 +161,8 @@ cd frontend && npm ci && cd ..
 make build-gui                  # Option A — default (Homebrew) FFmpeg
 # or
 make build-gui-static           # Option B2 — static FFmpeg via ../ffmpeg
+# or, with every optional node family compiled in (see §"Combining nodes"):
+make build-gui-all              # static FFmpeg + whisper + ONNX nodes + LibRaw
 
 ./mediamolder gui               # opens the GUI in your browser
 ```
@@ -389,9 +391,26 @@ Linked statically — no runtime library or rpath. See
 
 ### Combining nodes in one binary
 
-The build tags **stack**, so one binary can carry several optional nodes. Pass
-extra node tags to a `make` target via `EXTRA_TAGS` — **comma-separated, no
-spaces**. They are *appended* to the target's built-in tags.
+**The everything build.** `make build-gui-all` produces one GUI binary with
+every optional node family compiled in — static FFmpeg + `whisper_stt` +
+`yolo_v8`/`face_detect` + `raw_decode` (effective tags
+`ffstatic,with_whisper,with_onnx,with_libraw`):
+
+```bash
+make build-gui-all              # frontend + bundled LibRaw (auto) + full binary
+```
+
+Build-time requirements are the union of the individual targets: the
+`../ffmpeg` static tree (§Option B2) and libwhisper under `WHISPER_PREFIX`;
+the bundled LibRaw is built automatically when missing (`bundle-libraw` is
+idempotent), and ONNX Runtime is only needed at *run* time
+(`ONNXRUNTIME_SHARED_LIBRARY_PATH`). `make test-all` runs the test suite with
+all three node tags against the system FFmpeg.
+
+For finer control, the build tags **stack**, so one binary can carry any
+subset of optional nodes. Pass extra node tags to a `make` target via
+`EXTRA_TAGS` — **comma-separated, no spaces**. They are *appended* to the
+target's built-in tags.
 
 ```bash
 # build-gui-whisper already implies `ffstatic,with_whisper`.

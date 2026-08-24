@@ -1,7 +1,8 @@
 .PHONY: build build-static test test-static lint bench bench-static clean \
         frontend-install frontend-dev frontend-build gui gui-dev build-gui build-gui-static \
         check-deps build-debug build-gui-debug build-whisper test-whisper build-gui-whisper \
-        bundle-libraw build-libraw test-libraw build-gui-libraw build-gui-onnx
+        bundle-libraw build-libraw test-libraw build-gui-libraw build-gui-onnx \
+        build-gui-all test-all
 
 # Detect macOS: Apple ld warns about duplicate -l flags when two CGO packages
 # (av and PySceneDetect/internal) both link -lavutil and -lswscale. Pass
@@ -235,3 +236,25 @@ build-gui-libraw: frontend-build
 	CGO_LDFLAGS_ALLOW='.*' CGO_LDFLAGS='$(CGO_LDFLAGS_NODUP)' \
 	  go build -tags=ffstatic,with_libraw$(if $(EXTRA_TAGS),$(comma)$(EXTRA_TAGS)) \
 	  -o mediamolder ./cmd/mediamolder
+
+# One-stop "everything" build: static FFmpeg + every opt-in node family
+# (whisper_stt, face_detect / yolo_v8, raw_decode) + the embedded GUI, i.e.
+# -tags=ffstatic,with_whisper,with_onnx,with_libraw. Build-time requirements:
+# the ../ffmpeg static tree (as for build-gui-static), libwhisper installed
+# under WHISPER_PREFIX (as for build-gui-whisper), and the bundled LibRaw —
+# built here automatically when missing (bundle-libraw is idempotent). ONNX
+# Runtime is dlopen'd at runtime only (ONNXRUNTIME_SHARED_LIBRARY_PATH).
+# EXTRA_TAGS still composes for future opt-in tags.
+build-gui-all: frontend-build bundle-libraw
+	CGO_LDFLAGS_ALLOW='.*' CGO_LDFLAGS='$(CGO_LDFLAGS_NODUP)' \
+	  go build -tags=ffstatic,with_whisper,with_onnx,with_libraw$(if $(EXTRA_TAGS),$(comma)$(EXTRA_TAGS)) \
+	  -ldflags='-extldflags "-Wl,-rpath,$(WHISPER_PREFIX)/lib"' \
+	  -o mediamolder ./cmd/mediamolder
+
+# Test suite with every opt-in node tag enabled (system FFmpeg, like `test`).
+# Whisper/ONNX/LibRaw integration tests still skip when their runtime pieces
+# (WHISPER_TEST_MODEL, ONNX Runtime, sample RAWs) are absent.
+test-all:
+	CGO_LDFLAGS_ALLOW='.*' CGO_LDFLAGS='$(CGO_LDFLAGS_NODUP)' \
+	  go test -tags=with_whisper,with_onnx,with_libraw \
+	  -ldflags='-extldflags "-Wl,-rpath,$(WHISPER_PREFIX)/lib"' ./...
