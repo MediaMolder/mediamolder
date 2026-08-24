@@ -80,12 +80,7 @@ const (
 	hevcMaxShortTermRefPicSets = 64
 	hevcMaxLongTermRefPics     = 32
 
-	hevcMinLog2CTBSize = 4
-	hevcMaxLog2CTBSize = 6
-
 	hevcMaxCPBCnt = 32
-
-	hevcMaxLumaPS = 35651584
 
 	hevcMaxWidth  = 16888
 	hevcMaxHeight = 16888
@@ -96,8 +91,6 @@ const (
 	hevcMaxSliceSegments = 600
 
 	hevcMaxEntryPointOffsets = hevcMaxTileColumns * 135
-
-	hevcMaxPalettePredictorSize = 128
 )
 
 // Slice types (libavcodec/hevc/hevc.h).

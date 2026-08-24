@@ -189,13 +189,19 @@ func TestTextPacketLine(t *testing.T) {
 func TestMaxPacketsDone(t *testing.T) {
 	var buf bytes.Buffer
 	w, _ := NewWriter(&buf, Options{Format: "json", MaxPackets: 1})
-	w.BeginStream(Source{Codec: "h264"})
+	if err := w.BeginStream(Source{Codec: "h264"}); err != nil {
+		t.Fatal(err)
+	}
 	w.BeginPacket(PacketInfo{Index: 0})
-	w.EndPacket(&cbs.Fragment{}, nil)
+	if err := w.EndPacket(&cbs.Fragment{}, nil); err != nil {
+		t.Fatal(err)
+	}
 	if !w.Done() {
 		t.Fatal("Done() should report true after MaxPackets")
 	}
-	w.Close()
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // feedPackets drives n empty packets through w and returns the indices of
@@ -207,7 +213,9 @@ func feedPackets(t *testing.T, opts Options, n int64) (written []int64, done int
 	if err != nil {
 		t.Fatal(err)
 	}
-	w.BeginStream(Source{Codec: "h264"})
+	if err := w.BeginStream(Source{Codec: "h264"}); err != nil {
+		t.Fatal(err)
+	}
 	done = -1
 	for i := int64(0); i < n; i++ {
 		w.BeginPacket(PacketInfo{Index: i})
@@ -294,7 +302,9 @@ func TestTextRange(t *testing.T) {
 	if _, err := c.ReadPacket(data); err != nil {
 		t.Fatal(err)
 	}
-	w.EndPacket(nil, nil)
+	if err := w.EndPacket(nil, nil); err != nil {
+		t.Fatal(err)
+	}
 	if buf.Len() != 0 {
 		t.Fatalf("out-of-range packet produced output:\n%s", buf.String()[:min(buf.Len(), 300)])
 	}
@@ -305,7 +315,9 @@ func TestTextRange(t *testing.T) {
 	if _, err := c.ReadPacket(data); err != nil {
 		t.Fatal(err)
 	}
-	w.EndPacket(nil, nil)
+	if err := w.EndPacket(nil, nil); err != nil {
+		t.Fatal(err)
+	}
 	if err := w.Close(); err != nil {
 		t.Fatal(err)
 	}

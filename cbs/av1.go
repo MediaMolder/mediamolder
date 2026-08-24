@@ -282,9 +282,8 @@ type AV1Context struct {
 
 	ref [av1NumRefFrames]AV1ReferenceFrameState
 
-	// AVOptions
-	operatingPoint     int
-	fixedOBUSizeLength int
+	// AVOptions (fixed_obu_size_length is write-only in C and not ported)
+	operatingPoint int
 
 	loopFilterRefDeltas  [av1TotalRefsPerFrame]int8
 	loopFilterModeDeltas [2]int8

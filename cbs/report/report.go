@@ -436,6 +436,26 @@ func newJSONWriter(w io.Writer, opts Options) *jsonWriter {
 
 func (jw *jsonWriter) Tracer() cbs.Tracer { return jw.col }
 
+// writeBytes / writeString / writeByte capture the first write error into
+// jw.err (bufio errors are sticky; Close reports them).
+func (jw *jsonWriter) writeBytes(b []byte) {
+	if _, err := jw.w.Write(b); err != nil && jw.err == nil {
+		jw.err = err
+	}
+}
+
+func (jw *jsonWriter) writeString(str string) {
+	if _, err := jw.w.WriteString(str); err != nil && jw.err == nil {
+		jw.err = err
+	}
+}
+
+func (jw *jsonWriter) writeByte(c byte) {
+	if err := jw.w.WriteByte(c); err != nil && jw.err == nil {
+		jw.err = err
+	}
+}
+
 func (jw *jsonWriter) marshal(v any) []byte {
 	b, err := json.Marshal(v)
 	if err != nil && jw.err == nil {
@@ -451,11 +471,11 @@ func (jw *jsonWriter) BeginStream(src Source) error {
 	}{"mediamolder.bitstream_trace/1", src}
 	jw.codec = src.Codec
 	if jw.jsonl {
-		jw.w.Write(jw.marshal(hdr))
-		jw.w.WriteByte('\n')
+		jw.writeBytes(jw.marshal(hdr))
+		jw.writeByte('\n')
 	} else {
-		jw.w.WriteString(`{"schema":"mediamolder.bitstream_trace/1","source":`)
-		jw.w.Write(jw.marshal(src))
+		jw.writeString(`{"schema":"mediamolder.bitstream_trace/1","source":`)
+		jw.writeBytes(jw.marshal(src))
 	}
 	jw.started = true
 	return jw.err
@@ -483,13 +503,13 @@ func (jw *jsonWriter) EndExtradata(frag *cbs.Fragment, err error) error {
 	}
 	xd.Diags = jw.col.fragDiags
 	if jw.jsonl {
-		jw.w.Write(jw.marshal(struct {
+		jw.writeBytes(jw.marshal(struct {
 			Extradata any `json:"extradata"`
 		}{xd}))
-		jw.w.WriteByte('\n')
+		jw.writeByte('\n')
 	} else {
-		jw.w.WriteString(`,"extradata":`)
-		jw.w.Write(jw.marshal(xd))
+		jw.writeString(`,"extradata":`)
+		jw.writeBytes(jw.marshal(xd))
 	}
 	return jw.err
 }
@@ -541,21 +561,21 @@ func (jw *jsonWriter) EndPacket(frag *cbs.Fragment, err error) error {
 	}
 
 	if jw.jsonl {
-		jw.w.Write(jw.marshal(struct {
+		jw.writeBytes(jw.marshal(struct {
 			Packet packetJSON `json:"packet"`
 		}{pj}))
-		jw.w.WriteByte('\n')
+		jw.writeByte('\n')
 	} else {
 		if !jw.inPkts {
-			jw.w.WriteString(`,"packets":[`)
+			jw.writeString(`,"packets":[`)
 			jw.inPkts = true
 		}
 		if !jw.first {
-			jw.w.WriteByte(',')
+			jw.writeByte(',')
 		}
 		jw.first = false
-		jw.w.WriteByte('\n')
-		jw.w.Write(jw.marshal(pj))
+		jw.writeByte('\n')
+		jw.writeBytes(jw.marshal(pj))
 	}
 	return jw.err
 }
@@ -608,22 +628,22 @@ func (jw *jsonWriter) unitsJSON(frag *cbs.Fragment) []unitJSON {
 
 func (jw *jsonWriter) Close() error {
 	if jw.jsonl {
-		jw.w.Write(jw.marshal(struct {
+		jw.writeBytes(jw.marshal(struct {
 			Stats stats `json:"stats"`
 		}{jw.st}))
-		jw.w.WriteByte('\n')
+		jw.writeByte('\n')
 	} else {
 		if !jw.started {
-			jw.w.WriteString(`{"schema":"mediamolder.bitstream_trace/1"`)
+			jw.writeString(`{"schema":"mediamolder.bitstream_trace/1"`)
 		}
 		if jw.inPkts {
-			jw.w.WriteString("\n]")
+			jw.writeString("\n]")
 		} else {
-			jw.w.WriteString(`,"packets":[]`)
+			jw.writeString(`,"packets":[]`)
 		}
-		jw.w.WriteString(`,"stats":`)
-		jw.w.Write(jw.marshal(jw.st))
-		jw.w.WriteString("}\n")
+		jw.writeString(`,"stats":`)
+		jw.writeBytes(jw.marshal(jw.st))
+		jw.writeString("}\n")
 	}
 	if err := jw.w.Flush(); err != nil && jw.err == nil {
 		jw.err = err

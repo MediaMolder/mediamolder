@@ -18,16 +18,8 @@ import (
 	"math/bits"
 )
 
-type unsigned interface {
-	~uint8 | ~uint16 | ~uint32 | ~uint64
-}
-
-type sigd interface {
-	~int8 | ~int16 | ~int32 | ~int64
-}
-
-// integer covers both: the C macros freely assign the read value to
-// whatever integer field the struct declares.
+// integer covers both signedness families: the C macros freely assign the
+// read value to whatever integer field the struct declares.
 type integer interface {
 	~uint8 | ~uint16 | ~uint32 | ~uint64 | ~int8 | ~int16 | ~int32 | ~int64
 }
@@ -302,12 +294,6 @@ func se[T integer](r *Reader, name string, dst *T, rangeMin, rangeMax int32) {
 // ses is ses(name, range_min, range_max, subs...).
 func ses[T integer](r *Reader, name string, dst *T, rangeMin, rangeMax int32, subs ...int) {
 	*dst = T(readSEGolomb(r, name, subs, rangeMin, rangeMax))
-}
-
-// iv is i(width, name, range_min, range_max) (renamed: `i` is the
-// conventional loop variable in the templates).
-func iv[T integer](r *Reader, width int, name string, dst *T, rangeMin, rangeMax int32) {
-	*dst = T(readSignedRaw(r, width, name, nil, rangeMin, rangeMax))
 }
 
 // ib is ib(width, name).

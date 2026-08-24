@@ -327,7 +327,7 @@ func (h *AV1Context) setFrameRefs(r *Reader, current *AV1RawFrameHeader) {
 	for i := 0; i < av1RefsPerFrame; i++ {
 		refFrameIdx[i] = av1RefFrameNone
 	}
-	refFrameIdx[av1RefFrameLast-av1RefFrameLast] = int8(current.LastFrameIdx)
+	refFrameIdx[0] = int8(current.LastFrameIdx) // [AV1_REF_FRAME_LAST - AV1_REF_FRAME_LAST]
 	refFrameIdx[av1RefFrameGolden-av1RefFrameLast] = int8(current.GoldenFrameIdx)
 
 	for i := 0; i < av1NumRefFrames; i++ {
@@ -1076,12 +1076,11 @@ func (h *AV1Context) globalMotionParams(r *Reader, current *AV1RawFrameHeader) {
 		if typ >= av1WarpModelRotzoom {
 			h.globalMotionParam(r, current, typ, ref, 2)
 			h.globalMotionParam(r, current, typ, ref, 3)
+			// else: gm_params[ref][4] = -gm_params[ref][3] and
+			// gm_params[ref][5] = gm_params[ref][2] (decoder-derived).
 			if typ == av1WarpModelAffine {
 				h.globalMotionParam(r, current, typ, ref, 4)
 				h.globalMotionParam(r, current, typ, ref, 5)
-			} else {
-				// gm_params[ref][4] = -gm_params[ref][3]
-				// gm_params[ref][5] =  gm_params[ref][2]
 			}
 		}
 		if typ >= av1WarpModelTranslation {
@@ -1534,17 +1533,10 @@ func (h *AV1Context) uncompressedHeader(r *Reader, current *AV1RawFrameHeader) {
 		flag(r, "disable_frame_end_update_cdf", &current.DisableFrameEndUpdateCdf)
 	}
 
-	if current.PrimaryRefFrame == av1PrimaryRefNone {
-		// Init non-coeff CDFs.
-		// Setup past independence.
-	} else {
-		// Load CDF tables from previous frame.
-		// Load params from previous frame.
-	}
-
-	if current.UseRefFrameMvs != 0 {
-		// Perform motion field estimation process.
-	}
+	// primary_ref_frame == PRIMARY_REF_NONE: init non-coeff CDFs, setup
+	// past independence; else: load CDF tables and params from the
+	// previous frame. use_ref_frame_mvs: perform the motion field
+	// estimation process. All decoder-side steps — no bits read.
 
 	h.tileInfo(r, current)
 
