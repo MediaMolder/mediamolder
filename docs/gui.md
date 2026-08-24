@@ -130,6 +130,12 @@ in-app help dialog.
      (visible in the SSE stream / **Observations** panel).
      Only a **video** input handle is shown because the detectors are
      video-only pass-through nodes.
+     The **Bitstream trace (NAL/OBU report)** node (`bitstream_trace`)
+     inspects the compressed bitstream instead of decoded frames: it opens
+     the referenced input itself (set `input_id` and an absolute
+     `output_file` in the Inspector) and writes every H.264/H.265/AV1
+     NAL unit / OBU to a JSON report without decoding. See
+     [Bitstream Trace](bitstream-trace.md).
      See [§ Scene detection processors](#scene-detection-processors).
 4. **Add a Sink.** Drag *Output file* from **Sinks**, click **Browse…** and
    pick **Save** mode in the dialog to choose a destination path and
