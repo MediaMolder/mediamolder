@@ -5,6 +5,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Changed
+
+- **Bitstream trace: coded pictures are typed records (schema
+  `mediamolder.bitstream_trace/2`).** H.264/H.265 slice units now report a
+  fixed-schema `picture` object (slice type, derived `poc`, `frame_num` /
+  `segment_address`, `lsb`, `pps`, `qp_delta`, ref counts, `idr_pic_id`,
+  `field`) instead of a free-form `summary` map, and the CSV format fills
+  dedicated picture columns (`pic_type` … `ref_l1`) instead of a quoted JSON
+  blob — substantially smaller output on long streams and directly queryable
+  columns. Other unit types (parameter sets, SEI, AV1 OBUs) keep their
+  content summaries. See [docs/bitstream-trace.md](docs/bitstream-trace.md).
+
 ### Added
 
 - **Derived Picture Order Count in bitstream trace slice summaries.** H.264 and

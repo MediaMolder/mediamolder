@@ -63,7 +63,7 @@ func run(t *testing.T, opts Options) (string, map[string]any) {
 
 func TestJSONDocument(t *testing.T) {
 	_, doc := run(t, Options{Format: "json", Detail: "elements"})
-	if doc["schema"] != "mediamolder.bitstream_trace/1" {
+	if doc["schema"] != "mediamolder.bitstream_trace/2" {
 		t.Fatalf("schema: %v", doc["schema"])
 	}
 	pkts := doc["packets"].([]any)
@@ -114,12 +114,15 @@ func TestDetailHeadersOmitsSliceSections(t *testing.T) {
 		typ := um["type"].(float64)
 		_, hasSections := um["sections"]
 		switch typ {
-		case 1, 5: // slices: summary only
+		case 1, 5: // slices: typed picture record only
 			if hasSections {
 				t.Fatalf("slice unit %v has sections at detail=headers", typ)
 			}
-			if _, ok := um["summary"]; !ok {
-				t.Fatalf("slice unit %v missing summary", typ)
+			if _, ok := um["picture"]; !ok {
+				t.Fatalf("slice unit %v missing picture record", typ)
+			}
+			if _, ok := um["summary"]; ok {
+				t.Fatalf("slice unit %v still has a summary blob", typ)
 			}
 		case 7: // SPS keeps elements
 			if !hasSections {
@@ -148,6 +151,8 @@ func TestUnitTypeFilter(t *testing.T) {
 			}
 		} else if _, ok := um["summary"]; ok {
 			t.Fatalf("unit %v not filtered", um["type"])
+		} else if _, ok := um["picture"]; ok {
+			t.Fatalf("unit %v picture not filtered", um["type"])
 		}
 	}
 }

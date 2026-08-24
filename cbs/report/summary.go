@@ -67,8 +67,6 @@ func summarize(u *cbs.Unit) map[string]any {
 		return h264SPSSummary(c)
 	case *cbs.H264RawPPS:
 		return h264PPSSummary(c)
-	case *cbs.H264RawSlice:
-		return h264SliceSummary(&c.Header)
 	case *cbs.H264RawSEI:
 		return map[string]any{"messages": seiListSummary(&c.MessageList)}
 	case *cbs.H264RawAUD:
@@ -81,8 +79,6 @@ func summarize(u *cbs.Unit) map[string]any {
 		return h265SPSSummary(c)
 	case *cbs.H265RawPPS:
 		return h265PPSSummary(c)
-	case *cbs.H265RawSlice:
-		return h265SliceSummary(&c.Header)
 	case *cbs.H265RawSEI:
 		return map[string]any{"messages": seiListSummary(&c.MessageList)}
 	case *cbs.H265RawAUD:
@@ -174,33 +170,61 @@ func h264PPSSummary(pps *cbs.H264RawPPS) map[string]any {
 	}
 }
 
-func h264SliceSummary(sh *cbs.H264RawSliceHeader) map[string]any {
+// pictureJSON is the typed record for coded-picture units (H.264 and
+// H.265 slices). A fixed schema with short keys instead of a free-form
+// summary map: smaller output and directly mappable to CSV columns.
+type pictureJSON struct {
+	Type       string  `json:"type"`
+	TypeValue  uint8   `json:"type_value"`
+	POC        *int32  `json:"poc,omitempty"`
+	FrameNum   *uint16 `json:"frame_num,omitempty"` // H.264
+	Lsb        uint16  `json:"lsb"`                 // pic_order_cnt_lsb
+	FirstMB    *uint32 `json:"first_mb,omitempty"`  // H.264 first_mb_in_slice
+	SegAddr    *uint16 `json:"segment_address,omitempty"`
+	FirstSlice *bool   `json:"first_slice,omitempty"` // H.265
+	Dependent  bool    `json:"dependent,omitempty"`   // H.265
+	PPS        uint8   `json:"pps"`
+	QPDelta    int8    `json:"qp_delta"`
+	RefL0      uint8   `json:"ref_l0,omitempty"`
+	RefL1      uint8   `json:"ref_l1,omitempty"`
+	IDRPicID   *uint16 `json:"idr_pic_id,omitempty"`
+	Field      string  `json:"field,omitempty"`
+}
+
+func h264Picture(sh *cbs.H264RawSliceHeader, poc int32, hasPOC bool) *pictureJSON {
 	st := "?"
 	if sh.SliceType < 10 {
 		st = h264SliceTypeNames[sh.SliceType]
 	}
-	s := map[string]any{
-		"slice_type":       st,
-		"slice_type_value": sh.SliceType,
-		"first_mb":         sh.FirstMbInSlice,
-		"pps_id":           sh.PicParameterSetID,
-		"frame_num":        sh.FrameNum,
-		"slice_qp_delta":   sh.SliceQpDelta,
+	p := &pictureJSON{
+		Type:      st,
+		TypeValue: sh.SliceType,
+		Lsb:       sh.PicOrderCntLsb,
+		PPS:       sh.PicParameterSetID,
+		QPDelta:   sh.SliceQpDelta,
 	}
+	if hasPOC {
+		v := poc
+		p.POC = &v
+	}
+	fn := sh.FrameNum
+	p.FrameNum = &fn
+	mb := sh.FirstMbInSlice
+	p.FirstMB = &mb
 	if sh.NalUnitHeader.NalUnitType == 5 {
-		s["idr_pic_id"] = sh.IdrPicID
+		id := sh.IdrPicID
+		p.IDRPicID = &id
 	}
 	if sh.FieldPicFlag != 0 {
-		s["field"] = cond(sh.BottomFieldFlag != 0, "bottom", "top")
+		p.Field = cond(sh.BottomFieldFlag != 0, "bottom", "top")
 	}
-	s["pic_order_cnt_lsb"] = sh.PicOrderCntLsb
 	if sh.SliceType%5 == 0 || sh.SliceType%5 == 1 || sh.SliceType%5 == 3 {
-		s["num_ref_idx_l0"] = sh.NumRefIdxL0ActiveMinus1 + 1
+		p.RefL0 = sh.NumRefIdxL0ActiveMinus1 + 1
 	}
 	if sh.SliceType%5 == 1 {
-		s["num_ref_idx_l1"] = sh.NumRefIdxL1ActiveMinus1 + 1
+		p.RefL1 = sh.NumRefIdxL1ActiveMinus1 + 1
 	}
-	return s
+	return p
 }
 
 // seiListSummary flattens an SEI message list into an inventory with
@@ -293,4 +317,16 @@ func cond[T any](c bool, a, b T) T {
 		return a
 	}
 	return b
+}
+
+// pictureOf returns the typed picture record for coded-picture units,
+// nil for everything else.
+func pictureOf(u *cbs.Unit, poc int32, hasPOC bool) *pictureJSON {
+	switch c := u.Content.(type) {
+	case *cbs.H264RawSlice:
+		return h264Picture(&c.Header, poc, hasPOC)
+	case *cbs.H265RawSlice:
+		return h265Picture(&c.Header, poc, hasPOC)
+	}
+	return nil
 }

@@ -19,7 +19,12 @@ import (
 var csvHeader = []string{
 	"kind", "packet", "pts", "dts", "duration", "packet_pos", "packet_size",
 	"key_frame", "corrupt", "unit", "offset", "prefix", "size", "rbsp_size",
-	"type", "name", "decomposed", "skip", "error", "summary",
+	"type", "name", "decomposed", "skip", "error",
+	// Coded-picture columns, filled for H.264/H.265 slice rows (their
+	// summary column stays empty — the columns are the report).
+	"pic_type", "pic_type_value", "poc", "frame_num", "pic_lsb",
+	"first_mb", "pps_id", "qp_delta", "ref_l0", "ref_l1",
+	"summary",
 }
 
 // csvWriter renders one row per unit. The unit-type filter drops
@@ -124,15 +129,29 @@ func (c *csvWriter) writeUnits(kind string, pkt *PacketInfo, frag *cbs.Fragment,
 		if !emit || !c.filter.match(u) {
 			continue
 		}
+		picCols := []string{"", "", "", "", "", "", "", "", "", ""}
 		summary := ""
-		sm := summarize(u)
-		if hasPOC {
-			if sm == nil {
-				sm = map[string]any{}
+		if pic := pictureOf(u, poc, hasPOC); pic != nil {
+			opt := func(set bool, v string) string {
+				if set {
+					return v
+				}
+				return ""
 			}
-			sm["poc"] = poc
-		}
-		if len(sm) > 0 {
+			picCols = []string{
+				pic.Type,
+				num(int(pic.TypeValue)),
+				opt(pic.POC != nil, i64(int64(orZero32(pic.POC)))),
+				opt(pic.FrameNum != nil, num(int(orZero16(pic.FrameNum)))),
+				num(int(pic.Lsb)),
+				opt(pic.FirstMB != nil || pic.SegAddr != nil,
+					num(firstMBOrAddr(pic))),
+				num(int(pic.PPS)),
+				num(int(pic.QPDelta)),
+				opt(pic.RefL0 != 0, num(int(pic.RefL0))),
+				opt(pic.RefL1 != 0, num(int(pic.RefL1))),
+			}
+		} else if sm := summarize(u); len(sm) > 0 {
 			if b, err := json.Marshal(sm); err == nil {
 				summary = string(b)
 			}
@@ -144,7 +163,35 @@ func (c *csvWriter) writeUnits(kind string, pkt *PacketInfo, frag *cbs.Fragment,
 		row := append(append([]string{kind}, pktCols...),
 			num(i), num(u.Offset), num(u.PrefixSize), num(u.RawSize),
 			num(len(u.RBSP)), strconv.FormatUint(uint64(u.Type), 10),
-			u.TypeName, boolean(u.Decomposed), u.Skip, errText, summary)
+			u.TypeName, boolean(u.Decomposed), u.Skip, errText)
+		row = append(row, picCols...)
+		row = append(row, summary)
 		c.write(row)
 	}
+}
+
+func orZero32(v *int32) int32 {
+	if v == nil {
+		return 0
+	}
+	return *v
+}
+
+func orZero16(v *uint16) uint16 {
+	if v == nil {
+		return 0
+	}
+	return *v
+}
+
+// firstMBOrAddr maps the slice position column: first_mb_in_slice for
+// H.264, slice_segment_address for H.265.
+func firstMBOrAddr(p *pictureJSON) int {
+	if p.FirstMB != nil {
+		return int(*p.FirstMB)
+	}
+	if p.SegAddr != nil {
+		return int(*p.SegAddr)
+	}
+	return 0
 }

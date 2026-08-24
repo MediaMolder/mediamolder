@@ -85,20 +85,18 @@ func TestBitstreamTrace_RunJSON(t *testing.T) {
 	if first["key_frame"] != true {
 		t.Fatal("first packet should be a key frame")
 	}
-	// Derived Picture Order Count: every slice summary carries "poc";
-	// the IDR's picture has POC 0 and x264 spaces frames by 2.
+	// Coded pictures are typed records with a derived Picture Order
+	// Count; the IDR's picture has POC 0 and x264 spaces frames by 2.
 	var pocs []float64
 	for _, p := range pkts {
 		for _, u := range p.(map[string]any)["units"].([]any) {
 			um := u.(map[string]any)
-			if s, ok := um["summary"].(map[string]any); ok {
-				if _, isSlice := s["slice_type"]; isSlice {
-					poc, ok := s["poc"].(float64)
-					if !ok {
-						t.Fatalf("slice summary missing poc: %v", s)
-					}
-					pocs = append(pocs, poc)
+			if pic, ok := um["picture"].(map[string]any); ok {
+				poc, ok := pic["poc"].(float64)
+				if !ok {
+					t.Fatalf("picture record missing poc: %v", pic)
 				}
+				pocs = append(pocs, poc)
 			}
 		}
 	}

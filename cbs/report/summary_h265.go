@@ -79,19 +79,26 @@ func h265PPSSummary(pps *cbs.H265RawPPS) map[string]any {
 	}
 }
 
-func h265SliceSummary(sh *cbs.H265RawSliceHeader) map[string]any {
+func h265Picture(sh *cbs.H265RawSliceHeader, poc int32, hasPOC bool) *pictureJSON {
 	st := "?"
 	if sh.SliceType < 3 {
 		st = h265SliceTypeNames[sh.SliceType]
 	}
-	return map[string]any{
-		"slice_type":            st,
-		"slice_type_value":      sh.SliceType,
-		"pps_id":                sh.SlicePicParameterSetID,
-		"first_slice_in_pic":    sh.FirstSliceSegmentInPicFlag != 0,
-		"dependent":             sh.DependentSliceSegmentFlag != 0,
-		"slice_segment_address": sh.SliceSegmentAddress,
-		"pic_order_cnt_lsb":     sh.SlicePicOrderCntLsb,
-		"slice_qp_delta":        sh.SliceQpDelta,
+	p := &pictureJSON{
+		Type:      st,
+		TypeValue: sh.SliceType,
+		Lsb:       sh.SlicePicOrderCntLsb,
+		PPS:       sh.SlicePicParameterSetID,
+		QPDelta:   sh.SliceQpDelta,
+		Dependent: sh.DependentSliceSegmentFlag != 0,
 	}
+	if hasPOC {
+		v := poc
+		p.POC = &v
+	}
+	first := sh.FirstSliceSegmentInPicFlag != 0
+	p.FirstSlice = &first
+	addr := sh.SliceSegmentAddress
+	p.SegAddr = &addr
+	return p
 }

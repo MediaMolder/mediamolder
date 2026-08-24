@@ -109,7 +109,7 @@ very large report — combine with `unit_types` or `packet_range`).
 
 ```jsonc
 {
-  "schema": "mediamolder.bitstream_trace/1",
+  "schema": "mediamolder.bitstream_trace/2",
   "source": { "url": "in.mp4", "stream_index": 0, "codec": "h264",
               "profile": "High", "format": "avcc", "nal_length_size": 4,
               "time_base": [1, 12800] },
@@ -133,6 +133,14 @@ very large report — combine with `unit_types` or `packet_range`).
               ] }
           ],
           "decomposed": true
+        },
+        { "index": 3, "offset": 745, "prefix": 4, "size": 838, "rbsp_size": 838,
+          "type": 5, "name": "IDR",
+          "header": { "nal_ref_idc": 3, "type": 5 },
+          "picture": { "type": "I", "type_value": 7, "poc": 0, "frame_num": 0,
+                       "lsb": 0, "first_mb": 0, "pps": 0, "qp_delta": 4,
+                       "idr_pic_id": 0 },
+          "decomposed": true
         }
       ]
     }
@@ -151,13 +159,18 @@ Field notes:
 - `header` carries the raw NAL/OBU header fields even for units that are
   not decomposed (reserved types, HEVC layered NALs FFmpeg drops —
   reported here with a `skip` reason).
-- `summary` is derived per unit type: SPS/sequence header → dimensions,
-  profile/level, bit depth, VUI timing/colour; PPS → entropy mode,
-  weighted prediction, `init_qp`; slice → slice type, `frame_num`,
-  `pic_order_cnt_lsb`, the **derived Picture Order Count** (`poc`, per
+- **Coded pictures** (H.264/H.265 slices) carry a typed `picture` record
+  with a fixed schema instead of a free-form summary: slice `type` /
+  `type_value`, the **derived Picture Order Count** (`poc`, per
   Rec. H.264 §8.2.1 / H.265 §8.3.1 — all three H.264 POC modes, lsb wrap,
-  IDR/BLA resets, continuous across mid-stream CRAs), ref counts; SEI →
-  message inventory with decoded
+  IDR/BLA resets, continuous across mid-stream CRAs), `frame_num` /
+  `segment_address`, `lsb`, `pps`, `qp_delta`, `ref_l0`/`ref_l1`,
+  `idr_pic_id`, `field`. Fixed keys keep long streams compact and map 1:1
+  onto the CSV picture columns.
+- `summary` is derived for the other unit types: SPS/sequence header →
+  dimensions, profile/level, bit depth, VUI timing/colour; PPS → entropy
+  mode, weighted prediction, `init_qp`; AV1 frame headers → frame type,
+  order hint, reference state; SEI → message inventory with decoded
   fields for the common types (user data, mastering display, CLL,
   recovery point, pic timing, …).
 - `jsonl` emits the same objects one per line (header, packets, stats) so
@@ -165,10 +178,14 @@ Field notes:
 - `csv` emits **one row per unit** for spreadsheet / SQL workflows:
   `kind` (`extradata` | `packet`), the packet context (index, pts/dts,
   duration, position, size, key frame), the unit identity (index, offset,
-  prefix, sizes, type, name, decomposed/skip/error), and the derived
-  `summary` as one compact-JSON column. Element-level detail is not
-  representable in CSV (`detail` is ignored); the `unit_types` filter
-  drops non-matching rows entirely.
+  prefix, sizes, type, name, decomposed/skip/error), then the
+  **coded-picture columns** (`pic_type`, `pic_type_value`, `poc`,
+  `frame_num`, `pic_lsb`, `first_mb`, `pps_id`, `qp_delta`, `ref_l0`,
+  `ref_l1`) filled for H.264/H.265 slice rows, and a compact-JSON
+  `summary` column for the other unit types (slice rows leave it empty —
+  the columns are the report). Element-level detail is not representable
+  in CSV (`detail` is ignored); the `unit_types` filter drops
+  non-matching rows entirely.
 - A malformed unit gets an `"error"` and parsing **continues** with the
   next unit — unlike `trace_headers`, which aborts on the first error.
 

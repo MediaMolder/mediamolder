@@ -21,9 +21,10 @@ import (
 // Options selects the output shape.
 type Options struct {
 	// Format: "json" (single streamed document, default), "jsonl" (one
-	// object per packet), "csv" (one row per unit, with the summary as a
-	// compact-JSON column; element detail is json/jsonl-only), or "text"
-	// (trace_headers-format lines).
+	// object per packet), "csv" (one row per unit — coded pictures fill
+	// dedicated columns, other units carry a compact-JSON summary column;
+	// element detail is json/jsonl-only), or "text" (trace_headers-format
+	// lines).
 	Format string
 	// Detail: "elements" (full syntax-element trace), "headers"
 	// (elements for parameter sets / SEI / metadata, summaries for
@@ -382,6 +383,7 @@ type unitJSON struct {
 	Type       uint32         `json:"type"`
 	Name       string         `json:"name"`
 	Header     map[string]any `json:"header,omitempty"`
+	Picture    *pictureJSON   `json:"picture,omitempty"`
 	Summary    map[string]any `json:"summary,omitempty"`
 	Sections   []sectionJSON  `json:"sections,omitempty"`
 	Decomposed bool           `json:"decomposed"`
@@ -474,13 +476,13 @@ func (jw *jsonWriter) BeginStream(src Source) error {
 	hdr := struct {
 		Schema string `json:"schema"`
 		Source Source `json:"source"`
-	}{"mediamolder.bitstream_trace/1", src}
+	}{"mediamolder.bitstream_trace/2", src}
 	jw.codec = src.Codec
 	if jw.jsonl {
 		jw.writeBytes(jw.marshal(hdr))
 		jw.writeByte('\n')
 	} else {
-		jw.writeString(`{"schema":"mediamolder.bitstream_trace/1","source":`)
+		jw.writeString(`{"schema":"mediamolder.bitstream_trace/2","source":`)
 		jw.writeBytes(jw.marshal(src))
 	}
 	jw.started = true
@@ -621,12 +623,10 @@ func (jw *jsonWriter) unitsJSON(frag *cbs.Fragment) []unitJSON {
 		if jw.opts.Detail == "elements" || jw.opts.Detail == "" {
 			uj.EPB = u.EPBPositions
 		}
-		uj.Summary = summarize(u)
-		if hasPOC {
-			if uj.Summary == nil {
-				uj.Summary = map[string]any{}
-			}
-			uj.Summary["poc"] = poc
+		if pic := pictureOf(u, poc, hasPOC); pic != nil {
+			uj.Picture = pic
+		} else {
+			uj.Summary = summarize(u)
 		}
 		if ue := jw.col.units[i]; ue != nil {
 			uj.Diags = ue.diags
@@ -654,7 +654,7 @@ func (jw *jsonWriter) Close() error {
 		jw.writeByte('\n')
 	} else {
 		if !jw.started {
-			jw.writeString(`{"schema":"mediamolder.bitstream_trace/1"`)
+			jw.writeString(`{"schema":"mediamolder.bitstream_trace/2"`)
 		}
 		if jw.inPkts {
 			jw.writeString("\n]")
