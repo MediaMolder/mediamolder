@@ -54,8 +54,10 @@ type Codec interface {
 	ReadExtradata(data []byte) (*Fragment, error)
 	// ReadPacket parses one packet's payload (header == 0).
 	ReadPacket(data []byte) (*Fragment, error)
-	// Flush drops inter-frame state (but keeps parameter sets), for use
-	// after a seek; ports cbs_h264_flush / cbs_av1_flush.
+	// Flush resets all stored stream state — parameter sets included —
+	// exactly as cbs_h264_flush / cbs_h265_flush / cbs_av1_flush do.
+	// After a seek, re-read the extradata (or wait for in-band parameter
+	// sets) before expecting slice headers to decompose.
 	Flush()
 }
 

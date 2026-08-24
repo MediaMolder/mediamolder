@@ -252,9 +252,9 @@ func (p *BitstreamTrace) Init(params map[string]any) error {
 	if out == "" {
 		return fmt.Errorf("bitstream_trace: requires \"output_file\" (absolute path)")
 	}
-	safe, err := sanitizeOutputPath(out)
+	safe, err := sanitizeProcessorOutputPath("bitstream_trace", out)
 	if err != nil {
-		return fmt.Errorf("bitstream_trace: %w", err)
+		return err
 	}
 	p.outputPath = safe
 
@@ -285,13 +285,17 @@ func (p *BitstreamTrace) Init(params map[string]any) error {
 	if v, ok := params["max_packets"].(float64); ok {
 		p.cfg.Options.MaxPackets = int64(v)
 	}
-	if raw, ok := params["packet_range"].([]any); ok && len(raw) == 2 {
-		if a, ok := raw[0].(float64); ok {
-			p.cfg.Options.Range[0] = int64(a)
+	if raw, ok := params["packet_range"].([]any); ok {
+		if len(raw) != 2 {
+			return fmt.Errorf("bitstream_trace: packet_range wants [first, last], got %d entries", len(raw))
 		}
-		if b, ok := raw[1].(float64); ok {
-			p.cfg.Options.Range[1] = int64(b)
+		a, okA := raw[0].(float64)
+		b, okB := raw[1].(float64)
+		if !okA || !okB || a < 0 || b < a {
+			return fmt.Errorf("bitstream_trace: invalid packet_range %v", raw)
 		}
+		p.cfg.Options.Range = [2]int64{int64(a), int64(b)}
+		p.cfg.Options.RangeSet = true
 	}
 	if v, ok := params["emit_events"].(bool); ok {
 		p.emitEvents = v

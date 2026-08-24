@@ -38,8 +38,62 @@ type Options struct {
 	// Done() reports true.
 	MaxPackets int64
 	// Range limits detailed output to packet indices [Range[0], Range[1]]
-	// inclusive; active when Range[1] > 0.
-	Range [2]int64
+	// (0-based, inclusive at both ends: 0:0 is exactly the first packet).
+	// Active only when RangeSet is true, so 0:0 is a valid window.
+	Range    [2]int64
+	RangeSet bool
+}
+
+// packetGate applies MaxPackets and the inclusive packet-index range
+// uniformly across output formats. Every packet is still parsed (codec
+// state must advance); the gate only controls what is written and when
+// the driver may stop reading.
+type packetGate struct {
+	maxPackets int64
+	rangeSet   bool
+	lo, hi     int64
+	written    int64 // packets actually output
+	seen       int64 // packets delivered to the writer
+}
+
+func newPacketGate(opts Options) packetGate {
+	return packetGate{
+		maxPackets: opts.MaxPackets,
+		rangeSet:   opts.RangeSet,
+		lo:         opts.Range[0],
+		hi:         opts.Range[1],
+	}
+}
+
+// include reports whether the packet at idx belongs in the output.
+func (g *packetGate) include(idx int64) bool {
+	if g.maxPackets > 0 && g.written >= g.maxPackets {
+		return false
+	}
+	if g.rangeSet && (idx < g.lo || idx > g.hi) {
+		return false
+	}
+	return true
+}
+
+// note records the outcome for idx; call once per packet, after include.
+func (g *packetGate) note(idx int64, included bool) {
+	g.seen = idx + 1
+	if included {
+		g.written++
+	}
+}
+
+// done reports that nothing further can be written, so the driver may
+// stop feeding packets.
+func (g *packetGate) done() bool {
+	if g.maxPackets > 0 && g.written >= g.maxPackets {
+		return true
+	}
+	if g.rangeSet && g.seen > g.hi {
+		return true
+	}
+	return false
 }
 
 // Source describes the stream being traced (the report header).
@@ -107,6 +161,18 @@ type unitFilter struct {
 	all     bool
 }
 
+// unitNameAliases expands the family names of the proposal ("sps", "sei",
+// "idr", ...) to every per-codec TypeName they cover, so the same filter
+// spec works across H.264, H.265 and AV1.
+var unitNameAliases = map[string][]string{
+	"sps":      {"sps", "sequence_header"},
+	"seq":      {"sequence_header"},
+	"sei":      {"sei", "sei_prefix", "sei_suffix"},
+	"idr":      {"idr", "idr_w_radl", "idr_n_lp"},
+	"td":       {"temporal_delimiter"},
+	"metadata": {"metadata"},
+}
+
 func newUnitFilter(types []string) unitFilter {
 	f := unitFilter{names: map[string]bool{}, numbers: map[uint32]bool{}}
 	if len(types) == 0 {
@@ -124,6 +190,12 @@ func newUnitFilter(types []string) unitFilter {
 		}
 		if t == "slice" || t == "slices" {
 			f.slices = true
+			continue
+		}
+		if expanded, ok := unitNameAliases[t]; ok {
+			for _, name := range expanded {
+				f.names[name] = true
+			}
 			continue
 		}
 		f.names[t] = true
@@ -336,8 +408,7 @@ type jsonWriter struct {
 	col     *collector
 	filter  unitFilter
 	st      stats
-	npkt    int64 // packets written in detail
-	seen    int64 // packets seen
+	gate    packetGate
 	started bool
 	inPkts  bool
 	first   bool
@@ -353,6 +424,7 @@ func newJSONWriter(w io.Writer, opts Options) *jsonWriter {
 		col:    newCollector(),
 		filter: newUnitFilter(opts.UnitTypes),
 		st:     stats{ByType: map[string]int64{}},
+		gate:   newPacketGate(opts),
 		first:  true,
 	}
 	jw.col.elements = opts.Detail != "summary"
@@ -416,36 +488,21 @@ func (jw *jsonWriter) EndExtradata(frag *cbs.Fragment, err error) error {
 	return jw.err
 }
 
-func (jw *jsonWriter) inRange(idx int64) bool {
-	if jw.opts.Range[1] > 0 && (idx < jw.opts.Range[0] || idx > jw.opts.Range[1]) {
-		return false
-	}
-	return true
-}
-
-func (jw *jsonWriter) Done() bool {
-	if jw.opts.MaxPackets > 0 && jw.npkt >= jw.opts.MaxPackets {
-		return true
-	}
-	if jw.opts.Range[1] > 0 && jw.seen > jw.opts.Range[1] {
-		return true
-	}
-	return false
-}
+func (jw *jsonWriter) Done() bool { return jw.gate.done() }
 
 func (jw *jsonWriter) BeginPacket(pkt PacketInfo) {
 	jw.col.reset()
 	jw.curPkt = pkt
-	jw.seen = pkt.Index + 1
 }
 
 func (jw *jsonWriter) EndPacket(frag *cbs.Fragment, err error) error {
 	jw.st.Packets++
 	jw.st.addFragment(frag)
-	if !jw.inRange(jw.curPkt.Index) || jw.Done() {
+	included := jw.gate.include(jw.curPkt.Index)
+	jw.gate.note(jw.curPkt.Index, included)
+	if !included {
 		return jw.err
 	}
-	jw.npkt++
 
 	pkt := jw.curPkt
 	pj := packetJSON{
@@ -567,19 +624,42 @@ func (jw *jsonWriter) Close() error {
 // --- text writer (trace_headers parity) ---
 
 type textWriter struct {
-	tt   *cbs.TextTracer
-	opts Options
-	st   stats
-	npkt int64
-	seen int64
+	tt       *cbs.TextTracer
+	opts     Options
+	st       stats
+	gate     packetGate
+	suppress bool
 }
 
 func newTextWriter(w io.Writer, opts Options) *textWriter {
 	return &textWriter{tt: cbs.NewTextTracer(w), opts: opts,
-		st: stats{ByType: map[string]int64{}}}
+		gate: newPacketGate(opts),
+		st:   stats{ByType: map[string]int64{}}}
 }
 
-func (tw *textWriter) Tracer() cbs.Tracer { return tw.tt }
+// gatedTextTracer drops trace events while the writer is inside an
+// out-of-range packet; parsing still runs so codec state stays correct.
+type gatedTextTracer struct{ tw *textWriter }
+
+func (g gatedTextTracer) Header(name string) {
+	if !g.tw.suppress {
+		g.tw.tt.Header(name)
+	}
+}
+
+func (g gatedTextTracer) Element(e cbs.Element) {
+	if !g.tw.suppress {
+		g.tw.tt.Element(e)
+	}
+}
+
+func (g gatedTextTracer) Diag(level cbs.Level, msg string) {
+	if !g.tw.suppress {
+		g.tw.tt.Diag(level, msg)
+	}
+}
+
+func (tw *textWriter) Tracer() cbs.Tracer { return gatedTextTracer{tw} }
 
 func (tw *textWriter) BeginStream(Source) error { return tw.tt.Err() }
 
@@ -590,10 +670,15 @@ func (tw *textWriter) EndExtradata(frag *cbs.Fragment, err error) error {
 	return tw.tt.Err()
 }
 
-// BeginPacket prints the packet line exactly as trace_headers.c does.
+// BeginPacket prints the packet line exactly as trace_headers.c does,
+// unless the packet falls outside the MaxPackets / Range window.
 func (tw *textWriter) BeginPacket(pkt PacketInfo) {
-	tw.seen = pkt.Index + 1
-	tw.npkt++
+	included := tw.gate.include(pkt.Index)
+	tw.gate.note(pkt.Index, included)
+	tw.suppress = !included
+	if !included {
+		return
+	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "Packet: %d bytes", pkt.Size)
 	if pkt.KeyFrame {
@@ -620,13 +705,12 @@ func (tw *textWriter) BeginPacket(pkt PacketInfo) {
 }
 
 func (tw *textWriter) EndPacket(frag *cbs.Fragment, err error) error {
+	tw.suppress = false
 	tw.st.Packets++
 	tw.st.addFragment(frag)
 	return tw.tt.Err()
 }
 
-func (tw *textWriter) Done() bool {
-	return tw.opts.MaxPackets > 0 && tw.npkt >= tw.opts.MaxPackets
-}
+func (tw *textWriter) Done() bool { return tw.gate.done() }
 
 func (tw *textWriter) Close() error { return tw.tt.Err() }

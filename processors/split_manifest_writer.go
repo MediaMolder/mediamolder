@@ -7,8 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
-	"strings"
 
 	"github.com/MediaMolder/MediaMolder/av"
 )
@@ -78,17 +76,11 @@ func (p *SplitManifestWriter) Init(params map[string]any) error {
 	if outFile == "" {
 		return fmt.Errorf("split_manifest_writer: \"output_file\" param is required")
 	}
-	// Sanitize path (mirrors fileWriteHook CWE-022 prevention).
-	outFile = filepath.Clean(outFile)
-	if !filepath.IsAbs(outFile) {
-		return fmt.Errorf("split_manifest_writer: output_file must be an absolute path, got %q", outFile)
+	safeOut, err := sanitizeProcessorOutputPath("split_manifest_writer", outFile)
+	if err != nil {
+		return err
 	}
-	fsRoot := string(filepath.Separator)
-	rel, err := filepath.Rel(fsRoot, outFile)
-	if err != nil || strings.HasPrefix(rel, "..") {
-		return fmt.Errorf("split_manifest_writer: output_file %q is outside accessible root", outFile)
-	}
-	p.outputFile = filepath.Join(fsRoot, rel)
+	p.outputFile = safeOut
 
 	p.inputURI, _ = params["input_uri"].(string)
 

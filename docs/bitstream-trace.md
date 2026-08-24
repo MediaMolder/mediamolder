@@ -38,9 +38,9 @@ mediamolder trace-headers --stream v:1 --range 0:100 in.ts
 | `--output` | `-` | output path (`-` = stdout) |
 | `--format` | `json` | `json`, `jsonl`, `text` |
 | `--detail` | `elements` | `summary`, `headers`, `elements` (see below) |
-| `--units` | all | comma-separated filter: names (`sps,pps,sei,idr,slice`) or numeric types |
+| `--units` | all | comma-separated filter: family names (`sps,pps,vps,sei,idr,aud,slice,metadata`) or numeric types; names cover every codec's spelling (`sei` also matches HEVC `SEI_PREFIX`/`SEI_SUFFIX`, `sps` the AV1 sequence header) |
 | `--max-packets` | all | stop after N packets |
-| `--range` | all | only packets with index in `a:b` (inclusive) |
+| `--range` | all | only packets with index in `a:b` (0-based, inclusive at both ends; `0:0` = first packet only) |
 
 `--format text` reproduces FFmpeg's `trace_headers` output (without the
 `[trace_headers @ 0x…]` prefix), so it can be diffed directly against an
@@ -81,8 +81,8 @@ processing of the same input.
 | `output_file` | required | **absolute** report path |
 | `output_format` | `json` | `json`, `jsonl`, `text` |
 | `detail` | `headers` | `summary`, `headers`, `elements` |
-| `unit_types` | all | e.g. `["sps", "pps", "sei"]` or numeric types |
-| `max_packets`, `packet_range` | all | limit scope (`packet_range`: `[first, last]`) |
+| `unit_types` | all | e.g. `["sps", "pps", "sei"]` or numeric types (family names match across codecs) |
+| `max_packets`, `packet_range` | all | limit scope (`packet_range`: `[first, last]`, 0-based inclusive) |
 | `emit_events` | `false` | per-packet unit summaries on the events bus (GUI, `metadata_file_writer`) |
 
 Supported codecs: H.264/AVC, H.265/HEVC, AV1 — in any container
@@ -99,6 +99,8 @@ packaging are handled; codec extradata is parsed first, exactly as
 | `headers` | full element trace | summary only |
 | `elements` | full element trace | full element trace |
 
+Extradata is always reported in full regardless of packet filters — it is
+init-time state, exactly as `trace_headers` prints it once up front.
 `headers` is the "what is in this stream" mode and keeps reports small;
 `elements` is full FFmpeg parity (a feature film at `elements` produces a
 very large report — combine with `unit_types` or `packet_range`).

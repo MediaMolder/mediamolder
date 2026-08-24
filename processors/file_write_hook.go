@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 )
@@ -75,22 +74,10 @@ func (h *fileWriteHook) initFromParams(processorName string, params map[string]a
 		return nil, fmt.Errorf("%s: output_format %q is not valid (want jsonl, csv, timecodes)", processorName, fmtStr)
 	}
 
-	// Sanitize the path: resolve any "../" traversal components and require an
-	// absolute path. Then re-derive safePath from a non-user-input root using
-	// the filepath.Rel + HasPrefix confinement pattern (mirrors the GUI's
-	// sanitizePathAnyRoot logic) so that os.Create receives a value that is
-	// not considered directly tainted by static analysis (CWE-022 / CodeQL
-	// go/path-injection).
-	path = filepath.Clean(path)
-	if !filepath.IsAbs(path) {
-		return nil, fmt.Errorf("%s: output_file must be an absolute path, got %q", processorName, path)
+	safePath, err := sanitizeProcessorOutputPath(processorName, path)
+	if err != nil {
+		return nil, err
 	}
-	fsRoot := string(filepath.Separator) // "/" on Unix; first dir on Windows
-	rel, relErr := filepath.Rel(fsRoot, path)
-	if relErr != nil || strings.HasPrefix(rel, "..") {
-		return nil, fmt.Errorf("%s: output_file %q is not within an accessible filesystem root", processorName, path)
-	}
-	safePath := filepath.Join(fsRoot, rel)
 
 	f, err := os.Create(safePath)
 	if err != nil {

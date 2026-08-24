@@ -99,6 +99,7 @@ Flags:
 			return fmt.Errorf("trace-headers: invalid --range %q", *rangeSpec)
 		}
 		cfg.Options.Range = [2]int64{a, b}
+		cfg.Options.RangeSet = true
 	}
 
 	out := os.Stdout
