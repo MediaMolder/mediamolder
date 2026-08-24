@@ -64,6 +64,8 @@ The `Makefile` ships these top-level targets:
 | `make build-whisper` / `make test-whisper` | `go build -tags=with_whisper ./...` — opt-in `whisper_stt` (needs libwhisper) | Shared |
 | `make build-gui-whisper` | GUI binary, `ffstatic,with_whisper` (+ `EXTRA_TAGS`) | Static |
 | `make build-gui-onnx` | GUI binary, `ffstatic,with_onnx` — `yolo_v8` + `face_detect`, no whisper | Static |
+| `make build-gui-all` | GUI binary with **every** opt-in node family: `ffstatic,with_whisper,with_onnx,with_libraw` (runs `bundle-libraw` if needed; requires libwhisper + the static FFmpeg tree) | Static |
+| `make test-all` | Test suite with `with_whisper,with_onnx,with_libraw` (integration tests skip without their runtime pieces) | Shared |
 | `make build-debug` | `mediamolder` + `mediamolder-build.log` | Shared |
 | `make build-gui-debug` | `mediamolder` + `mediamolder-build.log` | Shared (+ frontend) |
 | `make check-deps` | Verify gcc + FFmpeg ≥ 8.1 headers | — |

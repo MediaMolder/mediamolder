@@ -7,6 +7,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- **`make build-gui-all` / `make test-all`.** One-stop build of the full-featured
+  single binary: static FFmpeg plus every opt-in node family — `whisper_stt`,
+  the ONNX nodes (`yolo_v8`, `face_detect`), and `raw_decode` — with the embedded
+  GUI (`-tags=ffstatic,with_whisper,with_onnx,with_libraw`). The bundled LibRaw
+  is built automatically when missing; libwhisper and the static FFmpeg tree are
+  required as for the individual targets, and ONNX Runtime remains a
+  runtime-only dependency. `make test-all` runs the suite with all three node
+  tags. Previously the same binary required composing targets by hand
+  (`make build-gui-whisper EXTRA_TAGS=with_onnx,with_libraw`).
+  See [docs/build-and-packaging.md](docs/build-and-packaging.md).
+
 - **Bitstream trace (`bitstream_trace` node + `trace-headers` CLI).** Packet-level
   NAL unit / OBU analysis for H.264, H.265 and AV1 — parameter sets, slice/frame
   headers, SEI messages, and optionally every syntax element with bit positions —
