@@ -522,7 +522,8 @@ func processorStreams(name string) []string {
 		"twelvelabs_indexer",
 		"twelvelabs_analyzer",
 		"twelvelabs_searcher",
-		"twelvelabs_embedder":
+		"twelvelabs_embedder",
+		"bitstream_trace":
 		return []string{"events"}
 	case "sequence_editor":
 		return []string{"video", "audio"}
@@ -559,6 +560,8 @@ func processorDescription(name string) string {
 		return "Detect scene changes (MAFD-based, same algorithm as FFmpeg's scdet)."
 	case "metadata_file_writer":
 		return "Wrap another processor and write its metadata to a JSON Lines file."
+	case "bitstream_trace":
+		return "Report every H.264/H.265/AV1 NAL unit / OBU in a stream to a JSON file — parameter sets, slice/frame headers, SEI — without decoding. An improved, machine-readable version of FFmpeg's trace_headers. See docs/bitstream-trace.md."
 	case "yolo_v8":
 		return "YOLOv8 object detection (requires the with_onnx build tag)."
 	case "face_detect":

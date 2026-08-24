@@ -219,7 +219,7 @@ func runExample(t *testing.T, jsonPath, name, inputAbs, _, _ string) {
 		"frame_info.jsonl", "scene_changes.jsonl", "detections.jsonl",
 		"scene_changes_content.jsonl", "scene_changes_adaptive.jsonl",
 		"scene_changes_hash.jsonl", "scene_changes_histogram.jsonl",
-		"scene_changes_threshold.jsonl",
+		"scene_changes_threshold.jsonl", "bitstream_trace.json",
 		"faces.jsonl", "transcript.json",
 	} {
 		dest := filepath.ToSlash(filepath.Join(tmpDir, meta))

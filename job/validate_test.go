@@ -173,6 +173,32 @@ func TestFrameSourceConsumedInputs(t *testing.T) {
 	}
 }
 
+// TestValidateBitstreamTraceGraph checks the documented bitstream_trace
+// graph (docs/bitstream-trace.md, example 68): one input consumed via a
+// top-level "input_id" param, no edges, no outputs. The input must not be
+// flagged as a dangling source and the config must validate clean.
+func TestValidateBitstreamTraceGraph(t *testing.T) {
+	cfg := &Config{
+		SchemaVersion: "1.1",
+		Inputs:        []Input{{ID: "in0", URL: "file:///in.mp4"}},
+		Graph: GraphDef{Nodes: []NodeDef{
+			{ID: "trace", Type: "go_processor", Processor: "bitstream_trace", Params: map[string]any{
+				"input_id":    "in0",
+				"output_file": "/tmp/trace.json",
+			}},
+		}},
+	}
+	r := ValidateConfigStatic(cfg, nil)
+	for _, iss := range r.Issues {
+		if iss.Severity == SeverityError {
+			t.Errorf("unexpected validation error: %+v", iss)
+		}
+	}
+	if got := frameSourceConsumedInputs(cfg); !got["in0"] {
+		t.Errorf("frameSourceConsumedInputs missing top-level input_id; got %v", got)
+	}
+}
+
 func TestTopology_DanglingSink(t *testing.T) {
 	cfg := minCfg(
 		[]Input{defaultInput()},

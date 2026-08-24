@@ -13,7 +13,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 )
@@ -146,24 +145,10 @@ func formatTranscript(format string, segs []whisperSeg) ([]byte, error) {
 	}
 }
 
-// sanitizeOutputPath requires an absolute, traversal-free path and re-derives it
-// from the filesystem root, mirroring fileWriteHook's CWE-022 confinement
-// pattern so os.WriteFile receives a value not treated as directly tainted.
+// sanitizeOutputPath keeps whisper's historical entry point; the shared
+// confinement logic lives in sanitizeProcessorOutputPath.
 func sanitizeOutputPath(path string) (string, error) {
-	path = filepath.Clean(path)
-	if !filepath.IsAbs(path) {
-		return "", fmt.Errorf("whisper_stt: output_file must be an absolute path, got %q", path)
-	}
-	// Confine to the path's own filesystem root — the volume on Windows
-	// ("C:\\"), "/" on Unix — so filepath.Rel can express the path and a
-	// tainted value never reaches os.WriteFile directly (CWE-022). Using "/"
-	// unconditionally would reject every absolute Windows path.
-	root := filepath.VolumeName(path) + string(filepath.Separator)
-	rel, relErr := filepath.Rel(root, path)
-	if relErr != nil || strings.HasPrefix(rel, "..") {
-		return "", fmt.Errorf("whisper_stt: output_file %q is not within an accessible filesystem root", path)
-	}
-	return filepath.Join(root, rel), nil
+	return sanitizeProcessorOutputPath("whisper_stt", path)
 }
 
 // writeTranscript renders segs in the given format and writes them to path.

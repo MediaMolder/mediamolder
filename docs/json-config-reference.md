@@ -424,6 +424,11 @@ The `go_processor` node type enables **custom Go per-frame processing** — for 
 - `params` are passed directly to the processor's `Init()` method.
 - Frames flow as `*av.Frame`; the processor may modify, replace, or drop them.
 - Non-nil `Metadata` returned by `Process()` is published on the event bus.
+- Some processors are **self-opening analyzers** that reference an input by a
+  top-level `input_id` param and need no edges at all (e.g. `bitstream_trace`,
+  which scans the compressed bitstream — see
+  [Bitstream Trace](bitstream-trace.md)). Such a graph validates with empty
+  `edges` and `outputs`.
 
 See [Go Processor Nodes](go-processor-nodes.md) for the full guide.
 

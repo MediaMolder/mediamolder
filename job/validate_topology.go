@@ -75,7 +75,8 @@ func sourceIDsWithEventsEdges(cfg *Config) map[string]bool {
 }
 
 // frameSourceConsumedInputs returns the set of input IDs referenced by a
-// FrameSource go_processor's params, via "input_id" or "media_id" in either a
+// FrameSource go_processor's params, via a top-level "input_id"
+// (bitstream_trace), or "input_id"/"media_id" entries in either a
 // top-level "clips" list or a "tracks[].clips" timeline (sequence_editor). These
 // inputs are read directly by the processor (by URL, resolved from the id before
 // Init — see resolveClipInputIDs) and carry no outbound graph edges, so they
@@ -102,6 +103,11 @@ func frameSourceConsumedInputs(cfg *Config) map[string]bool {
 	for _, node := range cfg.Graph.Nodes {
 		if node.Type != "go_processor" {
 			continue
+		}
+		// Top-level "input_id" (e.g. bitstream_trace) — resolved to "url"
+		// by resolveClipInputIDs before Init, same as clip entries.
+		if id, ok := node.Params["input_id"].(string); ok && id != "" {
+			m[id] = true
 		}
 		addClips(node.Params["clips"])
 		if tracksRaw, ok := node.Params["tracks"].([]any); ok {

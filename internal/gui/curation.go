@@ -175,6 +175,14 @@ var curatedNodes = map[string]NodeMeta{
 		Aliases:  []string{"motioncompensated", "dissolve", "fade", "lookahead", "x264", "cuts", "mc"},
 	},
 
+	// ── Bitstream analysis ───────────────────────────────────────────
+	// Packet-level NAL/OBU inspector built on the cbs package (Go port of
+	// FFmpeg's Coded Bitstream framework). See docs/bitstream-trace.md.
+	"bitstream_trace": {
+		Friendly: "Bitstream trace (NAL/OBU report)",
+		Aliases:  []string{"traceheaders", "nal", "obu", "sps", "pps", "sei", "headers", "analyze", "inspect", "cbs"},
+	},
+
 	// ── TwelveLabs multimodal analysis ────────────────────────
 	// REST integration with the TwelveLabs Video Understanding API
 	// (Marengo + Pegasus). See docs/twelvelabs.md for the full guide.

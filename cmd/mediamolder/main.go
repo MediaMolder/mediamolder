@@ -79,6 +79,8 @@ func run(args []string) error {
 		return cmdHWBench(args[1:])
 	case "go-scene-detect":
 		return cmdGoSceneDetect(args[1:])
+	case "trace-headers":
+		return cmdTraceHeaders(args[1:])
 	case "raw-decode":
 		return cmdRawDecode(args[1:])
 	case "raw-setup":
@@ -613,6 +615,11 @@ Commands:
                          Flags: -o/--output=PATH, --format=png|jpeg, --quality=N.
                          Requires a build with -tags with_libraw.
   raw-setup              Diagnose camera-RAW (LibRaw) readiness and how to enable it.
+  trace-headers <input>  Report H.264/H.265/AV1 NAL unit / OBU details as JSON without
+                         decoding (an improved, machine-readable trace_headers).
+                         Flags: --stream=v:N, --output=PATH, --format=json|jsonl|text,
+                                --detail=summary|headers|elements, --units=LIST,
+                                --max-packets=N, --range=A:B.
   go-scene-detect <input> Detect scene changes using PySceneDetect algorithms.
                          Flags: --detector=NAME (content|adaptive|threshold|hash|histogram),
                                 --threshold=F, --luma-only, --min-scene-len=V,
