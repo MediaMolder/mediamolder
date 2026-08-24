@@ -14,22 +14,18 @@ import (
 
 // unitHeaderJSON exposes the raw NAL/OBU header fields, available even
 // for undecomposed units.
-func unitHeaderJSON(u *cbs.Unit) map[string]any {
-	switch u.Content.(type) {
-	default:
-	}
-	h := map[string]any{}
-	switch {
-	case u.NuhLayerID != 0 || u.TemporalID != 0 || u.SpatialID != 0:
+func unitHeaderJSON(codec string, u *cbs.Unit) map[string]any {
+	h := map[string]any{"type": u.Type}
+	switch codec {
+	case "hevc", "h265":
 		h["nuh_layer_id"] = u.NuhLayerID
 		h["temporal_id"] = u.TemporalID
-		if u.SpatialID != 0 {
-			h["spatial_id"] = u.SpatialID
-		}
+	case "av1":
+		h["temporal_id"] = u.TemporalID
+		h["spatial_id"] = u.SpatialID
 	default:
 		h["nal_ref_idc"] = u.NalRefIDC
 	}
-	h["type"] = u.Type
 	return h
 }
 

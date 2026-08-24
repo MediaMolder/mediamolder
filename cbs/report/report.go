@@ -12,7 +12,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"sort"
 	"strconv"
 	"strings"
 
@@ -331,6 +330,7 @@ type packetJSON struct {
 
 type jsonWriter struct {
 	w       *bufio.Writer
+	codec   string
 	opts    Options
 	jsonl   bool
 	col     *collector
@@ -374,6 +374,7 @@ func (jw *jsonWriter) BeginStream(src Source) error {
 		Schema string `json:"schema"`
 		Source Source `json:"source"`
 	}{"mediamolder.bitstream_trace/1", src}
+	jw.codec = src.Codec
 	if jw.jsonl {
 		jw.w.Write(jw.marshal(hdr))
 		jw.w.WriteByte('\n')
@@ -504,7 +505,7 @@ func (jw *jsonWriter) unitsJSON(frag *cbs.Fragment) []unitJSON {
 			RbspSize:   len(u.RBSP),
 			Type:       u.Type,
 			Name:       u.TypeName,
-			Header:     unitHeaderJSON(u),
+			Header:     unitHeaderJSON(jw.codec, u),
 			Decomposed: u.Decomposed,
 			Skip:       u.Skip,
 		}
@@ -539,9 +540,6 @@ func (jw *jsonWriter) unitsJSON(frag *cbs.Fragment) []unitJSON {
 }
 
 func (jw *jsonWriter) Close() error {
-	// Deterministic by_type ordering is handled by encoding/json (sorted
-	// map keys); sort here only to make tests over raw text stable too.
-	_ = sort.StringsAreSorted
 	if jw.jsonl {
 		jw.w.Write(jw.marshal(struct {
 			Stats stats `json:"stats"`
