@@ -606,7 +606,7 @@ func (jw *jsonWriter) unitsJSON(frag *cbs.Fragment) []unitJSON {
 	out := make([]unitJSON, 0, len(frag.Units))
 	for i := range frag.Units {
 		u := &frag.Units[i]
-		poc, hasPOC := jw.sum.advance(u)
+		pic := jw.sum.advance(u)
 		uj := unitJSON{
 			Index:      i,
 			Offset:     u.Offset,
@@ -631,7 +631,7 @@ func (jw *jsonWriter) unitsJSON(frag *cbs.Fragment) []unitJSON {
 		if jw.opts.Detail == "elements" || jw.opts.Detail == "" {
 			uj.EPB = u.EPBPositions
 		}
-		if pic := pictureOf(u, poc, hasPOC); pic != nil {
+		if pic != nil {
 			uj.Picture = pic
 		} else {
 			uj.Summary = summarize(u)

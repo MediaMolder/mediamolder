@@ -198,3 +198,100 @@ func TestH265POCFirstCRAResets(t *testing.T) {
 		t.Fatalf("first CRA: %d %v", poc, ok)
 	}
 }
+
+// TestH264POCMMCO5: a picture carrying memory_management_control_operation
+// 5 reports the post-reset POC (0) and later pictures derive from the
+// reset state (Rec. H.264 §8.2.1).
+func TestH264POCMMCO5(t *testing.T) {
+	p := newPOCState()
+	slice := h264Env(p, 0, nil)
+
+	mustPOC(t, p, slice(5, 3, 0, 0))
+	if got := mustPOC(t, p, slice(1, 2, 1, 4)); got != 4 {
+		t.Fatalf("pre-mmco5 P: %d", got)
+	}
+	// P slice with mmco5: dec_ref_pic_marking = {op 5, op 0}.
+	sh := slice(1, 2, 2, 8)
+	sh.AdaptiveRefPicMarkingModeFlag = 1
+	sh.Mmco[0].MemoryManagementControlOperation = 5
+	sh.Mmco[1].MemoryManagementControlOperation = 0
+	if got := mustPOC(t, p, sh); got != 0 {
+		t.Fatalf("mmco5 picture must report POC 0, got %d", got)
+	}
+	// Next reference picture derives from the reset state (prev lsb 0).
+	if got := mustPOC(t, p, slice(1, 2, 3, 2)); got != 2 {
+		t.Fatalf("post-mmco5 P: %d", got)
+	}
+}
+
+// TestH265POCDependentSlices: dependent slice segments carry no
+// slice_pic_order_cnt_lsb; they reuse the picture POC and must not
+// poison the prevTid0 state.
+func TestH265POCDependentSlices(t *testing.T) {
+	p := newPOCState()
+	slice := h265Env(p)
+	mp := func(sh *cbs.H265RawSliceHeader) int32 {
+		t.Helper()
+		poc, ok := p.h265SlicePOC(sh)
+		if !ok {
+			t.Fatal("h265SlicePOC not derivable")
+		}
+		return poc
+	}
+
+	mp(slice(19, 1, 0)) // IDR
+	if got := mp(slice(1, 1, 8)); got != 8 {
+		t.Fatalf("independent segment: %d", got)
+	}
+	// Dependent segment of the same picture: lsb field is the zero value.
+	dep := slice(1, 1, 0)
+	dep.DependentSliceSegmentFlag = 1
+	if got := mp(dep); got != 8 {
+		t.Fatalf("dependent segment must reuse the picture POC, got %d", got)
+	}
+	// Had the dependent segment poisoned prevTid0 with lsb 0, this next
+	// picture (lsb 14, delta 14 > MaxLsb/2) would wrap to -2; with the
+	// true prev lsb 8 (delta 6) it must stay 14.
+	if got := mp(slice(1, 1, 14)); got != 14 {
+		t.Fatalf("post-dependent picture: %d (prevTid0 poisoned?)", got)
+	}
+}
+
+// TestH265DependentPictureRecord: the report record for a dependent
+// segment inherits the picture fields from the independent segment.
+func TestH265DependentPictureRecord(t *testing.T) {
+	s := newSummarizer()
+	s.poc.h265SPS[0] = &cbs.H265RawSPS{Log2MaxPicOrderCntLsbMinus4: 0}
+	s.poc.h265PPS[0] = &cbs.H265RawPPS{}
+
+	indep := &cbs.H265RawSliceHeader{
+		NalUnitHeader:              cbs.H265RawNALUnitHeader{NalUnitType: 1, NuhTemporalIDPlus1: 1},
+		FirstSliceSegmentInPicFlag: 1,
+		SliceType:                  1, // P
+		SlicePicOrderCntLsb:        4,
+		SliceQpDelta:               7,
+	}
+	dep := &cbs.H265RawSliceHeader{
+		NalUnitHeader:             cbs.H265RawNALUnitHeader{NalUnitType: 1, NuhTemporalIDPlus1: 1},
+		DependentSliceSegmentFlag: 1,
+		SliceSegmentAddress:       17,
+	}
+	unit := func(sh *cbs.H265RawSliceHeader) *cbs.Unit {
+		return &cbs.Unit{Decomposed: true, Content: &cbs.H265RawSlice{Header: *sh}}
+	}
+
+	p1 := s.advance(unit(indep))
+	if p1 == nil || p1.Type != "P" || *p1.POC != 4 {
+		t.Fatalf("independent record: %+v", p1)
+	}
+	p2 := s.advance(unit(dep))
+	if p2 == nil {
+		t.Fatal("no record for dependent segment")
+	}
+	if !p2.Dependent || p2.Type != "P" || p2.QPDelta != 7 || *p2.POC != 4 {
+		t.Fatalf("dependent record must inherit picture fields: %+v", p2)
+	}
+	if *p2.SegAddr != 17 || *p2.FirstSlice {
+		t.Fatalf("dependent record segment fields: %+v", p2)
+	}
+}

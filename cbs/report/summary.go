@@ -36,27 +36,63 @@ var h264SliceTypeNames = [10]string{"P", "B", "I", "SP", "SI", "P", "B", "I", "S
 // Order Count derivations need.
 type summarizer struct {
 	poc *pocState
+	// The last independent H.265 slice segment's record; dependent
+	// segments inherit the picture-level fields from it.
+	h265LastPic *pictureJSON
 }
 
 func newSummarizer() *summarizer { return &summarizer{poc: newPOCState()} }
 
 // advance MUST be called exactly once per unit, in decode order —
 // including units the output filters drop — so parameter-set tables and
-// the POC previous-picture state stay correct. It returns the derived
-// PicOrderCnt for slice units (hasPOC false otherwise, or when the unit
-// failed to decompose).
-func (s *summarizer) advance(u *cbs.Unit) (poc int32, hasPOC bool) {
+// the POC previous-picture state stay correct. For coded-picture units
+// it returns the typed picture record (with the derived POC); nil
+// otherwise, or when the unit failed to decompose.
+func (s *summarizer) advance(u *cbs.Unit) *pictureJSON {
 	s.poc.observePS(u)
 	if u.Err != nil || !u.Decomposed {
-		return 0, false
+		return nil
 	}
 	switch c := u.Content.(type) {
 	case *cbs.H264RawSlice:
-		poc, hasPOC = s.poc.h264SlicePOC(&c.Header)
+		poc, hasPOC := s.poc.h264SlicePOC(&c.Header)
+		return h264Picture(&c.Header, poc, hasPOC)
 	case *cbs.H265RawSlice:
-		poc, hasPOC = s.poc.h265SlicePOC(&c.Header)
+		poc, hasPOC := s.poc.h265SlicePOC(&c.Header)
+		if c.Header.DependentSliceSegmentFlag != 0 {
+			return s.h265DependentPicture(&c.Header, poc, hasPOC)
+		}
+		pic := h265Picture(&c.Header, poc, hasPOC)
+		s.h265LastPic = pic
+		return pic
 	}
-	return poc, hasPOC
+	return nil
+}
+
+// h265DependentPicture builds the record for a dependent slice segment:
+// the header carries only the segment address, so the picture-level
+// fields (slice type, QP, POC) come from the preceding independent
+// segment of the same picture.
+func (s *summarizer) h265DependentPicture(sh *cbs.H265RawSliceHeader, poc int32, hasPOC bool) *pictureJSON {
+	var pic pictureJSON
+	if s.h265LastPic != nil {
+		pic = *s.h265LastPic
+	} else {
+		pic.Type = "?"
+		pic.PPS = sh.SlicePicParameterSetID
+	}
+	pic.Dependent = true
+	first := false
+	pic.FirstSlice = &first
+	addr := sh.SliceSegmentAddress
+	pic.SegAddr = &addr
+	if hasPOC {
+		v := poc
+		pic.POC = &v
+	} else {
+		pic.POC = nil
+	}
+	return &pic
 }
 
 // summarize builds the per-unit summary for known content types. It is
@@ -317,16 +353,4 @@ func cond[T any](c bool, a, b T) T {
 		return a
 	}
 	return b
-}
-
-// pictureOf returns the typed picture record for coded-picture units,
-// nil for everything else.
-func pictureOf(u *cbs.Unit, poc int32, hasPOC bool) *pictureJSON {
-	switch c := u.Content.(type) {
-	case *cbs.H264RawSlice:
-		return h264Picture(&c.Header, poc, hasPOC)
-	case *cbs.H265RawSlice:
-		return h265Picture(&c.Header, poc, hasPOC)
-	}
-	return nil
 }

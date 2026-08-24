@@ -33,6 +33,11 @@ type pocState struct {
 	h265HasPrev    bool
 	prevTid0PocLsb int32
 	prevTid0PocMsb int32
+
+	// The current picture (from its independent slice segment), reused
+	// by dependent slice segments of the same picture.
+	h265HaveCurPic bool
+	h265CurPicPOC  int32
 }
 
 func newPOCState() *pocState {
@@ -102,6 +107,8 @@ func (p *pocState) h264SlicePOC(sh *cbs.H264RawSliceHeader) (poc int32, ok bool)
 	hasTop := sh.FieldPicFlag == 0 || sh.BottomFieldFlag == 0
 	hasBottom := sh.FieldPicFlag == 0 || sh.BottomFieldFlag != 0
 
+	var t0msb, t0lsb int32 // type-0 reference state, applied post-mmco5
+
 	switch sps.PicOrderCntType {
 	case 0: // §8.2.1.1
 		maxLsb := int32(1) << (sps.Log2MaxPicOrderCntLsbMinus4 + 4)
@@ -129,21 +136,7 @@ func (p *pocState) h264SlicePOC(sh *cbs.H264RawSliceHeader) (poc int32, ok bool)
 				bottom = msb + lsb
 			}
 		}
-		if isRef {
-			if mmco5 {
-				p.prevPicOrderCntMsb = 0
-				if sh.FieldPicFlag != 0 && sh.BottomFieldFlag != 0 {
-					p.prevPicOrderCntLsb = 0
-				} else {
-					// TopFieldOrderCnt after the mmco5 reset.
-					p.prevPicOrderCntLsb = top - min32(pocOf(hasTop, top, hasBottom, bottom), top)
-				}
-			} else {
-				p.prevPicOrderCntMsb = msb
-				p.prevPicOrderCntLsb = lsb
-			}
-			p.h264HasPrev = true
-		}
+		t0msb, t0lsb = msb, lsb
 
 	case 1: // §8.2.1.2
 		frameNumOffset := p.frameNumOffset(idr, frameNum, sps)
@@ -197,6 +190,34 @@ func (p *pocState) h264SlicePOC(sh *cbs.H264RawSliceHeader) (poc int32, ok bool)
 
 	default:
 		return 0, false
+	}
+
+	// §8.2.1: a picture with mmco5 has its order counts reset — the
+	// reported PicOrderCnt becomes 0 and prev state derives from the
+	// post-reset values.
+	if mmco5 {
+		temp := pocOf(hasTop, top, hasBottom, bottom)
+		if hasTop {
+			top -= temp
+		}
+		if hasBottom {
+			bottom -= temp
+		}
+	}
+
+	if sps.PicOrderCntType == 0 && isRef {
+		if mmco5 {
+			p.prevPicOrderCntMsb = 0
+			if sh.FieldPicFlag != 0 && sh.BottomFieldFlag != 0 {
+				p.prevPicOrderCntLsb = 0
+			} else {
+				p.prevPicOrderCntLsb = top // post-reset TopFieldOrderCnt
+			}
+		} else {
+			p.prevPicOrderCntMsb = t0msb
+			p.prevPicOrderCntLsb = t0lsb
+		}
+		p.h264HasPrev = true
 	}
 
 	return pocOf(hasTop, top, hasBottom, bottom), true
@@ -275,6 +296,17 @@ func (p *pocState) h265SlicePOC(sh *cbs.H265RawSliceHeader) (poc int32, ok bool)
 		return 0, false
 	}
 
+	// A dependent slice segment carries no slice_pic_order_cnt_lsb (the
+	// struct field is the zero value): it belongs to the same picture as
+	// the preceding independent segment. Reuse that POC and leave the
+	// prevTid0 state untouched.
+	if sh.DependentSliceSegmentFlag != 0 {
+		if p.h265HaveCurPic {
+			return p.h265CurPicPOC, true
+		}
+		return 0, false
+	}
+
 	typ := sh.NalUnitHeader.NalUnitType
 	maxLsb := int32(1) << (sps.Log2MaxPicOrderCntLsbMinus4 + 4)
 	lsb := int32(sh.SlicePicOrderCntLsb) // inferred 0 for IDR (not present)
@@ -302,5 +334,7 @@ func (p *pocState) h265SlicePOC(sh *cbs.H265RawSliceHeader) (poc int32, ok bool)
 		p.prevTid0PocMsb = msb
 		p.h265HasPrev = true
 	}
+	p.h265CurPicPOC = poc
+	p.h265HaveCurPic = true
 	return poc, true
 }

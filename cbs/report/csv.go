@@ -130,13 +130,13 @@ func (c *csvWriter) writeUnits(kind string, pkt *PacketInfo, frag *cbs.Fragment,
 
 	for i := range frag.Units {
 		u := &frag.Units[i]
-		poc, hasPOC := c.sum.advance(u)
+		pic := c.sum.advance(u)
 		if !emit || !c.filter.match(u) {
 			continue
 		}
 		picCols := []string{"", "", "", "", "", "", "", "", "", ""}
 		summary := ""
-		if pic := pictureOf(u, poc, hasPOC); pic != nil {
+		if pic != nil {
 			opt := func(set bool, v string) string {
 				if set {
 					return v
