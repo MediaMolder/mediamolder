@@ -506,6 +506,9 @@ mediamolder trace-headers --format text input.mp4
 mediamolder trace-headers --detail headers --units sps,pps,sei \
     --output report.json input.mkv
 
+# One CSV row per unit (packet context + summary column), spreadsheet-ready.
+mediamolder trace-headers --format csv --output units.csv input.mp4
+
 # One packet window on the second video stream.
 mediamolder trace-headers --stream v:1 --range 0:100 input.ts
 ```

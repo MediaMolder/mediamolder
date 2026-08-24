@@ -148,7 +148,7 @@ graph TD
 | **Runtime Executor**   | `runtime/`, `pipeline/`     | State machine (NULL→READY→PLAYING→NULL), goroutine groups per node, channel plumbing, backpressure watchdog, graceful shutdown, clock sync (`clock/`) |
 | **Processor Registry** | `processors/`               | Global `RegisterProcessor(name, factory)`, built-in nodes (decoder, filter, encoder, split, overlay, …), interface for custom Go processors |
 | **AV Bindings**        | `av/`                       | Idiomatic Go wrappers around libav* (`FormatContext`, `CodecContext`, `FilterGraph`, `Frame`, `Packet`), resource safety (`io.Closer`), HW accel contexts |
-| **Coded Bitstream**    | `cbs/`, `cbs/report/`       | cgo-free read-only Go port of FFmpeg's CBS framework: H.264/H.265/AV1 NAL/OBU splitting and header decomposition with a trace-callback model validated byte-for-byte against `trace_headers`; `report` renders JSON/JSONL/text (used by `bitstream_trace` and the `trace-headers` CLI) |
+| **Coded Bitstream**    | `cbs/`, `cbs/report/`       | cgo-free read-only Go port of FFmpeg's CBS framework: H.264/H.265/AV1 NAL/OBU splitting and header decomposition with a trace-callback model validated byte-for-byte against `trace_headers`; `report` renders JSON/JSONL/CSV/text (used by `bitstream_trace` and the `trace-headers` CLI) |
 | **Observability**      | `observability/`            | Prometheus collectors, OTel spans around build/open/execute phases, typed event bus (`StateChanged`, `Error`, `FrameProcessed`) |
 | **Compatibility**      | `compat/`, `docs/`          | FFmpeg CLI → JSON parser, migration guide, capability matrix |
 

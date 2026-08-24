@@ -134,7 +134,7 @@ in-app help dialog.
      inspects the compressed bitstream instead of decoded frames: it opens
      the referenced input itself (set `input_id` and an absolute
      `output_file` in the Inspector) and writes every H.264/H.265/AV1
-     NAL unit / OBU to a JSON report without decoding. See
+     NAL unit / OBU to a JSON, JSONL, or CSV report without decoding. See
      [Bitstream Trace](bitstream-trace.md).
      See [§ Scene detection processors](#scene-detection-processors).
 4. **Add a Sink.** Drag *Output file* from **Sinks**, click **Browse…** and

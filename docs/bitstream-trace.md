@@ -2,7 +2,7 @@
 
 `bitstream_trace` scans an elementary video bitstream at the packet level —
 **no decoding** — and reports every NAL unit (H.264 / H.265) or OBU (AV1)
-to a JSON, JSON Lines, or text file: parameter sets, slice / frame
+to a JSON, JSON Lines, CSV, or text file: parameter sets, slice / frame
 headers, SEI messages, and (optionally) every syntax element with its bit
 position, width, raw bits and value.
 
@@ -184,7 +184,7 @@ for _, u := range frag.Units {
 
 The `cbs` package is cgo-free and safe on hostile input (fuzzed; a parse
 error is reported on the unit, never a panic). `cbs/report` renders the
-JSON/JSONL/text reports; `processors.RunBitstreamTrace` is the shared
+JSON/JSONL/CSV/text reports; `processors.RunBitstreamTrace` is the shared
 driver.
 
 ## Validation

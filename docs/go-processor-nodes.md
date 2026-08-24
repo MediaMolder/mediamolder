@@ -432,7 +432,7 @@ See [docs/scene-detection.md](scene-detection.md#scene_change_histogram) for ful
 
 Scans an elementary video bitstream at the packet level — **no decoding** —
 and writes every NAL unit (H.264/H.265) or OBU (AV1) to a JSON, JSON Lines,
-or trace_headers-format text report: parameter sets, slice/frame headers,
+CSV, or trace_headers-format text report: parameter sets, slice/frame headers,
 SEI messages, and optionally every syntax element with bit positions. An
 improved, machine-readable version of FFmpeg's `trace_headers` bitstream
 filter, built on the `cbs` package (a Go port of libavcodec's Coded
