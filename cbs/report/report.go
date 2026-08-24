@@ -382,6 +382,7 @@ type unitJSON struct {
 	EPB        []int          `json:"epb,omitempty"`
 	Type       uint32         `json:"type"`
 	Name       string         `json:"name"`
+	Class      string         `json:"class"`
 	Header     map[string]any `json:"header,omitempty"`
 	Picture    *pictureJSON   `json:"picture,omitempty"`
 	Summary    map[string]any `json:"summary,omitempty"`
@@ -396,6 +397,7 @@ type packetJSON struct {
 	Index    int64      `json:"index"`
 	PTS      *int64     `json:"pts"`
 	DTS      *int64     `json:"dts"`
+	Time     *float64   `json:"time,omitempty"` // pts in seconds
 	Duration int64      `json:"duration,omitempty"`
 	Pos      int64      `json:"pos,omitempty"`
 	Size     int        `json:"size"`
@@ -415,6 +417,7 @@ type jsonWriter struct {
 	colElements bool // detail wants element sections at all
 	filter      unitFilter
 	sum         *summarizer
+	tb          [2]int
 	st          stats
 	gate        packetGate
 	started     bool
@@ -478,6 +481,7 @@ func (jw *jsonWriter) BeginStream(src Source) error {
 		Source Source `json:"source"`
 	}{"mediamolder.bitstream_trace/2", src}
 	jw.codec = src.Codec
+	jw.tb = src.TimeBase
 	if jw.jsonl {
 		jw.writeBytes(jw.marshal(hdr))
 		jw.writeByte('\n')
@@ -563,6 +567,9 @@ func (jw *jsonWriter) EndPacket(frag *cbs.Fragment, err error) error {
 	if pkt.HasPTS {
 		v := pkt.PTS
 		pj.PTS = &v
+		if sec, ok := packetTime(jw.tb, pkt.PTS); ok {
+			pj.Time = &sec
+		}
 	}
 	if pkt.HasDTS {
 		v := pkt.DTS
@@ -608,6 +615,7 @@ func (jw *jsonWriter) unitsJSON(frag *cbs.Fragment) []unitJSON {
 			RbspSize:   len(u.RBSP),
 			Type:       u.Type,
 			Name:       u.TypeName,
+			Class:      classify(jw.codec, u),
 			Header:     unitHeaderJSON(jw.codec, u),
 			Decomposed: u.Decomposed,
 			Skip:       u.Skip,

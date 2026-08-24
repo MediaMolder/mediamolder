@@ -116,12 +116,12 @@ very large report — combine with `unit_types` or `packet_range`).
   "extradata": { "size": 47, "units": [ /* unit objects */ ] },
   "packets": [
     {
-      "index": 0, "pts": 0, "dts": 0, "duration": 512, "pos": 48,
+      "index": 0, "pts": 0, "dts": 0, "time": 0.0, "duration": 512, "pos": 48,
       "size": 1587, "key_frame": true,
       "units": [
         {
           "index": 0, "offset": 4, "prefix": 4, "size": 27, "rbsp_size": 25,
-          "type": 7, "name": "SPS",
+          "type": 7, "name": "SPS", "class": "ps",
           "header": { "nal_ref_idc": 3, "type": 7 },
           "summary": { "sps_id": 0, "profile_idc": 100, "level_idc": 31,
                        "width": 1920, "height": 1080, "bit_depth_luma": 8,
@@ -135,7 +135,7 @@ very large report — combine with `unit_types` or `packet_range`).
           "decomposed": true
         },
         { "index": 3, "offset": 745, "prefix": 4, "size": 838, "rbsp_size": 838,
-          "type": 5, "name": "IDR",
+          "type": 5, "name": "IDR", "class": "vcl",
           "header": { "nal_ref_idc": 3, "type": 5 },
           "picture": { "type": "I", "type_value": 7, "poc": 0, "frame_num": 0,
                        "lsb": 0, "first_mb": 0, "pps": 0, "qp_delta": 4,
@@ -156,6 +156,12 @@ Field notes:
   to FFmpeg's first trace column. `offset` / `size` (unit) are byte
   positions in the packet including emulation-prevention bytes; `epb`
   (at `detail=elements`) lists where `0x03` bytes were removed.
+- `class` buckets every unit for filtering and rate analysis: `vcl`
+  (coded picture data — slices, AV1 frame/tile-group OBUs), `ps`
+  (parameter sets), `sei` (SEI messages, AV1 metadata OBUs), `other`
+  (AUD, filler, delimiters, reserved). It is present even for units that
+  failed to decompose. `time` is the packet pts in seconds (stream time
+  base applied).
 - `header` carries the raw NAL/OBU header fields even for units that are
   not decomposed (reserved types, HEVC layered NALs FFmpeg drops —
   reported here with a `skip` reason).
@@ -177,8 +183,9 @@ Field notes:
   arbitrarily long streams can be processed without loading a document.
 - `csv` emits **one row per unit** for spreadsheet / SQL workflows:
   `kind` (`extradata` | `packet`), the packet context (index, pts/dts,
-  duration, position, size, key frame), the unit identity (index, offset,
-  prefix, sizes, type, name, decomposed/skip/error), then the
+  `time` in seconds, duration, position, size, key frame), the unit
+  identity (index, offset, prefix, sizes, type, name, `class`,
+  decomposed/skip/error), then the
   **coded-picture columns** (`pic_type`, `pic_type_value`, `poc`,
   `frame_num`, `pic_lsb`, `first_mb`, `pps_id`, `qp_delta`, `ref_l0`,
   `ref_l1`) filled for H.264/H.265 slice rows, and a compact-JSON
@@ -188,6 +195,31 @@ Field notes:
   non-matching rows entirely.
 - A malformed unit gets an `"error"` and parsing **continues** with the
   next unit — unlike `trace_headers`, which aborts on the first error.
+
+## Plotting bit rate
+
+Every unit row carries its byte `size`, the packet `time` in seconds, and
+a `class` — so bit rate over time, split into picture data vs. overhead,
+is a three-line aggregation over the CSV:
+
+```sh
+mediamolder trace-headers --format csv in.mp4 > units.csv
+```
+
+```python
+import pandas as pd
+df = pd.read_csv("units.csv")
+df = df[df.kind == "packet"]
+rate = (df.assign(bits=df["size"] * 8, second=df.time.astype(float).astype(int))
+          .pivot_table(index="second", columns="class", values="bits", aggfunc="sum")
+          .fillna(0))
+rate.plot(ylabel="bits/s")            # vcl vs sei vs ps per second
+```
+
+Filtering the optional units away (or selecting only them) is the same
+column: `df[df["class"] == "vcl"]` for pure picture payload,
+`df[df["class"] == "sei"]` for SEI overhead. In the JSON formats the
+same fields appear as `packets[].time` and `units[].class`.
 
 ## Library
 

@@ -17,9 +17,9 @@ import (
 // JSON format carries (as one compact-JSON column). Element-level detail
 // is not representable in CSV — use json or jsonl for that.
 var csvHeader = []string{
-	"kind", "packet", "pts", "dts", "duration", "packet_pos", "packet_size",
+	"kind", "packet", "pts", "dts", "time", "duration", "packet_pos", "packet_size",
 	"key_frame", "corrupt", "unit", "offset", "prefix", "size", "rbsp_size",
-	"type", "name", "decomposed", "skip", "error",
+	"type", "name", "class", "decomposed", "skip", "error",
 	// Coded-picture columns, filled for H.264/H.265 slice rows (their
 	// summary column stays empty — the columns are the report).
 	"pic_type", "pic_type_value", "poc", "frame_num", "pic_lsb",
@@ -34,6 +34,7 @@ var csvHeader = []string{
 type csvWriter struct {
 	cw     *csv.Writer
 	codec  string
+	tb     [2]int
 	filter unitFilter
 	sum    *summarizer
 	gate   packetGate
@@ -64,6 +65,7 @@ func (c *csvWriter) write(row []string) {
 
 func (c *csvWriter) BeginStream(src Source) error {
 	c.codec = src.Codec
+	c.tb = src.TimeBase
 	c.write(csvHeader)
 	return c.err
 }
@@ -110,16 +112,19 @@ func (c *csvWriter) writeUnits(kind string, pkt *PacketInfo, frag *cbs.Fragment,
 		return "false"
 	}
 
-	pktCols := []string{"", "", "", "", "", "", "", ""}
+	pktCols := []string{"", "", "", "", "", "", "", "", ""}
 	if pkt != nil {
-		pts, dts := "", ""
+		pts, dts, tm := "", "", ""
 		if pkt.HasPTS {
 			pts = i64(pkt.PTS)
+			if sec, ok := packetTime(c.tb, pkt.PTS); ok {
+				tm = strconv.FormatFloat(sec, 'f', 6, 64)
+			}
 		}
 		if pkt.HasDTS {
 			dts = i64(pkt.DTS)
 		}
-		pktCols = []string{i64(pkt.Index), pts, dts, i64(pkt.Duration),
+		pktCols = []string{i64(pkt.Index), pts, dts, tm, i64(pkt.Duration),
 			i64(pkt.Pos), num(pkt.Size), boolean(pkt.KeyFrame), boolean(pkt.Corrupt)}
 	}
 
@@ -163,7 +168,8 @@ func (c *csvWriter) writeUnits(kind string, pkt *PacketInfo, frag *cbs.Fragment,
 		row := append(append([]string{kind}, pktCols...),
 			num(i), num(u.Offset), num(u.PrefixSize), num(u.RawSize),
 			num(len(u.RBSP)), strconv.FormatUint(uint64(u.Type), 10),
-			u.TypeName, boolean(u.Decomposed), u.Skip, errText)
+			u.TypeName, classify(c.codec, u), boolean(u.Decomposed),
+			u.Skip, errText)
 		row = append(row, picCols...)
 		row = append(row, summary)
 		c.write(row)

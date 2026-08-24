@@ -5,6 +5,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Added
+
+- **Bitstream trace: unit classes and packet time for rate analysis.** Every
+  reported unit now carries a `class` — `vcl` (coded picture data), `ps`
+  (parameter sets), `sei` (SEI / AV1 metadata), `other` — and every packet a
+  `time` in seconds (pts through the stream time base), in JSON and as CSV
+  columns. Plotting bit rate over time, or separating picture payload from
+  SEI overhead, becomes a one-line aggregation over the CSV; the guide shows
+  a pandas recipe. See [docs/bitstream-trace.md](docs/bitstream-trace.md).
+
 ### Changed
 
 - **Bitstream trace: coded pictures are typed records (schema

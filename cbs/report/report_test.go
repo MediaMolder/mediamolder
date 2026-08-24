@@ -426,8 +426,12 @@ func TestCSVFilterAndRange(t *testing.T) {
 	if len(rows) < 2 { // header + at least one SPS
 		t.Fatalf("filtered rows: %d\n%s", len(rows), out)
 	}
+	col := map[string]int{}
+	for i, name := range rows[0] {
+		col[name] = i
+	}
 	for _, r := range rows[1:] {
-		if r[14] != "7" { // "type" column: only SPS rows survive the filter
+		if r[col["type"]] != "7" { // only SPS rows survive the filter
 			t.Fatalf("unfiltered row: %v", r)
 		}
 	}
@@ -439,5 +443,38 @@ func TestCSVFilterAndRange(t *testing.T) {
 	}
 	if len(rows) != 1 { // header only: the single packet (index 0) is out of range
 		t.Fatalf("out-of-range rows: %d", len(rows))
+	}
+}
+
+// TestCSVClassAndTime: the class column separates vcl / ps / sei rows and
+// the time column carries the packet pts in seconds.
+func TestCSVClassAndTime(t *testing.T) {
+	out, _ := run(t, Options{Format: "csv"})
+	rows, err := csv.NewReader(strings.NewReader(out)).ReadAll()
+	if err != nil {
+		t.Fatal(err)
+	}
+	col := map[string]int{}
+	for i, name := range rows[0] {
+		col[name] = i
+	}
+	want := map[string]string{"7": "ps", "8": "ps", "6": "sei", "9": "other",
+		"1": "vcl", "5": "vcl"}
+	seen := map[string]bool{}
+	for _, r := range rows[1:] {
+		if w, ok := want[r[col["type"]]]; ok {
+			if r[col["class"]] != w {
+				t.Fatalf("type %s classified %q, want %q", r[col["type"]], r[col["class"]], w)
+			}
+			seen[w] = true
+		}
+		// pts 0 with time base 0/0 in this synthetic run: time stays
+		// empty; presence is covered by the processor-level test.
+		_ = r[col["time"]]
+	}
+	for _, c := range []string{"ps", "sei", "vcl"} {
+		if !seen[c] {
+			t.Fatalf("class %s never seen", c)
+		}
 	}
 }
