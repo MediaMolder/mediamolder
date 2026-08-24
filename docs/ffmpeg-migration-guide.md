@@ -43,6 +43,7 @@ see [Graph Basics](concepts-and-graph-basics.md).
 | 26 | `ffmpeg -i in.mkv -sn -c:v libx264 out.mp4` | Strip subtitles | [JSON](../testdata/examples/26_strip_subtitles.json) |
 | 27 | `ffmpeg -i in.mp4 -c copy -bsf:v h264_mp4toannexb out.ts` | BSF: MP4→TS remux | [JSON](../testdata/examples/27_bsf_remux.json) |
 | 28 | `ffmpeg -hwaccel qsv -i in.mp4 -c:v h264_qsv -bsf:v h264_metadata=level=4.1 out.mp4` | QSV + BSF | [JSON](../testdata/examples/28_qsv_bsf.json) |
+| 68 | `ffmpeg -i in.mp4 -c copy -bsf:v trace_headers -f null -` | Bitstream analysis → structured JSON instead of stderr text ([guide](bitstream-trace.md)) | [JSON](../testdata/examples/68_bitstream_trace.json) |
 
 ## Wave 1 flag → field mapping
 

@@ -21,6 +21,7 @@ This guide covers every feature available in MediaMolder, from installing the bi
    - [hwbench](#310-hwbench)
    - [go-scene-detect](#311-go-scene-detect)
    - [twelvelabs](#312-twelvelabs)
+   - [trace-headers](#313-trace-headers)
 4. [Graph JSON reference](#4-graph-json-reference)
    - [Top-level structure](#41-top-level-structure)
    - [inputs](#42-inputs)
@@ -478,6 +479,43 @@ mediamolder twelvelabs embed --video my-clip.mp4 --out my-clip.embeddings.json
 Run `mediamolder twelvelabs help` or `mediamolder twelvelabs <verb> --help` for the full flag reference.
 
 For in-graph usage (uploading, analyzing, searching, or embedding clips automatically as a graph runs) see [§5.12](#512-twelvelabs-cloud-analysis-in-a-graph) below and the full [TwelveLabs Guide](twelvelabs.md).
+
+---
+
+### 3.13 `trace-headers`
+
+Scan an elementary video bitstream (H.264, H.265, AV1) at the packet
+level — **no decoding** — and report every NAL unit / OBU: parameter
+sets, slice/frame headers, SEI messages, optionally every syntax element
+with bit positions. An improved, machine-readable version of FFmpeg's
+`trace_headers` bitstream filter.
+
+```bash
+mediamolder trace-headers [flags] <input>
+```
+
+```bash
+# Structured JSON report to stdout.
+mediamolder trace-headers input.mp4
+
+# FFmpeg trace_headers-format text, directly diffable against
+# `ffmpeg -i input.mp4 -c copy -bsf:v trace_headers -f null -`.
+mediamolder trace-headers --format text input.mp4
+
+# Just the parameter sets and SEI, headers-level detail, to a file.
+mediamolder trace-headers --detail headers --units sps,pps,sei \
+    --output report.json input.mkv
+
+# One packet window on the second video stream.
+mediamolder trace-headers --stream v:1 --range 0:100 input.ts
+```
+
+Flags: `--stream v:N | <index>` (default `v:0`), `--output PATH` (`-` =
+stdout), `--format json|jsonl|text`, `--detail summary|headers|elements`,
+`--units LIST` (family names or numeric types), `--max-packets N`,
+`--range A:B` (0-based, inclusive). The same analysis runs inside a graph
+via the `bitstream_trace` node. See the full
+[Bitstream Trace guide](bitstream-trace.md).
 
 ---
 

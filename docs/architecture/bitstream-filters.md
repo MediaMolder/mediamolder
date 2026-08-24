@@ -20,6 +20,14 @@ Bitstream filters (BSFs) transform encoded packets without re-encoding. They are
 | `filter_units` | Removing specific NAL units by type |
 | `dts2pts` | Recomputing PTS from DTS |
 
+> **Analyzing (rather than transforming) a bitstream?** FFmpeg's
+> `trace_headers` BSF works here too, but it only logs text to stderr.
+> MediaMolder ships a native, structured alternative — the
+> `bitstream_trace` node and `mediamolder trace-headers` CLI report every
+> H.264/H.265/AV1 NAL unit / OBU as JSON without decoding, validated
+> byte-for-byte against `trace_headers`. See
+> [Bitstream Trace](../bitstream-trace.md).
+
 ## JSON Configuration
 
 Bitstream filters are specified per-output on video and audio streams:
