@@ -301,10 +301,12 @@ func (p *BitstreamTrace) Init(params map[string]any) error {
 		p.emitEvents = v
 	}
 
-	// Fail on an unwritable output before doing any work.
-	f, err := os.OpenFile(p.outputPath, os.O_WRONLY|os.O_CREATE, 0o644)
+	// Fail on an unwritable output before doing any work. Opened through
+	// os.Root so confinement is OS-enforced (CWE-022).
+	f, err := openProcessorOutputFile("bitstream_trace", p.outputPath,
+		os.O_WRONLY|os.O_CREATE, 0o644)
 	if err != nil {
-		return fmt.Errorf("bitstream_trace: output_file: %w", err)
+		return err
 	}
 	f.Close()
 
@@ -324,9 +326,10 @@ func (p *BitstreamTrace) Run(ctx context.Context, _ func(*av.Frame) error) error
 		p.cfg.OnPacket = p.onPacket
 	}
 
-	f, err := os.Create(p.outputPath)
+	f, err := openProcessorOutputFile("bitstream_trace", p.outputPath,
+		os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
 	if err != nil {
-		return fmt.Errorf("bitstream_trace: %w", err)
+		return err
 	}
 	defer f.Close()
 
