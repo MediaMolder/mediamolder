@@ -169,7 +169,7 @@ For true camera-RAW develop (NEF/CR2/CR3/ARW/RAF/ORF/RW2/PEF/SRW/DNG) to a full,
 
 For native face analysis — detect faces (YOLOv8-face), align each, and optionally embed them (SFace) for recognition/clustering — use the `mediamolder face-detect` command for images/video or the built-in `face_detect` node inside a graph. Reproducible embeddings; models loaded as data, never linked. See [Face Detection Guide](docs/face-detection-guide.md)
 
-For packet-level bitstream analysis — every H.264/H.265/AV1 NAL unit / OBU reported to JSON (or JSONL/CSV) with no decoding (parameter sets, slice/frame headers, SEI, optionally every syntax element) — use the `mediamolder trace-headers` command or the built-in `bitstream_trace` node. An improved, machine-readable version of FFmpeg's `trace_headers`, validated byte-for-byte against it. See [Bitstream Trace](docs/bitstream-trace.md)
+For packet-level bitstream analysis — every H.264/H.265/AV1 NAL unit / OBU reported to JSON (or JSONL/CSV) with no decoding: parameter sets, SEI, typed coded-picture records with derived Picture Order Count, per-unit class (`vcl`/`ps`/`sei`) and timing for bit-rate plots, optionally every syntax element — use the `mediamolder trace-headers` command or the built-in `bitstream_trace` node. An improved, machine-readable version of FFmpeg's `trace_headers`, validated byte-for-byte against it. See [Bitstream Trace](docs/bitstream-trace.md)
 
 ### Video editing built in
 

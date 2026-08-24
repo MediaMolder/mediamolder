@@ -561,7 +561,7 @@ func processorDescription(name string) string {
 	case "metadata_file_writer":
 		return "Wrap another processor and write its metadata to a JSON Lines file."
 	case "bitstream_trace":
-		return "Report every H.264/H.265/AV1 NAL unit / OBU in a stream to a JSON, JSONL, or CSV file — parameter sets, slice/frame headers, SEI — without decoding. An improved, machine-readable version of FFmpeg's trace_headers. See docs/bitstream-trace.md."
+		return "Report every H.264/H.265/AV1 NAL unit / OBU in a stream to a JSON, JSONL, or CSV file — parameter sets, SEI, coded-picture records with derived POC, per-unit class and timing for bit-rate analysis — without decoding. An improved, machine-readable version of FFmpeg's trace_headers. See docs/bitstream-trace.md."
 	case "yolo_v8":
 		return "YOLOv8 object detection (requires the with_onnx build tag)."
 	case "face_detect":
