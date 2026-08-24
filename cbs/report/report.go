@@ -412,6 +412,7 @@ type jsonWriter struct {
 	col         *collector
 	colElements bool // detail wants element sections at all
 	filter      unitFilter
+	sum         *summarizer
 	st          stats
 	gate        packetGate
 	started     bool
@@ -429,6 +430,7 @@ func newJSONWriter(w io.Writer, opts Options) *jsonWriter {
 		jsonl:  opts.Format == "jsonl",
 		col:    newCollector(),
 		filter: newUnitFilter(opts.UnitTypes),
+		sum:    newSummarizer(),
 		st:     stats{ByType: map[string]int64{}},
 		gate:   newPacketGate(opts),
 		first:  true,
@@ -535,6 +537,13 @@ func (jw *jsonWriter) EndPacket(frag *cbs.Fragment, err error) error {
 	jw.st.addFragment(frag)
 	jw.gate.note(jw.curPkt.Index, jw.includeCur)
 	if !jw.includeCur {
+		// Skipped packets still advance decode-order state (parameter
+		// sets, POC previous-picture tracking).
+		if frag != nil {
+			for i := range frag.Units {
+				jw.sum.advance(&frag.Units[i])
+			}
+		}
 		return jw.err
 	}
 
@@ -588,6 +597,7 @@ func (jw *jsonWriter) unitsJSON(frag *cbs.Fragment) []unitJSON {
 	out := make([]unitJSON, 0, len(frag.Units))
 	for i := range frag.Units {
 		u := &frag.Units[i]
+		poc, hasPOC := jw.sum.advance(u)
 		uj := unitJSON{
 			Index:      i,
 			Offset:     u.Offset,
@@ -612,6 +622,12 @@ func (jw *jsonWriter) unitsJSON(frag *cbs.Fragment) []unitJSON {
 			uj.EPB = u.EPBPositions
 		}
 		uj.Summary = summarize(u)
+		if hasPOC {
+			if uj.Summary == nil {
+				uj.Summary = map[string]any{}
+			}
+			uj.Summary["poc"] = poc
+		}
 		if ue := jw.col.units[i]; ue != nil {
 			uj.Diags = ue.diags
 			includeSections := false

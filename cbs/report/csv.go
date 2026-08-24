@@ -30,6 +30,7 @@ type csvWriter struct {
 	cw     *csv.Writer
 	codec  string
 	filter unitFilter
+	sum    *summarizer
 	gate   packetGate
 
 	curPkt     PacketInfo
@@ -41,6 +42,7 @@ func newCSVWriter(w io.Writer, opts Options) *csvWriter {
 	return &csvWriter{
 		cw:     csv.NewWriter(w),
 		filter: newUnitFilter(opts.UnitTypes),
+		sum:    newSummarizer(),
 		gate:   newPacketGate(opts),
 	}
 }
@@ -64,7 +66,7 @@ func (c *csvWriter) BeginStream(src Source) error {
 func (c *csvWriter) BeginExtradata() {}
 
 func (c *csvWriter) EndExtradata(frag *cbs.Fragment, err error) error {
-	c.writeUnits("extradata", nil, frag)
+	c.writeUnits("extradata", nil, frag, true)
 	return c.err
 }
 
@@ -75,9 +77,8 @@ func (c *csvWriter) BeginPacket(pkt PacketInfo) {
 
 func (c *csvWriter) EndPacket(frag *cbs.Fragment, err error) error {
 	c.gate.note(c.curPkt.Index, c.includeCur)
-	if c.includeCur {
-		c.writeUnits("packet", &c.curPkt, frag)
-	}
+	// Skipped packets still advance decode-order state via writeUnits.
+	c.writeUnits("packet", &c.curPkt, frag, c.includeCur)
 	return c.err
 }
 
@@ -91,7 +92,7 @@ func (c *csvWriter) Close() error {
 	return c.err
 }
 
-func (c *csvWriter) writeUnits(kind string, pkt *PacketInfo, frag *cbs.Fragment) {
+func (c *csvWriter) writeUnits(kind string, pkt *PacketInfo, frag *cbs.Fragment, emit bool) {
 	if frag == nil {
 		return
 	}
@@ -119,12 +120,20 @@ func (c *csvWriter) writeUnits(kind string, pkt *PacketInfo, frag *cbs.Fragment)
 
 	for i := range frag.Units {
 		u := &frag.Units[i]
-		if !c.filter.match(u) {
+		poc, hasPOC := c.sum.advance(u)
+		if !emit || !c.filter.match(u) {
 			continue
 		}
 		summary := ""
-		if s := summarize(u); len(s) > 0 {
-			if b, err := json.Marshal(s); err == nil {
+		sm := summarize(u)
+		if hasPOC {
+			if sm == nil {
+				sm = map[string]any{}
+			}
+			sm["poc"] = poc
+		}
+		if len(sm) > 0 {
+			if b, err := json.Marshal(sm); err == nil {
 				summary = string(b)
 			}
 		}

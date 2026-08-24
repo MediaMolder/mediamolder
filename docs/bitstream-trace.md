@@ -154,7 +154,10 @@ Field notes:
 - `summary` is derived per unit type: SPS/sequence header → dimensions,
   profile/level, bit depth, VUI timing/colour; PPS → entropy mode,
   weighted prediction, `init_qp`; slice → slice type, `frame_num`,
-  `pic_order_cnt_lsb`, ref counts; SEI → message inventory with decoded
+  `pic_order_cnt_lsb`, the **derived Picture Order Count** (`poc`, per
+  Rec. H.264 §8.2.1 / H.265 §8.3.1 — all three H.264 POC modes, lsb wrap,
+  IDR/BLA resets, continuous across mid-stream CRAs), ref counts; SEI →
+  message inventory with decoded
   fields for the common types (user data, mastering display, CLL,
   recovery point, pic timing, …).
 - `jsonl` emits the same objects one per line (header, packets, stats) so
@@ -206,5 +209,3 @@ diffs it. Fuzz targets (`FuzzH264ReadPacket`, `FuzzH265ReadPacket`,
   are parsed but rarely exercised.
 - Mid-stream parameter-set changes delivered as packet side data
   (`AV_PKT_DATA_NEW_EXTRADATA`) are not yet reported.
-- Slice-level derived POC (picture order count per H.264 §8.2.1) is not
-  computed; `pic_order_cnt_lsb` and the raw deltas are reported.

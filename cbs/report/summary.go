@@ -31,7 +31,36 @@ func unitHeaderJSON(codec string, u *cbs.Unit) map[string]any {
 
 var h264SliceTypeNames = [10]string{"P", "B", "I", "SP", "SI", "P", "B", "I", "SP", "SI"}
 
-// summarize builds the per-unit summary for known content types.
+// summarizer derives per-unit summaries; it owns the decode-order state
+// (parameter sets, previous-picture POC) that the H.264/H.265 Picture
+// Order Count derivations need.
+type summarizer struct {
+	poc *pocState
+}
+
+func newSummarizer() *summarizer { return &summarizer{poc: newPOCState()} }
+
+// advance MUST be called exactly once per unit, in decode order —
+// including units the output filters drop — so parameter-set tables and
+// the POC previous-picture state stay correct. It returns the derived
+// PicOrderCnt for slice units (hasPOC false otherwise, or when the unit
+// failed to decompose).
+func (s *summarizer) advance(u *cbs.Unit) (poc int32, hasPOC bool) {
+	s.poc.observePS(u)
+	if u.Err != nil || !u.Decomposed {
+		return 0, false
+	}
+	switch c := u.Content.(type) {
+	case *cbs.H264RawSlice:
+		poc, hasPOC = s.poc.h264SlicePOC(&c.Header)
+	case *cbs.H265RawSlice:
+		poc, hasPOC = s.poc.h265SlicePOC(&c.Header)
+	}
+	return poc, hasPOC
+}
+
+// summarize builds the per-unit summary for known content types. It is
+// stateless; the caller injects the POC returned by advance.
 func summarize(u *cbs.Unit) map[string]any {
 	switch c := u.Content.(type) {
 	case *cbs.H264RawSPS:

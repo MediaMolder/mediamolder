@@ -85,6 +85,37 @@ func TestBitstreamTrace_RunJSON(t *testing.T) {
 	if first["key_frame"] != true {
 		t.Fatal("first packet should be a key frame")
 	}
+	// Derived Picture Order Count: every slice summary carries "poc";
+	// the IDR's picture has POC 0 and x264 spaces frames by 2.
+	var pocs []float64
+	for _, p := range pkts {
+		for _, u := range p.(map[string]any)["units"].([]any) {
+			um := u.(map[string]any)
+			if s, ok := um["summary"].(map[string]any); ok {
+				if _, isSlice := s["slice_type"]; isSlice {
+					poc, ok := s["poc"].(float64)
+					if !ok {
+						t.Fatalf("slice summary missing poc: %v", s)
+					}
+					pocs = append(pocs, poc)
+				}
+			}
+		}
+	}
+	// pocs is in decode order; as a set it must be exactly the even
+	// values 0..38 (x264 spaces frame POCs by 2; 20 frames, one IDR).
+	if len(pocs) != 20 || pocs[0] != 0 {
+		t.Fatalf("derived pocs: %v", pocs)
+	}
+	seen := map[float64]bool{}
+	for _, v := range pocs {
+		seen[v] = true
+	}
+	for i := 0; i < 20; i++ {
+		if !seen[float64(2*i)] {
+			t.Fatalf("poc %d missing from %v", 2*i, pocs)
+		}
+	}
 }
 
 func TestBitstreamTrace_JSONLAndFilters(t *testing.T) {

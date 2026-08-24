@@ -7,6 +7,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- **Derived Picture Order Count in bitstream trace slice summaries.** H.264 and
+  H.265 slice summaries now carry `poc`, derived exactly as a decoder would
+  (Rec. H.264 §8.2.1 — all three `pic_order_cnt_type` modes, lsb wrap and mmco5
+  resets; Rec. H.265 §8.3.1 — prevTid0 tracking, IDR/BLA resets, continuity
+  across mid-stream CRAs), from a per-stream tracker in the report layer that
+  observes parameter sets and slices in decode order — including packets and
+  units excluded by range or type filters, so the state never skews. This makes
+  GOP/reference-structure timelines derivable from summaries alone.
+  See [docs/bitstream-trace.md](docs/bitstream-trace.md).
+
 - **CSV output for bitstream trace.** `bitstream_trace` and
   `mediamolder trace-headers` accept `output_format` / `--format` `csv`: one
   row per NAL unit / OBU with its packet context (index, timestamps, position,
