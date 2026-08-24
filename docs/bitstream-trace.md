@@ -36,7 +36,7 @@ mediamolder trace-headers --stream v:1 --range 0:100 in.ts
 |---|---|---|
 | `--stream` | `v:0` | `v:N` (Nth video stream) or an absolute stream index |
 | `--output` | `-` | output path (`-` = stdout) |
-| `--format` | `json` | `json`, `jsonl`, `text` |
+| `--format` | `json` | `json`, `jsonl`, `csv`, `text` |
 | `--detail` | `elements` | `summary`, `headers`, `elements` (see below) |
 | `--units` | all | comma-separated filter: family names (`sps,pps,vps,sei,idr,aud,slice,metadata`) or numeric types; names cover every codec's spelling (`sei` also matches HEVC `SEI_PREFIX`/`SEI_SUFFIX`, `sps` the AV1 sequence header) |
 | `--max-packets` | all | stop after N packets |
@@ -79,7 +79,7 @@ processing of the same input.
 | `input_id` / `url` | required | input to scan (`input_id` is resolved from the job's `inputs`) |
 | `stream` | `v:0` | stream selector |
 | `output_file` | required | **absolute** report path |
-| `output_format` | `json` | `json`, `jsonl`, `text` |
+| `output_format` | `json` | `json`, `jsonl`, `csv`, `text` |
 | `detail` | `headers` | `summary`, `headers`, `elements` |
 | `unit_types` | all | e.g. `["sps", "pps", "sei"]` or numeric types (family names match across codecs) |
 | `max_packets`, `packet_range` | all | limit scope (`packet_range`: `[first, last]`, 0-based inclusive) |
@@ -159,6 +159,13 @@ Field notes:
   recovery point, pic timing, …).
 - `jsonl` emits the same objects one per line (header, packets, stats) so
   arbitrarily long streams can be processed without loading a document.
+- `csv` emits **one row per unit** for spreadsheet / SQL workflows:
+  `kind` (`extradata` | `packet`), the packet context (index, pts/dts,
+  duration, position, size, key frame), the unit identity (index, offset,
+  prefix, sizes, type, name, decomposed/skip/error), and the derived
+  `summary` as one compact-JSON column. Element-level detail is not
+  representable in CSV (`detail` is ignored); the `unit_types` filter
+  drops non-matching rows entirely.
 - A malformed unit gets an `"error"` and parsing **continues** with the
   next unit — unlike `trace_headers`, which aborts on the first error.
 

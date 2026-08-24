@@ -511,7 +511,7 @@ mediamolder trace-headers --stream v:1 --range 0:100 input.ts
 ```
 
 Flags: `--stream v:N | <index>` (default `v:0`), `--output PATH` (`-` =
-stdout), `--format json|jsonl|text`, `--detail summary|headers|elements`,
+stdout), `--format json|jsonl|csv|text`, `--detail summary|headers|elements`,
 `--units LIST` (family names or numeric types), `--max-packets N`,
 `--range A:B` (0-based, inclusive). The same analysis runs inside a graph
 via the `bitstream_trace` node. See the full

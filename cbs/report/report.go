@@ -21,7 +21,9 @@ import (
 // Options selects the output shape.
 type Options struct {
 	// Format: "json" (single streamed document, default), "jsonl" (one
-	// object per packet), or "text" (trace_headers-format lines).
+	// object per packet), "csv" (one row per unit, with the summary as a
+	// compact-JSON column; element detail is json/jsonl-only), or "text"
+	// (trace_headers-format lines).
 	Format string
 	// Detail: "elements" (full syntax-element trace), "headers"
 	// (elements for parameter sets / SEI / metadata, summaries for
@@ -146,10 +148,12 @@ func NewWriter(w io.Writer, opts Options) (Writer, error) {
 	switch opts.Format {
 	case "", "json", "jsonl":
 		return newJSONWriter(w, opts), nil
+	case "csv":
+		return newCSVWriter(w, opts), nil
 	case "text":
 		return newTextWriter(w, opts), nil
 	}
-	return nil, fmt.Errorf("report: unknown format %q (json, jsonl, text)", opts.Format)
+	return nil, fmt.Errorf("report: unknown format %q (json, jsonl, csv, text)", opts.Format)
 }
 
 // --- unit-type filter ---

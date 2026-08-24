@@ -18,7 +18,7 @@ package main
 //
 //	--stream <spec>       stream to trace: v:N or an absolute index (default v:0)
 //	--output <path>       output file (- = stdout, default)
-//	--format <fmt>        json (default), jsonl, text
+//	--format <fmt>        json (default), jsonl, csv, text
 //	--detail <level>      summary, headers, elements (default elements)
 //	--units <list>        comma-separated unit-type filter (names or numbers)
 //	--max-packets <n>     stop after n packets
@@ -43,7 +43,7 @@ func cmdTraceHeaders(args []string) error {
 	var (
 		stream     = fs.String("stream", "v:0", "stream to trace: v:N or an absolute index")
 		output     = fs.String("output", "-", "output file (- = stdout)")
-		format     = fs.String("format", "json", "output format: json, jsonl, text")
+		format     = fs.String("format", "json", "output format: json, jsonl, csv, text")
 		detail     = fs.String("detail", "elements", "detail level: summary, headers, elements")
 		units      = fs.String("units", "", "comma-separated unit-type filter (names or numbers)")
 		maxPackets = fs.Int64("max-packets", 0, "stop after n packets (0 = all)")
@@ -60,7 +60,7 @@ per-unit summaries. No decoding is performed.
 Flags:
   --stream <spec>       Stream to trace: v:N or an absolute index (default v:0)
   --output <path>       Output file (- = stdout, default)
-  --format <fmt>        Output format: json (default), jsonl, text
+  --format <fmt>        Output format: json (default), jsonl, csv, text
   --detail <level>      summary, headers, elements (default elements)
   --units <list>        Comma-separated unit-type filter (e.g. sps,pps,sei or 7,8,6)
   --max-packets <n>     Stop after n packets

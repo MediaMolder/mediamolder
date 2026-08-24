@@ -5,7 +5,7 @@ package processors
 
 // bitstream_trace scans an elementary video bitstream at the packet level —
 // no decoding — and reports every NAL unit (H.264/H.265) or OBU (AV1) to a
-// JSON, JSONL or trace_headers-format text file. It is an improved,
+// JSON, JSONL, CSV, or trace_headers-format text file. It is an improved,
 // machine-readable port of FFmpeg's `trace_headers` bitstream filter built
 // on the cbs package (a Go port of libavcodec/cbs*).
 //

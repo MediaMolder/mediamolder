@@ -7,6 +7,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- **CSV output for bitstream trace.** `bitstream_trace` and
+  `mediamolder trace-headers` accept `output_format` / `--format` `csv`: one
+  row per NAL unit / OBU with its packet context (index, timestamps, position,
+  key frame), unit identity (offset, sizes, type, name, decomposed/skip/error),
+  and the derived per-unit summary as a compact-JSON column — for spreadsheet
+  and SQL workflows over long streams. Element-level detail stays json/jsonl-only,
+  and the `unit_types` filter drops non-matching rows entirely.
+  See [docs/bitstream-trace.md](docs/bitstream-trace.md).
+
 - **`make build-gui-all` / `make test-all`.** One-stop build of the full-featured
   single binary: static FFmpeg plus every opt-in node family — `whisper_stt`,
   the ONNX nodes (`yolo_v8`, `face_detect`), and `raw_decode` — with the embedded

@@ -5,6 +5,7 @@ package report
 
 import (
 	"bytes"
+	"encoding/csv"
 	"encoding/json"
 	"os"
 	"strings"
@@ -361,5 +362,77 @@ func TestUnitFilterAliases(t *testing.T) {
 		if got := match([]string{c.spec}, c.typeName); got != c.want {
 			t.Errorf("filter %q vs %q: got %v, want %v", c.spec, c.typeName, got, c.want)
 		}
+	}
+}
+
+// TestCSVFormat: one row per unit, packet context + compact-JSON summary
+// column, header row first.
+func TestCSVFormat(t *testing.T) {
+	out, _ := run(t, Options{Format: "csv"})
+	rows, err := csv.NewReader(strings.NewReader(out)).ReadAll()
+	if err != nil {
+		t.Fatalf("output is not valid CSV: %v", err)
+	}
+	if len(rows) < 6 { // header + AUD, SPS, PPS, SEI, slices
+		t.Fatalf("rows: %d", len(rows))
+	}
+	if rows[0][0] != "kind" || rows[0][len(rows[0])-1] != "summary" {
+		t.Fatalf("header row: %v", rows[0])
+	}
+	col := map[string]int{}
+	for i, name := range rows[0] {
+		col[name] = i
+	}
+	var sps []string
+	for _, r := range rows[1:] {
+		if len(r) != len(rows[0]) {
+			t.Fatalf("ragged row: %v", r)
+		}
+		if r[col["kind"]] != "packet" {
+			t.Fatalf("kind: %v", r)
+		}
+		if r[col["type"]] == "7" {
+			sps = r
+		}
+	}
+	if sps == nil {
+		t.Fatal("no SPS row")
+	}
+	if sps[col["packet"]] != "0" || sps[col["key_frame"]] != "true" {
+		t.Fatalf("packet context: %v", sps)
+	}
+	var sum map[string]any
+	if err := json.Unmarshal([]byte(sps[col["summary"]]), &sum); err != nil {
+		t.Fatalf("summary column is not JSON: %v", err)
+	}
+	if sum["width"].(float64) != 64 || sum["height"].(float64) != 64 {
+		t.Fatalf("summary: %v", sum)
+	}
+}
+
+// TestCSVFilterAndRange: the unit filter drops rows; the packet gate
+// applies as in the other formats.
+func TestCSVFilterAndRange(t *testing.T) {
+	out, _ := run(t, Options{Format: "csv", UnitTypes: []string{"sps"}})
+	rows, err := csv.NewReader(strings.NewReader(out)).ReadAll()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) < 2 { // header + at least one SPS
+		t.Fatalf("filtered rows: %d\n%s", len(rows), out)
+	}
+	for _, r := range rows[1:] {
+		if r[14] != "7" { // "type" column: only SPS rows survive the filter
+			t.Fatalf("unfiltered row: %v", r)
+		}
+	}
+
+	out, _ = run(t, Options{Format: "csv", Range: [2]int64{1, 1}, RangeSet: true})
+	rows, err = csv.NewReader(strings.NewReader(out)).ReadAll()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 { // header only: the single packet (index 0) is out of range
+		t.Fatalf("out-of-range rows: %d", len(rows))
 	}
 }

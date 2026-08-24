@@ -445,7 +445,7 @@ so nothing in the graph decodes. See [Bitstream Trace](bitstream-trace.md).
 | `input_id` / `url` | string | **(required)** | Input to scan (`input_id` is resolved from the job's `inputs`) |
 | `stream`        | string   | `"v:0"`        | Stream selector: `v:N` or an absolute index |
 | `output_file`   | string   | **(required)** | Absolute report path |
-| `output_format` | string   | `"json"`       | `"json"`, `"jsonl"`, `"text"` |
+| `output_format` | string   | `"json"`       | `"json"`, `"jsonl"`, `"csv"`, `"text"` |
 | `detail`        | string   | `"headers"`    | `"summary"`, `"headers"`, `"elements"` |
 | `unit_types`    | array    | all            | Filter, e.g. `["sps", "pps", "sei"]` or numeric types |
 | `max_packets`   | number   | all            | Stop after N packets |
