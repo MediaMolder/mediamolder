@@ -124,7 +124,7 @@ func RunBitstreamTrace(ctx context.Context, cfg TraceConfig, out io.Writer) erro
 		return fmt.Errorf("bitstream_trace: %s: %w", cfg.URL, err)
 	}
 
-	codecID, ok := cbs.CodecFromAV(si.CodecID)
+	codecID, ok := cbs.CodecFromName(av.CodecName(si.CodecID))
 	if !ok {
 		return fmt.Errorf("bitstream_trace: codec %s is not supported (H.264, H.265 and AV1 are)",
 			av.CodecName(si.CodecID))

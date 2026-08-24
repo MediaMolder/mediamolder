@@ -119,6 +119,9 @@ func TestBitstreamTrace_JSONLAndFilters(t *testing.T) {
 func TestBitstreamTrace_TextGolden(t *testing.T) {
 	cases := []struct{ input, golden string }{
 		{"../av/testdata/tiny.mp4", "../cbs/testdata/golden/tiny.mp4.txt"},
+		{"../cbs/testdata/tiny_hevc.mp4", "../cbs/testdata/golden/tiny_hevc.mp4.txt"},
+		{"../cbs/testdata/tiny_av1.mp4", "../cbs/testdata/golden/tiny_av1.mp4.txt"},
+		{"../cbs/testdata/tiny.ivf", "../cbs/testdata/golden/tiny.ivf.txt"},
 	}
 	for _, c := range cases {
 		t.Run(filepath.Base(c.input), func(t *testing.T) {

@@ -50,6 +50,20 @@ func summarize(u *cbs.Unit) map[string]any {
 		return map[string]any{"primary_pic_type": c.PrimaryPicType}
 	case *cbs.H264RawFiller:
 		return map[string]any{"filler_size": c.FillerSize}
+	case *cbs.H265RawVPS:
+		return h265VPSSummary(c)
+	case *cbs.H265RawSPS:
+		return h265SPSSummary(c)
+	case *cbs.H265RawPPS:
+		return h265PPSSummary(c)
+	case *cbs.H265RawSlice:
+		return h265SliceSummary(&c.Header)
+	case *cbs.H265RawSEI:
+		return map[string]any{"messages": seiListSummary(&c.MessageList)}
+	case *cbs.H265RawAUD:
+		return map[string]any{"pic_type": c.PicType}
+	case *cbs.AV1RawOBU:
+		return summarizeAV1(c)
 	}
 	return nil
 }

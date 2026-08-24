@@ -26,23 +26,16 @@ func (c CodecID) String() string {
 	return fmt.Sprintf("CodecID(%d)", int(c))
 }
 
-// FFmpeg AVCodecID values (libavcodec/codec_id.h), for mapping from
-// av.StreamInfo.CodecID without importing av.
-const (
-	avCodecIDH264 = 27
-	avCodecIDHEVC = 173
-	avCodecIDAV1  = 226
-)
-
-// CodecFromAV maps an FFmpeg AVCodecID (as exposed by av.StreamInfo.CodecID)
-// to a CodecID.
-func CodecFromAV(avCodecID uint32) (CodecID, bool) {
-	switch avCodecID {
-	case avCodecIDH264:
+// CodecFromName maps an FFmpeg codec short name (av.CodecName) to a
+// CodecID. Preferred over enum values, which shift between FFmpeg
+// versions.
+func CodecFromName(name string) (CodecID, bool) {
+	switch name {
+	case "h264":
 		return CodecH264, true
-	case avCodecIDHEVC:
+	case "hevc", "h265":
 		return CodecH265, true
-	case avCodecIDAV1:
+	case "av1":
 		return CodecAV1, true
 	}
 	return 0, false

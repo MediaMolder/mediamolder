@@ -435,7 +435,9 @@ func (p *Pipeline) startDataFlow() {
 
 	go func() {
 		var err error
-		if len(p.cfg.Graph.Edges) > 0 {
+		if len(p.cfg.Graph.Edges) > 0 || len(p.cfg.Graph.Nodes) > 0 {
+			// Graph mode also covers edge-less graphs (e.g. a single
+			// self-opening go_processor such as bitstream_trace).
 			err = p.runGraph(gctx)
 		} else {
 			err = p.runLinear(gctx, g)
