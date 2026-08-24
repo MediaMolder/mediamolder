@@ -1,0 +1,29 @@
+{
+  "schema_version": "1.1",
+  "description": "Scan in.mp4's video bitstream at the packet level (no decoding) and write every NAL unit's details — parameter sets, slice headers, SEI — to bitstream_trace.json. An improved, machine-readable version of FFmpeg's trace_headers bitstream filter.",
+  "ffmpeg_cmd": "ffmpeg -i in.mp4 -c copy -bsf:v trace_headers -f null - 2> trace.txt  # text only; the graph writes structured JSON instead",
+  "inputs": [
+    {
+      "id": "in0",
+      "url": "{{input}}"
+    }
+  ],
+  "graph": {
+    "nodes": [
+      {
+        "id": "trace",
+        "type": "go_processor",
+        "processor": "bitstream_trace",
+        "params": {
+          "input_id": "in0",
+          "stream": "v:0",
+          "output_file": "bitstream_trace.json",
+          "output_format": "json",
+          "detail": "headers"
+        }
+      }
+    ],
+    "edges": []
+  },
+  "outputs": []
+}

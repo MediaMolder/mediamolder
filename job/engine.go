@@ -827,6 +827,23 @@ func resolveClipInputIDs(params map[string]any, inputs []Input) (map[string]any,
 	for _, inp := range inputs {
 		byID[inp.ID] = inp
 	}
+	topResolved := false
+	// Top-level "input_id" → "url" for processors that reference a single
+	// input directly (e.g. bitstream_trace).
+	if id, ok := params["input_id"].(string); ok && id != "" {
+		inp, found := byID[id]
+		if !found {
+			return nil, fmt.Errorf("input_id %q not found", id)
+		}
+		cp := make(map[string]any, len(params))
+		for k, v := range params {
+			cp[k] = v
+		}
+		cp["url"] = inp.URL
+		delete(cp, "input_id")
+		params = cp
+		topResolved = true
+	}
 	// Handle tracks for sequence_editor new timeline definition (media_id/input_id -> url)
 	if tracksRaw, ok := params["tracks"].([]any); ok {
 		changed := false
@@ -868,13 +885,16 @@ func resolveClipInputIDs(params map[string]any, inputs []Input) (map[string]any,
 				}
 			}
 		}
-		if changed {
+		if changed && !topResolved {
 			cp := make(map[string]any, len(params))
 			for k, v := range params {
 				cp[k] = v
 			}
 			return cp, nil
 		}
+	}
+	if topResolved {
+		return params, nil
 	}
 	return nil, nil
 }

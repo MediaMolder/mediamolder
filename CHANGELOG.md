@@ -7,6 +7,21 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- **Bitstream trace (`bitstream_trace` node + `trace-headers` CLI).** Packet-level
+  NAL unit / OBU analysis for H.264, H.265 and AV1 — parameter sets, slice/frame
+  headers, SEI messages, and optionally every syntax element with bit positions —
+  written to a JSON, JSON Lines, or text report, with **no decoding**. An improved,
+  machine-readable version of FFmpeg's `trace_headers` bitstream filter, built on
+  the new cgo-free `cbs` package: a read-only Go port of libavcodec's Coded
+  Bitstream framework whose element trace is validated byte-for-byte against
+  `ffmpeg -bsf:v trace_headers` goldens (checked-in fixtures + reference-build
+  captures) and fuzzed against hostile input. Unlike `trace_headers`, a malformed
+  unit is recorded and parsing continues; units FFmpeg silently drops are listed
+  with a skip reason; per-unit summaries (dimensions, profile, slice type, SEI
+  inventory) make the report scriptable for ingest QC without walking the element
+  trace. `--format text` reproduces FFmpeg's output for direct diffing.
+  See [docs/bitstream-trace.md](docs/bitstream-trace.md).
+
 - **Face-region visibility (occlusion) assessment.** `face.AssessFaceVisibility(img,
   bbox)` returns how much of a detected face is covered by something in front of it
   (a hand, a glass, another person) as a fraction in [0,1] — measured, not inferred: a

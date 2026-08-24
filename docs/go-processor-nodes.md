@@ -428,6 +428,36 @@ See [docs/scene-detection.md](scene-detection.md#scene_change_histogram) for ful
 }
 ```
 
+### `bitstream_trace`
+
+Scans an elementary video bitstream at the packet level — **no decoding** —
+and writes every NAL unit (H.264/H.265) or OBU (AV1) to a JSON, JSON Lines,
+or trace_headers-format text report: parameter sets, slice/frame headers,
+SEI messages, and optionally every syntax element with bit positions. An
+improved, machine-readable version of FFmpeg's `trace_headers` bitstream
+filter, built on the `cbs` package (a Go port of libavcodec's Coded
+Bitstream framework, validated byte-for-byte against FFmpeg). The node is a
+`FrameSource` that emits no frames: it opens the referenced input itself,
+so nothing in the graph decodes. See [Bitstream Trace](bitstream-trace.md).
+
+| Param           | Type     | Default        | Description |
+|-----------------|----------|----------------|-------------|
+| `input_id` / `url` | string | **(required)** | Input to scan (`input_id` is resolved from the job's `inputs`) |
+| `stream`        | string   | `"v:0"`        | Stream selector: `v:N` or an absolute index |
+| `output_file`   | string   | **(required)** | Absolute report path |
+| `output_format` | string   | `"json"`       | `"json"`, `"jsonl"`, `"text"` |
+| `detail`        | string   | `"headers"`    | `"summary"`, `"headers"`, `"elements"` |
+| `unit_types`    | array    | all            | Filter, e.g. `["sps", "pps", "sei"]` or numeric types |
+| `max_packets`   | number   | all            | Stop after N packets |
+| `packet_range`  | array    | all            | `[first, last]` packet index window |
+| `emit_events`   | bool     | `false`        | Per-packet unit summaries on the events bus |
+
+```json
+{ "id": "trace", "type": "go_processor", "processor": "bitstream_trace",
+  "params": { "input_id": "in0", "output_file": "/tmp/trace.json",
+              "detail": "headers" } }
+```
+
 ### `metadata_file_writer`
 
 A sink processor that writes metadata events to a [JSON Lines](https://jsonlines.org/) file. Supports two usage modes:

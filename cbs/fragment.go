@@ -44,9 +44,21 @@ func avErrString(err error) string {
 	return err.Error()
 }
 
+// UnitBoundaryTracer is an optional extension of Tracer: a sink that also
+// wants to know which unit the following Header/Element/Diag events belong
+// to (FFmpeg's flat text stream needs no attribution; the JSON report
+// does). BeginUnit/EndUnit bracket each unit's readUnit call; events
+// outside any bracket belong to the fragment split phase.
+type UnitBoundaryTracer interface {
+	Tracer
+	BeginUnit(index int)
+	EndUnit(index int)
+}
+
 // readFragmentUnits runs readUnit over each unit of the fragment,
 // mirroring cbs_read_fragment_content's ENOSYS/EAGAIN/error handling.
 func readFragmentUnits(frag *Fragment, tr Tracer, readUnit func(*Unit)) {
+	ubt, _ := tr.(UnitBoundaryTracer)
 	diag := func(level Level, format string, args ...any) {
 		if tr != nil {
 			tr.Diag(level, sprintf(format, args...))
@@ -59,7 +71,13 @@ func readFragmentUnits(frag *Fragment, tr Tracer, readUnit func(*Unit)) {
 			continue
 		}
 
+		if ubt != nil {
+			ubt.BeginUnit(i)
+		}
 		readUnit(unit)
+		if ubt != nil {
+			ubt.EndUnit(i)
+		}
 
 		switch {
 		case unit.Err == nil:
