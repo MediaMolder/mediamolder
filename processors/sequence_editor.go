@@ -1178,7 +1178,13 @@ type clipReader struct {
 	converter  *av.FilterGraph // per-source scale+format normalizer to the sequence format (lazily built)
 	vidIdx     int
 	lastSrcSec float64
-	sourceFPS  float64 // nominal frame rate for this source (from r_frame_rate or avg), used for reliable "skip N frames to reach source_in" without depending on PTS or broken seeks
+	sourceFPS  float64 // nominal frame rate for this source (from r_frame_rate or avg), used to count "skip N frames to reach source_in" without PTS-matching individual frames
+
+	pos           int64 // frame index (at the nominal rate) of the next frame the decoder will yield
+	landing       bool  // a seek happened; the next decoded frame's PTS re-anchors pos
+	landingFrames int   // decoded frames seen while landing that carried no PTS
+	noSeek        bool  // this source gave no usable PTS after a seek: decode-and-discard only
+	frames        int64 // frames decoded so far (diagnostics; tests pin the seek with it)
 }
 
 func openClipReader(url string) (*clipReader, error) {
@@ -1249,36 +1255,150 @@ func (r *clipReader) close() {
 	}
 }
 
-// getFrameAtSeconds advances the decoder from its current position (or the
-// beginning of the source for a fresh reader) and returns a decoded frame
-// corresponding to the requested source time. We count decoded frames using
-// the source's nominal rate rather than relying on PTS matching or demux seeks
-// (both of which were unreliable for these files and caused get failures for any
-// clip after the first, leading to the hold-last logic freezing the output on the
-// last good frame from clip 0).
+// getFrameAtSeconds returns the decoded frame for the requested source time.
+// Positioning mirrors the audio reader's: on a fresh reader or a far forward
+// jump the demuxer seeks to just before the target (seekTo) and the first
+// decoded PTS re-anchors the reader's absolute frame position, so only the
+// remainder is decoded and discarded — not the whole prefix, which on a
+// multi-GB interleaved capture took minutes per window. From the anchor,
+// frames are counted at the source's nominal rate (r_frame_rate preferred)
+// rather than PTS-matching individual frames. A small-advance continuation
+// (sec close to lastSrcSec) takes the very next frame from the hot decoder —
+// transitions and cached readers depend on that path staying warm. Sources
+// that cannot anchor a seek fall back to decode-from-start once (noSeek) and
+// keep the counting behaviour every source had before.
 func (r *clipReader) getFrameAtSeconds(sec float64) (*av.Frame, error) {
-	// Compute how many frames to skip from the "start of this access" to reach the
-	// requested source time. We use the source's nominal frame rate (r_frame_rate
-	// preferred) rather than trying to match decoded f.PTS() against a computed
-	// targetPTS. This is reliable, works for any source_in on fresh or cached
-	// readers, and completely avoids the SeekFile path (which was causing immediate
-	// ReadPacket EOF for clips after the first).
-	// On a small-advance continuation (sec close to lastSrcSec) we skip 0 in *this call*
-	// and just return the next decoded picture the decoder produces.
-	skip := 0
 	if r.sourceFPS <= 0 {
 		r.sourceFPS = 29.97
 	}
 	if r.lastSrcSec > 0 && sec <= r.lastSrcSec+0.5 {
-		// cheap continuation within a clip: take the very next frame(s) from the
+		// cheap continuation within a clip: take the very next frame from the
 		// hot decoder
-		skip = 0
-	} else {
-		// (re)start or jump for this srcT on this reader: skip the prefix
-		skip = int(sec*r.sourceFPS + 0.5)
+		f, err := r.decodeNext()
+		if err != nil {
+			return nil, err
+		}
+		r.pos++
+		r.lastSrcSec = sec
+		return f, nil
 	}
+	// (re)start or jump: position on the target frame index. A far forward
+	// jump seeks; the remainder (and a near hop, which keeps the decoder warm
+	// and the position exact) is decode-and-discard from the current position.
+	tIdx := int64(sec*r.sourceFPS + 0.5)
+	if float64(tIdx-r.pos) > seekMinAheadSec*r.sourceFPS {
+		if f := r.seekTo(sec, tIdx); f != nil {
+			r.pos++
+			if r.pos > tIdx {
+				r.lastSrcSec = sec
+				return f, nil
+			}
+			f.Close()
+		}
+	}
+	for {
+		f, err := r.decodeNext()
+		if err != nil {
+			return nil, err
+		}
+		r.pos++
+		if r.pos > tIdx {
+			r.lastSrcSec = sec
+			return f, nil
+		}
+		// still in the skip prefix for this access — drop and continue
+		f.Close()
+	}
+}
 
-	framesSeenThisCall := 0
+// seekTo moves the demuxer to seekSlackSec before sec and lets the first
+// decoded frame's PTS fix the reader's absolute frame position, so the
+// caller's decode-and-discard covers exactly the remainder. On success it
+// returns the anchoring frame — the frame at index r.pos, not yet consumed —
+// and nil when no seek happened. Sources that hand back no PTS after a seek
+// (or land past the target at maximum slack) fall back to decoding from the
+// start — the behaviour every source had before — and are not retried.
+func (r *clipReader) seekTo(sec float64, tIdx int64) *av.Frame {
+	if r.noSeek || r.demux == nil || r.si.TimeBase[1] <= 0 {
+		return nil
+	}
+	for slack := seekSlackSec; slack <= maxSeekSlackSec; slack *= 2 {
+		target := sec - slack
+		if target < 0 {
+			target = 0
+		}
+		if !r.reposition(target) {
+			return nil // the demuxer refused the seek; reposition marked noSeek
+		}
+		// Decode until the first frame places us — bounded: a source that
+		// never stamps a PTS must not be decoded to EOF while landing, and a
+		// frame with no known position is discarded, never emitted.
+		var f *av.Frame
+		for r.landing && r.landingFrames < maxLandingFrames {
+			nf, err := r.decodeNext()
+			if err != nil {
+				break // EOF or decode error: this attempt cannot anchor
+			}
+			if r.anchor(nf) {
+				f = nf
+				break
+			}
+			nf.Close()
+		}
+		if f == nil {
+			break // no PTS within the bound: this source cannot anchor a seek
+		}
+		if r.pos <= tIdx || target == 0 {
+			// Landed at or before the target (discard covers the rest), or the
+			// source simply starts later than asked — both are the position.
+			return f
+		}
+		// Landed past the target: a coarse index or a long GOP. Aim earlier.
+		f.Close()
+	}
+	// Fall back to decode-from-start, once; never retry the seek on this source.
+	r.noSeek = true
+	if r.reposition(0) {
+		r.pos = 0
+	}
+	r.landing = false
+	return nil
+}
+
+// reposition seeks the demuxer to sec and flushes the decoder; the next
+// decoded frame's PTS re-anchors r.pos (landing).
+func (r *clipReader) reposition(sec float64) bool {
+	if err := r.demux.SeekFile(int64(sec * 1e6)); err != nil {
+		r.noSeek = true
+		return false
+	}
+	r.dec.FlushBuffers()
+	r.landingFrames = 0
+	r.landing = true
+	return true
+}
+
+// anchor places a frame decoded while landing. A frame with a usable
+// timestamp fixes the reader's absolute frame index at the nominal rate and
+// ends the landing (the frame is the one at r.pos and stays the caller's to
+// use); one without has no known position, so it is discarded, counted
+// against maxLandingFrames. Position comes from best_effort_timestamp, not
+// pts: containers that store only decode timestamps (AVI — tape captures)
+// decode every frame with pts == NOPTS.
+func (r *clipReader) anchor(f *av.Frame) bool {
+	pts := f.BestEffortTimestamp()
+	if pts < 0 || r.si.TimeBase[1] <= 0 {
+		r.landingFrames++
+		return false
+	}
+	fSec := float64(pts) * float64(r.si.TimeBase[0]) / float64(r.si.TimeBase[1])
+	r.pos = int64(fSec*r.sourceFPS + 0.5)
+	r.landing = false
+	return true
+}
+
+// decodeNext returns the next decoded picture, feeding packets as needed.
+func (r *clipReader) decodeNext() (*av.Frame, error) {
 	for {
 		f, err := av.AllocFrame()
 		if err != nil {
@@ -1286,14 +1406,8 @@ func (r *clipReader) getFrameAtSeconds(sec float64) (*av.Frame, error) {
 		}
 		recvErr := r.dec.ReceiveFrame(f)
 		if recvErr == nil {
-			framesSeenThisCall++
-			if framesSeenThisCall > skip {
-				r.lastSrcSec = sec
-				return f, nil
-			}
-			// still in the skip prefix for this access — drop and continue
-			f.Close()
-			continue
+			r.frames++
+			return f, nil
 		}
 		f.Close()
 		if !av.IsEAgain(recvErr) {
