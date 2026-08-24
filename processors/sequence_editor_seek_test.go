@@ -174,10 +174,9 @@ func TestClipReaderNearHopDoesNotSeek(t *testing.T) {
 
 // A seek that lands on frames without a timestamp must not decode the rest
 // of the file waiting for one: the wait is bounded and position-less frames
-// are never kept. (This exact bug — an all-NOPTS source decoded to EOF while
-// landing — was PR #67's audio must-fix; the video path must not repeat it.)
-// No demuxer here hands back a file whose post-seek frames stay NOPTS, so the
-// landing state machine is driven directly, as the audio test does.
+// are never kept. No demuxer here hands back a file whose post-seek frames
+// stay NOPTS, so the landing state machine is driven directly, as the audio
+// test does.
 func TestClipReaderLandingIsBounded(t *testing.T) {
 	r := openFixtureReader(t, "avi", "avi", "mpeg4", 4*fixFPS)
 	if !r.reposition(1.0) {

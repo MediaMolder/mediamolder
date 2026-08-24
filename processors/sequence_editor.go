@@ -1181,9 +1181,9 @@ type clipReader struct {
 	sourceFPS  float64 // nominal frame rate for this source (from r_frame_rate or avg), used to count "skip N frames to reach source_in" without PTS-matching individual frames
 
 	pos           int64 // frame index (at the nominal rate) of the next frame the decoder will yield
-	landing       bool  // a seek happened; the next decoded frame's PTS re-anchors pos
-	landingFrames int   // decoded frames seen while landing that carried no PTS
-	noSeek        bool  // this source gave no usable PTS after a seek: decode-and-discard only
+	landing       bool  // a seek happened; the next decoded frame's timestamp re-anchors pos
+	landingFrames int   // decoded frames seen while landing that carried no timestamp
+	noSeek        bool  // this source gave no usable timestamp after a seek: decode-and-discard only
 	frames        int64 // frames decoded so far (diagnostics; tests pin the seek with it)
 }
 
@@ -1256,17 +1256,13 @@ func (r *clipReader) close() {
 }
 
 // getFrameAtSeconds returns the decoded frame for the requested source time.
-// Positioning mirrors the audio reader's: on a fresh reader or a far forward
-// jump the demuxer seeks to just before the target (seekTo) and the first
-// decoded PTS re-anchors the reader's absolute frame position, so only the
-// remainder is decoded and discarded — not the whole prefix, which on a
-// multi-GB interleaved capture took minutes per window. From the anchor,
-// frames are counted at the source's nominal rate (r_frame_rate preferred)
-// rather than PTS-matching individual frames. A small-advance continuation
-// (sec close to lastSrcSec) takes the very next frame from the hot decoder —
-// transitions and cached readers depend on that path staying warm. Sources
-// that cannot anchor a seek fall back to decode-from-start once (noSeek) and
-// keep the counting behaviour every source had before.
+// A fresh reader or a far forward jump seeks so the prefix is not decoded
+// (seekTo); from the anchor the remainder is counted at the source's nominal
+// rate rather than PTS-matching individual frames. A small-advance
+// continuation (sec close to lastSrcSec) takes the very next frame from the
+// hot decoder — transitions and cached readers depend on that path staying
+// warm. Sources that cannot anchor a seek fall back to decode-from-start
+// once (noSeek).
 func (r *clipReader) getFrameAtSeconds(sec float64) (*av.Frame, error) {
 	if r.sourceFPS <= 0 {
 		r.sourceFPS = 29.97
@@ -1312,12 +1308,12 @@ func (r *clipReader) getFrameAtSeconds(sec float64) (*av.Frame, error) {
 }
 
 // seekTo moves the demuxer to seekSlackSec before sec and lets the first
-// decoded frame's PTS fix the reader's absolute frame position, so the
+// decoded frame's timestamp fix the reader's absolute frame position, so the
 // caller's decode-and-discard covers exactly the remainder. On success it
 // returns the anchoring frame — the frame at index r.pos, not yet consumed —
-// and nil when no seek happened. Sources that hand back no PTS after a seek
-// (or land past the target at maximum slack) fall back to decoding from the
-// start — the behaviour every source had before — and are not retried.
+// and nil when no seek happened. Sources that hand back no timestamp after a
+// seek (or land past the target at maximum slack) fall back to decoding from
+// the start and are not retried.
 func (r *clipReader) seekTo(sec float64, tIdx int64) *av.Frame {
 	if r.noSeek || r.demux == nil || r.si.TimeBase[1] <= 0 {
 		return nil
@@ -1366,7 +1362,7 @@ func (r *clipReader) seekTo(sec float64, tIdx int64) *av.Frame {
 }
 
 // reposition seeks the demuxer to sec and flushes the decoder; the next
-// decoded frame's PTS re-anchors r.pos (landing).
+// decoded frame's timestamp re-anchors r.pos (landing).
 func (r *clipReader) reposition(sec float64) bool {
 	if err := r.demux.SeekFile(int64(sec * 1e6)); err != nil {
 		r.noSeek = true
