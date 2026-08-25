@@ -160,7 +160,7 @@ func TestUnitTypeFilter(t *testing.T) {
 func TestJSONLines(t *testing.T) {
 	out, _ := run(t, Options{Format: "jsonl", Detail: "summary"})
 	lines := strings.Split(strings.TrimSpace(out), "\n")
-	if len(lines) != 3 { // header, packet, stats
+	if len(lines) != 4 { // header, packet, violations, stats
 		t.Fatalf("jsonl lines: %d", len(lines))
 	}
 	for i, l := range lines {

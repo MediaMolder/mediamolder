@@ -455,6 +455,8 @@ so nothing in the graph decodes. See [Bitstream Trace](bitstream-trace.md).
 | `max_packets`   | number   | all            | Stop after N packets |
 | `packet_range`  | array    | all            | `[first, last]` packet index window |
 | `emit_events`   | bool     | `false`        | Per-packet unit summaries on the events bus |
+| `checks`        | string/array | none       | Structure checks: `default`, `strict`, or check ids |
+| `validate`      | bool     | `false`        | Fail the node on error-severity violations (implies `checks: default`) |
 
 ```json
 { "id": "trace", "type": "go_processor", "processor": "bitstream_trace",

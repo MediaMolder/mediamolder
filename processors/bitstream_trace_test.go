@@ -122,7 +122,7 @@ func TestBitstreamTrace_JSONLAndFilters(t *testing.T) {
 		t.Skip("tiny.mp4 not available:", err)
 	}
 	var buf bytes.Buffer
-	err := RunBitstreamTrace(context.Background(), TraceConfig{
+	_, err := RunBitstreamTrace(context.Background(), TraceConfig{
 		URL: input,
 		Options: report.Options{
 			Format:     "jsonl",
@@ -134,8 +134,8 @@ func TestBitstreamTrace_JSONLAndFilters(t *testing.T) {
 		t.Fatal(err)
 	}
 	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
-	// header + extradata + 3 packets + stats
-	if len(lines) != 6 {
+	// header + extradata + 3 packets + violations + stats
+	if len(lines) != 7 {
 		t.Fatalf("jsonl lines: %d\n%s", len(lines), buf.String())
 	}
 }
@@ -162,7 +162,7 @@ func TestBitstreamTrace_TextGolden(t *testing.T) {
 				t.Skip("golden not available:", err)
 			}
 			var buf bytes.Buffer
-			err = RunBitstreamTrace(context.Background(), TraceConfig{
+			_, err = RunBitstreamTrace(context.Background(), TraceConfig{
 				URL:     c.input,
 				Options: report.Options{Format: "text", Detail: "elements"},
 			}, &buf)

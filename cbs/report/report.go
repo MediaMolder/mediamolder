@@ -45,6 +45,11 @@ type Options struct {
 	// Active only when RangeSet is true, so 0:0 is a valid window.
 	Range    [2]int64
 	RangeSet bool
+	// Checks enables the opt-in stream-structure checks (checks.go):
+	// preset names ("default", "strict") and/or individual check ids.
+	// Parse-error (syntax) violations are always collected. Not
+	// supported by the text format.
+	Checks []string
 }
 
 // packetGate applies MaxPackets and the inclusive packet-index range
@@ -140,18 +145,32 @@ type Writer interface {
 	// Done reports that MaxPackets / Range have been exhausted and the
 	// driver may stop early.
 	Done() bool
+	// Violations returns the collected violations (nil for the text
+	// format, which reports only counts).
+	Violations() []Violation
+	// ErrorViolations counts error-severity findings, for --validate
+	// exit status.
+	ErrorViolations() int
 	// Close flushes and writes the stats trailer.
 	Close() error
 }
 
 // NewWriter returns a Writer for the given options.
 func NewWriter(w io.Writer, opts Options) (Writer, error) {
+	checks, err := ResolveChecks(opts.Checks)
+	if err != nil {
+		return nil, err
+	}
+	opts.Checks = checks
 	switch opts.Format {
 	case "", "json", "jsonl":
 		return newJSONWriter(w, opts), nil
 	case "csv":
 		return newCSVWriter(w, opts), nil
 	case "text":
+		if len(checks) > 0 {
+			return nil, fmt.Errorf("report: structure checks need a structured format (json, jsonl, csv)")
+		}
 		return newTextWriter(w, opts), nil
 	}
 	return nil, fmt.Errorf("report: unknown format %q (json, jsonl, csv, text)", opts.Format)
@@ -423,6 +442,8 @@ type jsonWriter struct {
 	colElements bool // detail wants element sections at all
 	filter      unitFilter
 	sum         *summarizer
+	vlog        violationLog
+	checks      *checker
 	tb          [2]int
 	st          stats
 	gate        packetGate
@@ -488,6 +509,7 @@ func (jw *jsonWriter) BeginStream(src Source) error {
 	}{"mediamolder.bitstream_trace/2", src}
 	jw.codec = src.Codec
 	jw.tb = src.TimeBase
+	jw.checks = newChecker(jw.opts.Checks, jw.codec, jw.sum, &jw.vlog)
 	if jw.jsonl {
 		jw.writeBytes(jw.marshal(hdr))
 		jw.writeByte('\n')
@@ -502,6 +524,7 @@ func (jw *jsonWriter) BeginStream(src Source) error {
 func (jw *jsonWriter) BeginExtradata() {
 	jw.col.reset()
 	jw.col.elements = jw.colElements
+	jw.checks.beginPacket(-1)
 }
 
 func (jw *jsonWriter) EndExtradata(frag *cbs.Fragment, err error) error {
@@ -514,12 +537,13 @@ func (jw *jsonWriter) EndExtradata(frag *cbs.Fragment, err error) error {
 	}{Units: []unitJSON{}}
 	if frag != nil {
 		xd.Size = len(frag.Data)
-		xd.Units = jw.unitsJSON(frag)
+		xd.Units = jw.unitsJSON(-1, frag)
 	}
 	if err != nil {
 		xd.Error = err.Error()
 	}
 	xd.Diags = jw.col.fragDiags
+	jw.checks.endPacket()
 	if jw.jsonl {
 		jw.writeBytes(jw.marshal(struct {
 			Extradata any `json:"extradata"`
@@ -542,6 +566,7 @@ func (jw *jsonWriter) BeginPacket(pkt PacketInfo) {
 	jw.curPkt = pkt
 	jw.includeCur = jw.gate.include(pkt.Index)
 	jw.col.elements = jw.colElements && jw.includeCur
+	jw.checks.beginPacket(pkt.Index)
 }
 
 func (jw *jsonWriter) EndPacket(frag *cbs.Fragment, err error) error {
@@ -550,12 +575,16 @@ func (jw *jsonWriter) EndPacket(frag *cbs.Fragment, err error) error {
 	jw.gate.note(jw.curPkt.Index, jw.includeCur)
 	if !jw.includeCur {
 		// Skipped packets still advance decode-order state (parameter
-		// sets, POC previous-picture tracking).
+		// sets, POC tracking) and still surface violations.
 		if frag != nil {
 			for i := range frag.Units {
-				jw.sum.advance(&frag.Units[i])
+				u := &frag.Units[i]
+				pic := jw.sum.advance(u)
+				jw.recordUnitViolations(jw.curPkt.Index, i, u)
+				jw.checks.observe(jw.curPkt.Index, i, u, pic)
 			}
 		}
+		jw.checks.endPacket()
 		return jw.err
 	}
 
@@ -585,12 +614,13 @@ func (jw *jsonWriter) EndPacket(frag *cbs.Fragment, err error) error {
 		}
 	}
 	if frag != nil {
-		pj.Units = jw.unitsJSON(frag)
+		pj.Units = jw.unitsJSON(jw.curPkt.Index, frag)
 	}
 	if err != nil {
 		pj.Error = err.Error()
 	}
 
+	jw.checks.endPacket()
 	if jw.jsonl {
 		jw.writeBytes(jw.marshal(struct {
 			Packet packetJSON `json:"packet"`
@@ -611,11 +641,26 @@ func (jw *jsonWriter) EndPacket(frag *cbs.Fragment, err error) error {
 	return jw.err
 }
 
-func (jw *jsonWriter) unitsJSON(frag *cbs.Fragment) []unitJSON {
+// recordUnitViolations maps a failed unit into a layer-0 violation,
+// preferring the parse diagnostic captured by the tracer as message.
+func (jw *jsonWriter) recordUnitViolations(packet int64, unit int, u *cbs.Unit) {
+	if u.Err == nil {
+		return
+	}
+	msg := ""
+	if ue := jw.col.units[unit]; ue != nil {
+		msg = firstErrorDiag(ue.diags)
+	}
+	jw.vlog.addUnitError(jw.codec, packet, unit, u, msg)
+}
+
+func (jw *jsonWriter) unitsJSON(packet int64, frag *cbs.Fragment) []unitJSON {
 	out := make([]unitJSON, 0, len(frag.Units))
 	for i := range frag.Units {
 		u := &frag.Units[i]
 		pic := jw.sum.advance(u)
+		jw.recordUnitViolations(packet, i, u)
+		jw.checks.observe(packet, i, u, pic)
 		uj := unitJSON{
 			Index:      i,
 			Offset:     u.Offset,
@@ -663,8 +708,20 @@ func (jw *jsonWriter) unitsJSON(frag *cbs.Fragment) []unitJSON {
 	return out
 }
 
+func (jw *jsonWriter) Violations() []Violation { return jw.vlog.list }
+
+func (jw *jsonWriter) ErrorViolations() int { return jw.vlog.errors }
+
 func (jw *jsonWriter) Close() error {
+	violations := jw.vlog.list
+	if violations == nil {
+		violations = []Violation{}
+	}
 	if jw.jsonl {
+		jw.writeBytes(jw.marshal(struct {
+			Violations []Violation `json:"violations"`
+		}{violations}))
+		jw.writeByte('\n')
 		jw.writeBytes(jw.marshal(struct {
 			Stats stats `json:"stats"`
 		}{jw.st}))
@@ -678,6 +735,8 @@ func (jw *jsonWriter) Close() error {
 		} else {
 			jw.writeString(`,"packets":[]`)
 		}
+		jw.writeString(`,"violations":`)
+		jw.writeBytes(jw.marshal(violations))
 		jw.writeString(`,"stats":`)
 		jw.writeBytes(jw.marshal(jw.st))
 		jw.writeString("}\n")
@@ -781,5 +840,11 @@ func (tw *textWriter) EndPacket(frag *cbs.Fragment, err error) error {
 }
 
 func (tw *textWriter) Done() bool { return tw.gate.done() }
+
+// Violations: the text format reports only counts (syntax errors from
+// the unit walk); structure checks are rejected at NewWriter.
+func (tw *textWriter) Violations() []Violation { return nil }
+
+func (tw *textWriter) ErrorViolations() int { return int(tw.st.Errors) }
 
 func (tw *textWriter) Close() error { return tw.tt.Err() }

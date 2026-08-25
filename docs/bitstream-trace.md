@@ -221,6 +221,51 @@ column: `df[df["class"] == "vcl"]` for pure picture payload,
 `df[df["class"] == "sei"]` for SEI overhead. In the JSON formats the
 same fields appear as `packets[].time` and `units[].class`.
 
+## Validation
+
+The report always carries a top-level `violations` list (layer 0): every
+unit parse failure the syntax templates detect — out-of-range elements,
+truncation, missing parameter-set references — as
+
+```jsonc
+{ "severity": "error", "kind": "syntax", "spec": "H.264",
+  "packet": 12, "unit": 0, "message": "PPS id 3 not available." }
+```
+
+Opt-in **structure checks** (layer 1, `kind: "structure"`) walk the same
+decode-order state the POC tracker keeps:
+
+| Check id | Severity | Finding |
+|---|---|---|
+| `vcl_before_ps` | error | picture data before any parameter sets (extradata or in-band) |
+| `frame_num_gap` | error | H.264 `frame_num` gap while `gaps_in_frame_num_allowed_flag` is 0 |
+| `no_aud` | warning | packet carries picture data but no access unit delimiter |
+| `sei_after_vcl` | warning | prefix SEI after the first VCL unit of the access unit |
+
+Presets: `default` = `vcl_before_ps,frame_num_gap` (flags only broken
+streams); `strict` adds the convention warnings — many perfectly legal
+streams fail those (no AUD, parameter sets only in extradata), which is
+why nothing beyond layer 0 is always-on.
+
+```sh
+mediamolder trace-headers --validate in.mp4            # exit non-zero on any
+                                                       # error-severity finding
+mediamolder trace-headers --checks strict in.mp4       # report-only
+```
+
+`--validate` implies `--checks default` when `--checks` is not given and
+makes the exit status reflect error-severity findings (syntax + failed
+checks). The graph node takes the same `checks` param plus
+`validate: true`, which fails the node (and so the job) instead. In CSV
+the findings append as `kind=violation` rows (check id in `name`,
+severity in `class`, message in `error`). Range and unit filters never
+hide violations — excluded packets are still parsed and checked.
+
+This is header-level validation only: semantics that need a decoder —
+DPB conformance, level limits, HRD/CPB timing, residual decoding — are
+out of scope. Structure checks need a structured format (`json`,
+`jsonl`, `csv`); `text` stays byte-for-byte FFmpeg parity.
+
 ## Library
 
 ```go

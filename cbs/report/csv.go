@@ -38,8 +38,12 @@ type csvWriter struct {
 	cw     *csv.Writer
 	codec  string
 	tb     [2]int
+	opts   Options
 	filter unitFilter
 	sum    *summarizer
+	col    *collector
+	vlog   violationLog
+	checks *checker
 	gate   packetGate
 
 	curPkt     PacketInfo
@@ -50,15 +54,17 @@ type csvWriter struct {
 func newCSVWriter(w io.Writer, opts Options) *csvWriter {
 	return &csvWriter{
 		cw:     csv.NewWriter(w),
+		opts:   opts,
 		filter: newUnitFilter(opts.UnitTypes),
 		sum:    newSummarizer(),
+		col:    newCollector(), // elements disabled: captures diagnostics only
 		gate:   newPacketGate(opts),
 	}
 }
 
-// Tracer returns nil: the CSV format needs no element trace, so parsing
-// runs without trace overhead.
-func (c *csvWriter) Tracer() cbs.Tracer { return nil }
+// Tracer returns a diagnostics-only collector: the CSV format needs no
+// element trace, but parse-error messages feed the violations list.
+func (c *csvWriter) Tracer() cbs.Tracer { return c.col }
 
 func (c *csvWriter) write(row []string) {
 	if err := c.cw.Write(row); err != nil && c.err == nil {
@@ -69,32 +75,73 @@ func (c *csvWriter) write(row []string) {
 func (c *csvWriter) BeginStream(src Source) error {
 	c.codec = src.Codec
 	c.tb = src.TimeBase
+	c.checks = newChecker(c.opts.Checks, c.codec, c.sum, &c.vlog)
 	c.write(csvHeader)
 	return c.err
 }
 
-func (c *csvWriter) BeginExtradata() {}
+func (c *csvWriter) BeginExtradata() {
+	c.col.reset()
+	c.checks.beginPacket(-1)
+}
 
 func (c *csvWriter) EndExtradata(frag *cbs.Fragment, err error) error {
 	c.writeUnits("extradata", nil, frag, true)
+	c.checks.endPacket()
 	return c.err
 }
 
 func (c *csvWriter) BeginPacket(pkt PacketInfo) {
+	c.col.reset()
 	c.curPkt = pkt
 	c.includeCur = c.gate.include(pkt.Index)
+	c.checks.beginPacket(pkt.Index)
 }
 
 func (c *csvWriter) EndPacket(frag *cbs.Fragment, err error) error {
 	c.gate.note(c.curPkt.Index, c.includeCur)
 	// Skipped packets still advance decode-order state via writeUnits.
 	c.writeUnits("packet", &c.curPkt, frag, c.includeCur)
+	c.checks.endPacket()
 	return c.err
 }
 
 func (c *csvWriter) Done() bool { return c.gate.done() }
 
+func (c *csvWriter) Violations() []Violation { return c.vlog.list }
+
+func (c *csvWriter) ErrorViolations() int { return c.vlog.errors }
+
+// Close appends the violations as kind="violation" rows: packet/unit
+// locate the finding, name carries the check id (or "syntax"), class the
+// severity, error the message.
 func (c *csvWriter) Close() error {
+	for _, vi := range c.vlog.list {
+		row := make([]string, len(csvHeader))
+		row[0] = "violation"
+		if vi.Packet >= 0 {
+			row[1] = strconv.FormatInt(vi.Packet, 10)
+		}
+		name := vi.Check
+		if name == "" {
+			name = vi.Kind
+		}
+		for i, h := range csvHeader {
+			switch h {
+			case "unit":
+				if vi.Unit >= 0 {
+					row[i] = strconv.Itoa(vi.Unit)
+				}
+			case "name":
+				row[i] = name
+			case "class":
+				row[i] = vi.Severity
+			case "error":
+				row[i] = vi.Message
+			}
+		}
+		c.write(row)
+	}
 	c.cw.Flush()
 	if err := c.cw.Error(); err != nil && c.err == nil {
 		c.err = err
@@ -134,9 +181,21 @@ func (c *csvWriter) writeUnits(kind string, pkt *PacketInfo, frag *cbs.Fragment,
 			i64(pkt.Pos), num(pkt.Size), boolean(pkt.KeyFrame), boolean(pkt.Corrupt)}
 	}
 
+	pktIndex := int64(-1)
+	if pkt != nil {
+		pktIndex = pkt.Index
+	}
 	for i := range frag.Units {
 		u := &frag.Units[i]
 		pic := c.sum.advance(u)
+		if u.Err != nil {
+			msg := ""
+			if ue := c.col.units[i]; ue != nil {
+				msg = firstErrorDiag(ue.diags)
+			}
+			c.vlog.addUnitError(c.codec, pktIndex, i, u, msg)
+		}
+		c.checks.observe(pktIndex, i, u, pic)
 		if !emit || !c.filter.match(u) {
 			continue
 		}

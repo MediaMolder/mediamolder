@@ -48,6 +48,8 @@ func cmdTraceHeaders(args []string) error {
 		units      = fs.String("units", "", "comma-separated unit-type filter (names or numbers)")
 		maxPackets = fs.Int64("max-packets", 0, "stop after n packets (0 = all)")
 		rangeSpec  = fs.String("range", "", "packet index range a:b (inclusive)")
+		checks     = fs.String("checks", "", "stream-structure checks: default, strict, or check ids (comma-separated)")
+		validate   = fs.Bool("validate", false, "exit non-zero on error-severity violations (enables --checks default when unset)")
 	)
 	fs.Usage = func() {
 		fmt.Fprint(os.Stderr, `Usage: mediamolder trace-headers [flags] <input>
@@ -65,6 +67,11 @@ Flags:
   --units <list>        Comma-separated unit-type filter (e.g. sps,pps,sei or 7,8,6)
   --max-packets <n>     Stop after n packets
   --range <a:b>         Only packets with index in [a, b]
+  --checks <set>        Stream-structure checks: default, strict, or ids
+                        (vcl_before_ps, frame_num_gap, no_aud, sei_after_vcl)
+  --validate            Exit non-zero on error-severity violations
+                        (syntax parse errors + failed checks); implies
+                        --checks default when --checks is not given
 
 `)
 	}
@@ -87,6 +94,11 @@ Flags:
 	}
 	if *units != "" {
 		cfg.Options.UnitTypes = strings.Split(*units, ",")
+	}
+	if *checks != "" {
+		cfg.Options.Checks = strings.Split(*checks, ",")
+	} else if *validate {
+		cfg.Options.Checks = []string{"default"}
 	}
 	if *rangeSpec != "" {
 		parts := strings.SplitN(*rangeSpec, ":", 2)
@@ -115,5 +127,12 @@ Flags:
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	return processors.RunBitstreamTrace(ctx, cfg, out)
+	res, err := processors.RunBitstreamTrace(ctx, cfg, out)
+	if err != nil {
+		return err
+	}
+	if *validate && res.ErrorViolations > 0 {
+		return fmt.Errorf("trace-headers: validation failed: %d error-severity violation(s)", res.ErrorViolations)
+	}
+	return nil
 }
