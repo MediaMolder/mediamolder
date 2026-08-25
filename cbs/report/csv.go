@@ -17,13 +17,16 @@ import (
 // JSON format carries (as one compact-JSON column). Element-level detail
 // is not representable in CSV — use json or jsonl for that.
 var csvHeader = []string{
-	"kind", "packet", "pts", "dts", "time", "duration", "packet_pos", "packet_size",
-	"key_frame", "corrupt", "unit", "offset", "prefix", "size", "rbsp_size",
+	"kind", "packet", "pts", "dts", "time", "dts_time", "duration",
+	"packet_pos", "packet_size", "key_frame", "corrupt",
+	"unit", "offset", "prefix", "size", "rbsp_size",
 	"type", "name", "class", "decomposed", "skip", "error",
-	// Coded-picture columns, filled for H.264/H.265 slice rows (their
-	// summary column stays empty — the columns are the report).
+	// Coded-picture columns, 1:1 with the JSON picture record, filled
+	// for H.264/H.265 slice rows (their summary column stays empty —
+	// the columns are the report).
 	"pic_type", "pic_type_value", "poc", "frame_num", "pic_lsb",
-	"first_mb", "pps_id", "qp_delta", "ref_l0", "ref_l1",
+	"first_mb", "segment_address", "first_slice", "dependent",
+	"pps_id", "qp_delta", "ref_l0", "ref_l1", "idr_pic_id", "field",
 	"summary",
 }
 
@@ -112,9 +115,9 @@ func (c *csvWriter) writeUnits(kind string, pkt *PacketInfo, frag *cbs.Fragment,
 		return "false"
 	}
 
-	pktCols := []string{"", "", "", "", "", "", "", "", ""}
+	pktCols := []string{"", "", "", "", "", "", "", "", "", ""}
 	if pkt != nil {
-		pts, dts, tm := "", "", ""
+		pts, dts, tm, dtm := "", "", "", ""
 		if pkt.HasPTS {
 			pts = i64(pkt.PTS)
 			if sec, ok := packetTime(c.tb, pkt.PTS); ok {
@@ -123,8 +126,11 @@ func (c *csvWriter) writeUnits(kind string, pkt *PacketInfo, frag *cbs.Fragment,
 		}
 		if pkt.HasDTS {
 			dts = i64(pkt.DTS)
+			if sec, ok := packetTime(c.tb, pkt.DTS); ok {
+				dtm = strconv.FormatFloat(sec, 'f', 6, 64)
+			}
 		}
-		pktCols = []string{i64(pkt.Index), pts, dts, tm, i64(pkt.Duration),
+		pktCols = []string{i64(pkt.Index), pts, dts, tm, dtm, i64(pkt.Duration),
 			i64(pkt.Pos), num(pkt.Size), boolean(pkt.KeyFrame), boolean(pkt.Corrupt)}
 	}
 
@@ -134,7 +140,7 @@ func (c *csvWriter) writeUnits(kind string, pkt *PacketInfo, frag *cbs.Fragment,
 		if !emit || !c.filter.match(u) {
 			continue
 		}
-		picCols := []string{"", "", "", "", "", "", "", "", "", ""}
+		picCols := []string{"", "", "", "", "", "", "", "", "", "", "", "", "", "", ""}
 		summary := ""
 		if pic != nil {
 			opt := func(set bool, v string) string {
@@ -149,12 +155,16 @@ func (c *csvWriter) writeUnits(kind string, pkt *PacketInfo, frag *cbs.Fragment,
 				opt(pic.POC != nil, i64(int64(orZero32(pic.POC)))),
 				opt(pic.FrameNum != nil, num(int(orZero16(pic.FrameNum)))),
 				num(int(pic.Lsb)),
-				opt(pic.FirstMB != nil || pic.SegAddr != nil,
-					num(firstMBOrAddr(pic))),
+				opt(pic.FirstMB != nil, num(int(orZero32u(pic.FirstMB)))),
+				opt(pic.SegAddr != nil, num(int(orZero16(pic.SegAddr)))),
+				opt(pic.FirstSlice != nil, boolean(pic.FirstSlice != nil && *pic.FirstSlice)),
+				boolean(pic.Dependent),
 				num(int(pic.PPS)),
 				num(int(pic.QPDelta)),
 				opt(pic.RefL0 != 0, num(int(pic.RefL0))),
 				opt(pic.RefL1 != 0, num(int(pic.RefL1))),
+				opt(pic.IDRPicID != nil, num(int(orZero16(pic.IDRPicID)))),
+				pic.Field,
 			}
 		} else if sm := summarize(u); len(sm) > 0 {
 			if b, err := json.Marshal(sm); err == nil {
@@ -190,14 +200,9 @@ func orZero16(v *uint16) uint16 {
 	return *v
 }
 
-// firstMBOrAddr maps the slice position column: first_mb_in_slice for
-// H.264, slice_segment_address for H.265.
-func firstMBOrAddr(p *pictureJSON) int {
-	if p.FirstMB != nil {
-		return int(*p.FirstMB)
+func orZero32u(v *uint32) uint32 {
+	if v == nil {
+		return 0
 	}
-	if p.SegAddr != nil {
-		return int(*p.SegAddr)
-	}
-	return 0
+	return *v
 }

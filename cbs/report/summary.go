@@ -281,9 +281,12 @@ func seiListSummary(list *cbs.SEIRawMessageList) []map[string]any {
 				p.UuidIsoIec11578[6:8], p.UuidIsoIec11578[8:10],
 				p.UuidIsoIec11578[10:16])
 			e["text"] = printablePrefix(p.Data, 200)
+			addRawHex(e, p.Data)
 		case *cbs.SEIRawUserDataRegistered:
 			e["country_code"] = p.ItuTT35CountryCode
 			e["data_length"] = len(p.Data)
+			addRawHex(e, p.Data)
+			parseA53Captions(e, p.ItuTT35CountryCode, p.Data)
 		case *cbs.SEIRawMasteringDisplayColourVolume:
 			e["display_primaries_x"] = p.DisplayPrimariesX
 			e["display_primaries_y"] = p.DisplayPrimariesY

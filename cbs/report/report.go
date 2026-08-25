@@ -170,6 +170,11 @@ type unitFilter struct {
 // "idr", ...) to every per-codec TypeName they cover, so the same filter
 // spec works across H.264, H.265 and AV1.
 var unitNameAliases = map[string][]string{
+	// "caption" selects the units that can carry closed captions (T.35
+	// SEI and AV1 metadata OBUs); message-level caption detection lives
+	// in the summaries ("contains": ["cea608", ...]).
+	"caption":  {"sei", "sei_prefix", "sei_suffix", "metadata"},
+	"captions": {"sei", "sei_prefix", "sei_suffix", "metadata"},
 	"sps":      {"sps", "sequence_header"},
 	"seq":      {"sequence_header"},
 	"sei":      {"sei", "sei_prefix", "sei_suffix"},
@@ -397,7 +402,8 @@ type packetJSON struct {
 	Index    int64      `json:"index"`
 	PTS      *int64     `json:"pts"`
 	DTS      *int64     `json:"dts"`
-	Time     *float64   `json:"time,omitempty"` // pts in seconds
+	Time     *float64   `json:"time,omitempty"`     // pts in seconds
+	DTSTime  *float64   `json:"dts_time,omitempty"` // dts in seconds (monotonic)
 	Duration int64      `json:"duration,omitempty"`
 	Pos      int64      `json:"pos,omitempty"`
 	Size     int        `json:"size"`
@@ -574,6 +580,9 @@ func (jw *jsonWriter) EndPacket(frag *cbs.Fragment, err error) error {
 	if pkt.HasDTS {
 		v := pkt.DTS
 		pj.DTS = &v
+		if sec, ok := packetTime(jw.tb, pkt.DTS); ok {
+			pj.DTSTime = &sec
+		}
 	}
 	if frag != nil {
 		pj.Units = jw.unitsJSON(frag)

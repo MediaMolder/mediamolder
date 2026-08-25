@@ -44,7 +44,7 @@ func classify(codec string, u *cbs.Unit) string {
 		}
 	case "av1":
 		switch t {
-		case 4, 6: // TILE_GROUP, FRAME
+		case 3, 4, 6, 7, 8: // FRAME_HEADER, TILE_GROUP, FRAME, REDUNDANT_FRAME_HEADER, TILE_LIST
 			return classVCL
 		case 1: // SEQUENCE_HEADER
 			return classPS
