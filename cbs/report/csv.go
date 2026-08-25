@@ -17,10 +17,11 @@ import (
 // JSON format carries (as one compact-JSON column). Element-level detail
 // is not representable in CSV — use json or jsonl for that.
 var csvHeader = []string{
-	"kind", "packet", "pts", "dts", "time", "dts_time", "duration",
+	"kind", "class", "name", "packet",
+	"pts", "dts", "time", "dts_time", "duration",
 	"packet_pos", "packet_size", "key_frame", "corrupt",
 	"unit", "offset", "prefix", "size", "rbsp_size",
-	"type", "name", "class", "decomposed", "skip", "error",
+	"type", "decomposed", "skip", "error",
 	// Coded-picture columns, 1:1 with the JSON picture record, filled
 	// for H.264/H.265 slice rows (their summary column stays empty —
 	// the columns are the report).
@@ -29,6 +30,23 @@ var csvHeader = []string{
 	"pps_id", "qp_delta", "ref_l0", "ref_l1", "idr_pic_id", "field",
 	"summary",
 }
+
+// csvColumn maps header names to positions so rows are assembled by
+// name; reordering csvHeader never silently misaligns a value.
+var csvColumn = func() map[string]int {
+	m := make(map[string]int, len(csvHeader))
+	for i, h := range csvHeader {
+		m[h] = i
+	}
+	return m
+}()
+
+// csvRow assembles one output row by column name.
+type csvRow []string
+
+func newCSVRow() csvRow { return make(csvRow, len(csvHeader)) }
+
+func (r csvRow) set(col, val string) { r[csvColumn[col]] = val }
 
 // csvWriter renders one row per unit. The unit-type filter drops
 // non-matching rows entirely (unlike JSON, which keeps identity-only
@@ -140,29 +158,21 @@ func (c *csvWriter) ErrorViolations() int { return c.vlog.errors }
 // severity, error the message.
 func (c *csvWriter) Close() error {
 	for _, vi := range c.vlog.list {
-		row := make([]string, len(csvHeader))
-		row[0] = "violation"
-		if vi.Packet >= 0 {
-			row[1] = strconv.FormatInt(vi.Packet, 10)
-		}
+		row := newCSVRow()
+		row.set("kind", "violation")
+		row.set("class", vi.Severity)
 		name := vi.Check
 		if name == "" {
 			name = vi.Kind
 		}
-		for i, h := range csvHeader {
-			switch h {
-			case "unit":
-				if vi.Unit >= 0 {
-					row[i] = strconv.Itoa(vi.Unit)
-				}
-			case "name":
-				row[i] = name
-			case "class":
-				row[i] = vi.Severity
-			case "error":
-				row[i] = vi.Message
-			}
+		row.set("name", name)
+		if vi.Packet >= 0 {
+			row.set("packet", strconv.FormatInt(vi.Packet, 10))
 		}
+		if vi.Unit >= 0 {
+			row.set("unit", strconv.Itoa(vi.Unit))
+		}
+		row.set("error", vi.Message)
 		c.write(row)
 	}
 	c.cw.Flush()
@@ -184,33 +194,20 @@ func (c *csvWriter) writeUnits(kind string, pkt *PacketInfo, frag *cbs.Fragment,
 		}
 		return "false"
 	}
-
-	pktCols := []string{"", "", "", "", "", "", "", "", "", ""}
-	if pkt != nil {
-		pts, dts, tm, dtm := "", "", "", ""
-		if pkt.HasPTS {
-			pts = i64(pkt.PTS)
-			if sec, ok := packetTime(c.tb, pkt.PTS); ok {
-				tm = strconv.FormatFloat(sec, 'f', 6, 64)
-			}
+	opt := func(set bool, v string) string {
+		if set {
+			return v
 		}
-		if pkt.HasDTS {
-			dts = i64(pkt.DTS)
-			if sec, ok := packetTime(c.tb, pkt.DTS); ok {
-				dtm = strconv.FormatFloat(sec, 'f', 6, 64)
-			}
-		}
-		pktCols = []string{i64(pkt.Index), pts, dts, tm, dtm, i64(pkt.Duration),
-			i64(pkt.Pos), num(pkt.Size), boolean(pkt.KeyFrame), boolean(pkt.Corrupt)}
+		return ""
 	}
 
 	pktIndex := int64(-1)
-	if pkt != nil {
-		pktIndex = pkt.Index
-	}
 	for i := range frag.Units {
 		u := &frag.Units[i]
 		pic := c.sum.advance(u)
+		if pkt != nil {
+			pktIndex = pkt.Index
+		}
 		if u.Err != nil {
 			msg := ""
 			if ue := c.col.units[i]; ue != nil {
@@ -222,48 +219,64 @@ func (c *csvWriter) writeUnits(kind string, pkt *PacketInfo, frag *cbs.Fragment,
 		if !emit || !c.filter.match(u) {
 			continue
 		}
-		picCols := []string{"", "", "", "", "", "", "", "", "", "", "", "", "", "", ""}
-		summary := ""
-		if pic != nil {
-			opt := func(set bool, v string) string {
-				if set {
-					return v
+
+		row := newCSVRow()
+		row.set("kind", kind)
+		row.set("class", classify(c.codec, u))
+		row.set("name", u.TypeName)
+		if pkt != nil {
+			row.set("packet", i64(pkt.Index))
+			if pkt.HasPTS {
+				row.set("pts", i64(pkt.PTS))
+				if sec, ok := packetTime(c.tb, pkt.PTS); ok {
+					row.set("time", strconv.FormatFloat(sec, 'f', 6, 64))
 				}
-				return ""
 			}
-			picCols = []string{
-				pic.Type,
-				num(int(pic.TypeValue)),
-				opt(pic.POC != nil, i64(int64(orZero32(pic.POC)))),
-				opt(pic.FrameNum != nil, num(int(orZero16(pic.FrameNum)))),
-				num(int(pic.Lsb)),
-				opt(pic.FirstMB != nil, num(int(orZero32u(pic.FirstMB)))),
-				opt(pic.SegAddr != nil, num(int(orZero16(pic.SegAddr)))),
-				opt(pic.FirstSlice != nil, boolean(pic.FirstSlice != nil && *pic.FirstSlice)),
-				boolean(pic.Dependent),
-				num(int(pic.PPS)),
-				num(int(pic.QPDelta)),
-				opt(pic.RefL0 != 0, num(int(pic.RefL0))),
-				opt(pic.RefL1 != 0, num(int(pic.RefL1))),
-				opt(pic.IDRPicID != nil, num(int(orZero16(pic.IDRPicID)))),
-				pic.Field,
+			if pkt.HasDTS {
+				row.set("dts", i64(pkt.DTS))
+				if sec, ok := packetTime(c.tb, pkt.DTS); ok {
+					row.set("dts_time", strconv.FormatFloat(sec, 'f', 6, 64))
+				}
 			}
+			row.set("duration", i64(pkt.Duration))
+			row.set("packet_pos", i64(pkt.Pos))
+			row.set("packet_size", num(pkt.Size))
+			row.set("key_frame", boolean(pkt.KeyFrame))
+			row.set("corrupt", boolean(pkt.Corrupt))
+		}
+		row.set("unit", num(i))
+		row.set("offset", num(u.Offset))
+		row.set("prefix", num(u.PrefixSize))
+		row.set("size", num(u.RawSize))
+		row.set("rbsp_size", num(len(u.RBSP)))
+		row.set("type", strconv.FormatUint(uint64(u.Type), 10))
+		row.set("decomposed", boolean(u.Decomposed))
+		row.set("skip", u.Skip)
+		if u.Err != nil {
+			row.set("error", u.Err.Error())
+		}
+
+		if pic != nil {
+			row.set("pic_type", pic.Type)
+			row.set("pic_type_value", num(int(pic.TypeValue)))
+			row.set("poc", opt(pic.POC != nil, i64(int64(orZero32(pic.POC)))))
+			row.set("frame_num", opt(pic.FrameNum != nil, num(int(orZero16(pic.FrameNum)))))
+			row.set("pic_lsb", num(int(pic.Lsb)))
+			row.set("first_mb", opt(pic.FirstMB != nil, num(int(orZero32u(pic.FirstMB)))))
+			row.set("segment_address", opt(pic.SegAddr != nil, num(int(orZero16(pic.SegAddr)))))
+			row.set("first_slice", opt(pic.FirstSlice != nil, boolean(pic.FirstSlice != nil && *pic.FirstSlice)))
+			row.set("dependent", boolean(pic.Dependent))
+			row.set("pps_id", num(int(pic.PPS)))
+			row.set("qp_delta", num(int(pic.QPDelta)))
+			row.set("ref_l0", opt(pic.RefL0 != 0, num(int(pic.RefL0))))
+			row.set("ref_l1", opt(pic.RefL1 != 0, num(int(pic.RefL1))))
+			row.set("idr_pic_id", opt(pic.IDRPicID != nil, num(int(orZero16(pic.IDRPicID)))))
+			row.set("field", pic.Field)
 		} else if sm := summarize(u); len(sm) > 0 {
 			if b, err := json.Marshal(sm); err == nil {
-				summary = string(b)
+				row.set("summary", string(b))
 			}
 		}
-		errText := ""
-		if u.Err != nil {
-			errText = u.Err.Error()
-		}
-		row := append(append([]string{kind}, pktCols...),
-			num(i), num(u.Offset), num(u.PrefixSize), num(u.RawSize),
-			num(len(u.RBSP)), strconv.FormatUint(uint64(u.Type), 10),
-			u.TypeName, classify(c.codec, u), boolean(u.Decomposed),
-			u.Skip, errText)
-		row = append(row, picCols...)
-		row = append(row, summary)
 		c.write(row)
 	}
 }

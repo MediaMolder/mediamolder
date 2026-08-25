@@ -80,7 +80,7 @@ func TestViolationsCSVRows(t *testing.T) {
 		t.Fatal(err)
 	}
 	out := buf.String()
-	if !strings.Contains(out, "violation,0,") ||
+	if !strings.Contains(out, "violation,error,syntax,0,") ||
 		!strings.Contains(out, "PPS id 0 not available.") {
 		t.Fatalf("violation row missing:\n%s", out)
 	}

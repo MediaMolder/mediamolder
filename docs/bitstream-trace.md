@@ -181,11 +181,12 @@ Field notes:
   recovery point, pic timing, …).
 - `jsonl` emits the same objects one per line (header, packets, stats) so
   arbitrarily long streams can be processed without loading a document.
-- `csv` emits **one row per unit** for spreadsheet / SQL workflows:
-  `kind` (`extradata` | `packet`), the packet context (index, pts/dts,
-  `time` in seconds, duration, position, size, key frame), the unit
-  identity (index, offset, prefix, sizes, type, name, `class`,
-  decomposed/skip/error), then the
+- `csv` emits **one row per unit** for spreadsheet / SQL workflows. The
+  leading columns are the ones you filter and group by — `kind`
+  (`extradata` | `packet` | `violation`), `class`, `name`, `packet` —
+  followed by the packet context (pts/dts, `time`/`dts_time` in seconds,
+  duration, position, size, key frame), the unit identity (index, offset,
+  prefix, sizes, type, decomposed/skip/error), then the
   **coded-picture columns** (`pic_type`, `pic_type_value`, `poc`,
   `frame_num`, `pic_lsb`, `first_mb`, `pps_id`, `qp_delta`, `ref_l0`,
   `ref_l1`) filled for H.264/H.265 slice rows, and a compact-JSON
