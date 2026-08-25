@@ -7,7 +7,7 @@ package main
 // an improved, machine-readable version of FFmpeg's trace_headers
 // bitstream filter. It scans an elementary video bitstream (H.264, H.265
 // or AV1, in any container libavformat opens) without decoding and reports
-// NAL unit / OBU details as JSON, JSON Lines, or trace_headers-format
+// NAL unit / OBU details as JSON, JSON Lines, CSV, or trace_headers-format
 // text.
 //
 // Usage:

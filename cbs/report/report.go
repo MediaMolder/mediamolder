@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 
 // Package report renders cbs parse results as a JSON document, JSON Lines
-// stream, or FFmpeg trace_headers-format text. It is the sink shared by
-// the bitstream_trace go_processor node and the `mediamolder trace-headers`
-// CLI subcommand.
+// stream, CSV rows, or FFmpeg trace_headers-format text. It is the sink
+// shared by the bitstream_trace go_processor node and the
+// `mediamolder trace-headers` CLI subcommand.
 package report
 
 import (
@@ -775,7 +775,9 @@ func (jw *jsonWriter) Close() error {
 type textWriter struct {
 	tt       *cbs.TextTracer
 	opts     Options
+	codec    string
 	st       stats
+	vlog     violationLog
 	gate     packetGate
 	curIdx   int64
 	suppress bool
@@ -811,13 +813,39 @@ func (g gatedTextTracer) Diag(level cbs.Level, msg string) {
 
 func (tw *textWriter) Tracer() cbs.Tracer { return gatedTextTracer{tw} }
 
-func (tw *textWriter) BeginStream(Source) error { return tw.tt.Err() }
+func (tw *textWriter) BeginStream(src Source) error {
+	tw.codec = src.Codec
+	return tw.tt.Err()
+}
 
 func (tw *textWriter) BeginExtradata() { tw.tt.Line("Extradata") }
 
 func (tw *textWriter) EndExtradata(frag *cbs.Fragment, err error) error {
 	tw.st.addFragment(frag)
+	tw.recordViolations(-1, frag, err)
 	return tw.tt.Err()
+}
+
+// recordViolations applies the layer-0 rules shared with the structured
+// writers: failed units (minus legal-but-unsupported ones) and split
+// failures. The text output itself stays FFmpeg parity; the findings
+// only feed the counts behind --validate.
+func (tw *textWriter) recordViolations(packet int64, frag *cbs.Fragment, splitErr error) {
+	if frag != nil {
+		for i := range frag.Units {
+			tw.vlog.addUnitError(tw.codec, packet, i, &frag.Units[i], "")
+		}
+	}
+	if splitErr != nil {
+		tw.vlog.add(Violation{
+			Severity: "error",
+			Kind:     "syntax",
+			Spec:     specName(tw.codec),
+			Packet:   packet,
+			Unit:     -1,
+			Message:  splitErr.Error(),
+		})
+	}
 }
 
 // BeginPacket prints the packet line exactly as trace_headers.c does,
@@ -859,15 +887,17 @@ func (tw *textWriter) EndPacket(frag *cbs.Fragment, err error) error {
 	tw.suppress = false
 	tw.st.Packets++
 	tw.st.addFragment(frag)
+	tw.recordViolations(tw.curIdx, frag, err)
 	return tw.tt.Err()
 }
 
 func (tw *textWriter) Done() bool { return tw.gate.done() }
 
-// Violations: the text format reports only counts (syntax errors from
-// the unit walk); structure checks are rejected at NewWriter.
-func (tw *textWriter) Violations() []Violation { return nil }
+// Violations: collected with the same layer-0 rules as the structured
+// formats but never printed (text is FFmpeg parity); structure checks
+// are rejected at NewWriter.
+func (tw *textWriter) Violations() []Violation { return tw.vlog.list }
 
-func (tw *textWriter) ErrorViolations() int { return int(tw.st.Errors) }
+func (tw *textWriter) ErrorViolations() int { return tw.vlog.errors }
 
 func (tw *textWriter) Close() error { return tw.tt.Err() }

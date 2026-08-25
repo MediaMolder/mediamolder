@@ -202,25 +202,36 @@ func TestCheckNoAUDAndSEIAfterVCL(t *testing.T) {
 // TestUnsupportedUnitsNotViolations: legal-but-undecomposed units (HEVC
 // EOS/EOB, reserved types → Skip/ErrUnsupported) must not fail
 // validation.
+// allFormats runs a layer-0 scenario against every writer: the rules
+// must be identical whether or not the format prints violations.
+var allFormats = []string{"json", "jsonl", "csv", "text"}
+
 func TestUnsupportedUnitsNotViolations(t *testing.T) {
-	var buf bytes.Buffer
-	w, _ := NewWriter(&buf, Options{Format: "json"})
-	if err := w.BeginStream(Source{Codec: "hevc"}); err != nil {
-		t.Fatal(err)
-	}
-	c, _ := cbs.New(cbs.CodecH265, w.Tracer())
-	// HEVC EOS_NUT (type 36): header 0x48 0x01 — valid, undecomposed.
-	eos := []byte{0x00, 0x00, 0x01, 0x48, 0x01, 0x80}
-	w.BeginPacket(PacketInfo{Index: 0})
-	frag, _ := c.ReadPacket(eos)
-	if err := w.EndPacket(frag, nil); err != nil {
-		t.Fatal(err)
-	}
-	if err := w.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if n := w.ErrorViolations(); n != 0 {
-		t.Fatalf("unsupported unit counted as violation: %d\n%+v", n, w.Violations())
+	for _, format := range allFormats {
+		t.Run(format, func(t *testing.T) {
+			var buf bytes.Buffer
+			w, err := NewWriter(&buf, Options{Format: format})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := w.BeginStream(Source{Codec: "hevc"}); err != nil {
+				t.Fatal(err)
+			}
+			c, _ := cbs.New(cbs.CodecH265, w.Tracer())
+			// HEVC EOS_NUT (type 36): header 0x48 0x01 — valid, undecomposed.
+			eos := []byte{0x00, 0x00, 0x01, 0x48, 0x01, 0x80}
+			w.BeginPacket(PacketInfo{Index: 0})
+			frag, _ := c.ReadPacket(eos)
+			if err := w.EndPacket(frag, nil); err != nil {
+				t.Fatal(err)
+			}
+			if err := w.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if n := w.ErrorViolations(); n != 0 {
+				t.Fatalf("unsupported unit counted as violation: %d\n%+v", n, w.Violations())
+			}
+		})
 	}
 }
 
@@ -260,8 +271,18 @@ func TestFrameNumGapMMCO5(t *testing.T) {
 // TestSplitErrorViolation: a packet whose fragment split fails (bad NALFF
 // length after avcC extradata) must surface in violations.
 func TestSplitErrorViolation(t *testing.T) {
+	for _, format := range allFormats {
+		t.Run(format, func(t *testing.T) { splitErrorScenario(t, format) })
+	}
+}
+
+func splitErrorScenario(t *testing.T, format string) {
+	t.Helper()
 	var buf bytes.Buffer
-	w, _ := NewWriter(&buf, Options{Format: "json"})
+	w, err := NewWriter(&buf, Options{Format: format})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := w.BeginStream(Source{Codec: "h264"}); err != nil {
 		t.Fatal(err)
 	}
@@ -287,10 +308,16 @@ func TestSplitErrorViolation(t *testing.T) {
 	if err := w.Close(); err != nil {
 		t.Fatal(err)
 	}
+	// Two syntax violations from the (deliberately bogus) avcC parameter
+	// sets plus the split failure — and every format must agree.
+	if w.ErrorViolations() != 3 {
+		t.Fatalf("error violations: got %d, want 3\n%+v", w.ErrorViolations(), w.Violations())
+	}
 	found := false
 	for _, v := range w.Violations() {
 		if v.Kind == "syntax" && v.Unit == -1 && v.Packet == 0 &&
-			strings.Contains(v.Message, "Invalid NAL unit size") {
+			(strings.Contains(v.Message, "Invalid NAL unit size") ||
+				format == "text" && strings.Contains(v.Message, "invalid data")) {
 			found = true
 		}
 	}
