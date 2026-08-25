@@ -97,7 +97,9 @@ Flags:
 	}
 	if *checks != "" {
 		cfg.Options.Checks = strings.Split(*checks, ",")
-	} else if *validate {
+	} else if *validate && *format != "text" {
+		// text is byte-for-byte FFmpeg parity and cannot carry check
+		// findings; --validate there covers syntax errors only.
 		cfg.Options.Checks = []string{"default"}
 	}
 	if *rangeSpec != "" {

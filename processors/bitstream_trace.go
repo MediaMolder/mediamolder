@@ -323,7 +323,9 @@ func (p *BitstreamTrace) Init(params map[string]any) error {
 	}
 	if v, ok := params["validate"].(bool); ok {
 		p.validate = v
-		if v && len(p.cfg.Options.Checks) == 0 {
+		// text is FFmpeg parity and cannot carry check findings;
+		// validate there covers syntax errors only.
+		if v && len(p.cfg.Options.Checks) == 0 && p.cfg.Options.Format != "text" {
 			p.cfg.Options.Checks = []string{"default"}
 		}
 	}

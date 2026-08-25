@@ -85,6 +85,22 @@ func TestBitstreamTrace_RunJSON(t *testing.T) {
 	if first["key_frame"] != true {
 		t.Fatal("first packet should be a key frame")
 	}
+	// time / dts_time are populated from the stream time base.
+	tb := src["time_base"].([]any)
+	den := tb[1].(float64)
+	for _, p := range pkts {
+		pm := p.(map[string]any)
+		sec, ok := pm["time"].(float64)
+		if !ok {
+			t.Fatalf("packet %v missing time", pm["index"])
+		}
+		if want := pm["pts"].(float64) / den; sec != want {
+			t.Fatalf("packet %v time %v, want %v", pm["index"], sec, want)
+		}
+		if _, ok := pm["dts_time"].(float64); !ok {
+			t.Fatalf("packet %v missing dts_time", pm["index"])
+		}
+	}
 	// Coded pictures are typed records with a derived Picture Order
 	// Count; the IDR's picture has POC 0 and x264 spaces frames by 2.
 	var pocs []float64

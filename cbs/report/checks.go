@@ -213,6 +213,12 @@ func (c *checker) checkFrameNum(packet int64, unit int, u *cbs.Unit, pic *pictur
 	if idr {
 		c.havePrevRef, c.prevRefFN = true, fn
 	} else if sh.NalUnitHeader.NalRefIdc != 0 {
-		c.havePrevRef, c.prevRefFN = true, fn
+		if h264HasMMCO5(sh) {
+			// §7.4.3: after mmco5 the previous reference frame_num is
+			// inferred as 0; frame_num restarting at 0/1 is legal.
+			c.havePrevRef, c.prevRefFN = true, 0
+		} else {
+			c.havePrevRef, c.prevRefFN = true, fn
+		}
 	}
 }

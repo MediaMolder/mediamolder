@@ -541,6 +541,7 @@ func (jw *jsonWriter) EndExtradata(frag *cbs.Fragment, err error) error {
 	}
 	if err != nil {
 		xd.Error = err.Error()
+		jw.addSplitViolation(-1, err)
 	}
 	xd.Diags = jw.col.fragDiags
 	jw.checks.endPacket()
@@ -584,6 +585,9 @@ func (jw *jsonWriter) EndPacket(frag *cbs.Fragment, err error) error {
 				jw.checks.observe(jw.curPkt.Index, i, u, pic)
 			}
 		}
+		if err != nil {
+			jw.addSplitViolation(jw.curPkt.Index, err)
+		}
 		jw.checks.endPacket()
 		return jw.err
 	}
@@ -618,6 +622,7 @@ func (jw *jsonWriter) EndPacket(frag *cbs.Fragment, err error) error {
 	}
 	if err != nil {
 		pj.Error = err.Error()
+		jw.addSplitViolation(jw.curPkt.Index, err)
 	}
 
 	jw.checks.endPacket()
@@ -639,6 +644,24 @@ func (jw *jsonWriter) EndPacket(frag *cbs.Fragment, err error) error {
 		jw.writeBytes(jw.marshal(pj))
 	}
 	return jw.err
+}
+
+// addSplitViolation records a fragment split failure (bad avcC/hvcC,
+// bad NALFF length, no start code): the packet could not be fully
+// decomposed, which is always error-severity.
+func (jw *jsonWriter) addSplitViolation(packet int64, err error) {
+	msg := firstErrorDiag(jw.col.fragDiags)
+	if msg == "" {
+		msg = err.Error()
+	}
+	jw.vlog.add(Violation{
+		Severity: "error",
+		Kind:     "syntax",
+		Spec:     specName(jw.codec),
+		Packet:   packet,
+		Unit:     -1,
+		Message:  msg,
+	})
 }
 
 // recordUnitViolations maps a failed unit into a layer-0 violation,

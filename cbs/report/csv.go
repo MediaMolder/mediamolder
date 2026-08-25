@@ -87,6 +87,9 @@ func (c *csvWriter) BeginExtradata() {
 
 func (c *csvWriter) EndExtradata(frag *cbs.Fragment, err error) error {
 	c.writeUnits("extradata", nil, frag, true)
+	if err != nil {
+		c.addSplitViolation(-1, err)
+	}
 	c.checks.endPacket()
 	return c.err
 }
@@ -102,8 +105,28 @@ func (c *csvWriter) EndPacket(frag *cbs.Fragment, err error) error {
 	c.gate.note(c.curPkt.Index, c.includeCur)
 	// Skipped packets still advance decode-order state via writeUnits.
 	c.writeUnits("packet", &c.curPkt, frag, c.includeCur)
+	if err != nil {
+		c.addSplitViolation(c.curPkt.Index, err)
+	}
 	c.checks.endPacket()
 	return c.err
+}
+
+// addSplitViolation mirrors the JSON writer: a fragment split failure is
+// always an error-severity syntax violation.
+func (c *csvWriter) addSplitViolation(packet int64, err error) {
+	msg := firstErrorDiag(c.col.fragDiags)
+	if msg == "" {
+		msg = err.Error()
+	}
+	c.vlog.add(Violation{
+		Severity: "error",
+		Kind:     "syntax",
+		Spec:     specName(c.codec),
+		Packet:   packet,
+		Unit:     -1,
+		Message:  msg,
+	})
 }
 
 func (c *csvWriter) Done() bool { return c.gate.done() }

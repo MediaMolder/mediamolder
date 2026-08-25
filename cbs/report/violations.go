@@ -16,6 +16,7 @@
 package report
 
 import (
+	"errors"
 	"strings"
 
 	"github.com/MediaMolder/MediaMolder/cbs"
@@ -61,8 +62,15 @@ func (v *violationLog) add(vi Violation) {
 // addUnitError records the layer-0 violation for a failed unit. msg may
 // carry the parse diagnostic text ("PPS id 3 not available."); when
 // empty the unit error string is used.
+//
+// Units that are legal but not decomposed are NOT violations: skip
+// reasons (reserved types, HEVC layers) and unsupported-feature errors
+// (ENOSYS / PATCHWELCOME — HEVC EOS/EOB, H.264 prefix or subset SPS,
+// MVC, reserved AV1 OBUs) describe this parser's coverage, not the
+// stream's conformance.
 func (v *violationLog) addUnitError(codec string, packet int64, unit int, u *cbs.Unit, msg string) {
-	if u.Err == nil {
+	if u.Err == nil || u.Skip != "" ||
+		errors.Is(u.Err, cbs.ErrUnsupported) || errors.Is(u.Err, cbs.ErrPatchWelcome) {
 		return
 	}
 	if msg == "" {
