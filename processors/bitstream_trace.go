@@ -5,7 +5,7 @@ package processors
 
 // bitstream_trace scans an elementary video bitstream at the packet level —
 // no decoding — and reports every NAL unit (H.264/H.265) or OBU (AV1) to a
-// JSON, JSONL or trace_headers-format text file. It is an improved,
+// JSON, JSONL, CSV, or trace_headers-format text file. It is an improved,
 // machine-readable port of FFmpeg's `trace_headers` bitstream filter built
 // on the cbs package (a Go port of libavcodec/cbs*).
 //
@@ -110,34 +110,41 @@ func traceSourceFormat(codec cbs.CodecID, xd []byte) (format string, nalLengthSi
 	return "", 0
 }
 
+// TraceResult reports what a trace run found.
+type TraceResult struct {
+	// ErrorViolations counts error-severity findings: unit parse
+	// failures (kind "syntax") plus failed structure checks.
+	ErrorViolations int
+}
+
 // RunBitstreamTrace opens cfg.URL, parses the selected stream's packets
 // with the cbs codec and writes the report to out.
-func RunBitstreamTrace(ctx context.Context, cfg TraceConfig, out io.Writer) error {
+func RunBitstreamTrace(ctx context.Context, cfg TraceConfig, out io.Writer) (TraceResult, error) {
 	in, err := av.OpenInput(cfg.URL, nil)
 	if err != nil {
-		return fmt.Errorf("bitstream_trace: open %q: %w", cfg.URL, err)
+		return TraceResult{}, fmt.Errorf("bitstream_trace: open %q: %w", cfg.URL, err)
 	}
 	defer in.Close()
 
 	idx, si, err := resolveTraceStream(in, cfg.Stream)
 	if err != nil {
-		return fmt.Errorf("bitstream_trace: %s: %w", cfg.URL, err)
+		return TraceResult{}, fmt.Errorf("bitstream_trace: %s: %w", cfg.URL, err)
 	}
 
 	codecID, ok := cbs.CodecFromName(av.CodecName(si.CodecID))
 	if !ok {
-		return fmt.Errorf("bitstream_trace: codec %s is not supported (H.264, H.265 and AV1 are)",
+		return TraceResult{}, fmt.Errorf("bitstream_trace: codec %s is not supported (H.264, H.265 and AV1 are)",
 			av.CodecName(si.CodecID))
 	}
 
 	w, err := report.NewWriter(out, cfg.Options)
 	if err != nil {
-		return err
+		return TraceResult{}, err
 	}
 
 	c, err := cbs.New(codecID, w.Tracer())
 	if err != nil {
-		return err
+		return TraceResult{}, err
 	}
 
 	xd := in.StreamExtraData(idx)
@@ -153,20 +160,20 @@ func RunBitstreamTrace(ctx context.Context, cfg TraceConfig, out io.Writer) erro
 		FrameRate:     si.FrameRate,
 	}
 	if err := w.BeginStream(src); err != nil {
-		return err
+		return TraceResult{}, err
 	}
 
 	if len(xd) > 0 {
 		w.BeginExtradata()
 		frag, xerr := c.ReadExtradata(xd)
 		if err := w.EndExtradata(frag, xerr); err != nil {
-			return err
+			return TraceResult{}, err
 		}
 	}
 
 	pkt, err := av.AllocPacket()
 	if err != nil {
-		return err
+		return TraceResult{}, err
 	}
 	defer pkt.Close()
 
@@ -176,7 +183,7 @@ func RunBitstreamTrace(ctx context.Context, cfg TraceConfig, out io.Writer) erro
 			select {
 			case <-ctx.Done():
 				_ = w.Close()
-				return ctx.Err()
+				return TraceResult{}, ctx.Err()
 			default:
 			}
 		}
@@ -186,7 +193,7 @@ func RunBitstreamTrace(ctx context.Context, cfg TraceConfig, out io.Writer) erro
 				break
 			}
 			_ = w.Close()
-			return fmt.Errorf("bitstream_trace: read packet: %w", rerr)
+			return TraceResult{}, fmt.Errorf("bitstream_trace: read packet: %w", rerr)
 		}
 		if pkt.StreamIndex() != idx {
 			pkt.Unref()
@@ -211,7 +218,7 @@ func RunBitstreamTrace(ctx context.Context, cfg TraceConfig, out io.Writer) erro
 		if err := w.EndPacket(frag, perr); err != nil {
 			pkt.Unref()
 			_ = w.Close()
-			return err
+			return TraceResult{}, err
 		}
 		if cfg.OnPacket != nil {
 			cfg.OnPacket(pi, frag)
@@ -222,7 +229,8 @@ func RunBitstreamTrace(ctx context.Context, cfg TraceConfig, out io.Writer) erro
 		}
 	}
 
-	return w.Close()
+	res := TraceResult{ErrorViolations: w.ErrorViolations()}
+	return res, w.Close()
 }
 
 // BitstreamTrace is the bitstream_trace go_processor.
@@ -230,6 +238,7 @@ type BitstreamTrace struct {
 	cfg        TraceConfig
 	outputPath string
 	emitEvents bool
+	validate   bool
 	emit       MetadataEmitter
 	fileSize   int64
 }
@@ -300,6 +309,29 @@ func (p *BitstreamTrace) Init(params map[string]any) error {
 	if v, ok := params["emit_events"].(bool); ok {
 		p.emitEvents = v
 	}
+	switch v := params["checks"].(type) {
+	case string:
+		if v != "" {
+			p.cfg.Options.Checks = strings.Split(v, ",")
+		}
+	case []any:
+		for _, c := range v {
+			if cs, ok := c.(string); ok {
+				p.cfg.Options.Checks = append(p.cfg.Options.Checks, cs)
+			}
+		}
+	}
+	if v, ok := params["validate"].(bool); ok {
+		p.validate = v
+		// text is FFmpeg parity and cannot carry check findings;
+		// validate there covers syntax errors only.
+		if v && len(p.cfg.Options.Checks) == 0 && p.cfg.Options.Format != "text" {
+			p.cfg.Options.Checks = []string{"default"}
+		}
+	}
+	if _, err := report.ResolveChecks(p.cfg.Options.Checks); err != nil {
+		return fmt.Errorf("bitstream_trace: %w", err)
+	}
 
 	// Fail on an unwritable output before doing any work. Opened through
 	// os.Root so confinement is OS-enforced (CWE-022).
@@ -333,8 +365,13 @@ func (p *BitstreamTrace) Run(ctx context.Context, _ func(*av.Frame) error) error
 	}
 	defer f.Close()
 
-	if err := RunBitstreamTrace(ctx, p.cfg, f); err != nil {
+	res, err := RunBitstreamTrace(ctx, p.cfg, f)
+	if err != nil {
 		return err
+	}
+	if p.validate && res.ErrorViolations > 0 {
+		return fmt.Errorf("bitstream_trace: validation failed: %d error-severity violation(s); see %s",
+			res.ErrorViolations, p.outputPath)
 	}
 	if p.emit != nil {
 		p.emit(&Metadata{FilePath: p.outputPath,

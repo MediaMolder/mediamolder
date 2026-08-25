@@ -617,7 +617,7 @@ Commands:
   raw-setup              Diagnose camera-RAW (LibRaw) readiness and how to enable it.
   trace-headers <input>  Report H.264/H.265/AV1 NAL unit / OBU details as JSON without
                          decoding (an improved, machine-readable trace_headers).
-                         Flags: --stream=v:N, --output=PATH, --format=json|jsonl|text,
+                         Flags: --stream=v:N, --output=PATH, --format=json|jsonl|csv|text,
                                 --detail=summary|headers|elements, --units=LIST,
                                 --max-packets=N, --range=A:B.
   go-scene-detect <input> Detect scene changes using PySceneDetect algorithms.

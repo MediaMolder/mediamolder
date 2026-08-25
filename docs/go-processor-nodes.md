@@ -432,8 +432,12 @@ See [docs/scene-detection.md](scene-detection.md#scene_change_histogram) for ful
 
 Scans an elementary video bitstream at the packet level — **no decoding** —
 and writes every NAL unit (H.264/H.265) or OBU (AV1) to a JSON, JSON Lines,
-or trace_headers-format text report: parameter sets, slice/frame headers,
-SEI messages, and optionally every syntax element with bit positions. An
+CSV, or trace_headers-format text report: parameter sets, SEI messages,
+optionally every syntax element with bit positions, and for coded pictures a
+typed record with slice type and the **derived Picture Order Count** (Rec.
+H.264 §8.2.1 / H.265 §8.3.1). Every unit carries a `class` (`vcl` / `ps` /
+`sei` / `other`) and every packet a `time` in seconds, so bit-rate-over-time
+and picture-vs-overhead analyses are simple aggregations over the report. An
 improved, machine-readable version of FFmpeg's `trace_headers` bitstream
 filter, built on the `cbs` package (a Go port of libavcodec's Coded
 Bitstream framework, validated byte-for-byte against FFmpeg). The node is a
@@ -445,12 +449,14 @@ so nothing in the graph decodes. See [Bitstream Trace](bitstream-trace.md).
 | `input_id` / `url` | string | **(required)** | Input to scan (`input_id` is resolved from the job's `inputs`) |
 | `stream`        | string   | `"v:0"`        | Stream selector: `v:N` or an absolute index |
 | `output_file`   | string   | **(required)** | Absolute report path |
-| `output_format` | string   | `"json"`       | `"json"`, `"jsonl"`, `"text"` |
+| `output_format` | string   | `"json"`       | `"json"`, `"jsonl"`, `"csv"`, `"text"` |
 | `detail`        | string   | `"headers"`    | `"summary"`, `"headers"`, `"elements"` |
 | `unit_types`    | array    | all            | Filter, e.g. `["sps", "pps", "sei"]` or numeric types |
 | `max_packets`   | number   | all            | Stop after N packets |
 | `packet_range`  | array    | all            | `[first, last]` packet index window |
 | `emit_events`   | bool     | `false`        | Per-packet unit summaries on the events bus |
+| `checks`        | string/array | none       | Structure checks: `default`, `strict`, or check ids |
+| `validate`      | bool     | `false`        | Fail the node on error-severity violations (implies `checks: default`) |
 
 ```json
 { "id": "trace", "type": "go_processor", "processor": "bitstream_trace",

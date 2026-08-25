@@ -7,7 +7,7 @@ package main
 // an improved, machine-readable version of FFmpeg's trace_headers
 // bitstream filter. It scans an elementary video bitstream (H.264, H.265
 // or AV1, in any container libavformat opens) without decoding and reports
-// NAL unit / OBU details as JSON, JSON Lines, or trace_headers-format
+// NAL unit / OBU details as JSON, JSON Lines, CSV, or trace_headers-format
 // text.
 //
 // Usage:
@@ -18,7 +18,7 @@ package main
 //
 //	--stream <spec>       stream to trace: v:N or an absolute index (default v:0)
 //	--output <path>       output file (- = stdout, default)
-//	--format <fmt>        json (default), jsonl, text
+//	--format <fmt>        json (default), jsonl, csv, text
 //	--detail <level>      summary, headers, elements (default elements)
 //	--units <list>        comma-separated unit-type filter (names or numbers)
 //	--max-packets <n>     stop after n packets
@@ -43,11 +43,13 @@ func cmdTraceHeaders(args []string) error {
 	var (
 		stream     = fs.String("stream", "v:0", "stream to trace: v:N or an absolute index")
 		output     = fs.String("output", "-", "output file (- = stdout)")
-		format     = fs.String("format", "json", "output format: json, jsonl, text")
+		format     = fs.String("format", "json", "output format: json, jsonl, csv, text")
 		detail     = fs.String("detail", "elements", "detail level: summary, headers, elements")
 		units      = fs.String("units", "", "comma-separated unit-type filter (names or numbers)")
 		maxPackets = fs.Int64("max-packets", 0, "stop after n packets (0 = all)")
 		rangeSpec  = fs.String("range", "", "packet index range a:b (inclusive)")
+		checks     = fs.String("checks", "", "stream-structure checks: default, strict, or check ids (comma-separated)")
+		validate   = fs.Bool("validate", false, "exit non-zero on error-severity violations (enables --checks default when unset)")
 	)
 	fs.Usage = func() {
 		fmt.Fprint(os.Stderr, `Usage: mediamolder trace-headers [flags] <input>
@@ -60,11 +62,16 @@ per-unit summaries. No decoding is performed.
 Flags:
   --stream <spec>       Stream to trace: v:N or an absolute index (default v:0)
   --output <path>       Output file (- = stdout, default)
-  --format <fmt>        Output format: json (default), jsonl, text
+  --format <fmt>        Output format: json (default), jsonl, csv, text
   --detail <level>      summary, headers, elements (default elements)
   --units <list>        Comma-separated unit-type filter (e.g. sps,pps,sei or 7,8,6)
   --max-packets <n>     Stop after n packets
   --range <a:b>         Only packets with index in [a, b]
+  --checks <set>        Stream-structure checks: default, strict, or ids
+                        (vcl_before_ps, frame_num_gap, no_aud, sei_after_vcl)
+  --validate            Exit non-zero on error-severity violations
+                        (syntax parse errors + failed checks); implies
+                        --checks default when --checks is not given
 
 `)
 	}
@@ -87,6 +94,13 @@ Flags:
 	}
 	if *units != "" {
 		cfg.Options.UnitTypes = strings.Split(*units, ",")
+	}
+	if *checks != "" {
+		cfg.Options.Checks = strings.Split(*checks, ",")
+	} else if *validate && *format != "text" {
+		// text is byte-for-byte FFmpeg parity and cannot carry check
+		// findings; --validate there covers syntax errors only.
+		cfg.Options.Checks = []string{"default"}
 	}
 	if *rangeSpec != "" {
 		parts := strings.SplitN(*rangeSpec, ":", 2)
@@ -115,5 +129,12 @@ Flags:
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	return processors.RunBitstreamTrace(ctx, cfg, out)
+	res, err := processors.RunBitstreamTrace(ctx, cfg, out)
+	if err != nil {
+		return err
+	}
+	if *validate && res.ErrorViolations > 0 {
+		return fmt.Errorf("trace-headers: validation failed: %d error-severity violation(s)", res.ErrorViolations)
+	}
+	return nil
 }

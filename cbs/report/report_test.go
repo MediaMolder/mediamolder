@@ -5,6 +5,7 @@ package report
 
 import (
 	"bytes"
+	"encoding/csv"
 	"encoding/json"
 	"os"
 	"strings"
@@ -62,7 +63,7 @@ func run(t *testing.T, opts Options) (string, map[string]any) {
 
 func TestJSONDocument(t *testing.T) {
 	_, doc := run(t, Options{Format: "json", Detail: "elements"})
-	if doc["schema"] != "mediamolder.bitstream_trace/1" {
+	if doc["schema"] != "mediamolder.bitstream_trace/2" {
 		t.Fatalf("schema: %v", doc["schema"])
 	}
 	pkts := doc["packets"].([]any)
@@ -113,12 +114,15 @@ func TestDetailHeadersOmitsSliceSections(t *testing.T) {
 		typ := um["type"].(float64)
 		_, hasSections := um["sections"]
 		switch typ {
-		case 1, 5: // slices: summary only
+		case 1, 5: // slices: typed picture record only
 			if hasSections {
 				t.Fatalf("slice unit %v has sections at detail=headers", typ)
 			}
-			if _, ok := um["summary"]; !ok {
-				t.Fatalf("slice unit %v missing summary", typ)
+			if _, ok := um["picture"]; !ok {
+				t.Fatalf("slice unit %v missing picture record", typ)
+			}
+			if _, ok := um["summary"]; ok {
+				t.Fatalf("slice unit %v still has a summary blob", typ)
 			}
 		case 7: // SPS keeps elements
 			if !hasSections {
@@ -147,6 +151,8 @@ func TestUnitTypeFilter(t *testing.T) {
 			}
 		} else if _, ok := um["summary"]; ok {
 			t.Fatalf("unit %v not filtered", um["type"])
+		} else if _, ok := um["picture"]; ok {
+			t.Fatalf("unit %v picture not filtered", um["type"])
 		}
 	}
 }
@@ -154,7 +160,7 @@ func TestUnitTypeFilter(t *testing.T) {
 func TestJSONLines(t *testing.T) {
 	out, _ := run(t, Options{Format: "jsonl", Detail: "summary"})
 	lines := strings.Split(strings.TrimSpace(out), "\n")
-	if len(lines) != 3 { // header, packet, stats
+	if len(lines) != 4 { // header, packet, violations, stats
 		t.Fatalf("jsonl lines: %d", len(lines))
 	}
 	for i, l := range lines {
@@ -360,6 +366,115 @@ func TestUnitFilterAliases(t *testing.T) {
 	for _, c := range cases {
 		if got := match([]string{c.spec}, c.typeName); got != c.want {
 			t.Errorf("filter %q vs %q: got %v, want %v", c.spec, c.typeName, got, c.want)
+		}
+	}
+}
+
+// TestCSVFormat: one row per unit, packet context + compact-JSON summary
+// column, header row first.
+func TestCSVFormat(t *testing.T) {
+	out, _ := run(t, Options{Format: "csv"})
+	rows, err := csv.NewReader(strings.NewReader(out)).ReadAll()
+	if err != nil {
+		t.Fatalf("output is not valid CSV: %v", err)
+	}
+	if len(rows) < 6 { // header + AUD, SPS, PPS, SEI, slices
+		t.Fatalf("rows: %d", len(rows))
+	}
+	if rows[0][0] != "kind" || rows[0][len(rows[0])-1] != "summary" {
+		t.Fatalf("header row: %v", rows[0])
+	}
+	col := map[string]int{}
+	for i, name := range rows[0] {
+		col[name] = i
+	}
+	var sps []string
+	for _, r := range rows[1:] {
+		if len(r) != len(rows[0]) {
+			t.Fatalf("ragged row: %v", r)
+		}
+		if r[col["kind"]] != "packet" {
+			t.Fatalf("kind: %v", r)
+		}
+		if r[col["type"]] == "7" {
+			sps = r
+		}
+	}
+	if sps == nil {
+		t.Fatal("no SPS row")
+	}
+	if sps[col["packet"]] != "0" || sps[col["key_frame"]] != "true" {
+		t.Fatalf("packet context: %v", sps)
+	}
+	var sum map[string]any
+	if err := json.Unmarshal([]byte(sps[col["summary"]]), &sum); err != nil {
+		t.Fatalf("summary column is not JSON: %v", err)
+	}
+	if sum["width"].(float64) != 64 || sum["height"].(float64) != 64 {
+		t.Fatalf("summary: %v", sum)
+	}
+}
+
+// TestCSVFilterAndRange: the unit filter drops rows; the packet gate
+// applies as in the other formats.
+func TestCSVFilterAndRange(t *testing.T) {
+	out, _ := run(t, Options{Format: "csv", UnitTypes: []string{"sps"}})
+	rows, err := csv.NewReader(strings.NewReader(out)).ReadAll()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) < 2 { // header + at least one SPS
+		t.Fatalf("filtered rows: %d\n%s", len(rows), out)
+	}
+	col := map[string]int{}
+	for i, name := range rows[0] {
+		col[name] = i
+	}
+	for _, r := range rows[1:] {
+		if r[col["type"]] != "7" { // only SPS rows survive the filter
+			t.Fatalf("unfiltered row: %v", r)
+		}
+	}
+
+	out, _ = run(t, Options{Format: "csv", Range: [2]int64{1, 1}, RangeSet: true})
+	rows, err = csv.NewReader(strings.NewReader(out)).ReadAll()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 { // header only: the single packet (index 0) is out of range
+		t.Fatalf("out-of-range rows: %d", len(rows))
+	}
+}
+
+// TestCSVClassAndTime: the class column separates vcl / ps / sei rows and
+// the time column carries the packet pts in seconds.
+func TestCSVClassAndTime(t *testing.T) {
+	out, _ := run(t, Options{Format: "csv"})
+	rows, err := csv.NewReader(strings.NewReader(out)).ReadAll()
+	if err != nil {
+		t.Fatal(err)
+	}
+	col := map[string]int{}
+	for i, name := range rows[0] {
+		col[name] = i
+	}
+	want := map[string]string{"7": "ps", "8": "ps", "6": "sei", "9": "other",
+		"1": "vcl", "5": "vcl"}
+	seen := map[string]bool{}
+	for _, r := range rows[1:] {
+		if w, ok := want[r[col["type"]]]; ok {
+			if r[col["class"]] != w {
+				t.Fatalf("type %s classified %q, want %q", r[col["type"]], r[col["class"]], w)
+			}
+			seen[w] = true
+		}
+		// pts 0 with time base 0/0 in this synthetic run: time stays
+		// empty; presence is covered by the processor-level test.
+		_ = r[col["time"]]
+	}
+	for _, c := range []string{"ps", "sei", "vcl"} {
+		if !seen[c] {
+			t.Fatalf("class %s never seen", c)
 		}
 	}
 }

@@ -31,15 +31,78 @@ func unitHeaderJSON(codec string, u *cbs.Unit) map[string]any {
 
 var h264SliceTypeNames = [10]string{"P", "B", "I", "SP", "SI", "P", "B", "I", "SP", "SI"}
 
-// summarize builds the per-unit summary for known content types.
+// summarizer derives per-unit summaries; it owns the decode-order state
+// (parameter sets, previous-picture POC) that the H.264/H.265 Picture
+// Order Count derivations need.
+type summarizer struct {
+	poc *pocState
+	// The last independent H.265 slice segment's record; dependent
+	// segments inherit the picture-level fields from it.
+	h265LastPic *pictureJSON
+}
+
+func newSummarizer() *summarizer { return &summarizer{poc: newPOCState()} }
+
+// advance MUST be called exactly once per unit, in decode order —
+// including units the output filters drop — so parameter-set tables and
+// the POC previous-picture state stay correct. For coded-picture units
+// it returns the typed picture record (with the derived POC); nil
+// otherwise, or when the unit failed to decompose.
+func (s *summarizer) advance(u *cbs.Unit) *pictureJSON {
+	s.poc.observePS(u)
+	if u.Err != nil || !u.Decomposed {
+		return nil
+	}
+	switch c := u.Content.(type) {
+	case *cbs.H264RawSlice:
+		poc, hasPOC := s.poc.h264SlicePOC(&c.Header)
+		return h264Picture(&c.Header, poc, hasPOC)
+	case *cbs.H265RawSlice:
+		poc, hasPOC := s.poc.h265SlicePOC(&c.Header)
+		if c.Header.DependentSliceSegmentFlag != 0 {
+			return s.h265DependentPicture(&c.Header, poc, hasPOC)
+		}
+		pic := h265Picture(&c.Header, poc, hasPOC)
+		s.h265LastPic = pic
+		return pic
+	}
+	return nil
+}
+
+// h265DependentPicture builds the record for a dependent slice segment:
+// the header carries only the segment address, so the picture-level
+// fields (slice type, QP, POC) come from the preceding independent
+// segment of the same picture.
+func (s *summarizer) h265DependentPicture(sh *cbs.H265RawSliceHeader, poc int32, hasPOC bool) *pictureJSON {
+	var pic pictureJSON
+	if s.h265LastPic != nil {
+		pic = *s.h265LastPic
+	} else {
+		pic.Type = "?"
+		pic.PPS = sh.SlicePicParameterSetID
+	}
+	pic.Dependent = true
+	first := false
+	pic.FirstSlice = &first
+	addr := sh.SliceSegmentAddress
+	pic.SegAddr = &addr
+	if hasPOC {
+		v := poc
+		pic.POC = &v
+	} else {
+		pic.POC = nil
+	}
+	return &pic
+}
+
+// summarize builds the per-unit summary for known content types. It is
+// stateless; the caller injects the POC returned by advance.
 func summarize(u *cbs.Unit) map[string]any {
 	switch c := u.Content.(type) {
 	case *cbs.H264RawSPS:
 		return h264SPSSummary(c)
 	case *cbs.H264RawPPS:
 		return h264PPSSummary(c)
-	case *cbs.H264RawSlice:
-		return h264SliceSummary(&c.Header)
 	case *cbs.H264RawSEI:
 		return map[string]any{"messages": seiListSummary(&c.MessageList)}
 	case *cbs.H264RawAUD:
@@ -52,8 +115,6 @@ func summarize(u *cbs.Unit) map[string]any {
 		return h265SPSSummary(c)
 	case *cbs.H265RawPPS:
 		return h265PPSSummary(c)
-	case *cbs.H265RawSlice:
-		return h265SliceSummary(&c.Header)
 	case *cbs.H265RawSEI:
 		return map[string]any{"messages": seiListSummary(&c.MessageList)}
 	case *cbs.H265RawAUD:
@@ -145,33 +206,61 @@ func h264PPSSummary(pps *cbs.H264RawPPS) map[string]any {
 	}
 }
 
-func h264SliceSummary(sh *cbs.H264RawSliceHeader) map[string]any {
+// pictureJSON is the typed record for coded-picture units (H.264 and
+// H.265 slices). A fixed schema with short keys instead of a free-form
+// summary map: smaller output and directly mappable to CSV columns.
+type pictureJSON struct {
+	Type       string  `json:"type"`
+	TypeValue  uint8   `json:"type_value"`
+	POC        *int32  `json:"poc,omitempty"`
+	FrameNum   *uint16 `json:"frame_num,omitempty"` // H.264
+	Lsb        uint16  `json:"lsb"`                 // pic_order_cnt_lsb
+	FirstMB    *uint32 `json:"first_mb,omitempty"`  // H.264 first_mb_in_slice
+	SegAddr    *uint16 `json:"segment_address,omitempty"`
+	FirstSlice *bool   `json:"first_slice,omitempty"` // H.265
+	Dependent  bool    `json:"dependent,omitempty"`   // H.265
+	PPS        uint8   `json:"pps"`
+	QPDelta    int8    `json:"qp_delta"`
+	RefL0      uint8   `json:"ref_l0,omitempty"`
+	RefL1      uint8   `json:"ref_l1,omitempty"`
+	IDRPicID   *uint16 `json:"idr_pic_id,omitempty"`
+	Field      string  `json:"field,omitempty"`
+}
+
+func h264Picture(sh *cbs.H264RawSliceHeader, poc int32, hasPOC bool) *pictureJSON {
 	st := "?"
 	if sh.SliceType < 10 {
 		st = h264SliceTypeNames[sh.SliceType]
 	}
-	s := map[string]any{
-		"slice_type":       st,
-		"slice_type_value": sh.SliceType,
-		"first_mb":         sh.FirstMbInSlice,
-		"pps_id":           sh.PicParameterSetID,
-		"frame_num":        sh.FrameNum,
-		"slice_qp_delta":   sh.SliceQpDelta,
+	p := &pictureJSON{
+		Type:      st,
+		TypeValue: sh.SliceType,
+		Lsb:       sh.PicOrderCntLsb,
+		PPS:       sh.PicParameterSetID,
+		QPDelta:   sh.SliceQpDelta,
 	}
+	if hasPOC {
+		v := poc
+		p.POC = &v
+	}
+	fn := sh.FrameNum
+	p.FrameNum = &fn
+	mb := sh.FirstMbInSlice
+	p.FirstMB = &mb
 	if sh.NalUnitHeader.NalUnitType == 5 {
-		s["idr_pic_id"] = sh.IdrPicID
+		id := sh.IdrPicID
+		p.IDRPicID = &id
 	}
 	if sh.FieldPicFlag != 0 {
-		s["field"] = cond(sh.BottomFieldFlag != 0, "bottom", "top")
+		p.Field = cond(sh.BottomFieldFlag != 0, "bottom", "top")
 	}
-	s["pic_order_cnt_lsb"] = sh.PicOrderCntLsb
 	if sh.SliceType%5 == 0 || sh.SliceType%5 == 1 || sh.SliceType%5 == 3 {
-		s["num_ref_idx_l0"] = sh.NumRefIdxL0ActiveMinus1 + 1
+		p.RefL0 = sh.NumRefIdxL0ActiveMinus1 + 1
 	}
 	if sh.SliceType%5 == 1 {
-		s["num_ref_idx_l1"] = sh.NumRefIdxL1ActiveMinus1 + 1
+		p.RefL1 = sh.NumRefIdxL1ActiveMinus1 + 1
 	}
-	return s
+	return p
 }
 
 // seiListSummary flattens an SEI message list into an inventory with
@@ -192,9 +281,12 @@ func seiListSummary(list *cbs.SEIRawMessageList) []map[string]any {
 				p.UuidIsoIec11578[6:8], p.UuidIsoIec11578[8:10],
 				p.UuidIsoIec11578[10:16])
 			e["text"] = printablePrefix(p.Data, 200)
+			addRawHex(e, p.Data)
 		case *cbs.SEIRawUserDataRegistered:
 			e["country_code"] = p.ItuTT35CountryCode
 			e["data_length"] = len(p.Data)
+			addRawHex(e, p.Data)
+			parseA53Captions(e, p.ItuTT35CountryCode, p.Data)
 		case *cbs.SEIRawMasteringDisplayColourVolume:
 			e["display_primaries_x"] = p.DisplayPrimariesX
 			e["display_primaries_y"] = p.DisplayPrimariesY

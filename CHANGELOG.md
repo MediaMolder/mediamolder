@@ -7,6 +7,79 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- **Bitstream trace validation: violations list, structure checks, `--validate`.**
+  Reports now carry a top-level `violations` list: every unit parse failure the
+  syntax templates detect (out-of-range elements, truncation, missing
+  parameter-set references) as `kind: "syntax"` entries with packet/unit
+  location and the parse diagnostic ("PPS id 3 not available."). Opt-in
+  stream-structure checks (`--checks default|strict|<ids>`, node param
+  `checks`) add `kind: "structure"` findings over the decode-order walk:
+  `vcl_before_ps` and `frame_num_gap` (errors, the `default` set), `no_aud`
+  and `sei_after_vcl` (warnings, `strict`). `--validate` exits non-zero on
+  error-severity findings; the node's `validate: true` fails the job. Range
+  and unit filters never hide violations. Header-level only by design —
+  decoder-side conformance (DPB, levels, HRD) is out of scope.
+- **Caption carriage dump (CEA-608/708).** T.35 SEI (payload type 4) and AV1
+  ITU-T T.35 metadata summaries now include `raw_hex` of the payload and,
+  when the ATSC A/53 / SCTE-128 wrapper matches (0xB5 / 0x0031 / GA94 /
+  cc_data), the parsed `cc_count`, `cc` triplets and a `contains` list of
+  `cea608`/`cea708` — a dump, not a caption decoder. Unregistered user data
+  gets the same `raw_hex`. New `--units caption` alias selects the carrier
+  units. `dts_time` joins `time` on packets for decode-order binning, and the
+  CSV picture columns now mirror the JSON record 1:1 (`segment_address`,
+  `first_slice`, `dependent`, `idr_pic_id`, `field`); AV1 frame-header and
+  tile-list OBUs count as `vcl` in rate splits.
+  See [docs/bitstream-trace.md](docs/bitstream-trace.md).
+
+### Fixed
+
+- **Bitstream trace POC correctness.** HEVC dependent slice segments (which
+  carry no `slice_pic_order_cnt_lsb`) no longer poison the prevTid0 state —
+  they reuse the picture's POC and inherit the independent segment's record
+  fields; and H.264 pictures carrying `mmco5` now report the post-reset
+  PicOrderCnt (0) per Rec. H.264 §8.2.1 instead of the pre-reset value.
+
+- **Bitstream trace: unit classes and packet time for rate analysis.** Every
+  reported unit now carries a `class` — `vcl` (coded picture data), `ps`
+  (parameter sets), `sei` (SEI / AV1 metadata), `other` — and every packet a
+  `time` in seconds (pts through the stream time base), in JSON and as CSV
+  columns. Plotting bit rate over time, or separating picture payload from
+  SEI overhead, becomes a one-line aggregation over the CSV; the guide shows
+  a pandas recipe. See [docs/bitstream-trace.md](docs/bitstream-trace.md).
+
+### Changed
+
+- **Bitstream trace: coded pictures are typed records (schema
+  `mediamolder.bitstream_trace/2`).** H.264/H.265 slice units now report a
+  fixed-schema `picture` object (slice type, derived `poc`, `frame_num` /
+  `segment_address`, `lsb`, `pps`, `qp_delta`, ref counts, `idr_pic_id`,
+  `field`) instead of a free-form `summary` map, and the CSV format fills
+  dedicated picture columns (`pic_type` … `ref_l1`) instead of a quoted JSON
+  blob — substantially smaller output on long streams and directly queryable
+  columns. Other unit types (parameter sets, SEI, AV1 OBUs) keep their
+  content summaries. See [docs/bitstream-trace.md](docs/bitstream-trace.md).
+
+### Added
+
+- **Derived Picture Order Count in bitstream trace slice summaries.** H.264 and
+  H.265 slice summaries now carry `poc`, derived exactly as a decoder would
+  (Rec. H.264 §8.2.1 — all three `pic_order_cnt_type` modes, lsb wrap and mmco5
+  resets; Rec. H.265 §8.3.1 — prevTid0 tracking, IDR/BLA resets, continuity
+  across mid-stream CRAs), from a per-stream tracker in the report layer that
+  observes parameter sets and slices in decode order — including packets and
+  units excluded by range or type filters, so the state never skews. This makes
+  GOP/reference-structure timelines derivable from summaries alone.
+  See [docs/bitstream-trace.md](docs/bitstream-trace.md).
+
+- **CSV output for bitstream trace.** `bitstream_trace` and
+  `mediamolder trace-headers` accept `output_format` / `--format` `csv`: one
+  row per NAL unit / OBU with its packet context (index, timestamps, position,
+  key frame), unit identity (offset, sizes, type, name, decomposed/skip/error),
+  and the derived per-unit summary as a compact-JSON column — for spreadsheet
+  and SQL workflows over long streams. Element-level detail stays json/jsonl-only,
+  and the `unit_types` filter drops non-matching rows entirely.
+  See [docs/bitstream-trace.md](docs/bitstream-trace.md).
+
 - **`make build-gui-all` / `make test-all`.** One-stop build of the full-featured
   single binary: static FFmpeg plus every opt-in node family — `whisper_stt`,
   the ONNX nodes (`yolo_v8`, `face_detect`), and `raw_decode` — with the embedded

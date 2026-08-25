@@ -486,9 +486,13 @@ For in-graph usage (uploading, analyzing, searching, or embedding clips automati
 
 Scan an elementary video bitstream (H.264, H.265, AV1) at the packet
 level — **no decoding** — and report every NAL unit / OBU: parameter
-sets, slice/frame headers, SEI messages, optionally every syntax element
-with bit positions. An improved, machine-readable version of FFmpeg's
-`trace_headers` bitstream filter.
+sets, SEI messages, optionally every syntax element with bit positions,
+and typed coded-picture records with the derived Picture Order Count.
+Each unit carries a `class` (`vcl`/`ps`/`sei`/`other`) and each packet a
+`time` in seconds, so bit rate over time — picture payload vs SEI
+overhead — falls out of a simple aggregation (see the guide's
+"Plotting bit rate" recipe). An improved, machine-readable version of
+FFmpeg's `trace_headers` bitstream filter.
 
 ```bash
 mediamolder trace-headers [flags] <input>
@@ -506,12 +510,18 @@ mediamolder trace-headers --format text input.mp4
 mediamolder trace-headers --detail headers --units sps,pps,sei \
     --output report.json input.mkv
 
+# One CSV row per unit — time/class/size + picture columns (slice type,
+# POC, QP...), spreadsheet- and pandas-ready.
+mediamolder trace-headers --format csv --output units.csv input.mp4
+
 # One packet window on the second video stream.
 mediamolder trace-headers --stream v:1 --range 0:100 input.ts
 ```
 
 Flags: `--stream v:N | <index>` (default `v:0`), `--output PATH` (`-` =
-stdout), `--format json|jsonl|text`, `--detail summary|headers|elements`,
+stdout), `--format json|jsonl|csv|text`, `--detail summary|headers|elements`,
+`--checks default|strict|<ids>`, `--validate` (exit non-zero on
+error-severity violations),
 `--units LIST` (family names or numeric types), `--max-packets N`,
 `--range A:B` (0-based, inclusive). The same analysis runs inside a graph
 via the `bitstream_trace` node. See the full

@@ -85,6 +85,51 @@ func TestBitstreamTrace_RunJSON(t *testing.T) {
 	if first["key_frame"] != true {
 		t.Fatal("first packet should be a key frame")
 	}
+	// time / dts_time are populated from the stream time base.
+	tb := src["time_base"].([]any)
+	den := tb[1].(float64)
+	for _, p := range pkts {
+		pm := p.(map[string]any)
+		sec, ok := pm["time"].(float64)
+		if !ok {
+			t.Fatalf("packet %v missing time", pm["index"])
+		}
+		if want := pm["pts"].(float64) / den; sec != want {
+			t.Fatalf("packet %v time %v, want %v", pm["index"], sec, want)
+		}
+		if _, ok := pm["dts_time"].(float64); !ok {
+			t.Fatalf("packet %v missing dts_time", pm["index"])
+		}
+	}
+	// Coded pictures are typed records with a derived Picture Order
+	// Count; the IDR's picture has POC 0 and x264 spaces frames by 2.
+	var pocs []float64
+	for _, p := range pkts {
+		for _, u := range p.(map[string]any)["units"].([]any) {
+			um := u.(map[string]any)
+			if pic, ok := um["picture"].(map[string]any); ok {
+				poc, ok := pic["poc"].(float64)
+				if !ok {
+					t.Fatalf("picture record missing poc: %v", pic)
+				}
+				pocs = append(pocs, poc)
+			}
+		}
+	}
+	// pocs is in decode order; as a set it must be exactly the even
+	// values 0..38 (x264 spaces frame POCs by 2; 20 frames, one IDR).
+	if len(pocs) != 20 || pocs[0] != 0 {
+		t.Fatalf("derived pocs: %v", pocs)
+	}
+	seen := map[float64]bool{}
+	for _, v := range pocs {
+		seen[v] = true
+	}
+	for i := 0; i < 20; i++ {
+		if !seen[float64(2*i)] {
+			t.Fatalf("poc %d missing from %v", 2*i, pocs)
+		}
+	}
 }
 
 func TestBitstreamTrace_JSONLAndFilters(t *testing.T) {
@@ -93,7 +138,7 @@ func TestBitstreamTrace_JSONLAndFilters(t *testing.T) {
 		t.Skip("tiny.mp4 not available:", err)
 	}
 	var buf bytes.Buffer
-	err := RunBitstreamTrace(context.Background(), TraceConfig{
+	_, err := RunBitstreamTrace(context.Background(), TraceConfig{
 		URL: input,
 		Options: report.Options{
 			Format:     "jsonl",
@@ -105,8 +150,8 @@ func TestBitstreamTrace_JSONLAndFilters(t *testing.T) {
 		t.Fatal(err)
 	}
 	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
-	// header + extradata + 3 packets + stats
-	if len(lines) != 6 {
+	// header + extradata + 3 packets + violations + stats
+	if len(lines) != 7 {
 		t.Fatalf("jsonl lines: %d\n%s", len(lines), buf.String())
 	}
 }
@@ -133,7 +178,7 @@ func TestBitstreamTrace_TextGolden(t *testing.T) {
 				t.Skip("golden not available:", err)
 			}
 			var buf bytes.Buffer
-			err = RunBitstreamTrace(context.Background(), TraceConfig{
+			_, err = RunBitstreamTrace(context.Background(), TraceConfig{
 				URL:     c.input,
 				Options: report.Options{Format: "text", Detail: "elements"},
 			}, &buf)

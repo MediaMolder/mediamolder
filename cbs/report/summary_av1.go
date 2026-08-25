@@ -130,6 +130,8 @@ func av1MetadataSummary(md *cbs.AV1RawMetadata) map[string]any {
 		s["name"] = "itut_t35"
 		s["country_code"] = md.ITUTT35.ItuTT35CountryCode
 		s["data_length"] = len(md.ITUTT35.Payload)
+		addRawHex(s, md.ITUTT35.Payload)
+		parseA53Captions(s, md.ITUTT35.ItuTT35CountryCode, md.ITUTT35.Payload)
 	case 5:
 		s["name"] = "timecode"
 	default:

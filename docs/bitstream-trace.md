@@ -2,7 +2,7 @@
 
 `bitstream_trace` scans an elementary video bitstream at the packet level —
 **no decoding** — and reports every NAL unit (H.264 / H.265) or OBU (AV1)
-to a JSON, JSON Lines, or text file: parameter sets, slice / frame
+to a JSON, JSON Lines, CSV, or text file: parameter sets, slice / frame
 headers, SEI messages, and (optionally) every syntax element with its bit
 position, width, raw bits and value.
 
@@ -36,7 +36,7 @@ mediamolder trace-headers --stream v:1 --range 0:100 in.ts
 |---|---|---|
 | `--stream` | `v:0` | `v:N` (Nth video stream) or an absolute stream index |
 | `--output` | `-` | output path (`-` = stdout) |
-| `--format` | `json` | `json`, `jsonl`, `text` |
+| `--format` | `json` | `json`, `jsonl`, `csv`, `text` |
 | `--detail` | `elements` | `summary`, `headers`, `elements` (see below) |
 | `--units` | all | comma-separated filter: family names (`sps,pps,vps,sei,idr,aud,slice,metadata`) or numeric types; names cover every codec's spelling (`sei` also matches HEVC `SEI_PREFIX`/`SEI_SUFFIX`, `sps` the AV1 sequence header) |
 | `--max-packets` | all | stop after N packets |
@@ -79,7 +79,7 @@ processing of the same input.
 | `input_id` / `url` | required | input to scan (`input_id` is resolved from the job's `inputs`) |
 | `stream` | `v:0` | stream selector |
 | `output_file` | required | **absolute** report path |
-| `output_format` | `json` | `json`, `jsonl`, `text` |
+| `output_format` | `json` | `json`, `jsonl`, `csv`, `text` |
 | `detail` | `headers` | `summary`, `headers`, `elements` |
 | `unit_types` | all | e.g. `["sps", "pps", "sei"]` or numeric types (family names match across codecs) |
 | `max_packets`, `packet_range` | all | limit scope (`packet_range`: `[first, last]`, 0-based inclusive) |
@@ -109,19 +109,19 @@ very large report — combine with `unit_types` or `packet_range`).
 
 ```jsonc
 {
-  "schema": "mediamolder.bitstream_trace/1",
+  "schema": "mediamolder.bitstream_trace/2",
   "source": { "url": "in.mp4", "stream_index": 0, "codec": "h264",
               "profile": "High", "format": "avcc", "nal_length_size": 4,
               "time_base": [1, 12800] },
   "extradata": { "size": 47, "units": [ /* unit objects */ ] },
   "packets": [
     {
-      "index": 0, "pts": 0, "dts": 0, "duration": 512, "pos": 48,
+      "index": 0, "pts": 0, "dts": 0, "time": 0.0, "duration": 512, "pos": 48,
       "size": 1587, "key_frame": true,
       "units": [
         {
           "index": 0, "offset": 4, "prefix": 4, "size": 27, "rbsp_size": 25,
-          "type": 7, "name": "SPS",
+          "type": 7, "name": "SPS", "class": "ps",
           "header": { "nal_ref_idc": 3, "type": 7 },
           "summary": { "sps_id": 0, "profile_idc": 100, "level_idc": 31,
                        "width": 1920, "height": 1080, "bit_depth_luma": 8,
@@ -132,6 +132,14 @@ very large report — combine with `unit_types` or `packet_range`).
                 { "pos": 0, "bits": 1, "name": "forbidden_zero_bit", "raw": "0", "value": 0 }
               ] }
           ],
+          "decomposed": true
+        },
+        { "index": 3, "offset": 745, "prefix": 4, "size": 838, "rbsp_size": 838,
+          "type": 5, "name": "IDR", "class": "vcl",
+          "header": { "nal_ref_idc": 3, "type": 5 },
+          "picture": { "type": "I", "type_value": 7, "poc": 0, "frame_num": 0,
+                       "lsb": 0, "first_mb": 0, "pps": 0, "qp_delta": 4,
+                       "idr_pic_id": 0 },
           "decomposed": true
         }
       ]
@@ -148,19 +156,116 @@ Field notes:
   to FFmpeg's first trace column. `offset` / `size` (unit) are byte
   positions in the packet including emulation-prevention bytes; `epb`
   (at `detail=elements`) lists where `0x03` bytes were removed.
+- `class` buckets every unit for filtering and rate analysis: `vcl`
+  (coded picture data — slices, AV1 frame/tile-group OBUs), `ps`
+  (parameter sets), `sei` (SEI messages, AV1 metadata OBUs), `other`
+  (AUD, filler, delimiters, reserved). It is present even for units that
+  failed to decompose. `time` is the packet pts in seconds (stream time
+  base applied).
 - `header` carries the raw NAL/OBU header fields even for units that are
   not decomposed (reserved types, HEVC layered NALs FFmpeg drops —
   reported here with a `skip` reason).
-- `summary` is derived per unit type: SPS/sequence header → dimensions,
-  profile/level, bit depth, VUI timing/colour; PPS → entropy mode,
-  weighted prediction, `init_qp`; slice → slice type, `frame_num`,
-  `pic_order_cnt_lsb`, ref counts; SEI → message inventory with decoded
+- **Coded pictures** (H.264/H.265 slices) carry a typed `picture` record
+  with a fixed schema instead of a free-form summary: slice `type` /
+  `type_value`, the **derived Picture Order Count** (`poc`, per
+  Rec. H.264 §8.2.1 / H.265 §8.3.1 — all three H.264 POC modes, lsb wrap,
+  IDR/BLA resets, continuous across mid-stream CRAs), `frame_num` /
+  `segment_address`, `lsb`, `pps`, `qp_delta`, `ref_l0`/`ref_l1`,
+  `idr_pic_id`, `field`. Fixed keys keep long streams compact and map 1:1
+  onto the CSV picture columns.
+- `summary` is derived for the other unit types: SPS/sequence header →
+  dimensions, profile/level, bit depth, VUI timing/colour; PPS → entropy
+  mode, weighted prediction, `init_qp`; AV1 frame headers → frame type,
+  order hint, reference state; SEI → message inventory with decoded
   fields for the common types (user data, mastering display, CLL,
   recovery point, pic timing, …).
 - `jsonl` emits the same objects one per line (header, packets, stats) so
   arbitrarily long streams can be processed without loading a document.
+- `csv` emits **one row per unit** for spreadsheet / SQL workflows. The
+  leading columns are the ones you filter and group by — `kind`
+  (`extradata` | `packet` | `violation`), `class`, `name`, `packet` —
+  followed by the packet context (pts/dts, `time`/`dts_time` in seconds,
+  duration, position, size, key frame), the unit identity (index, offset,
+  prefix, sizes, type, decomposed/skip/error), then the
+  **coded-picture columns** (`pic_type`, `pic_type_value`, `poc`,
+  `frame_num`, `pic_lsb`, `first_mb`, `pps_id`, `qp_delta`, `ref_l0`,
+  `ref_l1`) filled for H.264/H.265 slice rows, and a compact-JSON
+  `summary` column for the other unit types (slice rows leave it empty —
+  the columns are the report). Element-level detail is not representable
+  in CSV (`detail` is ignored); the `unit_types` filter drops
+  non-matching rows entirely.
 - A malformed unit gets an `"error"` and parsing **continues** with the
   next unit — unlike `trace_headers`, which aborts on the first error.
+
+## Plotting bit rate
+
+Every unit row carries its byte `size`, the packet `time` in seconds, and
+a `class` — so bit rate over time, split into picture data vs. overhead,
+is a three-line aggregation over the CSV:
+
+```sh
+mediamolder trace-headers --format csv in.mp4 > units.csv
+```
+
+```python
+import pandas as pd
+df = pd.read_csv("units.csv")
+df = df[df.kind == "packet"]
+rate = (df.assign(bits=df["size"] * 8, second=df.time.astype(float).astype(int))
+          .pivot_table(index="second", columns="class", values="bits", aggfunc="sum")
+          .fillna(0))
+rate.plot(ylabel="bits/s")            # vcl vs sei vs ps per second
+```
+
+Filtering the optional units away (or selecting only them) is the same
+column: `df[df["class"] == "vcl"]` for pure picture payload,
+`df[df["class"] == "sei"]` for SEI overhead. In the JSON formats the
+same fields appear as `packets[].time` and `units[].class`.
+
+## Validation
+
+The report always carries a top-level `violations` list (layer 0): every
+unit parse failure the syntax templates detect — out-of-range elements,
+truncation, missing parameter-set references — as
+
+```jsonc
+{ "severity": "error", "kind": "syntax", "spec": "H.264",
+  "packet": 12, "unit": 0, "message": "PPS id 3 not available." }
+```
+
+Opt-in **structure checks** (layer 1, `kind: "structure"`) walk the same
+decode-order state the POC tracker keeps:
+
+| Check id | Severity | Finding |
+|---|---|---|
+| `vcl_before_ps` | error | picture data before any parameter sets (extradata or in-band) |
+| `frame_num_gap` | error | H.264 `frame_num` gap while `gaps_in_frame_num_allowed_flag` is 0 |
+| `no_aud` | warning | packet carries picture data but no access unit delimiter |
+| `sei_after_vcl` | warning | prefix SEI after the first VCL unit of the access unit |
+
+Presets: `default` = `vcl_before_ps,frame_num_gap` (flags only broken
+streams); `strict` adds the convention warnings — many perfectly legal
+streams fail those (no AUD, parameter sets only in extradata), which is
+why nothing beyond layer 0 is always-on.
+
+```sh
+mediamolder trace-headers --validate in.mp4            # exit non-zero on any
+                                                       # error-severity finding
+mediamolder trace-headers --checks strict in.mp4       # report-only
+```
+
+`--validate` implies `--checks default` when `--checks` is not given and
+makes the exit status reflect error-severity findings (syntax + failed
+checks). The graph node takes the same `checks` param plus
+`validate: true`, which fails the node (and so the job) instead. In CSV
+the findings append as `kind=violation` rows (check id in `name`,
+severity in `class`, message in `error`). Range and unit filters never
+hide violations — excluded packets are still parsed and checked.
+
+This is header-level validation only: semantics that need a decoder —
+DPB conformance, level limits, HRD/CPB timing, residual decoding — are
+out of scope. Structure checks need a structured format (`json`,
+`jsonl`, `csv`); `text` stays byte-for-byte FFmpeg parity.
 
 ## Library
 
@@ -177,7 +282,7 @@ for _, u := range frag.Units {
 
 The `cbs` package is cgo-free and safe on hostile input (fuzzed; a parse
 error is reported on the unit, never a panic). `cbs/report` renders the
-JSON/JSONL/text reports; `processors.RunBitstreamTrace` is the shared
+JSON/JSONL/CSV/text reports; `processors.RunBitstreamTrace` is the shared
 driver.
 
 ## Validation
@@ -199,5 +304,3 @@ diffs it. Fuzz targets (`FuzzH264ReadPacket`, `FuzzH265ReadPacket`,
   are parsed but rarely exercised.
 - Mid-stream parameter-set changes delivered as packet side data
   (`AV_PKT_DATA_NEW_EXTRADATA`) are not yet reported.
-- Slice-level derived POC (picture order count per H.264 §8.2.1) is not
-  computed; `pic_order_cnt_lsb` and the raw deltas are reported.

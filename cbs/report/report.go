@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 
 // Package report renders cbs parse results as a JSON document, JSON Lines
-// stream, or FFmpeg trace_headers-format text. It is the sink shared by
-// the bitstream_trace go_processor node and the `mediamolder trace-headers`
-// CLI subcommand.
+// stream, CSV rows, or FFmpeg trace_headers-format text. It is the sink
+// shared by the bitstream_trace go_processor node and the
+// `mediamolder trace-headers` CLI subcommand.
 package report
 
 import (
@@ -21,7 +21,10 @@ import (
 // Options selects the output shape.
 type Options struct {
 	// Format: "json" (single streamed document, default), "jsonl" (one
-	// object per packet), or "text" (trace_headers-format lines).
+	// object per packet), "csv" (one row per unit — coded pictures fill
+	// dedicated columns, other units carry a compact-JSON summary column;
+	// element detail is json/jsonl-only), or "text" (trace_headers-format
+	// lines).
 	Format string
 	// Detail: "elements" (full syntax-element trace), "headers"
 	// (elements for parameter sets / SEI / metadata, summaries for
@@ -42,6 +45,11 @@ type Options struct {
 	// Active only when RangeSet is true, so 0:0 is a valid window.
 	Range    [2]int64
 	RangeSet bool
+	// Checks enables the opt-in stream-structure checks (checks.go):
+	// preset names ("default", "strict") and/or individual check ids.
+	// Parse-error (syntax) violations are always collected. Not
+	// supported by the text format.
+	Checks []string
 }
 
 // packetGate applies MaxPackets and the inclusive packet-index range
@@ -137,19 +145,35 @@ type Writer interface {
 	// Done reports that MaxPackets / Range have been exhausted and the
 	// driver may stop early.
 	Done() bool
+	// Violations returns the collected violations (nil for the text
+	// format, which reports only counts).
+	Violations() []Violation
+	// ErrorViolations counts error-severity findings, for --validate
+	// exit status.
+	ErrorViolations() int
 	// Close flushes and writes the stats trailer.
 	Close() error
 }
 
 // NewWriter returns a Writer for the given options.
 func NewWriter(w io.Writer, opts Options) (Writer, error) {
+	checks, err := ResolveChecks(opts.Checks)
+	if err != nil {
+		return nil, err
+	}
+	opts.Checks = checks
 	switch opts.Format {
 	case "", "json", "jsonl":
 		return newJSONWriter(w, opts), nil
+	case "csv":
+		return newCSVWriter(w, opts), nil
 	case "text":
+		if len(checks) > 0 {
+			return nil, fmt.Errorf("report: structure checks need a structured format (json, jsonl, csv)")
+		}
 		return newTextWriter(w, opts), nil
 	}
-	return nil, fmt.Errorf("report: unknown format %q (json, jsonl, text)", opts.Format)
+	return nil, fmt.Errorf("report: unknown format %q (json, jsonl, csv, text)", opts.Format)
 }
 
 // --- unit-type filter ---
@@ -165,6 +189,11 @@ type unitFilter struct {
 // "idr", ...) to every per-codec TypeName they cover, so the same filter
 // spec works across H.264, H.265 and AV1.
 var unitNameAliases = map[string][]string{
+	// "caption" selects the units that can carry closed captions (T.35
+	// SEI and AV1 metadata OBUs); message-level caption detection lives
+	// in the summaries ("contains": ["cea608", ...]).
+	"caption":  {"sei", "sei_prefix", "sei_suffix", "metadata"},
+	"captions": {"sei", "sei_prefix", "sei_suffix", "metadata"},
 	"sps":      {"sps", "sequence_header"},
 	"seq":      {"sequence_header"},
 	"sei":      {"sei", "sei_prefix", "sei_suffix"},
@@ -377,7 +406,9 @@ type unitJSON struct {
 	EPB        []int          `json:"epb,omitempty"`
 	Type       uint32         `json:"type"`
 	Name       string         `json:"name"`
+	Class      string         `json:"class"`
 	Header     map[string]any `json:"header,omitempty"`
+	Picture    *pictureJSON   `json:"picture,omitempty"`
 	Summary    map[string]any `json:"summary,omitempty"`
 	Sections   []sectionJSON  `json:"sections,omitempty"`
 	Decomposed bool           `json:"decomposed"`
@@ -390,6 +421,8 @@ type packetJSON struct {
 	Index    int64      `json:"index"`
 	PTS      *int64     `json:"pts"`
 	DTS      *int64     `json:"dts"`
+	Time     *float64   `json:"time,omitempty"`     // pts in seconds
+	DTSTime  *float64   `json:"dts_time,omitempty"` // dts in seconds (monotonic)
 	Duration int64      `json:"duration,omitempty"`
 	Pos      int64      `json:"pos,omitempty"`
 	Size     int        `json:"size"`
@@ -408,6 +441,10 @@ type jsonWriter struct {
 	col         *collector
 	colElements bool // detail wants element sections at all
 	filter      unitFilter
+	sum         *summarizer
+	vlog        violationLog
+	checks      *checker
+	tb          [2]int
 	st          stats
 	gate        packetGate
 	started     bool
@@ -425,6 +462,7 @@ func newJSONWriter(w io.Writer, opts Options) *jsonWriter {
 		jsonl:  opts.Format == "jsonl",
 		col:    newCollector(),
 		filter: newUnitFilter(opts.UnitTypes),
+		sum:    newSummarizer(),
 		st:     stats{ByType: map[string]int64{}},
 		gate:   newPacketGate(opts),
 		first:  true,
@@ -468,13 +506,15 @@ func (jw *jsonWriter) BeginStream(src Source) error {
 	hdr := struct {
 		Schema string `json:"schema"`
 		Source Source `json:"source"`
-	}{"mediamolder.bitstream_trace/1", src}
+	}{"mediamolder.bitstream_trace/2", src}
 	jw.codec = src.Codec
+	jw.tb = src.TimeBase
+	jw.checks = newChecker(jw.opts.Checks, jw.codec, jw.sum, &jw.vlog)
 	if jw.jsonl {
 		jw.writeBytes(jw.marshal(hdr))
 		jw.writeByte('\n')
 	} else {
-		jw.writeString(`{"schema":"mediamolder.bitstream_trace/1","source":`)
+		jw.writeString(`{"schema":"mediamolder.bitstream_trace/2","source":`)
 		jw.writeBytes(jw.marshal(src))
 	}
 	jw.started = true
@@ -484,6 +524,7 @@ func (jw *jsonWriter) BeginStream(src Source) error {
 func (jw *jsonWriter) BeginExtradata() {
 	jw.col.reset()
 	jw.col.elements = jw.colElements
+	jw.checks.beginPacket(-1)
 }
 
 func (jw *jsonWriter) EndExtradata(frag *cbs.Fragment, err error) error {
@@ -496,12 +537,14 @@ func (jw *jsonWriter) EndExtradata(frag *cbs.Fragment, err error) error {
 	}{Units: []unitJSON{}}
 	if frag != nil {
 		xd.Size = len(frag.Data)
-		xd.Units = jw.unitsJSON(frag)
+		xd.Units = jw.unitsJSON(-1, frag)
 	}
 	if err != nil {
 		xd.Error = err.Error()
+		jw.addSplitViolation(-1, err)
 	}
 	xd.Diags = jw.col.fragDiags
+	jw.checks.endPacket()
 	if jw.jsonl {
 		jw.writeBytes(jw.marshal(struct {
 			Extradata any `json:"extradata"`
@@ -524,6 +567,7 @@ func (jw *jsonWriter) BeginPacket(pkt PacketInfo) {
 	jw.curPkt = pkt
 	jw.includeCur = jw.gate.include(pkt.Index)
 	jw.col.elements = jw.colElements && jw.includeCur
+	jw.checks.beginPacket(pkt.Index)
 }
 
 func (jw *jsonWriter) EndPacket(frag *cbs.Fragment, err error) error {
@@ -531,6 +575,20 @@ func (jw *jsonWriter) EndPacket(frag *cbs.Fragment, err error) error {
 	jw.st.addFragment(frag)
 	jw.gate.note(jw.curPkt.Index, jw.includeCur)
 	if !jw.includeCur {
+		// Skipped packets still advance decode-order state (parameter
+		// sets, POC tracking) and still surface violations.
+		if frag != nil {
+			for i := range frag.Units {
+				u := &frag.Units[i]
+				pic := jw.sum.advance(u)
+				jw.recordUnitViolations(jw.curPkt.Index, i, u)
+				jw.checks.observe(jw.curPkt.Index, i, u, pic)
+			}
+		}
+		if err != nil {
+			jw.addSplitViolation(jw.curPkt.Index, err)
+		}
+		jw.checks.endPacket()
 		return jw.err
 	}
 
@@ -548,18 +606,26 @@ func (jw *jsonWriter) EndPacket(frag *cbs.Fragment, err error) error {
 	if pkt.HasPTS {
 		v := pkt.PTS
 		pj.PTS = &v
+		if sec, ok := packetTime(jw.tb, pkt.PTS); ok {
+			pj.Time = &sec
+		}
 	}
 	if pkt.HasDTS {
 		v := pkt.DTS
 		pj.DTS = &v
+		if sec, ok := packetTime(jw.tb, pkt.DTS); ok {
+			pj.DTSTime = &sec
+		}
 	}
 	if frag != nil {
-		pj.Units = jw.unitsJSON(frag)
+		pj.Units = jw.unitsJSON(jw.curPkt.Index, frag)
 	}
 	if err != nil {
 		pj.Error = err.Error()
+		jw.addSplitViolation(jw.curPkt.Index, err)
 	}
 
+	jw.checks.endPacket()
 	if jw.jsonl {
 		jw.writeBytes(jw.marshal(struct {
 			Packet packetJSON `json:"packet"`
@@ -580,10 +646,44 @@ func (jw *jsonWriter) EndPacket(frag *cbs.Fragment, err error) error {
 	return jw.err
 }
 
-func (jw *jsonWriter) unitsJSON(frag *cbs.Fragment) []unitJSON {
+// addSplitViolation records a fragment split failure (bad avcC/hvcC,
+// bad NALFF length, no start code): the packet could not be fully
+// decomposed, which is always error-severity.
+func (jw *jsonWriter) addSplitViolation(packet int64, err error) {
+	msg := firstErrorDiag(jw.col.fragDiags)
+	if msg == "" {
+		msg = err.Error()
+	}
+	jw.vlog.add(Violation{
+		Severity: "error",
+		Kind:     "syntax",
+		Spec:     specName(jw.codec),
+		Packet:   packet,
+		Unit:     -1,
+		Message:  msg,
+	})
+}
+
+// recordUnitViolations maps a failed unit into a layer-0 violation,
+// preferring the parse diagnostic captured by the tracer as message.
+func (jw *jsonWriter) recordUnitViolations(packet int64, unit int, u *cbs.Unit) {
+	if u.Err == nil {
+		return
+	}
+	msg := ""
+	if ue := jw.col.units[unit]; ue != nil {
+		msg = firstErrorDiag(ue.diags)
+	}
+	jw.vlog.addUnitError(jw.codec, packet, unit, u, msg)
+}
+
+func (jw *jsonWriter) unitsJSON(packet int64, frag *cbs.Fragment) []unitJSON {
 	out := make([]unitJSON, 0, len(frag.Units))
 	for i := range frag.Units {
 		u := &frag.Units[i]
+		pic := jw.sum.advance(u)
+		jw.recordUnitViolations(packet, i, u)
+		jw.checks.observe(packet, i, u, pic)
 		uj := unitJSON{
 			Index:      i,
 			Offset:     u.Offset,
@@ -592,6 +692,7 @@ func (jw *jsonWriter) unitsJSON(frag *cbs.Fragment) []unitJSON {
 			RbspSize:   len(u.RBSP),
 			Type:       u.Type,
 			Name:       u.TypeName,
+			Class:      classify(jw.codec, u),
 			Header:     unitHeaderJSON(jw.codec, u),
 			Decomposed: u.Decomposed,
 			Skip:       u.Skip,
@@ -607,7 +708,11 @@ func (jw *jsonWriter) unitsJSON(frag *cbs.Fragment) []unitJSON {
 		if jw.opts.Detail == "elements" || jw.opts.Detail == "" {
 			uj.EPB = u.EPBPositions
 		}
-		uj.Summary = summarize(u)
+		if pic != nil {
+			uj.Picture = pic
+		} else {
+			uj.Summary = summarize(u)
+		}
 		if ue := jw.col.units[i]; ue != nil {
 			uj.Diags = ue.diags
 			includeSections := false
@@ -626,21 +731,35 @@ func (jw *jsonWriter) unitsJSON(frag *cbs.Fragment) []unitJSON {
 	return out
 }
 
+func (jw *jsonWriter) Violations() []Violation { return jw.vlog.list }
+
+func (jw *jsonWriter) ErrorViolations() int { return jw.vlog.errors }
+
 func (jw *jsonWriter) Close() error {
+	violations := jw.vlog.list
+	if violations == nil {
+		violations = []Violation{}
+	}
 	if jw.jsonl {
+		jw.writeBytes(jw.marshal(struct {
+			Violations []Violation `json:"violations"`
+		}{violations}))
+		jw.writeByte('\n')
 		jw.writeBytes(jw.marshal(struct {
 			Stats stats `json:"stats"`
 		}{jw.st}))
 		jw.writeByte('\n')
 	} else {
 		if !jw.started {
-			jw.writeString(`{"schema":"mediamolder.bitstream_trace/1"`)
+			jw.writeString(`{"schema":"mediamolder.bitstream_trace/2"`)
 		}
 		if jw.inPkts {
 			jw.writeString("\n]")
 		} else {
 			jw.writeString(`,"packets":[]`)
 		}
+		jw.writeString(`,"violations":`)
+		jw.writeBytes(jw.marshal(violations))
 		jw.writeString(`,"stats":`)
 		jw.writeBytes(jw.marshal(jw.st))
 		jw.writeString("}\n")
@@ -656,7 +775,9 @@ func (jw *jsonWriter) Close() error {
 type textWriter struct {
 	tt       *cbs.TextTracer
 	opts     Options
+	codec    string
 	st       stats
+	vlog     violationLog
 	gate     packetGate
 	curIdx   int64
 	suppress bool
@@ -692,13 +813,39 @@ func (g gatedTextTracer) Diag(level cbs.Level, msg string) {
 
 func (tw *textWriter) Tracer() cbs.Tracer { return gatedTextTracer{tw} }
 
-func (tw *textWriter) BeginStream(Source) error { return tw.tt.Err() }
+func (tw *textWriter) BeginStream(src Source) error {
+	tw.codec = src.Codec
+	return tw.tt.Err()
+}
 
 func (tw *textWriter) BeginExtradata() { tw.tt.Line("Extradata") }
 
 func (tw *textWriter) EndExtradata(frag *cbs.Fragment, err error) error {
 	tw.st.addFragment(frag)
+	tw.recordViolations(-1, frag, err)
 	return tw.tt.Err()
+}
+
+// recordViolations applies the layer-0 rules shared with the structured
+// writers: failed units (minus legal-but-unsupported ones) and split
+// failures. The text output itself stays FFmpeg parity; the findings
+// only feed the counts behind --validate.
+func (tw *textWriter) recordViolations(packet int64, frag *cbs.Fragment, splitErr error) {
+	if frag != nil {
+		for i := range frag.Units {
+			tw.vlog.addUnitError(tw.codec, packet, i, &frag.Units[i], "")
+		}
+	}
+	if splitErr != nil {
+		tw.vlog.add(Violation{
+			Severity: "error",
+			Kind:     "syntax",
+			Spec:     specName(tw.codec),
+			Packet:   packet,
+			Unit:     -1,
+			Message:  splitErr.Error(),
+		})
+	}
 }
 
 // BeginPacket prints the packet line exactly as trace_headers.c does,
@@ -740,9 +887,17 @@ func (tw *textWriter) EndPacket(frag *cbs.Fragment, err error) error {
 	tw.suppress = false
 	tw.st.Packets++
 	tw.st.addFragment(frag)
+	tw.recordViolations(tw.curIdx, frag, err)
 	return tw.tt.Err()
 }
 
 func (tw *textWriter) Done() bool { return tw.gate.done() }
+
+// Violations: collected with the same layer-0 rules as the structured
+// formats but never printed (text is FFmpeg parity); structure checks
+// are rejected at NewWriter.
+func (tw *textWriter) Violations() []Violation { return tw.vlog.list }
+
+func (tw *textWriter) ErrorViolations() int { return tw.vlog.errors }
 
 func (tw *textWriter) Close() error { return tw.tt.Err() }
