@@ -23,21 +23,13 @@ const (
 )
 
 // decodeErrorGate is the per-stream policy for decoder failures inside the
-// source node.
-//
-// libav reports damage at packet granularity — a corrupt AC-3 frame, a slice
-// with a bad header — and ffmpeg's own decode loop (fftools/ffmpeg_dec.c)
-// logs such an error, counts it and moves on to the next packet unless
-// `-xerror` was given. Before this gate the source node returned the first
-// such error and the whole run died: a 40-minute tape capture with two bad
-// audio frames produced nothing at all, where ffmpeg would have produced 40
-// minutes minus 64 ms.
-//
-// Every error is counted (the node's Errors metric carries the total), the
-// run continues, and only a stream that stops decoding altogether
-// (maxConsecutive in a row) or an explicit exit_on_error turns a bad packet
-// into a failed run. The gate is pure Go so the policy is testable without
-// libav.
+// source node: ffmpeg's default (fftools/ffmpeg_dec.c packet_decode). libav
+// reports damage at packet granularity — a corrupt AC-3 frame, a slice with a
+// bad header — and each such error is counted (the node's Errors metric
+// carries the total) and skipped. Only a stream that stops decoding
+// altogether (maxConsecutive in a row) or an explicit exit_on_error
+// (`-xerror`) turns a bad packet into a failed run. Pure Go, so the policy is
+// testable without libav.
 type decodeErrorGate struct {
 	source         string // node id, for messages
 	stream         int    // stream index, for messages

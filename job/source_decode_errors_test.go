@@ -4,9 +4,11 @@
 package job
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -144,7 +146,12 @@ func TestSourceSkipsUndecodablePackets(t *testing.T) {
 
 	bad := filepath.Join(dir, "damaged.ts")
 	damageAudioPackets(t, clean, bad, 6)
+	// The gate logs each skip with the decoder's error; the fixture must
+	// reproduce the real thing — the AC-3 parser's sync failure, named.
+	var logged bytes.Buffer
+	log.SetOutput(&logged)
 	got, errs, err := decodeThroughSource(t, bad, dir, "")
+	log.SetOutput(os.Stderr)
 	if err != nil {
 		t.Fatalf("a damaged frame must not fail the run: %v", err)
 	}
@@ -153,6 +160,12 @@ func TestSourceSkipsUndecodablePackets(t *testing.T) {
 	}
 	if got < base*90/100 {
 		t.Fatalf("too much audio lost: %d of %d samples (%d decode errors)", got, base, errs)
+	}
+	if !strings.Contains(logged.String(), "AAC_AC3_PARSE_ERROR_SYNC") {
+		t.Fatalf("the skipped packets must be the AC-3 sync failure, named; log:\n%s", logged.String())
+	}
+	if !strings.Contains(logged.String(), fmt.Sprintf("skipped %d undecodable packet", errs)) {
+		t.Fatalf("no per-stream summary line; log:\n%s", logged.String())
 	}
 	t.Logf("damaged: %d decode errors skipped, %d of %d samples kept", errs, got, base)
 }

@@ -214,11 +214,16 @@ func (r *graphRunner) handleSource(ctx context.Context, node *graph.Node, outs [
 				if av.IsEAgain(err) || av.IsEOF(err) {
 					return nil
 				}
-				// The decoder rejected what it was fed (a damaged frame
-				// surfacing on the receive side — AC-3 reports its
-				// parser errors here). The packet is already consumed;
-				// count it and let the next SendPacket re-prime.
-				return decodeFailed(si.Index, err)
+				// A damaged frame surfacing on the receive side. Count
+				// it and keep receiving: a packet can decode to several
+				// frames, and the decoder is not ready for the next
+				// packet until it has been drained to EAGAIN (ffmpeg's
+				// packet_decode does the same; the gate's cap bounds a
+				// decoder that only ever errors).
+				if ferr := decodeFailed(si.Index, err); ferr != nil {
+					return ferr
+				}
+				continue
 			}
 			gateFor(si.Index).onFrame()
 			if si.Type == av.MediaTypeAudio {
@@ -425,6 +430,7 @@ func (r *graphRunner) handleSource(ctx context.Context, node *graph.Node, outs [
 					continue
 				}
 				if got {
+					gateFor(pkt.StreamIndex()).onFrame()
 					for _, idx := range subChans {
 						if perfSend(ctx, outs[idx], sub, t) {
 							sub.Close()
@@ -467,14 +473,15 @@ func (r *graphRunner) handleSource(ctx context.Context, node *graph.Node, outs [
 				// the file. Never skip past it.
 				return err
 			}
-			// The decoder refused the packet outright (a bad frame
-			// header, a parser failure): skip it, exactly as ffmpeg's
-			// "Error submitting packet to decoder" path does.
+			// The decoder refused the packet (a bad frame header, a
+			// parser failure): count it and fall through to the drain
+			// below, as ffmpeg's packet_decode does after "Error
+			// submitting packet to decoder" — a rejected packet can
+			// leave frames pending, and a decoder not drained to EAGAIN
+			// refuses the next packet with EAGAIN.
 			if ferr := decodeFailed(pkt.StreamIndex(), err); ferr != nil {
 				return ferr
 			}
-			r.pipe.Metrics().Node(node.ID).RecordLatency(time.Since(frameStart))
-			continue
 		}
 		if err := receiveAll(dec, si); err != nil {
 			return err
@@ -510,8 +517,9 @@ func (r *graphRunner) handleSource(ctx context.Context, node *graph.Node, outs [
 				if ferr := decodeFailed(idx, err); ferr != nil {
 					return ferr
 				}
-				break // the tail was damaged; everything before it was delivered
+				continue // keep draining past a damaged tail frame
 			}
+			gateFor(idx).onFrame()
 			if si.Type == av.MediaTypeAudio {
 				rescaleAudioPTS(f, si)
 			}
