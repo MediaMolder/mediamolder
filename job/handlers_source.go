@@ -109,6 +109,26 @@ func (r *graphRunner) handleSource(ctx context.Context, node *graph.Node, outs [
 	// bar and shows only elapsed-time and processed-media-time.
 	r.pipe.Metrics().Node(node.ID).SetMediaDuration(src.mediaDuration)
 
+	// Decoder failures are per-stream and per-packet, and — as in ffmpeg's
+	// own decode loop — skipped rather than fatal (decodeErrorGate). Every
+	// skip lands in the node's Errors metric; the gate decides whether the
+	// stream is still worth reading.
+	gates := make(map[int]*decodeErrorGate)
+	gateFor := func(streamIdx int) *decodeErrorGate {
+		g, ok := gates[streamIdx]
+		if !ok {
+			g = newDecodeErrorGate(node.ID, streamIdx, r.cfg.GlobalOptions.ExitOnError)
+			gates[streamIdx] = g
+		}
+		return g
+	}
+	// decodeFailed counts one undecodable packet on streamIdx and returns
+	// the error that ends the run, or nil to carry on with the next packet.
+	decodeFailed := func(streamIdx int, err error) error {
+		r.pipe.Metrics().Node(node.ID).Errors.Add(1)
+		return gateFor(streamIdx).onError(err)
+	}
+
 	// sendFrame delivers f to each listed output channel. When more
 	// than one channel is listed (multiple consumers of the same
 	// stream) the frame is cloned for all but the last recipient so
@@ -194,8 +214,18 @@ func (r *graphRunner) handleSource(ctx context.Context, node *graph.Node, outs [
 				if av.IsEAgain(err) || av.IsEOF(err) {
 					return nil
 				}
-				return err
+				// A damaged frame surfacing on the receive side. Count
+				// it and keep receiving: a packet can decode to several
+				// frames, and the decoder is not ready for the next
+				// packet until it has been drained to EAGAIN (ffmpeg's
+				// packet_decode does the same; the gate's cap bounds a
+				// decoder that only ever errors).
+				if ferr := decodeFailed(si.Index, err); ferr != nil {
+					return ferr
+				}
+				continue
 			}
+			gateFor(si.Index).onFrame()
 			if si.Type == av.MediaTypeAudio {
 				rescaleAudioPTS(f, si)
 			}
@@ -392,9 +422,15 @@ func (r *graphRunner) handleSource(ctx context.Context, node *graph.Node, outs [
 			if subChans := streamIdxToFrameChans[si.Index]; len(subChans) > 0 {
 				sub, got, err := subDec.Decode(pkt)
 				if err != nil {
-					return err
+					// ffmpeg tolerates subtitle decode errors too.
+					if ferr := decodeFailed(pkt.StreamIndex(), err); ferr != nil {
+						return ferr
+					}
+					r.pipe.Metrics().Node(node.ID).RecordLatency(time.Since(frameStart))
+					continue
 				}
 				if got {
+					gateFor(pkt.StreamIndex()).onFrame()
 					for _, idx := range subChans {
 						if perfSend(ctx, outs[idx], sub, t) {
 							sub.Close()
@@ -421,8 +457,31 @@ func (r *graphRunner) handleSource(ctx context.Context, node *graph.Node, outs [
 			r.pipe.Metrics().Node(node.ID).RecordLatency(time.Since(frameStart))
 			continue
 		}
+		// A packet the demuxer flagged corrupt still goes to the decoder
+		// (ffmpeg does the same without -fflags +discardcorrupt: decoders
+		// conceal partial damage, and the decode path below catches what
+		// they cannot). The flag is a warning unless exit_on_error.
+		if pkt.IsCorrupt() {
+			if err := gateFor(pkt.StreamIndex()).onCorrupt(); err != nil {
+				return err
+			}
+		}
 		if err := dec.SendPacket(pkt); err != nil {
-			return err
+			if av.IsEAgain(err) {
+				// The decoder's queue was not drained — a bug in this
+				// loop (see the consumer check above), not damage in
+				// the file. Never skip past it.
+				return err
+			}
+			// The decoder refused the packet (a bad frame header, a
+			// parser failure): count it and fall through to the drain
+			// below, as ffmpeg's packet_decode does after "Error
+			// submitting packet to decoder" — a rejected packet can
+			// leave frames pending, and a decoder not drained to EAGAIN
+			// refuses the next packet with EAGAIN.
+			if ferr := decodeFailed(pkt.StreamIndex(), err); ferr != nil {
+				return ferr
+			}
 		}
 		if err := receiveAll(dec, si); err != nil {
 			return err
@@ -439,7 +498,10 @@ func (r *graphRunner) handleSource(ctx context.Context, node *graph.Node, outs [
 			continue
 		}
 		if err := dec.Flush(); err != nil && !av.IsEOF(err) && !av.IsEAgain(err) {
-			return err
+			if ferr := decodeFailed(idx, err); ferr != nil {
+				return ferr
+			}
+			continue // nothing to drain from a decoder that refused to flush
 		}
 		// Drain remaining decoded frames.
 		for {
@@ -452,8 +514,12 @@ func (r *graphRunner) handleSource(ctx context.Context, node *graph.Node, outs [
 				if av.IsEOF(err) || av.IsEAgain(err) {
 					break
 				}
-				return err
+				if ferr := decodeFailed(idx, err); ferr != nil {
+					return ferr
+				}
+				continue // keep draining past a damaged tail frame
 			}
+			gateFor(idx).onFrame()
 			if si.Type == av.MediaTypeAudio {
 				rescaleAudioPTS(f, si)
 			}
@@ -461,6 +527,18 @@ func (r *graphRunner) handleSource(ctx context.Context, node *graph.Node, outs [
 				f.Close()
 				return err
 			}
+		}
+	}
+	// One line per damaged stream, so a run that skipped packets says so
+	// even when nothing downstream noticed.
+	gateIdx := make([]int, 0, len(gates))
+	for idx := range gates {
+		gateIdx = append(gateIdx, idx)
+	}
+	sort.Ints(gateIdx)
+	for _, idx := range gateIdx {
+		if s := gates[idx].summary(); s != "" {
+			log.Print(s)
 		}
 	}
 	return nil

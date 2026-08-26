@@ -5,6 +5,7 @@ package job
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"os"
@@ -454,7 +455,13 @@ func (r *graphRunner) resolveThreadType(node *graph.Node) string {
 	return r.cfg.GlobalOptions.ThreadType
 }
 
-func (r *graphRunner) close() {
+// close releases every resource the runner opened. It returns the joined
+// go_processor / event-sink Close() errors: a processor that does its real
+// work in Close() (a speech-to-text processor transcribes its whole buffer
+// there; a file-writing hook flushes there) has no other way to report
+// failure, and dropping the value made a run that produced nothing look like
+// one that succeeded. The run's own error takes precedence at the caller.
+func (r *graphRunner) close() error {
 	for _, s := range r.sources {
 		s.Close()
 	}
@@ -464,6 +471,7 @@ func (r *graphRunner) close() {
 	for _, enc := range r.encoders {
 		enc.Close()
 	}
+	var errs []error
 	// Close go_processors in topological order (event producers first) so that
 	// a producer's Close() — which blocks until its upload goroutines finish
 	// and fire OnSegmentCompleted on downstream consumers — completes before
@@ -471,18 +479,24 @@ func (r *graphRunner) close() {
 	closedProc := make(map[string]bool, len(r.goProcessors))
 	for _, id := range r.goProcessorCloseOrder {
 		if p, ok := r.goProcessors[id]; ok {
-			p.Close()
+			if err := p.Close(); err != nil {
+				errs = append(errs, fmt.Errorf("go_processor %q close: %w", id, err))
+			}
 			closedProc[id] = true
 		}
 	}
 	for id, p := range r.goProcessors {
 		if !closedProc[id] {
-			p.Close()
+			if err := p.Close(); err != nil {
+				errs = append(errs, fmt.Errorf("go_processor %q close: %w", id, err))
+			}
 		}
 	}
-	for _, sinks := range r.eventsSinks {
+	for id, sinks := range r.eventsSinks {
 		for _, s := range sinks {
-			_ = s.Close()
+			if err := s.Close(); err != nil {
+				errs = append(errs, fmt.Errorf("event sink %q close: %w", id, err))
+			}
 		}
 	}
 	for _, f := range r.passLogFiles {
@@ -500,6 +514,7 @@ func (r *graphRunner) close() {
 		_ = d.Close()
 	}
 	// Sinks are finalized by the caller (muxer.Close for atomic rename).
+	return errors.Join(errs...)
 }
 
 // handle dispatches to the appropriate per-kind handler.

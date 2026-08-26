@@ -96,7 +96,33 @@ func (s *Scheduler) Run(ctx context.Context, g *graph.Graph, handler NodeHandler
 		})
 	}
 
-	return eg.Wait()
+	err := eg.Wait()
+	// Every producer has returned and closed its outputs, so each edge is a
+	// closed channel that may still hold values a consumer never took: on an
+	// error the errgroup cancels the other nodes, and a consumer that returns
+	// on ctx.Done leaves its inbound buffer as it was. Those values are
+	// libav frames and packets — owned by whoever receives them — so they
+	// must be released here or they leak (LeakSanitizer caught exactly this
+	// on an aborted run: decoded audio frames stranded on a source→encoder
+	// edge).
+	for _, ch := range edgeCh {
+		drainClose(ch)
+	}
+	return err
+}
+
+// drainClose receives everything left on a closed channel and releases each
+// value that knows how to be released (av.Frame / av.Packet / subtitles have
+// a bare Close(); io.Closer-shaped values are honoured too).
+func drainClose(ch chan any) {
+	for v := range ch {
+		switch c := v.(type) {
+		case interface{ Close() }:
+			c.Close()
+		case interface{ Close() error }:
+			_ = c.Close()
+		}
+	}
 }
 
 // FanOut reads values from src and broadcasts each value to all dsts.

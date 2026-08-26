@@ -33,6 +33,31 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- **Source node tolerates decoder errors the way ffmpeg does.** A packet a
+  decoder rejects mid-stream (a damaged AC-3 frame in a camcorder transport
+  stream, a slice with a bad header) used to end the whole run with a bare
+  `averror(-16976906): Error number -16976906 occurred` — a 40-minute tape with
+  two bad audio frames produced nothing. The graph source now skips such
+  packets and counts them in the node's `Errors` metric (one summary log line
+  per damaged stream), like ffmpeg's decode loop; a stream that stops
+  decoding altogether (1000 consecutive failures) still fails the run, and the
+  new `global_options.exit_on_error` restores abort-on-first-error (`-xerror`).
+  A demuxer-flagged corrupt packet is logged and still handed to the decoder,
+  as in ffmpeg without `-fflags +discardcorrupt`.
+- **AAC/AC-3 parser error codes are named.** libavcodec's private
+  `AAC_AC3_PARSE_ERROR_*` codes (which `av_strerror` cannot render) now read
+  e.g. `AC-3/AAC parser: frame sync error (AAC_AC3_PARSE_ERROR_SYNC)`, with
+  `av.IsCodecParseError` and `av.ErrCodeAACAC3Parse*` for callers.
+- **An aborted run no longer leaks the frames left on its edges.** When a
+  node fails, the scheduler cancels the others; a consumer returning on
+  cancellation left its inbound buffer as it was, and the libav frames and
+  packets in it were never released. The scheduler now drains every edge
+  after the last node returns and releases what is left (LeakSanitizer found
+  decoded audio frames stranded on a source→encoder edge).
+- **go_processor `Close()` errors reach `Run`.** A processor that does its
+  real work at close time (a transcriber flushing its buffer, a file-writing
+  hook) could fail silently; the joined close errors are now the run's error
+  when nothing earlier failed. An earlier run error still wins.
 - **Bitstream trace POC correctness.** HEVC dependent slice segments (which
   carry no `slice_pic_order_cnt_lsb`) no longer poison the prevTid0 state —
   they reuse the picture's POC and inherit the independent segment's record

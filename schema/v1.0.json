@@ -324,6 +324,7 @@
         "hw_accel": { "type": "string" },
         "hw_device": { "type": "string" },
         "realtime": { "type": "boolean" },
+        "exit_on_error": { "type": "boolean", "description": "Mirrors ffmpeg -xerror: the first packet a decoder rejects (or the demuxer flags corrupt) fails the run. Off by default: damaged packets are skipped and counted in the source node's Errors metric, and only a stream that stops decoding altogether (1000 consecutive failures) fails the run." },
         "highest_quality_preset": { "type": "string", "description": "Phase 6 adaptive stepping: the slowest (highest quality) preset the controller is allowed to use. The controller may step freely to any faster preset to maintain real-time throughput. Omit to allow stepping all the way to the initial encoder preset." },
         "preset_group_step": { "type": "boolean", "description": "When true (default), step every eligible video encoder together once a quorum is simultaneously behind." },
         "target_fps": { "type": "number", "minimum": 0, "description": "Graph-level real-time fps target; 0 = derive from per-node fps_target." },
