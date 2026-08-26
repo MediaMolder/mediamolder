@@ -48,6 +48,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   `AAC_AC3_PARSE_ERROR_*` codes (which `av_strerror` cannot render) now read
   e.g. `AC-3/AAC parser: frame sync error (AAC_AC3_PARSE_ERROR_SYNC)`, with
   `av.IsCodecParseError` and `av.ErrCodeAACAC3Parse*` for callers.
+- **An aborted run no longer leaks the frames left on its edges.** When a
+  node fails, the scheduler cancels the others; a consumer returning on
+  cancellation left its inbound buffer as it was, and the libav frames and
+  packets in it were never released. The scheduler now drains every edge
+  after the last node returns and releases what is left (LeakSanitizer found
+  decoded audio frames stranded on a source→encoder edge).
 - **go_processor `Close()` errors reach `Run`.** A processor that does its
   real work at close time (a transcriber flushing its buffer, a file-writing
   hook) could fail silently; the joined close errors are now the run's error
