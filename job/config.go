@@ -1298,6 +1298,13 @@ type Options struct {
 	HardwareDevice string `json:"hw_device,omitempty"`
 	Realtime       bool   `json:"realtime,omitempty"`
 
+	// ExitOnError mirrors ffmpeg's `-xerror`: the first packet a decoder
+	// rejects (or the demuxer flags corrupt) fails the run. Off by default,
+	// as in ffmpeg: damaged packets are skipped and counted in the source
+	// node's Errors metric, and only a stream that stops decoding
+	// altogether (maxConsecutiveDecodeErrors in a row) fails the run.
+	ExitOnError bool `json:"exit_on_error,omitempty"`
+
 	// Phase 6 — adaptive encoder preset stepping.
 	//
 	// HighestQualityPreset: the slowest (highest quality) preset the

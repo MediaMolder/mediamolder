@@ -1214,7 +1214,11 @@ func (p *Pipeline) runGraph(ctx context.Context) (runErr error) {
 	// 3. Pre-open all AV resources in topological order.
 	runner := newGraphRunner(cfg, p)
 	defer func() {
-		runner.close()
+		// A processor's Close() error is the run's error when nothing
+		// earlier failed; an earlier failure is the root cause and wins.
+		if cerr := runner.close(); cerr != nil && runErr == nil {
+			runErr = cerr
+		}
 		p.mu.Lock()
 		p.graphRunner = nil
 		p.reconf = nil
