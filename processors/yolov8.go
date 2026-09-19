@@ -28,12 +28,7 @@ func ParseYOLOv8Output(raw []float32, numClasses, numPreds, inputSize int, confT
 		return nil
 	}
 
-	// Compute letterbox reverse-mapping parameters.
-	scale := math.Min(float64(inputSize)/float64(origW), float64(inputSize)/float64(origH))
-	newW := math.Round(float64(origW) * scale)
-	newH := math.Round(float64(origH) * scale)
-	offsetX := (float64(inputSize) - newW) / 2.0
-	offsetY := (float64(inputSize) - newH) / 2.0
+	unX, unY := unletterbox(inputSize, origW, origH)
 
 	var dets []Detection
 	for i := 0; i < numPreds; i++ {
@@ -57,23 +52,10 @@ func ParseYOLOv8Output(raw []float32, numClasses, numPreds, inputSize int, confT
 		w := float64(raw[2*numPreds+i])
 		h := float64(raw[3*numPreds+i])
 
-		// Convert to corner coordinates in model-input space.
-		x1 := cx - w/2
-		y1 := cy - h/2
-		x2 := cx + w/2
-		y2 := cy + h/2
-
-		// Reverse letterbox: model coords → original frame pixels.
-		x1 = (x1 - offsetX) / scale
-		y1 = (y1 - offsetY) / scale
-		x2 = (x2 - offsetX) / scale
-		y2 = (y2 - offsetY) / scale
-
-		// Clamp to frame bounds.
-		x1 = math.Max(0, math.Min(x1, float64(origW)))
-		y1 = math.Max(0, math.Min(y1, float64(origH)))
-		x2 = math.Max(0, math.Min(x2, float64(origW)))
-		y2 = math.Max(0, math.Min(y2, float64(origH)))
+		x1 := unX(cx - w/2)
+		y1 := unY(cy - h/2)
+		x2 := unX(cx + w/2)
+		y2 := unY(cy + h/2)
 
 		label := "unknown"
 		if bestClass < len(labels) {
@@ -88,6 +70,20 @@ func ParseYOLOv8Output(raw []float32, numClasses, numPreds, inputSize int, confT
 	}
 
 	return dets
+}
+
+// unletterbox maps model-input coordinates (after a centred letterbox to
+// inputSize²) back to original-frame pixels, clamped to the frame.
+// Offsets use float division of the rounded scaled size — the arithmetic
+// ParseYOLOv8Output used inline — not Letterbox's integer (target-new)/2 pad.
+func unletterbox(inputSize, origW, origH int) (unX, unY func(float64) float64) {
+	scale := math.Min(float64(inputSize)/float64(origW), float64(inputSize)/float64(origH))
+	offsetX := (float64(inputSize) - math.Round(float64(origW)*scale)) / 2.0
+	offsetY := (float64(inputSize) - math.Round(float64(origH)*scale)) / 2.0
+	origWf, origHf := float64(origW), float64(origH)
+	unX = func(x float64) float64 { return math.Max(0, math.Min((x-offsetX)/scale, origWf)) }
+	unY = func(y float64) float64 { return math.Max(0, math.Min((y-offsetY)/scale, origHf)) }
+	return
 }
 
 // NMS performs greedy non-maximum suppression. Detections are sorted by
