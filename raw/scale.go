@@ -105,57 +105,77 @@ func distrib(n, m int) []tap {
 // scaleRGB16 resamples a packed RGB16 buffer (w×h, 3 samples per pixel, host order) to
 // nw×nh and writes it into a new NRGBA64 (big-endian samples, alpha 0xFFFF). workers ≤ 0
 // means one per CPU.
+//
+// The two passes run in chunks of destination rows: the window of source rows a chunk
+// needs is shrunk horizontally into a float32 buffer the size of that window, then the
+// chunk's rows are shrunk vertically from it. The windows of neighbouring chunks overlap by
+// the kernel's support, a few rows, which are shrunk again; what is never built is a
+// horizontal pass over the whole sensor (189 MB of float32 for a 24-megapixel sensor to
+// 4096), so the develop's transient is the chunk's window. Within a chunk each pass is
+// banded across the workers by rows.
 func scaleRGB16(src []uint16, w, h, nw, nh, workers int) *image.NRGBA64 {
 	if workers <= 0 {
 		workers = runtime.GOMAXPROCS(0)
 	}
-	if workers > h {
-		workers = h
-	}
 	xs := distrib(nw, w)
 	ys := distrib(nh, h)
-	// Pass one: every source row, shrunk to nw, as float32 RGB.
-	tmp := make([]float32, h*nw*3)
-	parallelRows(h, workers, func(y0, y1 int) {
-		for y := y0; y < y1; y++ {
-			srow := src[y*w*3 : (y+1)*w*3]
-			trow := tmp[y*nw*3 : (y+1)*nw*3]
-			for x, t := range xs {
-				var r, g, b float32
-				s := t.first * 3
-				for _, wt := range t.weights {
-					r += wt * float32(srow[s])
-					g += wt * float32(srow[s+1])
-					b += wt * float32(srow[s+2])
-					s += 3
-				}
-				trow[x*3], trow[x*3+1], trow[x*3+2] = r, g, b
-			}
-		}
-	})
-	// Pass two: every destination row from the shrunk source rows.
 	dst := image.NewNRGBA64(image.Rect(0, 0, nw, nh))
-	parallelRows(nh, workers, func(y0, y1 int) {
-		for y := y0; y < y1; y++ {
-			t := ys[y]
-			drow := dst.Pix[y*dst.Stride : y*dst.Stride+nw*8]
-			for x := 0; x < nw; x++ {
-				var r, g, b float32
-				s := t.first*nw*3 + x*3
-				for _, wt := range t.weights {
-					r += wt * tmp[s]
-					g += wt * tmp[s+1]
-					b += wt * tmp[s+2]
-					s += nw * 3
-				}
-				d := x * 8
-				binary.BigEndian.PutUint16(drow[d:d+2], ftou16(r))
-				binary.BigEndian.PutUint16(drow[d+2:d+4], ftou16(g))
-				binary.BigEndian.PutUint16(drow[d+4:d+6], ftou16(b))
-				binary.BigEndian.PutUint16(drow[d+6:d+8], 0xFFFF)
-			}
+	const chunk = 64
+	var tmp []float32
+	for y0 := 0; y0 < nh; y0 += chunk {
+		y1 := y0 + chunk
+		if y1 > nh {
+			y1 = nh
 		}
-	})
+		// The source rows this chunk reads: the taps' firsts rise with the row.
+		s0 := ys[y0].first
+		s1 := ys[y1-1].first + len(ys[y1-1].weights)
+		rows := s1 - s0
+		if cap(tmp) < rows*nw*3 {
+			tmp = make([]float32, rows*nw*3)
+		}
+		tmp = tmp[:rows*nw*3]
+		// Pass one: the window's source rows, shrunk to nw, as float32 RGB.
+		parallelRows(rows, workers, func(r0, r1 int) {
+			for r := r0; r < r1; r++ {
+				srow := src[(s0+r)*w*3 : (s0+r+1)*w*3]
+				trow := tmp[r*nw*3 : (r+1)*nw*3]
+				for x, t := range xs {
+					var cr, cg, cb float32
+					s := t.first * 3
+					for _, wt := range t.weights {
+						cr += wt * float32(srow[s])
+						cg += wt * float32(srow[s+1])
+						cb += wt * float32(srow[s+2])
+						s += 3
+					}
+					trow[x*3], trow[x*3+1], trow[x*3+2] = cr, cg, cb
+				}
+			}
+		})
+		// Pass two: the chunk's destination rows from the shrunk window.
+		parallelRows(y1-y0, workers, func(d0, d1 int) {
+			for y := y0 + d0; y < y0+d1; y++ {
+				t := ys[y]
+				drow := dst.Pix[y*dst.Stride : y*dst.Stride+nw*8]
+				for x := 0; x < nw; x++ {
+					var cr, cg, cb float32
+					s := (t.first-s0)*nw*3 + x*3
+					for _, wt := range t.weights {
+						cr += wt * tmp[s]
+						cg += wt * tmp[s+1]
+						cb += wt * tmp[s+2]
+						s += nw * 3
+					}
+					d := x * 8
+					binary.BigEndian.PutUint16(drow[d:d+2], ftou16(cr))
+					binary.BigEndian.PutUint16(drow[d+2:d+4], ftou16(cg))
+					binary.BigEndian.PutUint16(drow[d+4:d+6], ftou16(cb))
+					binary.BigEndian.PutUint16(drow[d+6:d+8], 0xFFFF)
+				}
+			}
+		})
+	}
 	return dst
 }
 
