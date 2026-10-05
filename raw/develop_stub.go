@@ -10,3 +10,8 @@ package raw
 // DecodeDevelop is unavailable without the `with_libraw` build tag; it errors cleanly so callers
 // compile and run with no native dependency (and fall back to [Decode]/the preview).
 func DecodeDevelop(path string) (Develop, error) { return Develop{}, ErrUnsupported }
+
+// DecodeDevelopScaled is unavailable without the `with_libraw` build tag, like [DecodeDevelop].
+func DecodeDevelopScaled(path string, maxPixel int) (Develop, error) {
+	return Develop{}, ErrUnsupported
+}

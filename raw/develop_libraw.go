@@ -60,7 +60,6 @@ package raw
 import "C"
 
 import (
-	"encoding/binary"
 	"fmt"
 	"image"
 	"unsafe"
@@ -90,7 +89,17 @@ func librawOutputColor(c ColorSpace) (C.int, bool) {
 // file plus the pinned LibRaw version always yields the same raster.
 //
 // Returns [ErrUnsupported] for a non-RAW path, and a wrapped error on a genuine decode failure.
-func DecodeDevelop(path string) (d Develop, err error) {
+func DecodeDevelop(path string) (Develop, error) {
+	return DecodeDevelopScaled(path, 0)
+}
+
+// DecodeDevelopScaled is [DecodeDevelop] with the master shrunk so its longest edge is at
+// most maxPixel (0: full size), resampled from LibRaw's 16-bit output before anything is
+// built at sensor size — a Catmull-Rom with x/image/draw's shrinking semantics, across the
+// CPUs (scale.go). A consumer that shows a bounded master gets it in a fraction of the
+// time and memory of a full develop followed by its own scaler, and nothing is ever
+// enlarged: a sensor already within maxPixel comes back at its own size.
+func DecodeDevelopScaled(path string, maxPixel int) (d Develop, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			d, err = Develop{}, fmt.Errorf("raw: develop %q panicked: %v", path, r)
@@ -124,20 +133,14 @@ func DecodeDevelop(path string) (d Develop, err error) {
 	}
 
 	// LibRaw hands back 3 channels of 16-bit samples in host byte order. NRGBA64 stores its
-	// 16-bit channels big-endian, with a 4th (alpha) channel, so transcode per sample.
+	// 16-bit channels big-endian, with a 4th (alpha) channel: shrunk into one when asked,
+	// transcoded sample by sample otherwise (scale.go, both across the CPUs).
 	src := unsafe.Slice((*uint16)(unsafe.Pointer(cbuf)), width*height*3)
-	out := image.NewNRGBA64(image.Rect(0, 0, width, height))
-	for y := 0; y < height; y++ {
-		srow := y * width * 3
-		drow := out.PixOffset(0, y)
-		for x := 0; x < width; x++ {
-			s := srow + x*3
-			d := drow + x*8
-			binary.BigEndian.PutUint16(out.Pix[d+0:d+2], src[s+0])
-			binary.BigEndian.PutUint16(out.Pix[d+2:d+4], src[s+1])
-			binary.BigEndian.PutUint16(out.Pix[d+4:d+6], src[s+2])
-			binary.BigEndian.PutUint16(out.Pix[d+6:d+8], 0xFFFF)
-		}
+	var out *image.NRGBA64
+	if nw, nh, shrink := scaledSize(width, height, maxPixel); shrink {
+		out = scaleRGB16(src, width, height, nw, nh, 0)
+	} else {
+		out = transcodeRGB16(src, width, height)
 	}
 	return Develop{Image: out, ColorSpace: space, Version: DevelopVersion}, nil
 }

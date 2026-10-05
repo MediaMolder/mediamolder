@@ -25,20 +25,23 @@ package av
 //     return 0;
 // }
 //
-// // select_supported_sample_fmt ensures ctx->sample_fmt is in the codec's
-// // supported list. When it is not, the first supported format is used.
-// // AVCodec.sample_fmts is deprecated in FFmpeg 8+ but still functional;
-// // suppress the warning since we intentionally use it here.
-// #pragma GCC diagnostic push
-// #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+// // select_supported_sample_fmt ensures ctx->sample_fmt is in the encoder's
+// // supported list, read through avcodec_get_supported_config (FFmpeg 7.1+, as
+// // codec.go does) — the AVCodec.sample_fmts field it replaces was deprecated in
+// // 7.1 and removed in FFmpeg 9. An encoder that lists no formats accepts any;
+// // when the chosen one is not listed, the first listed format is used.
 // static void select_supported_sample_fmt(AVCodecContext *ctx, const AVCodec *codec) {
-//     if (codec->sample_fmts == NULL) return;
-//     for (const enum AVSampleFormat *p = codec->sample_fmts; *p != AV_SAMPLE_FMT_NONE; p++) {
-//         if (*p == ctx->sample_fmt) return;
+//     const void *configs = NULL;
+//     int num = 0;
+//     if (avcodec_get_supported_config(NULL, codec, AV_CODEC_CONFIG_SAMPLE_FORMAT, 0, &configs, &num) < 0)
+//         return;
+//     if (configs == NULL || num <= 0) return;
+//     const enum AVSampleFormat *fmts = (const enum AVSampleFormat *)configs;
+//     for (int i = 0; i < num; i++) {
+//         if (fmts[i] == ctx->sample_fmt) return;
 //     }
-//     ctx->sample_fmt = codec->sample_fmts[0];
+//     ctx->sample_fmt = fmts[0];
 // }
-// #pragma GCC diagnostic pop
 import "C"
 
 import (
