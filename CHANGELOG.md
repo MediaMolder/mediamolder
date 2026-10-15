@@ -42,6 +42,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- **`go_processor` nodes that return a new frame without metadata now
+  forward that frame.** The runtime only swapped in the processor's output
+  when the processor also returned metadata. Otherwise it sent the original
+  frame downstream and leaked the new one. A cropping processor's output
+  never reached the encoder: a following `scale` squashed the full frame
+  instead. Dropping a frame while returning metadata no longer panics.
+
 - **smartcopy: constant-rate sources give constant-rate cuts.** Re-encoded
   packets took their first DTS values from the priming GOP (a jump of
   several frames at the head), and a copied keyframe whose leading pictures
@@ -115,6 +122,32 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   columns. Plotting bit rate over time, or separating picture payload from
   SEI overhead, becomes a one-line aggregation over the CSV; the guide shows
   a pandas recipe. See [docs/bitstream-trace.md](docs/bitstream-trace.md).
+
+### Added
+
+- **Bitstream trace validation: violations list, structure checks, `--validate`.**
+  Reports now carry a top-level `violations` list: every unit parse failure the
+  syntax templates detect (out-of-range elements, truncation, missing
+  parameter-set references) as `kind: "syntax"` entries with packet/unit
+  location and the parse diagnostic ("PPS id 3 not available."). Opt-in
+  stream-structure checks (`--checks default|strict|<ids>`, node param
+  `checks`) add `kind: "structure"` findings over the decode-order walk:
+  `vcl_before_ps` and `frame_num_gap` (errors, the `default` set), `no_aud`
+  and `sei_after_vcl` (warnings, `strict`). `--validate` exits non-zero on
+  error-severity findings; the node's `validate: true` fails the job. Range
+  and unit filters never hide violations. Header-level only by design —
+  decoder-side conformance (DPB, levels, HRD) is out of scope.
+- **Caption carriage dump (CEA-608/708).** T.35 SEI (payload type 4) and AV1
+  ITU-T T.35 metadata summaries now include `raw_hex` of the payload and,
+  when the ATSC A/53 / SCTE-128 wrapper matches (0xB5 / 0x0031 / GA94 /
+  cc_data), the parsed `cc_count`, `cc` triplets and a `contains` list of
+  `cea608`/`cea708` — a dump, not a caption decoder. Unregistered user data
+  gets the same `raw_hex`. New `--units caption` alias selects the carrier
+  units. `dts_time` joins `time` on packets for decode-order binning, and the
+  CSV picture columns now mirror the JSON record 1:1 (`segment_address`,
+  `first_slice`, `dependent`, `idr_pic_id`, `field`); AV1 frame-header and
+  tile-list OBUs count as `vcl` in rate splits.
+  See [docs/bitstream-trace.md](docs/bitstream-trace.md).
 
 ### Changed
 

@@ -279,6 +279,7 @@ func (r *graphRunner) handleGoProcessor(ctx context.Context, node *graph.Node, i
 		}
 
 		// Emit metadata on the event bus if provided.
+		cutSignaled := false
 		if md != nil && r.pipe != nil {
 			// When a delay buffer is active, the cut was detected looking back
 			// at delayBuf[0] — update the metadata PTS to that frame's PTS so
@@ -301,7 +302,6 @@ func (r *graphRunner) handleGoProcessor(ctx context.Context, node *graph.Node, i
 			// Signal segment_sink outputs watching any of the Custom keys.
 			// Track whether any cut flag was set so we can force an IDR on the
 			// correct output frame (the cut frame, not the current frame).
-			cutSignaled := false
 			for key, val := range md.Custom {
 				if val == true {
 					gates := r.segmentCuts[key]
@@ -326,24 +326,24 @@ func (r *graphRunner) handleGoProcessor(ctx context.Context, node *graph.Node, i
 					cutSignaled = true
 				}
 			}
-			// Only close the input frame if the processor returned a new one.
-			// When out == f (pass-through) closing f would free the AVFrame
-			// that out still points to, making f.p nil on the next line.
-			if out != f {
-				f.Close()
-			}
-			f = out
-			// Set IDR annotation: on the cut frame (delayBuf[0]) when using a
-			// delay buffer, on the current frame otherwise.
-			if cutSignaled {
-				if lookback > 0 && len(delayBuf) > 0 {
-					if err := markFrameForceKeyframe(delayBuf[0].frame); err != nil {
-						return fmt.Errorf("go_processor %q: mark force keyframe: %w", node.ID, err)
-					}
-				} else if f != nil {
-					if err := markFrameForceKeyframe(f); err != nil {
-						return fmt.Errorf("go_processor %q: mark force keyframe: %w", node.ID, err)
-					}
+		}
+		// Only close the input frame if the processor returned a new one.
+		// When out == f (pass-through) closing f would free the AVFrame
+		// that out still points to, making f.p nil on the next line.
+		if out != f {
+			f.Close()
+		}
+		f = out
+		// Set IDR annotation: on the cut frame (delayBuf[0]) when using a
+		// delay buffer, on the current frame otherwise.
+		if cutSignaled {
+			if lookback > 0 && len(delayBuf) > 0 {
+				if err := markFrameForceKeyframe(delayBuf[0].frame); err != nil {
+					return fmt.Errorf("go_processor %q: mark force keyframe: %w", node.ID, err)
+				}
+			} else if f != nil {
+				if err := markFrameForceKeyframe(f); err != nil {
+					return fmt.Errorf("go_processor %q: mark force keyframe: %w", node.ID, err)
 				}
 			}
 		}
@@ -352,8 +352,8 @@ func (r *graphRunner) handleGoProcessor(ctx context.Context, node *graph.Node, i
 		r.pipe.Metrics().Node(node.ID).RecordLatency(time.Since(frameStart))
 
 		// nil output means the processor consumed (dropped) the frame.
+		// The input frame was closed above.
 		if out == nil {
-			f.Close()
 			// With a delay buffer still forward the oldest held frame so
 			// the buffer does not grow unboundedly.
 			if lookback > 0 && len(delayBuf) >= lookback {
