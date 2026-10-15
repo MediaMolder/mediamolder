@@ -33,6 +33,22 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- **smartcopy: re-encoded boundary GOPs now decode, and open-GOP cuts keep
+  every in-window frame.** Boundary packets were forwarded as Annex B with
+  parameter sets the output never carried, so every re-encoded frame was
+  dropped or garbled next to the copied interior (H.264 and HEVC, MP4 and
+  MOV). Re-encoded packets are now re-framed to the source's NAL framing;
+  with libx264 the boundary SPS/PPS take a free id and join the output avcC,
+  otherwise (HEVC, other encoders) they travel in-band with the source's
+  parameter sets re-inserted on copied keyframes and an `hev1` / `avc3`
+  sample entry. GOPs are classified by presentation span, so leading
+  pictures of open GOPs are neither dropped nor copied against missing
+  references; splices use BLA (HEVC) or in-place POC / frame_num
+  renumbering (H.264). Re-encoded packets carry durations and display-order
+  DTS so the MP4 edit list and timeline stay intact. Covered by decode-based
+  tests on generated H.264/HEVC, open/closed-GOP, MP4/MOV fixtures.
+  `smartcopy_global_header` is ignored (placement is derived from the
+  source) and the GUI toggle is gone.
 - **Source node tolerates decoder errors the way ffmpeg does.** A packet a
   decoder rejects mid-stream (a damaged AC-3 frame in a camcorder transport
   stream, a slice with a bad header) used to end the whole run with a bare

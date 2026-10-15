@@ -839,6 +839,12 @@ func (r *graphRunner) rotateSegment(w *sinkWriter, out *Output, newURL string) e
 				newMuxer.Abort()
 				return fmt.Errorf("segment rotate add stream from input: %w", addErr)
 			}
+			if from.Kind == graph.KindSmartCopy {
+				if perr := r.applySmartCopyStreamParams(newMuxer, idx, from); perr != nil {
+					newMuxer.Abort()
+					return fmt.Errorf("segment rotate smartcopy stream params: %w", perr)
+				}
+			}
 			outIdx = idx
 			newRescales[i] = &sinkRescale{srcTB: srcTB, dstTB: newMuxer.StreamTimeBase(outIdx)}
 		default:
@@ -1133,10 +1139,11 @@ func (r *graphRunner) openSink(_ *graph.Graph, node *graph.Node) (*sinkResources
 			// muxer in the new TB. We rescale per-packet to compensate.
 			rescales[i] = &sinkRescale{srcTB: enc.TimeBase(), dstTB: muxer.StreamTimeBase(outIdx)}
 		case graph.KindCopy, graph.KindSmartCopy:
-			// smartcopy registers exactly like copy: the output stream is
-			// wired from the source codecpar (extradata = source), and the
-			// smartcopy node emits packets — copied interior and re-encoded
-			// boundary alike — in the source stream time_base.
+			// smartcopy registers like copy: the output stream is wired
+			// from the source codecpar, then adjusted by the node's plan
+			// (merged avcC or in-band sample entry) so the re-encoded
+			// boundary packets decode next to the copied interior. Every
+			// packet is in the source stream time_base.
 			srcInput, srcIdx, srcTB, err := r.copySourceFor(from)
 			if err != nil {
 				muxer.Abort()
@@ -1146,6 +1153,12 @@ func (r *graphRunner) openSink(_ *graph.Graph, node *graph.Node) (*sinkResources
 			if err != nil {
 				muxer.Abort()
 				return nil, fmt.Errorf("sink %q add copy stream: %w", node.ID, err)
+			}
+			if from.Kind == graph.KindSmartCopy {
+				if err := r.applySmartCopyStreamParams(muxer, idx, from); err != nil {
+					muxer.Abort()
+					return nil, fmt.Errorf("sink %q smartcopy stream params for %q: %w", node.ID, from.ID, err)
+				}
 			}
 			outIdx = idx
 			rescales[i] = &sinkRescale{srcTB: srcTB, dstTB: muxer.StreamTimeBase(outIdx)}
