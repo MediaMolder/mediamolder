@@ -136,6 +136,9 @@ in-app help dialog.
      `output_file` in the Inspector) and writes every H.264/H.265/AV1
      NAL unit / OBU to a JSON, JSONL, or CSV report without decoding. See
      [Bitstream Trace](bitstream-trace.md).
+     The **Path crop** node (`path_crop`) crops each frame to a full-height
+     window whose left edge follows a per-PTS path and drops frames off the
+     path. See [Path crop](path-crop-processor.md).
      See [§ Scene detection processors](#scene-detection-processors).
 4. **Add a Sink.** Drag *Output file* from **Sinks**, click **Browse…** and
    pick **Save** mode in the dialog to choose a destination path and
