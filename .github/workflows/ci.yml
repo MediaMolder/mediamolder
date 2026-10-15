@@ -287,8 +287,11 @@ jobs:
       - name: Test with ASan
         # CGO_ENABLED=1 is the default; -asan instruments C and Go allocations.
         # ASAN_OPTIONS=detect_leaks=1 enables LSan (included in ASan on Linux).
+        # LSAN_OPTIONS points at the known third-party leaks we cannot fix
+        # (see .github/lsan.supp).
         env:
           ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
+          LSAN_OPTIONS: suppressions=${{ github.workspace }}/.github/lsan.supp:print_suppressions=0
         run: go test -asan -short ./...
 
   lint:

@@ -1794,6 +1794,8 @@ function NodeForm({ def, onChange, streams, padHints, hwDevices = [], inputIds =
 /* ---------- Smart-copy (frame-accurate trim) node form ---------- */
 
 // Reserved keys that are not boundary-encoder AVOptions.
+// smartcopy_global_header is legacy: the engine derives parameter-set
+// placement from the source and ignores it, but older graphs may carry it.
 const SMARTCOPY_RESERVED = new Set([
   'smartcopy_encoder',
   'smartcopy_global_header',
@@ -1838,7 +1840,6 @@ function SmartCopyForm({ def, onChange, isAudio = false }: { def: NodeDef; onCha
   if (isAudio) return <SmartAudioCopyForm />;
   const params = def.params ?? {};
   const encName = (params.smartcopy_encoder as string | undefined)?.trim() || 'libx264';
-  const globalHeader = params.smartcopy_global_header;
 
   // Edit a smartcopy-specific param directly (merges into def.params).
   const setSmartParam = (key: string, value: unknown) => {
@@ -1901,25 +1902,6 @@ function SmartCopyForm({ def, onChange, isAudio = false }: { def: NodeDef; onCha
       />
 
       <EncoderForm def={shimDef} onChange={handleEncoderChange} />
-
-      <label
-        style={{ display: 'flex', alignItems: 'flex-start', gap: 6, marginTop: 10, cursor: 'pointer' }}
-      >
-        <input
-          type="checkbox"
-          checked={globalHeader === undefined ? true : globalHeader !== false}
-          onChange={(e) => setSmartParam('smartcopy_global_header', e.target.checked)}
-          style={{ marginTop: 2, flexShrink: 0 }}
-        />
-        <span>
-          Global header (<code>smartcopy_global_header</code>)
-          <div style={{ fontSize: 11, color: 'var(--text-dim)', fontWeight: 'normal', marginTop: 2 }}>
-            Place codec parameter sets in the container header (avcC/hvcC) rather
-            than in-band. Required for MP4/MOV; leave on unless the container
-            needs in-band parameter sets (e.g. MPEG-TS).
-          </div>
-        </span>
-      </label>
     </>
   );
 }

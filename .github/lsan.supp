@@ -1,0 +1,8 @@
+# LeakSanitizer suppressions for the ASan CI job (go test -asan).
+#
+# libx265 3.5 (Ubuntu 24.04's libx265-199) allocates a zoneParam x265_param
+# in x265_encoder_open and never frees it (source/encoder/api.cpp: it is
+# used only as a template for configureZone and neither stored on the
+# encoder nor passed to x265_param_free). One block leaks per encoder open,
+# regardless of how the encoder is used. Fixed upstream after 3.5.
+leak:x265_encoder_open

@@ -44,9 +44,11 @@ everywhere else):
 Drag **Copy → Smart copy (video)** from the palette between an input's video
 pin and an output. The node's properties panel exposes the full boundary
 encoder (rate control, preset, tune, profile/level, raw `x264-params` /
-`x265-params`), an optional **Boundary encoder** override, and a **Global
-header** toggle. Set the trim window (Start / Duration / End) on the connected
-output's **Timing** section — it applies to every stream of that output.
+`x265-params`) and an optional **Boundary encoder** override. Set the trim
+window (Start / Duration / End) on the connected output's **Timing** section
+— it applies to every stream of that output. (Older graphs may still carry a
+`smartcopy_global_header` param; it is ignored, since parameter-set placement
+is now derived from the source — see below.)
 
 For audio, drag **Copy → Smart copy (audio, PCM)** between an input's audio pin
 and an output. Its panel has no tunable parameters (PCM boundary slicing has no
@@ -78,26 +80,60 @@ The graph splits the work along the existing source/copy boundary:
 
 ```
  source (demux)  --raw packets-->  smartcopy node  --packets-->  sink
-                                   copy interior GOPs            (AddStreamFromInput:
-                                   re-encode boundary GOPs        extradata = source)
+                                   copy interior GOPs            (AddStreamFromInput +
+                                   re-encode boundary runs        the node's stream plan)
 ```
 
-For a window `[start, end)`, with `KF(t)` = keyframe at/before `t`:
+Packets are grouped into GOPs in decode order (a keyframe and everything up
+to the next keyframe). A GOP's **presentation span** is the range of PTS it
+carries: with open GOPs that starts *before* the keyframe, because the
+leading B-pictures that display before the keyframe are coded after it. For
+a window `[start, end)`:
 
-1. **Head** — the GOP containing `start` is decoded and its frames with
-   `pts >= start` are re-encoded; the first is forced to a keyframe.
-2. **Interior** — every whole GOP fully inside `[start, end)` is copied
-   verbatim (no decode/encode).
-3. **Tail** — the GOP containing `end` is decoded and its frames with
-   `pts < end` are re-encoded.
+1. A GOP whose span ends before `start`, or starts at/after `end`, is
+   dropped (the last one before the window is kept as decoder priming).
+2. A GOP whose keyframe is at/after `start` and whose span ends before `end`
+   is **copied** verbatim — no decode, no encode.
+3. Any other GOP overlaps a cut and joins the pending **boundary run**.
 
-The boundary decoder is primed with the **previous GOP** so open-GOP
-sources (whose leading frames reference across a GOP boundary) still
-decode with their references present; the primed frames are dropped from
-the output.
+A run is re-encoded in one encoder session when the next copied GOP (or
+the end of the window) arrives: the priming GOP, the run and — when a
+copied GOP follows — that GOP's leading pictures are decoded, the frames
+inside the window and not yet emitted are re-encoded (the first forced to
+an IDR), and the copied GOP then starts at its keyframe. Leading pictures
+of a copied GOP are re-encoded rather than copied because they reference
+pictures that are no longer in the output; trailing pictures never do.
+Window membership is decided by presentation time, so a cut that lands
+among the leading pictures of a keyframe keeps exactly the frames inside
+the window.
 
-Audio, subtitle and data streams on the same output are stream-copied and
-trimmed to the same window at the muxer (packet-accurate; ~1 audio frame).
+The re-encoded packets have to decode next to the copied ones, which the
+node arranges per codec (the *stream plan*, shared with the sink):
+
+- **Framing.** Encoders emit Annex B; an ISOBMFF source (avcC/hvcC) is
+  length-prefixed, so re-encoded packets are re-framed to the source's NAL
+  framing. Their DTS are derived from display order with the source's
+  reorder depth, so they slot into the copied DTS timeline.
+- **H.264 with libx264.** The boundary encoder uses a free `sps-id`; its
+  SPS/PPS are appended to the output's avcC next to the source's. Nothing
+  travels in-band, and copied packets stay byte-identical — except after an
+  open-GOP head splice, where copied slice *headers* are renumbered until
+  the next IDR (see below; slice data is untouched). The boundary encoder's
+  B-frame depth and reference count are kept within the source's.
+- **HEVC, and H.264 with other encoders.** Parameter-set ids cannot be
+  chosen, so the boundary encoder repeats its VPS/SPS/PPS before each IDR
+  and the source's parameter sets are re-inserted in front of every copied
+  keyframe. MP4/MOV outputs get the in-band sample entry (`hev1` /
+  `avc3`).
+- **Open-GOP splices.** The first copied keyframe after a re-encoded head
+  is not an IDR. For HEVC its CRA slices become BLA, the standard splicing
+  tool: a new coded video sequence with its leading pictures discarded.
+  H.264 has no equivalent, so the copied slices' `pic_order_cnt_lsb` and
+  `frame_num` are shifted by a constant (fixed-width fields rewritten in
+  place; slice data untouched) until the next IDR, so the decoder's output
+  order continues from the re-encoded run. Sources with
+  `pic_order_cnt_type 2` get a B-frame-free boundary run instead; type 1 is
+  not renumbered.
 
 ## Audio (`codec_audio: "smartcopy"`)
 
@@ -128,7 +164,16 @@ for a packet-accurate (~21 ms) lossless copy.
 ## Limitations
 
 - Video parameters are identical source→target by design.
-- Open-GOP sources are handled by previous-GOP priming, but the safest
-  results come from closed-GOP sources.
+- For open-GOP H.264 sources the copied slice *headers* after the head
+  cut are renumbered (slice data is byte-identical); when the head cut
+  lands within a few frames of a non-IDR keyframe, the copied slices'
+  memory-management operations may address pictures that were before the
+  cut, which libavcodec reports as `mmco: unref short failure` while
+  decoding correctly.
+- `hev1` / `avc3` in-band parameter sets and avcC records carrying several
+  SPS/PPS are standard, but playback in AVFoundation has not been verified.
+- A source that is not a regular file cannot be probed for its reorder
+  depth; re-encoded packet DTS are then derived from the run alone and
+  clamped at the joins.
 - Sample-accurate audio (re-encoding partial audio frames at the edges) is
   not yet implemented; audio is packet-copy-trimmed.
