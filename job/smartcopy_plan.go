@@ -48,7 +48,8 @@ type smartCopyPlan struct {
 	extradata    []byte   // replacement output extradata (nil = keep the source's)
 	codecTag     string   // sample entry for ISOBMFF outputs ("" = keep)
 	srcParamSets [][]byte // source VPS/SPS/PPS NALs, re-inserted on copied keyframes (in-band mode)
-	encParamSets [][]byte // boundary SPS/PPS expected from the encoder (config mode)
+	encParamSets [][]byte // boundary parameter sets the encoder is expected to emit (config mode)
+	hevcIDs      hevcIDs  // ids the boundary VPS/SPS/PPS and slices are renumbered to (HEVC config mode)
 
 	// srcReorder is the source's decode-to-display delay in frames (the
 	// B-frame depth its DTS timeline assumes), or -1 when it could not be
@@ -162,7 +163,9 @@ func probeSourceReorder(url string, srcIdx int, si av.StreamInfo, tb [2]int) int
 // reorderDepth derives a GOP's decode-to-display delay in frames from its
 // packets in decode order (keyframe first). A stream's DTS timeline is its
 // display-ordered PTS sequence shifted by that delay, so for the keyframe
-// PTS − DTS = (delay + leading pictures) × frame duration. Without usable
+// PTS − DTS = (delay + leading pictures) × frame duration. The frame
+// duration is the GOP's smallest PTS step (exact for a constant-rate
+// source); dur is the fallback for a single-packet GOP. Without usable
 // DTS, the smallest delay that keeps every DTS at or below its PTS is
 // returned instead.
 func reorderDepth(pts, dts []int64, dur int64) int {
@@ -171,13 +174,14 @@ func reorderDepth(pts, dts []int64, dur int64) int {
 	}
 	sorted := append([]int64(nil), pts...)
 	sort.Slice(sorted, func(i, j int) bool { return sorted[i] < sorted[j] })
-	if dur <= 0 && len(sorted) > 1 {
-		deltas := make([]int64, 0, len(sorted)-1)
-		for i := 1; i < len(sorted); i++ {
-			deltas = append(deltas, sorted[i]-sorted[i-1])
+	tick := int64(0)
+	for i := 1; i < len(sorted); i++ {
+		if d := sorted[i] - sorted[i-1]; d > 0 && (tick == 0 || d < tick) {
+			tick = d
 		}
-		sort.Slice(deltas, func(i, j int) bool { return deltas[i] < deltas[j] })
-		dur = deltas[len(deltas)/2]
+	}
+	if tick > 0 {
+		dur = tick
 	}
 	key := pts[0]
 	leading := 0
@@ -229,6 +233,28 @@ func planSmartCopyVideo(si av.StreamInfo, srcTB [2]int, extradata []byte, srcReo
 
 	switch codec {
 	case cbs.CodecH265:
+		if plan.encOpts.CodecName == "libx265" {
+			var kv []string
+			switch srcReorder {
+			case 0:
+				kv = []string{"bframes=0"}
+			case 1:
+				kv = []string{"b-pyramid=0"}
+			}
+			if len(kv) > 0 {
+				plan.encOpts.ExtraOpts = mergeCodecParams(plan.encOpts.ExtraOpts, "x265-params", kv)
+				plan.notes = append(plan.notes, "boundary x265 reorder depth limited to the source's ("+strings.Join(kv, ", ")+")")
+			}
+		}
+		if plan.lengthSize > 0 {
+			// An hvcC source must come out with every parameter set in
+			// hvcC: the in-band alternative needs hev1, which AVFoundation
+			// does not decode, so a failure here fails the job.
+			if err := planSmartCopyHEVCConfig(plan, extradata, fourCC(si.CodecTag)); err != nil {
+				return nil, fmt.Errorf("HEVC boundary parameter sets cannot be renumbered into the output hvcC: %w", err)
+			}
+			return plan, nil
+		}
 		plan.mode = smartCopyModeInBand
 		plan.encOpts.GlobalHeader = false
 		if plan.lengthSize > 0 {
@@ -243,19 +269,6 @@ func planSmartCopyVideo(si av.StreamInfo, srcTB [2]int, extradata []byte, srcReo
 			}
 			plan.codecTag = "hev1"
 		}
-		if plan.encOpts.CodecName == "libx265" {
-			var kv []string
-			switch srcReorder {
-			case 0:
-				kv = []string{"bframes=0"}
-			case 1:
-				kv = []string{"b-pyramid=0"}
-			}
-			if len(kv) > 0 {
-				plan.encOpts.ExtraOpts = mergeCodecParams(plan.encOpts.ExtraOpts, "x265-params", kv)
-				plan.notes = append(plan.notes, "boundary x265 reorder depth limited to the source's ("+strings.Join(kv, ", ")+")")
-			}
-		}
 		plan.notes = append(plan.notes, "HEVC boundary parameter sets travel in-band; copied keyframes carry the source's (hev1)")
 		return plan, nil
 
@@ -263,6 +276,74 @@ func planSmartCopyVideo(si av.StreamInfo, srcTB [2]int, extradata []byte, srcReo
 		return planSmartCopyH264(plan, extradata)
 	}
 	return plan, nil
+}
+
+// planSmartCopyHEVCConfig sets up HEVC config mode: a trial encoder yields
+// the boundary VPS/SPS/PPS, which are renumbered to ids the source does not
+// use and appended to the output hvcC. The run's slice headers are
+// renumbered to match as they are emitted, so the track stays hvc1 with
+// nothing in-band (see smartcopy_hevc_ids.go).
+func planSmartCopyHEVCConfig(plan *smartCopyPlan, extradata []byte, srcTag string) error {
+	ids, err := freeHEVCIDs(extradata)
+	if err != nil {
+		return err
+	}
+	opts := plan.encOpts
+	opts.GlobalHeader = true
+	enc, err := av.OpenEncoder(opts)
+	if err != nil {
+		return fmt.Errorf("open trial boundary encoder: %w", err)
+	}
+	ed := enc.ExtraData()
+	enc.Close()
+	var ps [][]byte
+	if len(ed) > 0 && ed[0] == 1 {
+		ps, err = hvcCParamSets(ed)
+		if err != nil {
+			return err
+		}
+	} else {
+		ps = splitAnnexB(ed)
+	}
+	var orig [][]byte
+	for _, n := range ps {
+		if nalIsParamSet(cbs.CodecH265, n) {
+			orig = append(orig, n)
+		}
+	}
+	if len(orig) < 3 {
+		return fmt.Errorf("boundary encoder %s produced %d parameter sets", plan.encOpts.CodecName, len(orig))
+	}
+	renumbered, err := hevcRenumberParamSets(orig, ids)
+	if err != nil {
+		return err
+	}
+	merged, err := hvcCWithParamSets(extradata, renumbered)
+	if err != nil {
+		return fmt.Errorf("merge boundary parameter sets into hvcC: %w", err)
+	}
+	plan.mode = smartCopyModeConfigPS
+	plan.encOpts.GlobalHeader = true
+	plan.encParamSets = orig
+	plan.hevcIDs = ids
+	plan.extradata = merged
+	// AddStreamFromInput clears the codec tag and the mov muxer then
+	// defaults HEVC to hev1, which AVFoundation does not decode. With every
+	// parameter set in hvcC the track can keep the source's sample entry.
+	plan.codecTag = "hvc1"
+	if srcTag == "hev1" {
+		plan.codecTag = "hev1"
+	}
+	plan.notes = append(plan.notes, fmt.Sprintf("boundary VPS/SPS/PPS renumbered to ids %d/%d/%d and appended to the output hvcC (%s)", ids.vps, ids.sps, ids.pps, plan.codecTag))
+	return nil
+}
+
+// fourCC renders a codec tag as its four-character string, or "" for 0.
+func fourCC(tag uint32) string {
+	if tag == 0 {
+		return ""
+	}
+	return string([]byte{byte(tag), byte(tag >> 8), byte(tag >> 16), byte(tag >> 24)})
 }
 
 func planSmartCopyH264(plan *smartCopyPlan, extradata []byte) (*smartCopyPlan, error) {
@@ -301,6 +382,9 @@ func planSmartCopyH264(plan *smartCopyPlan, extradata []byte) (*smartCopyPlan, e
 			base = append(base, "b-pyramid=none")
 			plan.notes = append(plan.notes, "boundary x264 B-pyramid disabled to match the source's reorder depth")
 		}
+		// With a B-pyramid x264 (and x265) reorder exactly two frames deep
+		// whatever bframes is, so a source with depth 2 or more needs no
+		// further cap.
 	}
 
 	if plan.lengthSize > 0 && isX264 {

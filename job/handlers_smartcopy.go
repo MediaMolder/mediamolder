@@ -32,11 +32,11 @@ import (
 // Downstream the sink registers the stream via AddStreamFromInput (the
 // source codecpar) and applies the node's smartCopyPlan: the re-encoded
 // packets are re-framed to the source's NAL framing and their parameter
-// sets either join the output avcC under their own ids (H.264 + libx264)
-// or travel in-band (HEVC, other encoders), with the source's parameter
-// sets re-inserted on copied keyframes. Open-GOP leading pictures are
-// decided by presentation time and spliced with BLA (HEVC) or POC
-// renumbering (H.264).
+// sets join the output avcC under their own ids (H.264 + libx264), are
+// renumbered into the output hvcC (HEVC), or travel in-band with the
+// source's parameter sets re-inserted on copied keyframes (other H.264
+// encoders). Open-GOP leading pictures are decided by presentation time
+// and spliced with BLA (HEVC) or POC renumbering (H.264).
 //
 // See docs/smartcopy.md for the algorithm and constraints.
 func (r *graphRunner) handleSmartCopy(ctx context.Context, node *graph.Node, ins []<-chan any, outs []chan<- any) error {
@@ -287,12 +287,18 @@ type smartCopyState struct {
 
 	// srcReorder is the source's decode-to-display delay in frames (the
 	// plan's probe, else measured from the first GOP); -1 until known.
-	srcReorder int
-	runOut     []*av.Packet // re-encoded packets of the current run, awaiting DTS assignment
+	srcReorder  int
+	depthWarned bool
+	// frameTick is one frame in source time_base units, measured as the
+	// smallest PTS step of the first complete GOP (exact for a constant
+	// rate source, unlike the demuxer's average frame rate); 0 until known.
+	frameTick int64
+	runOut    []*av.Packet // re-encoded packets of the current run, awaiting DTS assignment
 
-	runFirst   bool            // next encoder packet is the first of the run
-	runPending [][]byte        // parameter sets to insert before the run's first packet
-	runDur     map[int64]int64 // kept-frame PTS → duration, for packets the encoder leaves at 0
+	runFirst   bool                 // next encoder packet is the first of the run
+	runPending [][]byte             // parameter sets to insert before the run's first packet
+	runDur     map[int64]int64      // kept-frame PTS → duration, for packets the encoder leaves at 0
+	runHEVC    *hevcSliceRenumberer // HEVC config mode: renumbers the run's slice headers
 
 	lastDTS    int64 // last emitted DTS (source TB) for the monotonic guard
 	dtsClamped bool  // whether the guard ever had to bump a DTS
@@ -309,8 +315,11 @@ func (s *smartCopyState) consume(pkt *av.Packet) error {
 	if pkt.IsKeyFrame() {
 		// A keyframe completes cur, which can then be classified.
 		if s.cur != nil {
+			if s.frameTick <= 0 {
+				s.frameTick = gopFrameTick(s.cur)
+			}
 			if s.srcReorder < 0 {
-				s.srcReorder = gopReorderDepth(s.cur, frameDurationTB(s.plan.encOpts.FrameRate, s.srcTB))
+				s.srcReorder = gopReorderDepth(s.cur, s.frameTick)
 			}
 			g := s.cur
 			s.cur = nil
@@ -433,6 +442,20 @@ func (s *smartCopyState) emitCopy(g *scGOP) error {
 	// decode order, so compare against the watermark as it was before this
 	// GOP, not the running maximum.
 	watermark := s.emitted
+	drop := func(pts int64) bool {
+		return validPTS(pts) && (pts < s.startPTS || pts >= s.endPTS || (watermark != math.MinInt64 && pts <= watermark))
+	}
+	// Leading pictures that are dropped (re-encoded with the run, or before
+	// the window) were decoded right after the keyframe in the source, so
+	// the keyframe's source DTS sits that many frames too early for the
+	// output's decode order. Retime it to its own display slot minus the
+	// reorder delay; the trailing packets' DTS already continue from there.
+	droppedLeading := 0
+	for _, p := range g.pkts[1:] {
+		if pts := p.PTS(); validPTS(pts) && pts < g.key && drop(pts) {
+			droppedLeading++
+		}
+	}
 	var ret error
 	for i, p := range g.pkts {
 		if ret != nil {
@@ -440,7 +463,7 @@ func (s *smartCopyState) emitCopy(g *scGOP) error {
 			continue
 		}
 		pts := p.PTS()
-		if validPTS(pts) && (pts < s.startPTS || pts >= s.endPTS || (watermark != math.MinInt64 && pts <= watermark)) {
+		if drop(pts) {
 			p.Close() // outside the window, or already re-encoded (leading picture)
 			continue
 		}
@@ -449,6 +472,9 @@ func (s *smartCopyState) emitCopy(g *scGOP) error {
 				p.Close()
 				ret = err
 				continue
+			}
+			if droppedLeading > 0 && s.srcReorder >= 0 && validPTS(pts) {
+				p.SetDTS(pts - int64(s.srcReorder)*s.frameDur(nil))
 			}
 		}
 		if s.renumber {
@@ -684,7 +710,7 @@ func (s *smartCopyState) flushRun(hi int64, next *scGOP) error {
 	if err := s.drainEncoder(enc); err != nil {
 		return err
 	}
-	if err := s.sendRun(prime); err != nil {
+	if err := s.sendRun(); err != nil {
 		return err
 	}
 	s.spliced = true
@@ -698,9 +724,11 @@ func (s *smartCopyState) flushRun(hi int64, next *scGOP) error {
 // PTS of the frame d positions earlier in display order, with d the larger
 // of the source's delay (so the run lands exactly where the copied
 // packets' DTS leave off) and the run's own reorder depth (so no DTS
-// exceeds its PTS). Frames displayed before the run come from the priming
-// GOP; before the clip start they are extrapolated at one frame duration.
-func (s *smartCopyState) sendRun(before []*av.Packet) error {
+// exceeds its PTS). Frames before the run's first are extrapolated at one
+// frame duration: for a tail run those are the copied frames just before
+// it, for a head run they precede the clip, and either way the step stays
+// one frame so the container sees a constant frame rate.
+func (s *smartCopyState) sendRun() error {
 	pkts := s.runOut
 	s.runOut = nil
 	if len(pkts) == 0 {
@@ -721,45 +749,24 @@ func (s *smartCopyState) sendRun(before []*av.Packet) error {
 			depth = d
 		}
 	}
+	if depth > s.srcReorder && s.srcReorder >= 0 && !s.depthWarned {
+		// The run reorders deeper than the source: its DTS must start that
+		// much earlier, which leaves a larger step at the next join. The
+		// plan caps the encoder's B-frame layout to avoid this.
+		log.Printf("smartcopy node %q: re-encoded run reorders %d frames deep, source %d; one DTS step at the join will be longer", s.node.ID, depth, s.srcReorder)
+		s.depthWarned = true
+	}
 	if s.srcReorder > depth {
 		depth = s.srcReorder
 	}
-	var prior []int64
-	for _, p := range before {
-		if pts := p.PTS(); validPTS(pts) && pts < display[0] {
-			prior = append(prior, pts)
-		}
-	}
-	sort.Slice(prior, func(i, j int) bool { return prior[i] < prior[j] })
-	dur := int64(0)
-	if len(display) > 1 {
-		dur = display[1] - display[0]
-	} else if len(prior) > 0 {
-		dur = display[0] - prior[len(prior)-1]
-	}
-	if dur <= 0 {
-		dur = frameDurationTB(s.plan.encOpts.FrameRate, s.srcTB)
-	}
-	if dur <= 0 {
-		dur = 1
-	}
-	at := func(i int) int64 { // display-ordered PTS, i relative to the run's first frame
-		switch {
-		case i >= 0:
-			return display[i]
-		case -i <= len(prior):
-			return prior[len(prior)+i]
-		default:
-			base := display[0]
-			if len(prior) > 0 {
-				base = prior[0]
-				i += len(prior)
-			}
-			return base + int64(i)*dur
-		}
-	}
+	dur := s.frameDur(display)
 	for k, p := range pkts {
-		p.SetDTS(at(k - depth))
+		i := k - depth
+		if i >= 0 {
+			p.SetDTS(display[i])
+		} else {
+			p.SetDTS(display[0] + int64(i)*dur)
+		}
 		pts := p.PTS()
 		if err := s.send(p); err != nil { // send owns p from here on
 			closeAll(pkts[k+1:])
@@ -770,6 +777,44 @@ func (s *smartCopyState) sendRun(before []*av.Packet) error {
 		}
 	}
 	return nil
+}
+
+// frameDur is one frame in source time_base units: the step of the
+// display-ordered PTS list when it has one, else the tick measured from
+// the first GOP, else the stream's frame rate.
+func (s *smartCopyState) frameDur(display []int64) int64 {
+	dur := int64(0)
+	if len(display) > 1 {
+		dur = display[1] - display[0]
+	}
+	if dur <= 0 {
+		dur = s.frameTick
+	}
+	if dur <= 0 {
+		dur = frameDurationTB(s.plan.encOpts.FrameRate, s.srcTB)
+	}
+	if dur <= 0 {
+		dur = 1
+	}
+	return dur
+}
+
+// gopFrameTick is the smallest positive PTS step inside a GOP.
+func gopFrameTick(g *scGOP) int64 {
+	pts := make([]int64, 0, len(g.pkts))
+	for _, p := range g.pkts {
+		if v := p.PTS(); validPTS(v) {
+			pts = append(pts, v)
+		}
+	}
+	sort.Slice(pts, func(i, j int) bool { return pts[i] < pts[j] })
+	tick := int64(0)
+	for i := 1; i < len(pts); i++ {
+		if d := pts[i] - pts[i-1]; d > 0 && (tick == 0 || d < tick) {
+			tick = d
+		}
+	}
+	return tick
 }
 
 // gopReorderDepth is reorderDepth over one buffered GOP.
@@ -789,6 +834,10 @@ func gopReorderDepth(g *scGOP, dur int64) int {
 func (s *smartCopyState) beginRun(enc *av.EncoderContext) error {
 	s.runPending = nil
 	s.runFirst = true
+	s.runHEVC = nil
+	if s.plan.codec == cbs.CodecH265 && s.plan.mode == smartCopyModeConfigPS {
+		return s.beginRunHEVC(enc)
+	}
 	if s.plan.codec != cbs.CodecH264 {
 		return nil
 	}
@@ -812,6 +861,41 @@ func (s *smartCopyState) beginRun(enc *av.EncoderContext) error {
 		}
 		s.runPOC = st
 	}
+	return nil
+}
+
+// beginRunHEVC prepares the slice renumbering for an HEVC config-mode run.
+// The encoder's parameter sets must match the ones the plan renumbered
+// into the output hvcC (the encoder is deterministic for one option set);
+// a different set would need the same ids and cannot share the track.
+func (s *smartCopyState) beginRunHEVC(enc *av.EncoderContext) error {
+	ed := enc.ExtraData()
+	var got [][]byte
+	var nals [][]byte
+	if len(ed) > 0 && ed[0] == 1 {
+		nals, _ = hvcCParamSets(ed)
+	} else {
+		nals = splitAnnexB(ed)
+	}
+	for _, n := range nals {
+		if nalIsParamSet(cbs.CodecH265, n) {
+			got = append(got, n)
+		}
+	}
+	if len(got) == 0 {
+		return fmt.Errorf("smartcopy %q: boundary encoder emitted no parameter sets", s.node.ID)
+	}
+	if !equalNALSets(got, s.plan.encParamSets) {
+		// The output hvcC already holds the planned sets under the chosen
+		// ids; a different set under the same ids cannot be added to an
+		// hvc1 track without ambiguity, so this is a hard error.
+		return fmt.Errorf("smartcopy %q: boundary encoder parameter sets differ from the planned ones in the output hvcC", s.node.ID)
+	}
+	r, err := newHEVCSliceRenumberer(got, s.plan.hevcIDs.pps)
+	if err != nil {
+		return fmt.Errorf("smartcopy %q: %w", s.node.ID, err)
+	}
+	s.runHEVC = r
 	return nil
 }
 
@@ -913,7 +997,15 @@ func (s *smartCopyState) reframeRunPacket(p *av.Packet) error {
 	if s.runPOC != nil {
 		s.runPOC.observe(data)
 	}
-	nals := splitAnnexB(data)
+	var nals [][]byte
+	if s.runHEVC != nil {
+		var err error
+		if nals, err = s.runHEVC.rewritePacket(data); err != nil {
+			return fmt.Errorf("smartcopy %q: %w", s.node.ID, err)
+		}
+	} else {
+		nals = splitAnnexB(data)
+	}
 	if s.runFirst {
 		s.runFirst = false
 		if len(s.runPending) > 0 {

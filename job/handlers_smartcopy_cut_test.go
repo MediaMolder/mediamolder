@@ -272,6 +272,15 @@ func verifySmartCutTol(t *testing.T, outPath string, first, last int, tol float6
 	if len(pkts) > 0 && !pkts[0].key {
 		t.Errorf("first output packet is not a keyframe")
 	}
+	// A constant-rate source must give a constant-rate cut: every DTS step
+	// (what MP4 stores in stts) is one frame, at the head, at the joins and
+	// at the tail. A single odd step makes probes call the file variable
+	// frame rate.
+	for i := 1; i < len(pkts); i++ {
+		if d := pkts[i].dts - pkts[i-1].dts; d != 1001 {
+			t.Errorf("packet %d: DTS step %d, want 1001 (constant frame rate)", i, d)
+		}
+	}
 }
 
 // slicePayloadKeys returns, per video packet of path, a key made of its
@@ -388,6 +397,7 @@ func TestSmartCopyCutDecodes(t *testing.T) {
 			si, _ := in.StreamInfo(0)
 			ed := in.StreamExtraData(0)
 			in.Close()
+			pkts, _ := probeVideoPackets(t, out)
 			tag := string([]byte{byte(si.CodecTag), byte(si.CodecTag >> 8), byte(si.CodecTag >> 16), byte(si.CodecTag >> 24)})
 			switch codec {
 			case cbs.CodecH264:
@@ -399,8 +409,22 @@ func TestSmartCopyCutDecodes(t *testing.T) {
 					t.Errorf("output avcC: %d SPS, %d PPS (%v); want the source's and the boundary's", len(sps), len(pps), err)
 				}
 			case cbs.CodecH265:
-				if tag != "hev1" {
-					t.Errorf("codec tag %q, want hev1 (in-band parameter sets)", tag)
+				if tag != "hvc1" {
+					t.Errorf("codec tag %q, want hvc1 (source sample entry kept; parameter sets in hvcC)", tag)
+				}
+				nals, err := hvcCParamSets(ed)
+				if err != nil {
+					t.Fatalf("output hvcC: %v", err)
+				}
+				counts := map[int]int{}
+				for _, n := range nals {
+					counts[hevcNALType(n)]++
+				}
+				if counts[hevcNALVPS] != 2 || counts[hevcNALSPS] != 2 || counts[hevcNALPPS] != 2 {
+					t.Errorf("output hvcC holds %d VPS, %d SPS, %d PPS; want the source's and the boundary's", counts[hevcNALVPS], counts[hevcNALSPS], counts[hevcNALPPS])
+				}
+				if packetHasParamSets(cbs.CodecH265, pkts[0].data, 4) {
+					t.Errorf("first output packet carries in-band parameter sets; config mode should keep them in hvcC")
 				}
 			}
 

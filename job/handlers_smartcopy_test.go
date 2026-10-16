@@ -16,6 +16,7 @@ import (
 
 type probedPkt struct {
 	pts  int64
+	dts  int64
 	key  bool
 	data []byte
 }
@@ -61,7 +62,7 @@ func probeVideoPackets(t *testing.T, path string) ([]probedPkt, [2]int) {
 			t.Fatalf("ReadPacket: %v", err)
 		}
 		if pkt.StreamIndex() == vIdx {
-			out = append(out, probedPkt{pts: pkt.PTS(), key: pkt.IsKeyFrame(), data: pkt.Data()})
+			out = append(out, probedPkt{pts: pkt.PTS(), dts: pkt.DTS(), key: pkt.IsKeyFrame(), data: pkt.Data()})
 		}
 		pkt.Close()
 	}

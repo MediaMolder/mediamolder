@@ -33,15 +33,34 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- **smartcopy: constant-rate sources give constant-rate cuts.** Re-encoded
+  packets took their first DTS values from the priming GOP (a jump of
+  several frames at the head), and a copied keyframe whose leading pictures
+  were re-encoded kept a DTS two frames early, which the monotonic clamp
+  turned into 1-tick and 2001-tick steps. Every DTS step is now one frame
+  for H.264 (closed and open GOP) and HEVC cuts, so `stts` has one entry and
+  completed-file probes no longer call the cut variable frame rate.
+- **smartcopy: HEVC cuts keep `hvc1` and decode in AVFoundation.** The
+  boundary VPS/SPS/PPS are renumbered to free ids and appended to the output
+  hvcC, with the re-encoded slice headers renumbered to match, instead of
+  travelling in-band under `hev1`, which AVFoundation does not decode.
+- **Re-encoded audio trims keep the head of the window.** The auto-inserted
+  `atrim` is now followed by `asetpts=PTS-STARTPTS` (unless `copy_ts`) and
+  the sink no longer applies its packet-level ss/to drop or start shift to
+  that stream (segment re-anchors still apply), so the encoder's priming packet (AAC: -1024 samples) and, for a
+  start that is not sample-aligned, the packet holding the window's first
+  samples reach the muxer. AAC output now starts at 0, lasts exactly the
+  window and decodes identically to `ffmpeg -af atrim,asetpts -c:a aac`;
+  it used to begin one AAC frame late behind a 21 ms empty edit.
 - **smartcopy: re-encoded boundary GOPs now decode, and open-GOP cuts keep
   every in-window frame.** Boundary packets were forwarded as Annex B with
   parameter sets the output never carried, so every re-encoded frame was
   dropped or garbled next to the copied interior (H.264 and HEVC, MP4 and
   MOV). Re-encoded packets are now re-framed to the source's NAL framing;
-  with libx264 the boundary SPS/PPS take a free id and join the output avcC,
-  otherwise (HEVC, other encoders) they travel in-band with the source's
-  parameter sets re-inserted on copied keyframes and an `hev1` / `avc3`
-  sample entry. GOPs are classified by presentation span, so leading
+  with libx264 the boundary SPS/PPS take a free id and join the output avcC;
+  for HEVC they are renumbered into the output hvcC (see the `hvc1` entry
+  above); with other H.264 encoders they travel in-band with the source's
+  parameter sets re-inserted on copied keyframes and an `avc3` sample entry. GOPs are classified by presentation span, so leading
   pictures of open GOPs are neither dropped nor copied against missing
   references; splices use BLA (HEVC) or in-place POC / frame_num
   renumbering (H.264). Re-encoded packets carry durations and display-order
