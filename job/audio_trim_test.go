@@ -199,3 +199,98 @@ func TestAudioTrimSampleAccurate(t *testing.T) {
 	t.Logf("audio trim: %d samples decoded, want %d (%.1f ms off) @ %d Hz",
 		total, want, float64(diff)*1000/float64(sampleRate), sampleRate)
 }
+
+// probeAudioPackets returns every audio packet's PTS plus the stream's
+// time_base, start time and duration (both in time_base units).
+func probeAudioPackets(t *testing.T, path string) (pts []int64, tb [2]int, start, duration int64) {
+	t.Helper()
+	in, err := av.OpenInput(path, nil)
+	if err != nil {
+		t.Fatalf("OpenInput(%s): %v", path, err)
+	}
+	defer in.Close()
+	aIdx := -1
+	for i := 0; i < in.NumStreams(); i++ {
+		if si, err := in.StreamInfo(i); err == nil && si.Type == av.MediaTypeAudio {
+			aIdx, tb, start, duration = si.Index, si.TimeBase, si.StartTime, si.Duration
+			break
+		}
+	}
+	if aIdx < 0 {
+		t.Fatalf("%s: no audio stream", path)
+	}
+	for {
+		pkt, err := av.AllocPacket()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := in.ReadPacket(pkt); err != nil {
+			pkt.Close()
+			if av.IsEOF(err) {
+				break
+			}
+			t.Fatalf("ReadPacket: %v", err)
+		}
+		if pkt.StreamIndex() == aIdx {
+			pts = append(pts, pkt.PTS())
+		}
+		pkt.Close()
+	}
+	return pts, tb, start, duration
+}
+
+func mustRunJob(t *testing.T, cfgJSON string) {
+	t.Helper()
+	if _, err := runJob(t, cfgJSON); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+}
+
+// TestAudioTrimAACKeepsHeadOfWindow is the regression test for a re-encoded
+// AAC trim whose start is not on a sample boundary. The sink's packet-level
+// drop used to discard the encoder's priming packet (-1024 samples) and,
+// for an unaligned start, the packet holding the window's first samples, so
+// the output began one AAC frame late with a 21 ms empty edit. The atrim is
+// now followed by asetpts and the sink leaves that channel alone, so the
+// output matches ffmpeg's: first packet at -1024, start_time 0, duration
+// equal to the window.
+func TestAudioTrimAACKeepsHeadOfWindow(t *testing.T) {
+	if !av.FindEncoder("aac") {
+		t.Skip("aac encoder not available")
+	}
+	dir := t.TempDir()
+	src := filepath.ToSlash(filepath.Join(dir, "src.m4a"))
+	mustRunJob(t, fmt.Sprintf(`{
+		"schema_version": "1.1",
+		"inputs": [],
+		"graph": {"nodes": [
+			{"id":"tone","type":"filter_source","filter":"sine",
+			 "params":{"frequency":"440","sample_rate":"48000","duration":"2.5"}}],
+			"edges": [{"from":"tone","to":"out:a","type":"audio"}]},
+		"outputs": [{"id":"out","url":%q,"format":"mp4","codec_audio":"aac"}]
+	}`, src))
+
+	const ss, to = 0.567233, 1.968633 // frame 17 and frame 59 of a 29.97 fps clip, floored to the microsecond
+	out := filepath.ToSlash(filepath.Join(dir, "cut.m4a"))
+	mustRunJob(t, fmt.Sprintf(`{
+		"schema_version": "1.0",
+		"inputs": [{"id":"in0","url":%q,"streams":[{"input_index":0,"type":"audio","track":0}]}],
+		"graph": {"nodes": [], "edges": [{"from":"in0:a:0","to":"out0:a","type":"audio"}]},
+		"outputs": [{"id":"out0","url":%q,"format":"mp4","codec_audio":"aac","options":{"ss":"%.6f","to":"%.6f"}}]
+	}`, src, out, ss, to))
+
+	pts, tb, start, duration := probeAudioPackets(t, out)
+	if tb != [2]int{1, 48000} {
+		t.Fatalf("audio time_base %v, want 1/48000", tb)
+	}
+	if len(pts) < 2 || pts[0] != -1024 || pts[1] != 0 {
+		t.Errorf("first packets %v, want [-1024 0 ...] (encoder priming packet kept, stream rebased to zero)", pts[:min(len(pts), 3)])
+	}
+	if start != 0 {
+		t.Errorf("audio start_time %d ticks, want 0", start)
+	}
+	want := int64(math.Round((to - ss) * 48000))
+	if d := duration - want; d > 48 || d < -48 { // within 1 ms
+		t.Errorf("audio duration %d samples, want %d (window %.6f s)", duration, want, to-ss)
+	}
+}

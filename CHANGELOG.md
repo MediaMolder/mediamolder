@@ -44,6 +44,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   boundary VPS/SPS/PPS are renumbered to free ids and appended to the output
   hvcC, with the re-encoded slice headers renumbered to match, instead of
   travelling in-band under `hev1`, which AVFoundation does not decode.
+- **Re-encoded audio trims keep the head of the window.** The auto-inserted
+  `atrim` is now followed by `asetpts=PTS-STARTPTS` (unless `copy_ts`) and
+  the sink no longer applies its packet-level ss/to drop or shift to that
+  stream, so the encoder's priming packet (AAC: -1024 samples) and, for a
+  start that is not sample-aligned, the packet holding the window's first
+  samples reach the muxer. AAC output now starts at 0, lasts exactly the
+  window and decodes identically to `ffmpeg -af atrim,asetpts -c:a aac`;
+  it used to begin one AAC frame late behind a 21 ms empty edit.
 - **smartcopy: re-encoded boundary GOPs now decode, and open-GOP cuts keep
   every in-window frame.** Boundary packets were forwarded as Annex B with
   parameter sets the output never carried, so every re-encoded frame was

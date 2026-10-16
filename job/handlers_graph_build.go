@@ -384,9 +384,12 @@ func spliceAudioAdaptersForEncoders(def *graph.Def) {
 // packet granularity, so re-encoded audio is off by up to one packet (~21 ms)
 // at each edge. This pass inserts `atrim=start=S:end=E,asetpts=PTS-STARTPTS`
 // in front of every audio encoder whose output declares a trim window, so the
-// exact boundary sample is selected and the stream is rebased to zero. The
-// sink then skips its own output-timing on that channel (see sinkWriter
-// internalTrim) because the atrim already trimmed and rebased it.
+// exact boundary sample is selected and the stream is rebased to zero (the
+// asetpts is left out under copy_ts, which keeps source timestamps). The sink
+// then skips its own output-timing on that channel (see sinkWriter
+// internalTrim) because the atrim already trimmed and rebased it, and every
+// encoder packet, including a negative-PTS priming packet, reaches the muxer
+// so it can write the codec's edit list exactly as FFmpeg does.
 //
 // Runs before the audio adapter / sync splices so `atrim` sits upstream-most
 // (trim → resample → reframe → encode). Synthetic node IDs use "__atrim__".
@@ -458,10 +461,16 @@ func spliceAudioTrimForOutputs(cfg *Config, def *graph.Def) {
 			}
 			spec += fmt.Sprintf("end=%.6f", float64(endUS)/1e6)
 		}
-		// No asetpts: keep the source PTS so the sink's normal output-timing
-		// (drop-below-start + shift-to-zero) rebases the stream, exactly as it
-		// does for any trimmed re-encode. atrim only refines the boundary to
-		// the exact sample; the sink's packet drop then removes nothing real.
+		// Rebase to zero here, as FFmpeg's insert_trim + its output
+		// start_time offset do, unless copy_ts keeps source timestamps. The
+		// sink skips its packet-level drop/stop/shift on this channel (see
+		// sinkWriter.internalTrim): that drop would discard the encoder's
+		// priming packet (AAC starts at -1024 samples) and, when the start
+		// is not sample-aligned, the packet holding the window's first
+		// samples.
+		if !cfg.CopyTS {
+			spec += ",asetpts=PTS-STARTPTS"
+		}
 
 		filtID := fmt.Sprintf("__atrim__%s_%d", enc.ID, i)
 		filtNode := graph.NodeDef{

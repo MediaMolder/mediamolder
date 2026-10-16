@@ -53,6 +53,27 @@ func shiftPTSus(pkt *av.Packet, deltaUS int64, tb [2]int) {
 	}
 }
 
+// internalTrimChannels reports, per inbound channel, whether the stream
+// was trimmed upstream by a spliced atrim: an encoder fed (through any
+// adapter chain) by a node whose ID carries the "__atrim__" prefix.
+func internalTrimChannels(node *graph.Node) []bool {
+	out := make([]bool, len(node.Inbound))
+	for i, e := range node.Inbound {
+		n := e.From
+		for depth := 0; n != nil && depth < 16; depth++ {
+			if strings.HasPrefix(n.ID, "__atrim__") {
+				out[i] = true
+				break
+			}
+			if len(n.Inbound) != 1 {
+				break
+			}
+			n = n.Inbound[0].From
+		}
+	}
+	return out
+}
+
 // sinkWriter carries the per-output muxing state and implements the per-packet
 // and per-channel write operations for handleSink. Separating this type from
 // graphRunner makes processOne and writeOne independently testable.
@@ -63,7 +84,11 @@ type sinkWriter struct {
 	stopUS  int64       // output-side -t/-to; noLimitUS = no trim
 	shiftUS int64       // subtracted from kept packets so output anchors at PTS 0
 	mu      *sync.Mutex // nil for single-stream path; shared across goroutines otherwise
-	pipe    *Pipeline
+	// internalTrim marks inbound channels whose stream was already trimmed
+	// and rebased upstream by a spliced atrim (spliceAudioTrimForOutputs):
+	// the sink applies no output-side ss/to and no shift to them.
+	internalTrim []bool
+	pipe         *Pipeline
 	// pendingCut is non-nil when the output has SegmentOnMetadata set.
 	// The go_processor handler signals it with the cut frame's source-PTS
 	// (microseconds); the video goroutine rotates the muxer at the next
@@ -186,7 +211,16 @@ func (w *sinkWriter) processOne(i int, pkt *av.Packet, dstTB [2]int, rs *sinkRes
 	// drop out-of-window packets instead, and the pipeline runs to EOF.
 	smartCh := i < len(w.node.Inbound) && w.node.Inbound[i].From != nil &&
 		w.node.Inbound[i].From.Kind == graph.KindSmartCopy
-	if !smartCh {
+	// Channels trimmed upstream by atrim(+asetpts) carry their window too:
+	// every encoder packet must reach the muxer, including the priming
+	// packet with a negative PTS, and the stream is already at zero.
+	trimmed := i < len(w.internalTrim) && w.internalTrim[i]
+	if trimmed {
+		if w.shortestReached(ptsUS, hasPTS) {
+			return false, false, nil
+		}
+	}
+	if !smartCh && !trimmed {
 		// When no output-side -ss is configured and copyTS is false, drop any
 		// packet arriving with a negative PTS. After an input-side -ss seek the
 		// source shifts every packet by ts_offset so the keyframe that landed
@@ -218,8 +252,10 @@ func (w *sinkWriter) processOne(i int, pkt *av.Packet, dstTB [2]int, rs *sinkRes
 	}
 
 	// Shift kept packets so the output file anchors at PTS 0
-	// (suppressed under -copyts).
-	shiftPTSus(pkt, w.shiftUS, dstTB)
+	// (suppressed under -copyts, and on channels rebased upstream).
+	if !trimmed {
+		shiftPTSus(pkt, w.shiftUS, dstTB)
+	}
 
 	// BSF chain: drive through av_bsf_send_packet / av_bsf_receive_packet
 	// and call writeOne for each output packet. Mirrors
@@ -332,12 +368,13 @@ func (r *graphRunner) handleSink(ctx context.Context, node *graph.Node, ins []<-
 	}
 
 	w := &sinkWriter{
-		sink:    sink,
-		node:    node,
-		startUS: startUS,
-		stopUS:  stopUS,
-		shiftUS: shiftDownUS,
-		pipe:    r.pipe,
+		sink:         sink,
+		node:         node,
+		startUS:      startUS,
+		stopUS:       stopUS,
+		shiftUS:      shiftDownUS,
+		pipe:         r.pipe,
+		internalTrim: internalTrimChannels(node),
 	}
 
 	// The pending-cut flag was pre-registered in r.segmentCuts during openSink
