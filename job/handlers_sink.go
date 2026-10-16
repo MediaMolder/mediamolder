@@ -78,13 +78,29 @@ func internalTrimChannels(node *graph.Node) []bool {
 // rebased upstream (asetpts=PTS-STARTPTS after the spliced atrim): the
 // output-side start, unless copy_ts kept source timestamps. Adding it to a
 // packet's PTS puts the packet back on the source timeline the segment
-// cuts and the shortest bound are expressed in; subtracting it from the
-// sink's shift leaves only the segment re-anchor to apply.
+// cuts are expressed in; subtracting it from the sink's shift leaves only
+// the segment re-anchor to apply.
 func (w *sinkWriter) trimOffsetUS(i int) int64 {
 	if i >= len(w.internalTrim) || !w.internalTrim[i] || w.sink.copyTS || w.startUS == int64(av.NoPTSValue) {
 		return 0
 	}
 	return w.startUS
+}
+
+// cutPTSus returns channel i's packet PTS on the source timeline, where
+// segment cuts live: the packet's own PTS plus any upstream rebase.
+func (w *sinkWriter) cutPTSus(i int, pkt *av.Packet, srcTB [2]int) (int64, bool) {
+	us, ok := ptsToMicros(pkt.PTS(), srcTB)
+	return us + w.trimOffsetUS(i), ok
+}
+
+// anchorSegment makes a new segment start at PTS 0 by shifting every
+// channel by the rotating keyframe's source-timeline PTS (suppressed under
+// -copyts). Channels rebased upstream receive it minus their rebase.
+func (w *sinkWriter) anchorSegment(pktUS int64) {
+	if !w.sink.copyTS {
+		w.shiftUS = pktUS
+	}
 }
 
 // sinkWriter carries the per-output muxing state and implements the per-packet
@@ -567,9 +583,7 @@ func (r *graphRunner) handleSink(ctx context.Context, node *graph.Node, ins []<-
 			// from rotating early when the go_processor runs ahead of the encoder.
 			if w.pendingCut != nil && pkt.IsKeyFrame() {
 				if cutUS := w.pendingCut.frontCut(); cutUS >= 0 {
-					pktUS, ok := ptsToMicros(pkt.PTS(), c.srcTB)
-					pktUS += w.trimOffsetUS(0) // cuts are on the source timeline
-					if ok && pktUS >= cutUS {
+					if pktUS, ok := w.cutPTSus(0, pkt, c.srcTB); ok && pktUS >= cutUS {
 						nextURL := fmt.Sprintf(sink.cfg.URL, w.segCounter+1)
 						if err := r.rotateSegment(w, &sink.cfg, nextURL); err != nil {
 							_ = pkt.Close()
@@ -578,11 +592,8 @@ func (r *graphRunner) handleSink(ctx context.Context, node *graph.Node, ins []<-
 						w.pendingCut.popFront()
 						// Anchor the new segment at PTS 0 so each output
 						// MP4 plays back from time zero rather than carrying
-						// the original source timeline. Suppressed under
-						// -copyts.
-						if !sink.copyTS {
-							w.shiftUS = pktUS
-						}
+						// the original source timeline.
+						w.anchorSegment(pktUS)
 						c.dstTB = sink.muxer.StreamTimeBase(0)
 						if c.rs != nil {
 							c.dstTB = c.rs.dstTB
@@ -737,8 +748,7 @@ func (r *graphRunner) handleSink(ctx context.Context, node *graph.Node, ins []<-
 					}
 				}
 				if w.pendingCut != nil {
-					pktUS, ok := ptsToMicros(pkt.PTS(), c.srcTB)
-					pktUS += w.trimOffsetUS(c.idx) // cuts are on the source timeline
+					pktUS, ok := w.cutPTSus(c.idx, pkt, c.srcTB)
 					if isVideo {
 						if pkt.IsKeyFrame() {
 							if cutUS := w.pendingCut.frontCut(); cutUS >= 0 && ok && pktUS >= cutUS {
@@ -748,9 +758,8 @@ func (r *graphRunner) handleSink(ctx context.Context, node *graph.Node, ins []<-
 								// a closed/new muxer.
 								w.mu.Lock()
 								rotErr := r.rotateSegment(w, &sink.cfg, nextURL)
-								if rotErr == nil && !sink.copyTS {
-									// Anchor each new segment at PTS 0.
-									w.shiftUS = pktUS
+								if rotErr == nil {
+									w.anchorSegment(pktUS) // each new segment starts at PTS 0
 								}
 								w.mu.Unlock()
 								if rotErr != nil {

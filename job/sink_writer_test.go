@@ -408,3 +408,74 @@ func TestSinkWriter_TrimmedChannelShift(t *testing.T) {
 		t.Errorf("trimOffsetUS = %d, want %d", off, startUS)
 	}
 }
+
+// TestSinkWriter_TrimmedChannelCutAndShortest drives the two decisions the
+// segment loops and -shortest take on a channel rebased upstream: a cut is
+// compared on the source timeline (the rebased PTS plus the output start),
+// the anchor stored at a rotation is that source time, and the -shortest
+// bound, kept in written (post-shift) time, neither drops the negative
+// priming packet nor lets the channel run past another channel's end.
+func TestSinkWriter_TrimmedChannelCutAndShortest(t *testing.T) {
+	fm := &fakeMuxer{tb: tb1k}
+	defer fm.closeAll()
+	const startUS = 500_000
+	sr := &sinkResources{muxer: fm, cfg: Output{}, shortest: true, shortestPTSus: noLimitUS}
+	w := &sinkWriter{
+		sink:         sr,
+		node:         makeVideoNode("sink0", 1),
+		startUS:      startUS,
+		stopUS:       noLimitUS,
+		shiftUS:      startUS,
+		pipe:         minimalPipeline(),
+		internalTrim: []bool{true},
+	}
+	pkt, err := av.AllocPacket()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pkt.Close()
+
+	// Cut compare: the rebased packet at 800 ms is the source's 1.3 s.
+	pkt.SetPTS(800)
+	if us, ok := w.cutPTSus(0, pkt, tb1k); !ok || us != 1_300_000 {
+		t.Fatalf("cutPTSus = %d,%v, want 1300000 (source timeline)", us, ok)
+	}
+	w.anchorSegment(1_300_000)
+	if w.shiftUS != 1_300_000 {
+		t.Fatalf("anchorSegment stored %d, want the source-time anchor 1300000", w.shiftUS)
+	}
+	w.shiftUS = startUS // back to the first segment for the -shortest checks
+
+	// -shortest: another channel ended at written PTS 1.0 s.
+	sr.shortestPTSus = 1_000_000
+	st := &chanState{}
+	write := func(ptsMS int64) bool {
+		t.Helper()
+		pkt.SetPTS(ptsMS)
+		pkt.SetDTS(ptsMS)
+		wrote, _, err := w.processOne(0, pkt, tb1k, nil, st)
+		if err != nil {
+			t.Fatalf("pts %d: %v", ptsMS, err)
+		}
+		return wrote
+	}
+	if !write(-21) {
+		t.Errorf("priming packet dropped by -shortest")
+	}
+	if !write(999) {
+		t.Errorf("packet below the shortest bound dropped")
+	}
+	if write(1000) {
+		t.Errorf("packet at the shortest bound written; the rebased PTS plus the start must not be what is compared")
+	}
+	// copy_ts: no rebase upstream, so no offset on the cut compare either.
+	sr.copyTS = true
+	pkt.SetPTS(1300)
+	if us, _ := w.cutPTSus(0, pkt, tb1k); us != 1_300_000 {
+		t.Errorf("copy_ts cutPTSus = %d, want 1300000", us)
+	}
+	w.anchorSegment(2_000_000)
+	if w.shiftUS != startUS {
+		t.Errorf("anchorSegment under copy_ts changed shiftUS to %d", w.shiftUS)
+	}
+}

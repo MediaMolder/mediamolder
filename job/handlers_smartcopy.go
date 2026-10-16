@@ -32,11 +32,11 @@ import (
 // Downstream the sink registers the stream via AddStreamFromInput (the
 // source codecpar) and applies the node's smartCopyPlan: the re-encoded
 // packets are re-framed to the source's NAL framing and their parameter
-// sets either join the output avcC under their own ids (H.264 + libx264)
-// or travel in-band (HEVC, other encoders), with the source's parameter
-// sets re-inserted on copied keyframes. Open-GOP leading pictures are
-// decided by presentation time and spliced with BLA (HEVC) or POC
-// renumbering (H.264).
+// sets join the output avcC under their own ids (H.264 + libx264), are
+// renumbered into the output hvcC (HEVC), or travel in-band with the
+// source's parameter sets re-inserted on copied keyframes (other H.264
+// encoders). Open-GOP leading pictures are decided by presentation time
+// and spliced with BLA (HEVC) or POC renumbering (H.264).
 //
 // See docs/smartcopy.md for the algorithm and constraints.
 func (r *graphRunner) handleSmartCopy(ctx context.Context, node *graph.Node, ins []<-chan any, outs []chan<- any) error {
