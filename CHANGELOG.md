@@ -46,8 +46,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   travelling in-band under `hev1`, which AVFoundation does not decode.
 - **Re-encoded audio trims keep the head of the window.** The auto-inserted
   `atrim` is now followed by `asetpts=PTS-STARTPTS` (unless `copy_ts`) and
-  the sink no longer applies its packet-level ss/to drop or shift to that
-  stream, so the encoder's priming packet (AAC: -1024 samples) and, for a
+  the sink no longer applies its packet-level ss/to drop or start shift to
+  that stream (segment re-anchors still apply), so the encoder's priming packet (AAC: -1024 samples) and, for a
   start that is not sample-aligned, the packet holding the window's first
   samples reach the muxer. AAC output now starts at 0, lasts exactly the
   window and decodes identically to `ffmpeg -af atrim,asetpts -c:a aac`;

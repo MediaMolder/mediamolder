@@ -230,8 +230,14 @@ func (w *sinkWriter) processOne(i int, pkt *av.Packet, dstTB [2]int, rs *sinkRes
 	// every encoder packet must reach the muxer, including the priming
 	// packet with a negative PTS, and the stream is already at zero.
 	trimmed := i < len(w.internalTrim) && w.internalTrim[i]
+	// The shift this channel receives below; the shortest bound is kept in
+	// output (post-shift) time, so compare post-shift PTS against it.
+	shift := w.shiftUS
 	if trimmed {
-		if w.shortestReached(ptsUS+w.trimOffsetUS(i), hasPTS) {
+		shift -= w.trimOffsetUS(i)
+	}
+	if trimmed {
+		if w.shortestReached(ptsUS-shift, hasPTS) {
 			return false, false, nil
 		}
 	}
@@ -261,7 +267,7 @@ func (w *sinkWriter) processOne(i int, pkt *av.Packet, dstTB [2]int, rs *sinkRes
 			return false, !w.sink.hasSmartCopyIn, nil
 		}
 		// `-shortest`: stop once another channel has closed at a lower PTS.
-		if w.shortestReached(ptsUS, hasPTS) {
+		if w.shortestReached(ptsUS-shift, hasPTS) {
 			return false, false, nil
 		}
 	}
@@ -269,11 +275,7 @@ func (w *sinkWriter) processOne(i int, pkt *av.Packet, dstTB [2]int, rs *sinkRes
 	// Shift kept packets so the output file anchors at PTS 0 (suppressed
 	// under -copyts). A channel rebased upstream has the start already
 	// taken off; only a later segment re-anchor remains.
-	if trimmed {
-		shiftPTSus(pkt, w.shiftUS-w.trimOffsetUS(i), dstTB)
-	} else {
-		shiftPTSus(pkt, w.shiftUS, dstTB)
-	}
+	shiftPTSus(pkt, shift, dstTB)
 
 	// BSF chain: drive through av_bsf_send_packet / av_bsf_receive_packet
 	// and call writeOne for each output packet. Mirrors
@@ -565,7 +567,9 @@ func (r *graphRunner) handleSink(ctx context.Context, node *graph.Node, ins []<-
 			// from rotating early when the go_processor runs ahead of the encoder.
 			if w.pendingCut != nil && pkt.IsKeyFrame() {
 				if cutUS := w.pendingCut.frontCut(); cutUS >= 0 {
-					if pktUS, ok := ptsToMicros(pkt.PTS(), c.srcTB); ok && pktUS >= cutUS {
+					pktUS, ok := ptsToMicros(pkt.PTS(), c.srcTB)
+					pktUS += w.trimOffsetUS(0) // cuts are on the source timeline
+					if ok && pktUS >= cutUS {
 						nextURL := fmt.Sprintf(sink.cfg.URL, w.segCounter+1)
 						if err := r.rotateSegment(w, &sink.cfg, nextURL); err != nil {
 							_ = pkt.Close()

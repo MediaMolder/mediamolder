@@ -386,10 +386,11 @@ func spliceAudioAdaptersForEncoders(def *graph.Def) {
 // in front of every audio encoder whose output declares a trim window, so the
 // exact boundary sample is selected and the stream is rebased to zero (the
 // asetpts is left out under copy_ts, which keeps source timestamps). The sink
-// then skips its own output-timing on that channel (see sinkWriter
-// internalTrim) because the atrim already trimmed and rebased it, and every
-// encoder packet, including a negative-PTS priming packet, reaches the muxer
-// so it can write the codec's edit list exactly as FFmpeg does.
+// then skips its own ss/to on that channel and shifts it only for segment
+// re-anchors (see sinkWriter internalTrim) because the atrim already trimmed
+// and rebased it, and every encoder packet, including a negative-PTS priming
+// packet, reaches the muxer so it can write the codec's edit list exactly as
+// FFmpeg does.
 //
 // Runs before the audio adapter / sync splices so `atrim` sits upstream-most
 // (trim → resample → reframe → encode). Synthetic node IDs use "__atrim__".
@@ -463,11 +464,11 @@ func spliceAudioTrimForOutputs(cfg *Config, def *graph.Def) {
 		}
 		// Rebase to zero here, as FFmpeg's insert_trim + its output
 		// start_time offset do, unless copy_ts keeps source timestamps. The
-		// sink skips its packet-level drop/stop/shift on this channel (see
-		// sinkWriter.internalTrim): that drop would discard the encoder's
-		// priming packet (AAC starts at -1024 samples) and, when the start
-		// is not sample-aligned, the packet holding the window's first
-		// samples.
+		// sink skips its packet-level drop/stop on this channel and shifts
+		// it only for segment re-anchors (see sinkWriter.internalTrim): that
+		// drop would discard the encoder's priming packet (AAC starts at
+		// -1024 samples) and, when the start is not sample-aligned, the
+		// packet holding the window's first samples.
 		if !cfg.CopyTS {
 			spec += ",asetpts=PTS-STARTPTS"
 		}

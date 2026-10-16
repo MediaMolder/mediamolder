@@ -117,10 +117,11 @@ node arranges per codec (the *stream plan*, shared with the sink):
   before the run, and a copied keyframe whose leading pictures went into
   the run is retimed to its own slot, so a constant-rate source gives a
   cut whose every DTS step is one frame (a single `stts` entry). The
-  boundary encoder's B-frame layout is capped so the run never reorders
-  deeper than the source (no B-frames or no pyramid for shallow sources,
-  `bframes ≤ 2^depth − 1` for libx264 otherwise); a run that still does is
-  logged, and only the one step at its join is longer.
+  boundary encoder's B-frame layout is kept within the source's reorder
+  depth (no B-frames for a depth of 0, no pyramid for 1; with a pyramid
+  libx264 and libx265 reorder exactly two deep whatever `bframes` is); a run
+  that still reorders deeper is logged, and only the one step at its join
+  is longer.
 - **H.264 with libx264.** The boundary encoder uses a free `sps-id`; its
   SPS/PPS are appended to the output's avcC next to the source's. Nothing
   travels in-band, and copied packets stay byte-identical — except after an

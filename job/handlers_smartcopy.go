@@ -866,8 +866,8 @@ func (s *smartCopyState) beginRun(enc *av.EncoderContext) error {
 
 // beginRunHEVC prepares the slice renumbering for an HEVC config-mode run.
 // The encoder's parameter sets must match the ones the plan renumbered
-// into the output hvcC; if they differ, the actual ones are renumbered and
-// sent in-band before the run's first packet.
+// into the output hvcC (the encoder is deterministic for one option set);
+// a different set would need the same ids and cannot share the track.
 func (s *smartCopyState) beginRunHEVC(enc *av.EncoderContext) error {
 	ed := enc.ExtraData()
 	var got [][]byte
