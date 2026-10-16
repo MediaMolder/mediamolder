@@ -74,6 +74,19 @@ func internalTrimChannels(node *graph.Node) []bool {
 	return out
 }
 
+// trimOffsetUS is the amount by which channel i's stream was already
+// rebased upstream (asetpts=PTS-STARTPTS after the spliced atrim): the
+// output-side start, unless copy_ts kept source timestamps. Adding it to a
+// packet's PTS puts the packet back on the source timeline the segment
+// cuts and the shortest bound are expressed in; subtracting it from the
+// sink's shift leaves only the segment re-anchor to apply.
+func (w *sinkWriter) trimOffsetUS(i int) int64 {
+	if i >= len(w.internalTrim) || !w.internalTrim[i] || w.sink.copyTS || w.startUS == int64(av.NoPTSValue) {
+		return 0
+	}
+	return w.startUS
+}
+
 // sinkWriter carries the per-output muxing state and implements the per-packet
 // and per-channel write operations for handleSink. Separating this type from
 // graphRunner makes processOne and writeOne independently testable.
@@ -86,7 +99,9 @@ type sinkWriter struct {
 	mu      *sync.Mutex // nil for single-stream path; shared across goroutines otherwise
 	// internalTrim marks inbound channels whose stream was already trimmed
 	// and rebased upstream by a spliced atrim (spliceAudioTrimForOutputs):
-	// the sink applies no output-side ss/to and no shift to them.
+	// the sink applies no output-side ss/to to them, and its shift is
+	// reduced by the rebase already applied (see trimOffsetUS) so segment
+	// re-anchoring still lands them on the new segment's zero.
 	internalTrim []bool
 	pipe         *Pipeline
 	// pendingCut is non-nil when the output has SegmentOnMetadata set.
@@ -216,7 +231,7 @@ func (w *sinkWriter) processOne(i int, pkt *av.Packet, dstTB [2]int, rs *sinkRes
 	// packet with a negative PTS, and the stream is already at zero.
 	trimmed := i < len(w.internalTrim) && w.internalTrim[i]
 	if trimmed {
-		if w.shortestReached(ptsUS, hasPTS) {
+		if w.shortestReached(ptsUS+w.trimOffsetUS(i), hasPTS) {
 			return false, false, nil
 		}
 	}
@@ -251,9 +266,12 @@ func (w *sinkWriter) processOne(i int, pkt *av.Packet, dstTB [2]int, rs *sinkRes
 		}
 	}
 
-	// Shift kept packets so the output file anchors at PTS 0
-	// (suppressed under -copyts, and on channels rebased upstream).
-	if !trimmed {
+	// Shift kept packets so the output file anchors at PTS 0 (suppressed
+	// under -copyts). A channel rebased upstream has the start already
+	// taken off; only a later segment re-anchor remains.
+	if trimmed {
+		shiftPTSus(pkt, w.shiftUS-w.trimOffsetUS(i), dstTB)
+	} else {
 		shiftPTSus(pkt, w.shiftUS, dstTB)
 	}
 
@@ -716,6 +734,7 @@ func (r *graphRunner) handleSink(ctx context.Context, node *graph.Node, ins []<-
 				}
 				if w.pendingCut != nil {
 					pktUS, ok := ptsToMicros(pkt.PTS(), c.srcTB)
+					pktUS += w.trimOffsetUS(c.idx) // cuts are on the source timeline
 					if isVideo {
 						if pkt.IsKeyFrame() {
 							if cutUS := w.pendingCut.frontCut(); cutUS >= 0 && ok && pktUS >= cutUS {

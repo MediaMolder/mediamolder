@@ -353,3 +353,58 @@ func TestSinkWriter_RecordShortest(t *testing.T) {
 		t.Errorf("shortestPTSus = %d after earlier close, want 3_000_000", got)
 	}
 }
+
+// TestSinkWriter_TrimmedChannelShift covers a channel rebased upstream by
+// the spliced atrim+asetpts: the sink drops nothing (the encoder's
+// negative-PTS priming packet passes), applies no start shift (the stream
+// is already at zero), and after a segment rotation re-anchors it by the
+// cut relative to the trim start, so audio lands on the new segment's zero
+// with the video.
+func TestSinkWriter_TrimmedChannelShift(t *testing.T) {
+	fm := &fakeMuxer{tb: tb1k}
+	defer fm.closeAll()
+	const startUS = 500_000
+	w := &sinkWriter{
+		sink:         &sinkResources{muxer: fm, cfg: Output{}},
+		node:         makeVideoNode("sink0", 1),
+		startUS:      startUS,
+		stopUS:       noLimitUS,
+		shiftUS:      startUS, // handleSink's initial shift-to-zero
+		pipe:         minimalPipeline(),
+		internalTrim: []bool{true},
+	}
+	st := &chanState{}
+	write := func(ptsMS int64) int64 {
+		t.Helper()
+		pkt, err := av.AllocPacket()
+		if err != nil {
+			t.Fatal(err)
+		}
+		pkt.SetPTS(ptsMS)
+		pkt.SetDTS(ptsMS)
+		wrote, stopAll, err := w.processOne(0, pkt, tb1k, nil, st)
+		pkt.Close()
+		if err != nil || !wrote || stopAll {
+			t.Fatalf("pts %d: wrote=%v stopAll=%v err=%v", ptsMS, wrote, stopAll, err)
+		}
+		return fm.packets[len(fm.packets)-1].PTS()
+	}
+	if got := write(-21); got != -21 { // priming packet, already rebased
+		t.Errorf("priming packet written at %d, want -21", got)
+	}
+	if got := write(0); got != 0 {
+		t.Errorf("first packet written at %d, want 0", got)
+	}
+	// Segment rotation at source time 1.3 s: handleSink sets shiftUS to the
+	// keyframe's source PTS. The rebased audio at the cut is at 0.8 s.
+	w.shiftUS = 1_300_000
+	if got := write(800); got != 0 {
+		t.Errorf("packet at the cut written at %d, want 0 (re-anchored to the new segment)", got)
+	}
+	if got := write(821); got != 21 {
+		t.Errorf("next packet written at %d, want 21", got)
+	}
+	if off := w.trimOffsetUS(0); off != startUS {
+		t.Errorf("trimOffsetUS = %d, want %d", off, startUS)
+	}
+}
