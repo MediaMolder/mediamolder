@@ -91,7 +91,9 @@ func TestPathCrop_LeftEdge(t *testing.T) {
 		{"pts":0,"cx":100},{"pts":10,"cx":100},{"pts":20,"cx":160.6},{"pts":30,"cx":250.2}]}`)
 	for i, want := range []int{32, 32, 92, 182} {
 		src := columnFrame(t, 320, 240, int64(i*10))
-		src.AddSEIUnregisteredSideData(append(bytes.Repeat([]byte{1}, 16), 'x'))
+		if err := src.AddSEIUnregisteredSideData(append(bytes.Repeat([]byte{1}, 16), 'x')); err != nil {
+			t.Fatalf("sample %d: AddSEIUnregisteredSideData: %v", i, err)
+		}
 		out, md, err := p.Process(src, videoCtx)
 		if err != nil {
 			t.Fatalf("sample %d: %v", i, err)
