@@ -287,7 +287,8 @@ type smartCopyState struct {
 
 	// srcReorder is the source's decode-to-display delay in frames (the
 	// plan's probe, else measured from the first GOP); -1 until known.
-	srcReorder int
+	srcReorder  int
+	depthWarned bool
 	// frameTick is one frame in source time_base units, measured as the
 	// smallest PTS step of the first complete GOP (exact for a constant
 	// rate source, unlike the demuxer's average frame rate); 0 until known.
@@ -748,6 +749,13 @@ func (s *smartCopyState) sendRun() error {
 			depth = d
 		}
 	}
+	if depth > s.srcReorder && s.srcReorder >= 0 && !s.depthWarned {
+		// The run reorders deeper than the source: its DTS must start that
+		// much earlier, which leaves a larger step at the next join. The
+		// plan caps the encoder's B-frame layout to avoid this.
+		log.Printf("smartcopy node %q: re-encoded run reorders %d frames deep, source %d; one DTS step at the join will be longer", s.node.ID, depth, s.srcReorder)
+		s.depthWarned = true
+	}
 	if s.srcReorder > depth {
 		depth = s.srcReorder
 	}
@@ -878,12 +886,10 @@ func (s *smartCopyState) beginRunHEVC(enc *av.EncoderContext) error {
 		return fmt.Errorf("smartcopy %q: boundary encoder emitted no parameter sets", s.node.ID)
 	}
 	if !equalNALSets(got, s.plan.encParamSets) {
-		renumbered, err := hevcRenumberParamSets(got, s.plan.hevcIDs)
-		if err != nil {
-			return fmt.Errorf("smartcopy %q: renumber boundary parameter sets: %w", s.node.ID, err)
-		}
-		log.Printf("smartcopy node %q: boundary encoder parameter sets differ from the planned ones; sending them in-band", s.node.ID)
-		s.runPending = renumbered
+		// The output hvcC already holds the planned sets under the chosen
+		// ids; a different set under the same ids cannot be added to an
+		// hvc1 track without ambiguity, so this is a hard error.
+		return fmt.Errorf("smartcopy %q: boundary encoder parameter sets differ from the planned ones in the output hvcC", s.node.ID)
 	}
 	r, err := newHEVCSliceRenumberer(got, s.plan.hevcIDs.pps)
 	if err != nil {

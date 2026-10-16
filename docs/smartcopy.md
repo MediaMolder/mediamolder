@@ -117,7 +117,10 @@ node arranges per codec (the *stream plan*, shared with the sink):
   before the run, and a copied keyframe whose leading pictures went into
   the run is retimed to its own slot, so a constant-rate source gives a
   cut whose every DTS step is one frame (a single `stts` entry). The
-  boundary encoder's B-frame depth is kept within the source's.
+  boundary encoder's B-frame layout is capped so the run never reorders
+  deeper than the source (no B-frames or no pyramid for shallow sources,
+  `bframes ≤ 2^depth − 1` for libx264 otherwise); a run that still does is
+  logged, and only the one step at its join is longer.
 - **H.264 with libx264.** The boundary encoder uses a free `sps-id`; its
   SPS/PPS are appended to the output's avcC next to the source's. Nothing
   travels in-band, and copied packets stay byte-identical — except after an
@@ -129,7 +132,9 @@ node arranges per codec (the *stream plan*, shared with the sink):
   trailing bits re-padded) and appended to the output's hvcC, and every
   re-encoded slice header is renumbered to the new PPS id with its slice
   data kept byte-aligned. The track keeps the source's sample entry
-  (`hvc1`), which AVFoundation requires, and nothing travels in-band.
+  (`hvc1`), which AVFoundation requires, and nothing travels in-band. An
+  hvcC source whose sets cannot be renumbered fails the job rather than
+  falling back to `hev1`; in-band remains only for Annex B sources.
 - **H.264 with other encoders.** The boundary encoder repeats its SPS/PPS
   before each IDR and the source's parameter sets are re-inserted in front
   of every copied keyframe; MP4/MOV outputs get the `avc3` sample entry.
@@ -192,5 +197,3 @@ priming packet so the file carries the codec's edit list as FFmpeg writes it
 - A source that is not a regular file cannot be probed for its reorder
   depth; it is then measured from the first GOP, and re-encoded packet DTS
   are clamped at the joins if the boundary encoder reorders deeper.
-- Sample-accurate audio (re-encoding partial audio frames at the edges) is
-  not yet implemented; audio is packet-copy-trimmed.

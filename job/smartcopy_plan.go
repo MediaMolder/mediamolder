@@ -247,11 +247,13 @@ func planSmartCopyVideo(si av.StreamInfo, srcTB [2]int, extradata []byte, srcReo
 			}
 		}
 		if plan.lengthSize > 0 {
-			if err := planSmartCopyHEVCConfig(plan, extradata, fourCC(si.CodecTag)); err == nil {
-				return plan, nil
-			} else {
-				plan.notes = append(plan.notes, "HEVC parameter sets cannot be renumbered into the output hvcC ("+err.Error()+"); falling back to in-band")
+			// An hvcC source must come out with every parameter set in
+			// hvcC: the in-band alternative needs hev1, which AVFoundation
+			// does not decode, so a failure here fails the job.
+			if err := planSmartCopyHEVCConfig(plan, extradata, fourCC(si.CodecTag)); err != nil {
+				return nil, fmt.Errorf("HEVC boundary parameter sets cannot be renumbered into the output hvcC: %w", err)
 			}
+			return plan, nil
 		}
 		plan.mode = smartCopyModeInBand
 		plan.encOpts.GlobalHeader = false
@@ -379,6 +381,15 @@ func planSmartCopyH264(plan *smartCopyPlan, extradata []byte) (*smartCopyPlan, e
 		case plan.srcReorder == 1:
 			base = append(base, "b-pyramid=none")
 			plan.notes = append(plan.notes, "boundary x264 B-pyramid disabled to match the source's reorder depth")
+		case plan.srcReorder >= 2:
+			// With a B-pyramid x264 reorders up to ceil(log2(bframes+1))
+			// frames deep, so bframes <= 2^depth - 1 keeps the run within
+			// the source's delay. Presets stay at 3 (depth 2); only an
+			// explicit larger bframes is capped.
+			if cap := 1<<uint(plan.srcReorder) - 1; userBFrames(plan.encOpts.ExtraOpts) > cap {
+				base = append(base, "bframes="+strconv.Itoa(cap))
+				plan.notes = append(plan.notes, fmt.Sprintf("boundary x264 bframes capped at %d to match the source's reorder depth", cap))
+			}
 		}
 	}
 
@@ -507,6 +518,24 @@ func planSmartCopyH264(plan *smartCopyPlan, extradata []byte) (*smartCopyPlan, e
 		plan.extradata = merged
 	}
 	return plan, nil
+}
+
+// userBFrames returns the B-frame count the caller asked for through the
+// bf AVOption or x264-params/x265-params, or -1 when unspecified.
+func userBFrames(extra map[string]string) int {
+	if v, err := strconv.Atoi(strings.TrimSpace(extra["bf"])); err == nil {
+		return v
+	}
+	for _, key := range []string{"x264-params", "x265-params"} {
+		for _, kv := range strings.Split(extra[key], ":") {
+			if k, v, ok := strings.Cut(strings.TrimSpace(kv), "="); ok && k == "bframes" {
+				if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil {
+					return n
+				}
+			}
+		}
+	}
+	return -1
 }
 
 // mergeCodecParams returns a copy of extra with the given key=value pairs
