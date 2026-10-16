@@ -33,6 +33,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- **smartcopy: constant-rate sources give constant-rate cuts.** Re-encoded
+  packets took their first DTS values from the priming GOP (a jump of
+  several frames at the head), and a copied keyframe whose leading pictures
+  were re-encoded kept a DTS two frames early, which the monotonic clamp
+  turned into 1-tick and 2001-tick steps. Every DTS step is now one frame
+  for H.264 (closed and open GOP) and HEVC cuts, so `stts` has one entry and
+  completed-file probes no longer call the cut variable frame rate.
+- **smartcopy: HEVC cuts keep `hvc1` and decode in AVFoundation.** The
+  boundary VPS/SPS/PPS are renumbered to free ids and appended to the output
+  hvcC, with the re-encoded slice headers renumbered to match, instead of
+  travelling in-band under `hev1`, which AVFoundation does not decode.
 - **smartcopy: re-encoded boundary GOPs now decode, and open-GOP cuts keep
   every in-window frame.** Boundary packets were forwarded as Annex B with
   parameter sets the output never carried, so every re-encoded frame was

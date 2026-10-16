@@ -113,18 +113,26 @@ node arranges per codec (the *stream plan*, shared with the sink):
 - **Framing.** Encoders emit Annex B; an ISOBMFF source (avcC/hvcC) is
   length-prefixed, so re-encoded packets are re-framed to the source's NAL
   framing. Their DTS are derived from display order with the source's
-  reorder depth, so they slot into the copied DTS timeline.
+  reorder depth (probed from the file), extrapolated one frame at a time
+  before the run, and a copied keyframe whose leading pictures went into
+  the run is retimed to its own slot, so a constant-rate source gives a
+  cut whose every DTS step is one frame (a single `stts` entry). The
+  boundary encoder's B-frame depth is kept within the source's.
 - **H.264 with libx264.** The boundary encoder uses a free `sps-id`; its
   SPS/PPS are appended to the output's avcC next to the source's. Nothing
   travels in-band, and copied packets stay byte-identical — except after an
   open-GOP head splice, where copied slice *headers* are renumbered until
   the next IDR (see below; slice data is untouched). The boundary encoder's
-  B-frame depth and reference count are kept within the source's.
-- **HEVC, and H.264 with other encoders.** Parameter-set ids cannot be
-  chosen, so the boundary encoder repeats its VPS/SPS/PPS before each IDR
-  and the source's parameter sets are re-inserted in front of every copied
-  keyframe. MP4/MOV outputs get the in-band sample entry (`hev1` /
-  `avc3`).
+  reference count is kept within the source's.
+- **HEVC.** x265 cannot choose its ids, so the boundary VPS/SPS/PPS are
+  renumbered to ids the source does not use (Exp-Golomb fields rewritten,
+  trailing bits re-padded) and appended to the output's hvcC, and every
+  re-encoded slice header is renumbered to the new PPS id with its slice
+  data kept byte-aligned. The track keeps the source's sample entry
+  (`hvc1`), which AVFoundation requires, and nothing travels in-band.
+- **H.264 with other encoders.** The boundary encoder repeats its SPS/PPS
+  before each IDR and the source's parameter sets are re-inserted in front
+  of every copied keyframe; MP4/MOV outputs get the `avc3` sample entry.
 - **Open-GOP splices.** The first copied keyframe after a re-encoded head
   is not an IDR. For HEVC its CRA slices become BLA, the standard splicing
   tool: a new coded video sequence with its leading pictures discarded.
@@ -161,6 +169,13 @@ window is trimmed sample-accurately via an auto-inserted `atrim` filter (see
 [json-config-reference.md](json-config-reference.md)) — or `codec_audio: "copy"`
 for a packet-accurate (~21 ms) lossless copy.
 
+Other audio on the same output follows the output's window: a stream-copied
+codec is trimmed at the muxer (packet-accurate, ~1 audio frame); a
+re-encoded codec such as `codec_audio: "aac"` is trimmed to the exact sample
+by an auto-inserted `atrim`, rebased to zero, and muxed with the encoder's
+priming packet so the file carries the codec's edit list as FFmpeg writes it
+(see [json-config-reference.md](json-config-reference.md)).
+
 ## Limitations
 
 - Video parameters are identical source→target by design.
@@ -170,10 +185,12 @@ for a packet-accurate (~21 ms) lossless copy.
   memory-management operations may address pictures that were before the
   cut, which libavcodec reports as `mmco: unref short failure` while
   decoding correctly.
-- `hev1` / `avc3` in-band parameter sets and avcC records carrying several
-  SPS/PPS are standard, but playback in AVFoundation has not been verified.
+- Cuts of H.264 (avcC with two SPS/PPS) and HEVC (`hvc1`, hvcC with two
+  parameter-set groups) sources decode frame for frame in AVFoundation
+  (`AVAssetReader`, macOS 26). The `avc3` path for H.264 boundary encoders
+  other than libx264 has not been checked there.
 - A source that is not a regular file cannot be probed for its reorder
-  depth; re-encoded packet DTS are then derived from the run alone and
-  clamped at the joins.
+  depth; it is then measured from the first GOP, and re-encoded packet DTS
+  are clamped at the joins if the boundary encoder reorders deeper.
 - Sample-accurate audio (re-encoding partial audio frames at the edges) is
   not yet implemented; audio is packet-copy-trimmed.
