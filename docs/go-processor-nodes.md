@@ -27,6 +27,7 @@ Everything runs in-process: no subprocesses, no network calls, no Python. Your p
 		- [`metadata_file_writer`](#metadata_file_writer)
 		- [`sei_hello`](#sei_hello)
 		- [`path_crop`](#path_crop)
+		- [`moving_crop_scale`](#moving_crop_scale)
 		- [`vidi_analyzer`](#vidi_analyzer)
 		- [`twelvelabs_indexer`](#twelvelabs_indexer)
 		- [`twelvelabs_analyzer`](#twelvelabs_analyzer)
@@ -163,10 +164,11 @@ type ProcessorContext struct {
     PTS        int64           // presentation timestamp (in stream timebase units)
     FrameIndex uint64          // how many frames this node has seen so far (starts at 0)
     Context    context.Context // standard Go context — check this for cancellation
+    TimeBase   [2]int          // input time base, {numerator, denominator}; {0, 0} when unknown
 }
 ```
 
-You can use `MediaType` to handle video and audio frames differently, and `FrameIndex` for logic that depends on position (e.g. "skip the first 100 frames").
+You can use `MediaType` to handle video and audio frames differently, and `FrameIndex` for logic that depends on position (e.g. "skip the first 100 frames"). `TimeBase` is the input edge's time base. `moving_crop_scale` uses it to turn keyframe times in seconds into PTS.
 
 ### Metadata
 
@@ -589,6 +591,28 @@ processor may change PTS or the time base (`fps`, `setpts`, `bwdif`, `yadif`,
 …). `Close` fails the job if any sample matched no frame. The encoder opens at
 the size of the last filter before the processor, so follow it with a `scale`
 to `width` × frame height. See [Path crop](path-crop-processor.md).
+
+### `moving_crop_scale`
+
+Crops each video frame to a keyframed window and scales that window to a
+fixed output size. The encoder opens at `output` width and height, so the
+graph does not need a following `scale`. Keyframes bracket PTS (or seconds,
+via `t` and `ProcessorContext.TimeBase`). Between them the window can hold,
+move linearly, or follow a Catmull-Rom spline. A `zoom` list interpolates in
+log size. `aspect: output` derives the height from the output aspect.
+
+| Param | Default | Description |
+|-------|---------|-------------|
+| `output.width`, `output.height` | required | Even, at least 2. |
+| `keyframes` | required | `pts` or `t`, `x`/`y` or `cx`/`cy`, `w`/`h` or `zoom`. Time strictly increasing. |
+| `interpolate` | `linear` | `hold`, `linear`, or `smooth`. |
+| `unmatched` | `hold` | `hold`, `drop`, or `error` outside the first and last keyframe. |
+| `aspect` | `free` | `free`, or `output` to keep the output aspect unless the derived height is clamped to the picture. |
+| `align` | `chroma` | `chroma` or `exact`. |
+| `flags` | `bicubic` | swscale algorithm name. |
+| `emit_rect` | `false` | Metadata with the applied integer rectangle. |
+
+On 4:2:0 the window steps by 2 luma pixels. See [Moving crop and scale](moving-crop-scale.md).
 
 ### `vidi_analyzer`
 

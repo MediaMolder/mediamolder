@@ -70,6 +70,13 @@ type MultiStreamSource interface {
 	RunStreams(ctx context.Context, send func(stream int, f *av.Frame) error) error
 }
 
+// FrameTransformInfo is implemented by a Processor with an inbound AV edge
+// whose output stream differs from its input. The runtime passes the resolved
+// upstream StreamInfo and uses the result to open downstream filters and encoders.
+type FrameTransformInfo interface {
+	TransformStreamInfo(in av.StreamInfo) (av.StreamInfo, error)
+}
+
 // Processor is the interface every go_processor node must implement.
 type Processor interface {
 	// Init is called once during graph construction, before the first frame.
@@ -97,6 +104,9 @@ type ProcessorContext struct {
 	PTS        int64
 	FrameIndex uint64
 	Context    context.Context // for cancellation / deadlines
+	// TimeBase is the input edge time base as {numerator, denominator}.
+	// Both are zero when the runtime could not resolve one.
+	TimeBase [2]int
 }
 
 // Metadata carries arbitrary results produced by a processor (detections,

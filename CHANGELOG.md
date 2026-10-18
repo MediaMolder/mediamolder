@@ -7,6 +7,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- **`moving_crop_scale` processor.** Crops each video frame to a keyframed
+  window and scales it to a fixed output size. Keyframes bracket PTS, or
+  seconds via `t`, and interpolate with hold, linear, or Catmull-Rom. A
+  `zoom` list moves in log size. `aspect: output` keeps the output aspect.
+  The encoder opens at `output` width and height through
+  `FrameTransformInfo`. `ProcessorContext.TimeBase` carries the input time
+  base. Node metrics count swscale graph rebuilds (`SwsReinits`). New
+  `av.Frame.CropRect`, `av.Frame.VisibleHeight`, `av.Frame.CropWindow`,
+  `av.Scaler`, and `av.SecondsToTicks`.
+  See [docs/moving-crop-scale.md](docs/moving-crop-scale.md).
 - **`path_crop` processor.** Crops each video frame
   to a full-height window whose left edge follows a per-PTS path of
   centre-x samples, and drops frames off the path. Window offsets come from

@@ -258,6 +258,7 @@ func (r *graphRunner) handleGoProcessor(ctx context.Context, node *graph.Node, i
 			PTS:        f.PTS(),
 			FrameIndex: frameIndex,
 			Context:    ctx,
+			TimeBase:   tb,
 		}
 
 		out, md, err := proc.Process(f, pctx)
@@ -360,7 +361,11 @@ func (r *graphRunner) handleGoProcessor(ctx context.Context, node *graph.Node, i
 		}
 
 		frameIndex++
-		r.pipe.Metrics().Node(node.ID).RecordLatency(time.Since(frameStart))
+		nm := r.pipe.Metrics().Node(node.ID)
+		nm.RecordLatency(time.Since(frameStart))
+		if counter, ok := proc.(interface{ ScaleReinits() int64 }); ok {
+			nm.SetSwsReinits(counter.ScaleReinits())
+		}
 
 		// nil output means the processor consumed (dropped) the frame.
 		// The input frame was closed above.

@@ -265,6 +265,8 @@ mediamolder.RegisterProcessor("scene-detector", func() processors.Processor {
 })
 ```
 
+`moving_crop_scale` changes the picture size. It implements `FrameTransformInfo`, and `resolveEdgeStreamInfo` reports that output width and height to the encoder and to downstream filters. `ProcessorContext.TimeBase` is the input edge time base, `{numerator, denominator}`, filled by the go_processor handler. Both live in `processors/processor.go`.
+
 **Pipeline Lifecycle (high-level):**
 ```go
 p, _ := pipeline.New(ctx, config)   // parse + validate

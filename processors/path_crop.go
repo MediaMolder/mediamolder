@@ -17,9 +17,6 @@ func init() {
 	Register("path_crop", func() Processor { return &PathCrop{} })
 }
 
-// maxExactJSONInt is the largest integer a JSON number (float64) holds exactly.
-const maxExactJSONInt = 1 << 53
-
 // PathCrop crops each video frame to a full-height window whose left edge
 // follows a path of (PTS, centre x) samples, and drops frames that are not on
 // the path. The window math matches FFmpeg's crop filter
@@ -171,45 +168,10 @@ func (p *PathCrop) within(d int64) bool {
 func pathCropX(cx float64, width, frameWidth, log2ChromaW int) int {
 	e := cx - float64(width)/2
 	maxX := frameWidth - width
-	x := 0
-	switch {
-	case e <= 0:
-	case e >= float64(maxX):
-		x = maxX
-	default:
-		x = int(math.Floor(e))
-		if e-math.Floor(e) > 0.5 {
-			x++
-		}
+	if e >= float64(maxX) {
+		e = float64(maxX)
 	}
-	return x &^ (1<<log2ChromaW - 1)
-}
-
-// pathCropInt returns a param as an integer within ±2^53: a JSON number that
-// is integral, or a Go int or int64. The bound is what match relies on to
-// keep its distance arithmetic from overflowing.
-func pathCropInt(v any) (int64, error) {
-	var i int64
-	switch n := v.(type) {
-	case float64:
-		if n != math.Trunc(n) {
-			return 0, fmt.Errorf("%v is not an integer within ±2^53", n)
-		}
-		if math.Abs(n) > maxExactJSONInt {
-			return 0, fmt.Errorf("%v is outside ±2^53", n)
-		}
-		return int64(n), nil
-	case int:
-		i = int64(n)
-	case int64:
-		i = n
-	default:
-		return 0, fmt.Errorf("has type %T, want a number", v)
-	}
-	if i < -maxExactJSONInt || i > maxExactJSONInt {
-		return 0, fmt.Errorf("%d is outside ±2^53", i)
-	}
-	return i, nil
+	return cropAlignDown(cropRoundTiesDown(e), log2ChromaW)
 }
 
 func pathCropWidth(v any) (int, error) {
@@ -224,7 +186,7 @@ func pathCropWidth(v any) (int, error) {
 		}
 		w = int64(i)
 	default:
-		i, err := pathCropInt(v)
+		i, err := cropInt(v)
 		if err != nil {
 			return 0, fmt.Errorf("path_crop: width %w", err)
 		}
@@ -260,7 +222,7 @@ func pathCropFrames(v any) ([]int64, []float64, error) {
 	pts := make([]int64, len(items))
 	cx := make([]float64, len(items))
 	for i, m := range items {
-		n, err := pathCropInt(m["pts"])
+		n, err := cropInt(m["pts"])
 		if err != nil {
 			return nil, nil, fmt.Errorf("path_crop: frames[%d].pts %w", i, err)
 		}

@@ -139,6 +139,11 @@ in-app help dialog.
      The **Path crop** node (`path_crop`) crops each frame to a full-height
      window whose left edge follows a per-PTS path and drops frames off the
      path. See [Path crop](path-crop-processor.md).
+     The **Moving crop and scale** node (`moving_crop_scale`) crops each
+     frame to a keyframed window and scales it to a fixed output size. The
+     Inspector edits the output size, the interpolation and alignment
+     options, and the keyframes row by row. See
+     [Moving crop and scale](moving-crop-scale.md).
      See [§ Scene detection processors](#scene-detection-processors).
 4. **Add a Sink.** Drag *Output file* from **Sinks**, click **Browse…** and
    pick **Save** mode in the dialog to choose a destination path and
