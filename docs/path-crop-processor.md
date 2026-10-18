@@ -61,8 +61,6 @@ guarantee:
   `yadif` in every mode (they halve the time base and double PTS,
   `libavfilter/yadif_common.c`). `scale`, `setsar` and `format` are fine.
 - Frames are in system memory. A hardware frame is an error.
-- The incoming frame's `crop_*` fields are zero. Frames out of a filter
-  graph satisfy this.
 
 If a precondition is broken, no frame matches. `Close` reports that as an
 error, so the job does not produce an empty file in silence.
@@ -72,12 +70,13 @@ error, so the job does not produce an empty file in silence.
 1. A nil frame returns nil; that is not an error.
 2. A non-video frame is returned unchanged.
 3. The frame's PTS is matched to one unused path sample: an exact PTS
-   wins, otherwise the nearest unused sample within the half-frame limit
-   (half the smallest step between consecutive path PTS; 1 when the path
-   has one sample or that step is below 2). A tie goes to the earlier
-   sample. A sample is used at most once. Because every step is at least
-   twice the limit, only the samples either side of the PTS can be in
-   range, found by binary search.
+   wins, otherwise the nearest unused sample *less than* half the smallest
+   step between consecutive path PTS away (one tick when the path has one
+   sample). A frame exactly half a step from two samples matches neither,
+   so a path sampled every second frame never has its sample taken by the
+   frame before it. A sample is used at most once. Only the samples either
+   side of the PTS can be in range, found by binary search. A frame with
+   no PTS (`AV_NOPTS_VALUE`), or one far outside the path, matches nothing.
 4. No match drops the frame. That is how a keyframe seek before the in
    point, or a trim that runs past the out point, stays out of the file.
 5. A match returns a new frame; the runtime releases the original.
@@ -92,7 +91,10 @@ The crop:
    as FFmpeg's `crop` filter does (`libavfilter/vf_crop.c`). For 4:2:0 and
    4:2:2 this clears the low bit; for 4:4:4 there is no step.
 5. A frame narrower than `width`, or a `width` that is not a multiple of
-   the chroma step, is an error, not a drop.
+   the chroma step, is an error, not a drop. The frame's width is its
+   visible width: cropping the frame still carries in its `crop_*` fields
+   (a decoder with `apply_cropping` off leaves the conformance window
+   there) is applied first.
 6. The window is cut with `av.Frame.CropColumns(x, width)`: a new
    reference of the source frame gets `crop_left`/`crop_right` and goes
    through `av_frame_apply_cropping(AV_FRAME_CROP_UNALIGNED)`, FFmpeg's own
@@ -104,15 +106,17 @@ The crop:
    buffers (`av_frame_copy`), so swscale sees aligned rows and
    `Frame.Plane()` slices stay inside their buffer.
 8. The output keeps the source frame's properties — PTS, duration, side
-   data (`av_frame_copy_props`). Side data is not cleared; put a
-   `sidedata` filter after the processor if the output must not carry it.
+   data (`av_frame_copy_props`) — with the `crop_*` fields cleared. Side
+   data is not cleared; put a `sidedata` filter after the processor if the
+   output must not carry it.
 
 The processor returns no metadata.
 
 `Close` returns an error if any path sample was never used, naming the
 count and the first unused PTS. That catches a broken precondition and a
-source that ends before the out point. `Close` also runs after a failed or
-cancelled run; the runtime collects its error with the others.
+source that ends before the out point. `Close` also runs after a failed
+or cancelled run; the runtime collects its error with the others, and the
+run's own error (including the cancellation) wins.
 
 A hold is two samples with the same `cx`: they produce the same x. The
 processor never invents a glide between samples.

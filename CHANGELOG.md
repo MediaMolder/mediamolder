@@ -7,6 +7,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- **`path_crop` processor.** Crops each video frame
+  to a full-height window whose left edge follows a per-PTS path of
+  centre-x samples, and drops frames off the path. Window offsets come from
+  `av_frame_apply_cropping`, so 8-bit, high-bit-depth, semi-planar and
+  packed formats are all cut correctly, and cropping a frame still carries
+  (`crop_*` fields) is folded first. A frame exactly half a step between
+  two samples, or without a PTS, matches neither. `Close` fails the job
+  when a path sample matched no frame. The path is a `frames: [{pts, cx}]`
+  array. New `av.Frame.CropColumns`, `av.Frame.VisibleWidth`,
+  `av.Frame.Crop`, `av.Frame.SetCrop`, `av.Frame.Log2ChromaW` and
+  `av.PixFmtByName`.
+  See [docs/path-crop-processor.md](docs/path-crop-processor.md).
 - **Frame-index walks.** `frameindex.Estimate`, `WalkPackets`, and `WalkDecode`
   build a presentation-order PTS table for one video stream. The packet walk
   does not decode. The decode walk records one row per decoded frame, and both
@@ -123,44 +135,6 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   columns. Plotting bit rate over time, or separating picture payload from
   SEI overhead, becomes a one-line aggregation over the CSV; the guide shows
   a pandas recipe. See [docs/bitstream-trace.md](docs/bitstream-trace.md).
-
-### Added
-
-- **`path_crop` processor.** Crops each video frame
-  to a full-height window whose left edge follows a per-PTS path of
-  centre-x samples, and drops frames off the path. Window offsets come from
-  `av_frame_apply_cropping`, so 8-bit, high-bit-depth, semi-planar and
-  packed formats are all cut correctly, and cropping a frame still carries
-  (`crop_*` fields) is folded first. A frame exactly half a step between
-  two samples, or without a PTS, matches neither. `Close` fails the job
-  when a path sample matched no frame, except after a cancelled run. The
-  path is a `frames: [{pts, cx}]` array. New `av.Frame.CropColumns`,
-  `av.Frame.VisibleWidth`, `av.Frame.Crop`, `av.Frame.SetCrop`,
-  `av.Frame.Log2ChromaW` and `av.PixFmtByName`.
-  See [docs/path-crop-processor.md](docs/path-crop-processor.md).
-- **Bitstream trace validation: violations list, structure checks, `--validate`.**
-  Reports now carry a top-level `violations` list: every unit parse failure the
-  syntax templates detect (out-of-range elements, truncation, missing
-  parameter-set references) as `kind: "syntax"` entries with packet/unit
-  location and the parse diagnostic ("PPS id 3 not available."). Opt-in
-  stream-structure checks (`--checks default|strict|<ids>`, node param
-  `checks`) add `kind: "structure"` findings over the decode-order walk:
-  `vcl_before_ps` and `frame_num_gap` (errors, the `default` set), `no_aud`
-  and `sei_after_vcl` (warnings, `strict`). `--validate` exits non-zero on
-  error-severity findings; the node's `validate: true` fails the job. Range
-  and unit filters never hide violations. Header-level only by design —
-  decoder-side conformance (DPB, levels, HRD) is out of scope.
-- **Caption carriage dump (CEA-608/708).** T.35 SEI (payload type 4) and AV1
-  ITU-T T.35 metadata summaries now include `raw_hex` of the payload and,
-  when the ATSC A/53 / SCTE-128 wrapper matches (0xB5 / 0x0031 / GA94 /
-  cc_data), the parsed `cc_count`, `cc` triplets and a `contains` list of
-  `cea608`/`cea708` — a dump, not a caption decoder. Unregistered user data
-  gets the same `raw_hex`. New `--units caption` alias selects the carrier
-  units. `dts_time` joins `time` on packets for decode-order binning, and the
-  CSV picture columns now mirror the JSON record 1:1 (`segment_address`,
-  `first_slice`, `dependent`, `idr_pic_id`, `field`); AV1 frame-header and
-  tile-list OBUs count as `vcl` in rate splits.
-  See [docs/bitstream-trace.md](docs/bitstream-trace.md).
 
 ### Changed
 

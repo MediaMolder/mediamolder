@@ -583,8 +583,8 @@ format works (8-bit, 10-bit, `nv12`, packed RGB). Side data passes through.
 }
 ```
 
-A frame matches the unused sample with the same PTS, or the nearest one within
-half the smallest path step. The job needs `copy_ts`, and no node before the
+A frame matches the unused sample with the same PTS, or the nearest one less
+than half the smallest path step away. The job needs `copy_ts`, and no node before the
 processor may change PTS or the time base (`fps`, `setpts`, `bwdif`, `yadif`,
 …). `Close` fails the job if any sample matched no frame. The encoder opens at
 the size of the last filter before the processor, so follow it with a `scale`

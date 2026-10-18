@@ -35,7 +35,7 @@ type PathCrop struct {
 	cx    []float64
 	used  []bool
 	nUsed int
-	half  int64
+	step  int64 // smallest step between path PTS; 0 for a one-sample path
 }
 
 func (p *PathCrop) Init(params map[string]any) error {
@@ -64,9 +64,9 @@ func (p *PathCrop) Init(params map[string]any) error {
 	p.cx = cx
 	p.used = make([]bool, len(pts))
 	p.nUsed = 0
-	p.half = 1
-	if len(pts) >= 2 && minStep >= 2 {
-		p.half = minStep / 2
+	p.step = 0
+	if len(pts) >= 2 {
+		p.step = minStep
 	}
 	return nil
 }
@@ -78,11 +78,15 @@ func (p *PathCrop) Process(frame *av.Frame, ctx ProcessorContext) (*av.Frame, *M
 	if ctx.MediaType != av.MediaTypeVideo {
 		return frame, nil, nil
 	}
-	i, ok := p.match(frame.PTS())
+	pts := frame.PTS()
+	if pts == av.NoPTSValue {
+		return nil, nil, nil
+	}
+	i, ok := p.match(pts)
 	if !ok {
 		return nil, nil, nil
 	}
-	fw := frame.Width()
+	fw := frame.VisibleWidth()
 	if fw < p.width {
 		return nil, nil, fmt.Errorf("path_crop: frame width %d is narrower than window %d", fw, p.width)
 	}
@@ -105,7 +109,8 @@ func (p *PathCrop) Process(frame *av.Frame, ctx ProcessorContext) (*av.Frame, *M
 
 // Close reports path samples that no frame matched. That happens when copy_ts
 // is off, when a node before the processor changed PTS or the time base, or
-// when the source ends before the out point.
+// when the source ends before the out point. After a cancelled or failed run
+// the runtime reports the run's own error ahead of this one.
 func (p *PathCrop) Close() error {
 	if p.nUsed == len(p.pts) {
 		return nil
@@ -120,9 +125,16 @@ func (p *PathCrop) Close() error {
 }
 
 // match returns the unused sample for pts: an exact match, else the nearest
-// within the half-frame limit, ties to the earlier sample. Steps are at least
-// twice the limit, so only the samples either side of pts can be in range.
+// unused sample less than half the smallest path step away. A PTS exactly
+// half a step from two samples matches neither, so a frame between two
+// samples can never take the later one before its own frame arrives. Only the
+// samples either side of pts can be in range. A PTS far outside the path
+// (every path PTS is within ±2^53) cannot match, and the bound keeps the
+// distance arithmetic from overflowing.
 func (p *PathCrop) match(pts int64) (int, bool) {
+	if pts < -2*maxExactJSONInt || pts > 2*maxExactJSONInt {
+		return -1, false
+	}
 	i := sort.Search(len(p.pts), func(k int) bool { return p.pts[k] >= pts })
 	if i < len(p.pts) && p.pts[i] == pts {
 		return i, !p.used[i]
@@ -136,11 +148,20 @@ func (p *PathCrop) match(pts int64) (int, bool) {
 		if d < 0 {
 			d = -d
 		}
-		if d <= p.half && (best < 0 || d < bestD) {
+		if p.within(d) && (best < 0 || d < bestD) {
 			best, bestD = k, d
 		}
 	}
 	return best, best >= 0
+}
+
+// within reports whether a frame d ticks from a sample may take it: less
+// than half the smallest path step, or one tick for a one-sample path.
+func (p *PathCrop) within(d int64) bool {
+	if p.step == 0 {
+		return d <= 1
+	}
+	return 2*d < p.step
 }
 
 // pathCropX is the integer left edge of a width-wide window centred on cx in a
@@ -164,31 +185,55 @@ func pathCropX(cx float64, width, frameWidth, log2ChromaW int) int {
 	return x &^ (1<<log2ChromaW - 1)
 }
 
+// pathCropInt returns a param as an integer within ±2^53: a JSON number that
+// is integral, or a Go int or int64. The bound is what match relies on to
+// keep its distance arithmetic from overflowing.
+func pathCropInt(v any) (int64, error) {
+	var i int64
+	switch n := v.(type) {
+	case float64:
+		if n != math.Trunc(n) {
+			return 0, fmt.Errorf("%v is not an integer within ±2^53", n)
+		}
+		if math.Abs(n) > maxExactJSONInt {
+			return 0, fmt.Errorf("%v is outside ±2^53", n)
+		}
+		return int64(n), nil
+	case int:
+		i = int64(n)
+	case int64:
+		i = n
+	default:
+		return 0, fmt.Errorf("has type %T, want a number", v)
+	}
+	if i < -maxExactJSONInt || i > maxExactJSONInt {
+		return 0, fmt.Errorf("%d is outside ±2^53", i)
+	}
+	return i, nil
+}
+
 func pathCropWidth(v any) (int, error) {
-	var w int
+	var w int64
 	switch n := v.(type) {
 	case nil:
 		return 0, fmt.Errorf("path_crop: missing width")
-	case float64:
-		if n != math.Trunc(n) || math.Abs(n) > maxExactJSONInt {
-			return 0, fmt.Errorf("path_crop: width %v is not an integer", n)
-		}
-		w = int(n)
-	case int:
-		w = n
 	case string:
 		i, err := strconv.Atoi(strings.TrimSpace(n))
 		if err != nil {
 			return 0, fmt.Errorf("path_crop: width: %w", err)
 		}
-		w = i
+		w = int64(i)
 	default:
-		return 0, fmt.Errorf("path_crop: width has type %T", v)
+		i, err := pathCropInt(v)
+		if err != nil {
+			return 0, fmt.Errorf("path_crop: width %w", err)
+		}
+		w = i
 	}
-	if w < 2 || w%2 != 0 {
+	if w < 2 || w%2 != 0 || w > math.MaxInt32 {
 		return 0, fmt.Errorf("path_crop: width %d must be even and at least 2", w)
 	}
-	return w, nil
+	return int(w), nil
 }
 
 func pathCropFrames(v any) ([]int64, []float64, error) {
@@ -215,19 +260,11 @@ func pathCropFrames(v any) ([]int64, []float64, error) {
 	pts := make([]int64, len(items))
 	cx := make([]float64, len(items))
 	for i, m := range items {
-		switch n := m["pts"].(type) {
-		case float64:
-			if n != math.Trunc(n) || math.Abs(n) > maxExactJSONInt {
-				return nil, nil, fmt.Errorf("path_crop: frames[%d].pts %v is not an integer within ±2^53", i, n)
-			}
-			pts[i] = int64(n)
-		case int:
-			pts[i] = int64(n)
-		case int64:
-			pts[i] = n
-		default:
-			return nil, nil, fmt.Errorf("path_crop: frames[%d].pts has type %T, want a number", i, m["pts"])
+		n, err := pathCropInt(m["pts"])
+		if err != nil {
+			return nil, nil, fmt.Errorf("path_crop: frames[%d].pts %w", i, err)
 		}
+		pts[i] = n
 		switch n := m["cx"].(type) {
 		case float64:
 			cx[i] = n

@@ -155,17 +155,88 @@ func TestPathCrop_Matching(t *testing.T) {
 	}
 }
 
-func TestPathCrop_TieGoesToEarlierSample(t *testing.T) {
-	p := newPathCrop(t, `{"width":64,"frames":[{"pts":0,"cx":100},{"pts":10,"cx":200}]}`)
-	src := columnFrame(t, 320, 16, 5)
+// A path sampled every second frame: the frame half-way between two samples
+// must not take the later sample, or the on-path frame that follows would
+// find it used and be dropped, shifting the whole output by one frame.
+func TestPathCrop_HalfStepFrameMatchesNeither(t *testing.T) {
+	p := newPathCrop(t, `{"width":64,"frames":[{"pts":0,"cx":100},{"pts":20,"cx":200},{"pts":40,"cx":300}]}`)
+	for _, tc := range []struct {
+		pts  int64
+		keep bool
+		col0 byte
+	}{
+		{0, true, 68},
+		{10, false, 0},
+		{20, true, 168},
+		{30, false, 0},
+		{40, true, 0}, // x clamps to 256; column 256 mod 256
+	} {
+		src := columnFrame(t, 320, 16, tc.pts)
+		out, _, err := p.Process(src, videoCtx)
+		src.Close()
+		if err != nil {
+			t.Fatalf("pts %d: %v", tc.pts, err)
+		}
+		if (out != nil) != tc.keep {
+			t.Fatalf("pts %d: kept=%v, want %v", tc.pts, out != nil, tc.keep)
+		}
+		if out != nil {
+			if got := out.Plane(0)[0]; got != tc.col0 {
+				t.Errorf("pts %d: luma column 0 = %d, want %d", tc.pts, got, tc.col0)
+			}
+			out.Close()
+		}
+	}
+	if err := p.Close(); err != nil {
+		t.Errorf("Close: %v", err)
+	}
+}
+
+// A wrapped distance lands inside the tolerance only when the step is wide
+// enough to admit it, so the path here has two samples a wide step apart
+// and the bogus PTS sit where p.pts[k] - pts overflows.
+func TestPathCrop_DropsUnmatchablePTS(t *testing.T) {
+	p := newPathCrop(t, `{"width":64,"frames":[{"pts":0,"cx":100},{"pts":9007199254740992,"cx":100}]}`)
+	for _, pts := range []int64{av.NoPTSValue, math.MinInt64 + 1, math.MaxInt64, -(1 << 55), 1 << 55, -(1 << 62), 1 << 62} {
+		src := columnFrame(t, 320, 16, pts)
+		out, _, err := p.Process(src, videoCtx)
+		src.Close()
+		if err != nil {
+			t.Fatalf("pts %d: %v", pts, err)
+		}
+		if out != nil {
+			out.Close()
+			t.Errorf("pts %d matched sample 0", pts)
+		}
+	}
+	src := columnFrame(t, 320, 16, 0)
 	defer src.Close()
 	out, _, err := p.Process(src, videoCtx)
 	if err != nil || out == nil {
-		t.Fatalf("Process: out=%v err=%v", out, err)
+		t.Fatalf("pts 0 after bogus PTS: out=%v err=%v", out, err)
 	}
-	defer out.Close()
-	if got := out.Plane(0)[0]; got != 68 {
-		t.Errorf("luma column 0 = %d, want 68 (sample 0)", got)
+	out.Close()
+}
+
+func TestPathCrop_WidthAcceptsInt64(t *testing.T) {
+	p := &PathCrop{}
+	err := p.Init(map[string]any{"width": int64(64), "frames": []map[string]any{{"pts": int64(0), "cx": 1}}})
+	if err != nil || p.width != 64 {
+		t.Fatalf("Init: width=%d err=%v", p.width, err)
+	}
+}
+
+// Go callers can pass int64 PTS that JSON cannot carry; the same ±2^53 bound
+// applies, or match's distance arithmetic could overflow.
+func TestPathCrop_RejectsGoIntPTSBeyond2to53(t *testing.T) {
+	for _, pts := range []any{int64(1<<53 + 1), int64(math.MaxInt64 - 10), int(-(1 << 53) - 1)} {
+		err := (&PathCrop{}).Init(map[string]any{"width": 8, "frames": []map[string]any{{"pts": pts, "cx": 1}}})
+		if err == nil || !strings.Contains(err.Error(), "outside") {
+			t.Errorf("pts %v: Init = %v, want outside-±2^53 error", pts, err)
+		}
+	}
+	if err := (&PathCrop{}).Init(map[string]any{"width": 8, "frames": []map[string]any{{"pts": int64(1 << 53), "cx": 1}}}); err != nil {
+		t.Errorf("pts 2^53: %v", err)
 	}
 }
 
@@ -202,8 +273,8 @@ func TestPathCrop_NarrowFrameIsError(t *testing.T) {
 
 func TestPathCrop_FramesParse(t *testing.T) {
 	p := newPathCrop(t, `{"width":"608","frames":[{"pts":18399380,"cx":1285.2289979757086},{"pts":18402383,"cx":1285.8241402692095}]}`)
-	if p.width != 608 || len(p.pts) != 2 || p.half != 1501 {
-		t.Fatalf("parsed %+v, want width 608, 2 samples, half 1501", p)
+	if p.width != 608 || len(p.pts) != 2 || p.step != 3003 {
+		t.Fatalf("parsed %+v, want width 608, 2 samples, step 3003", p)
 	}
 	if p.pts[1] != 18402383 || p.cx[0] != 1285.2289979757086 {
 		t.Errorf("samples (%d, %v), (%d, %v)", p.pts[0], p.cx[0], p.pts[1], p.cx[1])
@@ -226,6 +297,8 @@ func TestPathCrop_InitErrors(t *testing.T) {
 		"odd width":        `{"width":7,"frames":[{"pts":0,"cx":1}]}`,
 		"width below 2":    `{"width":0,"frames":[{"pts":0,"cx":1}]}`,
 		"fractional width": `{"width":8.5,"frames":[{"pts":0,"cx":1}]}`,
+		"bool width":       `{"width":true,"frames":[{"pts":0,"cx":1}]}`,
+		"huge width":       `{"width":1e12,"frames":[{"pts":0,"cx":1}]}`,
 		"no path":          `{"width":8}`,
 		"empty frames":     `{"width":8,"frames":[]}`,
 		"frames not array": `{"width":8,"frames":"0:1"}`,
