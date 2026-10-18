@@ -10,25 +10,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - **`moving_crop_scale` processor.** Crops each video frame to a keyframed
   window and scales it to a fixed output size. Keyframes bracket PTS, or
   seconds via `t`, and interpolate with hold, linear, or Catmull-Rom. A
-  `zoom` list moves in log size. `aspect: output` keeps the output aspect.
-  The encoder opens at `output` width and height through
+  `zoom` list moves in log size. `aspect: output` derives the height from
+  the output aspect, and clamps it when that height is taller than the
+  picture. `match: sample` uses each keyframe at most once, within half
+  the gap to the next keyframe, and `Close` fails when a keyframe matched
+  no frame. The encoder opens at `output` width and height through
   `FrameTransformInfo`. `ProcessorContext.TimeBase` carries the input time
   base. Node metrics count swscale graph rebuilds (`SwsReinits`). New
-  `av.Frame.CropRect`, `av.Frame.VisibleHeight`, `av.Frame.CropWindow`,
-  `av.Scaler`, and `av.SecondsToTicks`.
+  `av.Frame.CropRect`, `av.Frame.CropWindow`, `av.Frame.VisibleWidth`,
+  `av.Frame.VisibleHeight`, `av.Frame.Log2ChromaW`, `av.Scaler`, and
+  `av.SecondsToTicks`. Also new: `av.Frame.CropColumns`, `av.Frame.Crop`,
+  `av.Frame.SetCrop`, and `av.PixFmtByName`.
   See [docs/moving-crop-scale.md](docs/moving-crop-scale.md).
-- **`path_crop` processor.** Crops each video frame
-  to a full-height window whose left edge follows a per-PTS path of
-  centre-x samples, and drops frames off the path. Window offsets come from
-  `av_frame_apply_cropping`, so 8-bit, high-bit-depth, semi-planar and
-  packed formats are all cut correctly, and cropping a frame still carries
-  (`crop_*` fields) is folded first. A frame exactly half a step between
-  two samples, or without a PTS, matches neither. `Close` fails the job
-  when a path sample matched no frame. The path is a `frames: [{pts, cx}]`
-  array. New `av.Frame.CropColumns`, `av.Frame.VisibleWidth`,
-  `av.Frame.Crop`, `av.Frame.SetCrop`, `av.Frame.Log2ChromaW` and
-  `av.PixFmtByName`.
-  See [docs/path-crop-processor.md](docs/path-crop-processor.md).
 - **Frame-index walks.** `frameindex.Estimate`, `WalkPackets`, and `WalkDecode`
   build a presentation-order PTS table for one video stream. The packet walk
   does not decode. The decode walk records one row per decoded frame, and both

@@ -4,7 +4,6 @@
 package processors
 
 import (
-	"bytes"
 	"encoding/json"
 	"math"
 	"strings"
@@ -12,6 +11,27 @@ import (
 
 	"github.com/MediaMolder/MediaMolder/av"
 )
+
+var videoCtx = ProcessorContext{MediaType: av.MediaTypeVideo}
+
+// columnFrame is a yuv420p frame whose luma column x holds x (mod 256).
+func columnFrame(t *testing.T, w, h int, pts int64) *av.Frame {
+	t.Helper()
+	f, err := av.NewVideoFrame(w, h, av.PixFmtByName("yuv420p"))
+	if err != nil {
+		t.Fatalf("NewVideoFrame: %v", err)
+	}
+	for p := 0; p < f.NumPlanes(); p++ {
+		data, ls := f.Plane(p), f.Linesize(p)
+		for row := 0; row < f.PlaneHeight(p); row++ {
+			for c := 0; c < f.PlaneWidth(p); c++ {
+				data[row*ls+c] = byte(c)
+			}
+		}
+	}
+	f.SetPTS(pts)
+	return f
+}
 
 func TestMovingCropScale_Registered(t *testing.T) {
 	p, err := Get("moving_crop_scale")
@@ -160,6 +180,7 @@ func TestMovingCropScale_InitRejects(t *testing.T) {
 		{"nonfinite", mcsParams(64, 64, nil, map[string]any{"pts": 0, "x": math.NaN(), "y": 0, "w": 32, "h": 32}), "not finite"},
 		{"negative t", mcsParams(64, 64, nil, map[string]any{"t": -0.1, "x": 0, "y": 0, "w": 32, "h": 32}), "negative"},
 		{"bad emit", mcsParams(64, 64, map[string]any{"emit_rect": "yes"}, ok), "bool"},
+		{"sample linear", mcsParams(64, 64, map[string]any{"match": "sample", "interpolate": "linear"}, ok), "only allows"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -391,76 +412,50 @@ func TestMovingCropScale_OddVisibleWidth(t *testing.T) {
 	}
 }
 
-func TestMovingCropScale_SameWindowAsPathCrop(t *testing.T) {
+func TestMovingCropScale_FastPathLeftEdge(t *testing.T) {
 	const width, height = 136, 240
 	samples := []struct {
-		pts int64
-		cx  float64
+		pts  int64
+		cx   float64
+		want int
 	}{
-		{0, 100}, {10, 100}, {20, 160.6}, {30, 250.2}, {40, 160.5},
+		{0, 100, 32},
+		{10, 100, 32},
+		{20, 160.6, 92},
+		{30, 250.2, 182},
+		{40, 160.5, 92},
 	}
-	frames := make([]any, len(samples))
 	kfs := make([]any, len(samples))
 	for i, s := range samples {
-		frames[i] = map[string]any{"pts": s.pts, "cx": s.cx}
 		kfs[i] = map[string]any{"pts": s.pts, "cx": s.cx, "cy": height / 2, "w": width, "h": height}
-	}
-	path := &PathCrop{}
-	if err := path.Init(map[string]any{"width": width, "frames": frames}); err != nil {
-		t.Fatal(err)
 	}
 	mov := mcsInit(t, map[string]any{
 		"output":      map[string]any{"width": width, "height": height},
 		"keyframes":   kfs,
+		"match":       "sample",
 		"interpolate": "hold",
 		"unmatched":   "drop",
 		"align":       "chroma",
 	})
 	for _, s := range samples {
 		src := columnFrame(t, 320, height, s.pts)
-		a, _, err := path.Process(src, videoCtx)
-		if err != nil {
-			t.Fatal(err)
-		}
-		b, _, err := mov.Process(src, videoCtx)
+		out, _, err := mov.Process(src, videoCtx)
 		src.Close()
-		if err != nil {
-			t.Fatal(err)
+		if err != nil || out == nil {
+			t.Fatalf("pts %d: out=%v err=%v", s.pts, out != nil, err)
 		}
-		if a == nil || b == nil {
-			t.Fatalf("pts %d: path=%v moving=%v", s.pts, a != nil, b != nil)
+		if out.Width() != width || out.Height() != height {
+			t.Fatalf("pts %d: %dx%d", s.pts, out.Width(), out.Height())
 		}
-		samePlanes(t, a, b)
-		a.Close()
-		b.Close()
-	}
-	if err := path.Close(); err != nil {
-		t.Fatal(err)
+		for _, row := range []int{0, height - 1} {
+			if got := int(out.Plane(0)[row*out.Linesize(0)]); got != s.want {
+				t.Errorf("pts %d row %d: luma column 0 = %d, want %d", s.pts, row, got, s.want)
+			}
+		}
+		out.Close()
 	}
 	if mov.ScaleReinits() != 0 {
 		t.Fatalf("fast path rebuilt swscale %d times", mov.ScaleReinits())
-	}
-}
-
-func samePlanes(t *testing.T, a, b *av.Frame) {
-	t.Helper()
-	if a.Width() != b.Width() || a.Height() != b.Height() || a.PTS() != b.PTS() || a.NumPlanes() != b.NumPlanes() {
-		t.Fatalf("frame %dx%d pts %d planes %d vs %dx%d pts %d planes %d",
-			a.Width(), a.Height(), a.PTS(), a.NumPlanes(), b.Width(), b.Height(), b.PTS(), b.NumPlanes())
-	}
-	for i := 0; i < a.NumPlanes(); i++ {
-		if a.Linesize(i) != b.Linesize(i) || a.PlaneWidth(i) != b.PlaneWidth(i) || a.PlaneHeight(i) != b.PlaneHeight(i) {
-			t.Fatalf("plane %d layout %d/%d/%d vs %d/%d/%d", i,
-				a.Linesize(i), a.PlaneWidth(i), a.PlaneHeight(i),
-				b.Linesize(i), b.PlaneWidth(i), b.PlaneHeight(i))
-		}
-		ls, pw, ph := a.Linesize(i), a.PlaneWidth(i), a.PlaneHeight(i)
-		ap, bp := a.Plane(i), b.Plane(i)
-		for row := 0; row < ph; row++ {
-			if !bytes.Equal(ap[row*ls:row*ls+pw], bp[row*ls:row*ls+pw]) {
-				t.Fatalf("plane %d row %d differs", i, row)
-			}
-		}
 	}
 }
 
@@ -627,5 +622,223 @@ func TestMovingCropScale_JSONConfig(t *testing.T) {
 	}
 	if got := int(out.Plane(0)[0]); got != 24 {
 		t.Fatalf("luma column 0 = %d, want 24", got)
+	}
+}
+
+func sampleParams(w, h int, kfs ...map[string]any) map[string]any {
+	return mcsParams(w, h, map[string]any{"match": "sample", "interpolate": "hold", "unmatched": "drop"}, kfs...)
+}
+
+func centreKF(pts int, cx float64) map[string]any {
+	return map[string]any{"pts": pts, "cx": cx, "cy": 8, "w": 64, "h": 16}
+}
+
+func TestMovingCropScale_SampleMatch(t *testing.T) {
+	p := &MovingCropScale{}
+	if err := p.Init(sampleParams(64, 16, centreKF(3000, 160), centreKF(6003, 160), centreKF(9006, 160))); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		pts  int64
+		keep bool
+	}{
+		{1400, false},
+		{3001, true},
+		{3000, false},
+		{6002, true},
+		{7500, false},
+		{9006, true},
+		{12009, false},
+	} {
+		src := columnFrame(t, 320, 16, tc.pts)
+		out, _, err := p.Process(src, videoCtx)
+		src.Close()
+		if err != nil {
+			t.Fatalf("pts %d: %v", tc.pts, err)
+		}
+		if (out != nil) != tc.keep {
+			t.Errorf("pts %d: kept=%v, want %v", tc.pts, out != nil, tc.keep)
+		}
+		if out != nil {
+			out.Close()
+		}
+	}
+	if err := p.Close(); err != nil {
+		t.Errorf("Close after every keyframe matched: %v", err)
+	}
+}
+
+func TestMovingCropScale_SampleHalfStepMatchesNeither(t *testing.T) {
+	p := &MovingCropScale{}
+	if err := p.Init(sampleParams(64, 16, centreKF(0, 100), centreKF(20, 200), centreKF(40, 300))); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		pts  int64
+		keep bool
+		col0 byte
+	}{
+		{0, true, 68},
+		{10, false, 0},
+		{20, true, 168},
+		{30, false, 0},
+		{40, true, 0},
+	} {
+		src := columnFrame(t, 320, 16, tc.pts)
+		out, _, err := p.Process(src, videoCtx)
+		src.Close()
+		if err != nil {
+			t.Fatalf("pts %d: %v", tc.pts, err)
+		}
+		if (out != nil) != tc.keep {
+			t.Fatalf("pts %d: kept=%v, want %v", tc.pts, out != nil, tc.keep)
+		}
+		if out != nil {
+			if got := out.Plane(0)[0]; got != tc.col0 {
+				t.Errorf("pts %d: luma column 0 = %d, want %d", tc.pts, got, tc.col0)
+			}
+			out.Close()
+		}
+	}
+	if err := p.Close(); err != nil {
+		t.Errorf("Close: %v", err)
+	}
+}
+
+func TestMovingCropScale_SampleDropsFarPTS(t *testing.T) {
+	p := &MovingCropScale{}
+	if err := p.Init(sampleParams(64, 16,
+		map[string]any{"pts": 0, "cx": 100, "cy": 8, "w": 64, "h": 16},
+		map[string]any{"pts": int64(1 << 53), "cx": 100, "cy": 8, "w": 64, "h": 16},
+	)); err != nil {
+		t.Fatal(err)
+	}
+	for _, pts := range []int64{av.NoPTSValue, math.MinInt64 + 1, math.MaxInt64, -(1 << 55), 1 << 55, -(1 << 62), 1 << 62} {
+		src := columnFrame(t, 320, 16, pts)
+		out, _, err := p.Process(src, videoCtx)
+		src.Close()
+		if err != nil {
+			t.Fatalf("pts %d: %v", pts, err)
+		}
+		if out != nil {
+			out.Close()
+			t.Errorf("pts %d matched a keyframe", pts)
+		}
+	}
+	src := columnFrame(t, 320, 16, 0)
+	out, _, err := p.Process(src, videoCtx)
+	src.Close()
+	if err != nil || out == nil {
+		t.Fatalf("pts 0 after far PTS: out=%v err=%v", out != nil, err)
+	}
+	out.Close()
+	if err := p.Close(); err == nil || !strings.Contains(err.Error(), "1 of 2") {
+		t.Fatalf("Close = %v, want the unused far keyframe", err)
+	}
+}
+
+func TestMovingCropScale_SampleCloseReportsUnused(t *testing.T) {
+	p := &MovingCropScale{}
+	if err := p.Init(sampleParams(64, 16, centreKF(0, 100), centreKF(10, 100))); err != nil {
+		t.Fatal(err)
+	}
+	err := p.Close()
+	if err == nil || !strings.Contains(err.Error(), "2 of 2") || !strings.Contains(err.Error(), "first unused pts 0") {
+		t.Fatalf("Close = %v, want 2 of 2 unused", err)
+	}
+}
+
+func TestMovingCropScale_SampleOneTick(t *testing.T) {
+	for _, tc := range []struct {
+		pts  int64
+		keep bool
+	}{
+		{10, true},
+		{11, true},
+		{9, true},
+		{12, false},
+		{8, false},
+	} {
+		p := &MovingCropScale{}
+		if err := p.Init(sampleParams(32, 32, kf(10, 0, 0, 32, 32))); err != nil {
+			t.Fatal(err)
+		}
+		f := pixFrame(t, "yuv420p", 32, 32, tc.pts)
+		out, _, err := p.Process(f, videoCtx)
+		f.Close()
+		if err != nil {
+			t.Fatalf("pts %d: %v", tc.pts, err)
+		}
+		if (out != nil) != tc.keep {
+			t.Errorf("pts %d: kept=%v, want %v", tc.pts, out != nil, tc.keep)
+		}
+		if out != nil {
+			out.Close()
+		}
+		cerr := p.Close()
+		if tc.keep && cerr != nil {
+			t.Errorf("pts %d: Close = %v", tc.pts, cerr)
+		}
+		if !tc.keep && cerr == nil {
+			t.Errorf("pts %d: Close succeeded, want the unused keyframe", tc.pts)
+		}
+	}
+}
+
+func TestMovingCropScale_SampleTimeGap(t *testing.T) {
+	p := mcsInit(t, mcsParams(32, 32, map[string]any{
+		"match": "sample", "interpolate": "hold", "unmatched": "drop", "emit_rect": true,
+	},
+		map[string]any{"t": 0.0, "x": 0, "y": 0, "w": 32, "h": 32},
+		map[string]any{"t": 1.0, "x": 8, "y": 0, "w": 32, "h": 32},
+	))
+	ctx := ProcessorContext{MediaType: av.MediaTypeVideo, TimeBase: [2]int{1, 25}}
+	f := pixFrame(t, "yuv420p", 64, 32, 1)
+	out, md, err := p.Process(f, ctx)
+	f.Close()
+	if err != nil || out == nil {
+		t.Fatalf("tick 1: out=%v err=%v", out != nil, err)
+	}
+	out.Close()
+	_, x, _, _, _, _ := appliedRect(t, md)
+	if x != 0 {
+		t.Fatalf("tick 1 x=%d, want the first keyframe", x)
+	}
+	f = pixFrame(t, "yuv420p", 64, 32, 25)
+	out, md, err = p.Process(f, ctx)
+	f.Close()
+	if err != nil || out == nil {
+		t.Fatalf("tick 25: out=%v err=%v", out != nil, err)
+	}
+	out.Close()
+	_, x, _, _, _, _ = appliedRect(t, md)
+	if x != 8 {
+		t.Fatalf("tick 25 x=%d, want 8", x)
+	}
+}
+
+func TestMovingCropScale_SampleHoldDoesNotConsume(t *testing.T) {
+	p := mcsInit(t, mcsParams(64, 16, map[string]any{
+		"match": "sample", "interpolate": "hold", "unmatched": "hold", "emit_rect": true,
+	}, centreKF(0, 100), centreKF(20, 200)))
+	mid := columnFrame(t, 320, 16, 10)
+	out, md, err := p.Process(mid, videoCtx)
+	mid.Close()
+	if err != nil || out == nil {
+		t.Fatalf("halfway hold: out=%v err=%v", out != nil, err)
+	}
+	out.Close()
+	_, x, _, _, _, interp := appliedRect(t, md)
+	if x != 68 || interp {
+		t.Fatalf("halfway hold x=%d interp=%v, want 68 false", x, interp)
+	}
+	for _, pts := range []int64{0, 20} {
+		f := columnFrame(t, 320, 16, pts)
+		got, _, err := p.Process(f, videoCtx)
+		f.Close()
+		if err != nil || got == nil {
+			t.Fatalf("pts %d: out=%v err=%v", pts, got != nil, err)
+		}
+		got.Close()
 	}
 }

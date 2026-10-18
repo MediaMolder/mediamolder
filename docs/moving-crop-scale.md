@@ -1,9 +1,11 @@
 # `moving_crop_scale` processor
 
 `moving_crop_scale` crops each video frame to a window that follows a list of
-keyframes, then scales that window to a fixed output size. A reframing job
-uses it where `path_crop` would need a `scale` node after it: the processor
-tells the encoder its output size, so the graph does not.
+keyframes, then scales that window to a fixed output size. The processor
+tells the encoder its output size, so the graph does not need a following
+`scale`. `match: sample` is the trim: each keyframe is used once, frames
+that fall between samples are dropped, and `Close` fails if a keyframe
+matched no frame.
 
 The window moves in whole luma pixels, stepped down to the chroma grid unless
 `align` is `exact`. On 4:2:0 that step is 2 luma pixels. Sub-pixel panning is
@@ -42,7 +44,8 @@ out of scope.
 | `keyframes[].w`, `h` | one of | Window size, luma pixels. May be fractional. `h` may be omitted when `aspect` is `output`. |
 | `keyframes[].zoom` | one of | Window relative to the output: `w = output.width / zoom`, `h = output.height / zoom`. `zoom = 1` is a window the size of the output. `zoom > 0`. Every keyframe uses `zoom`, or none do. |
 | `interpolate` | `linear` | Between keyframes: `hold` (the earlier rectangle), `linear`, or `smooth` (Catmull-Rom). |
-| `unmatched` | `hold` | Before the first keyframe and after the last: `hold` (the nearest keyframe), `drop`, or `error`. |
+| `unmatched` | `hold` | Before the first keyframe and after the last, and any frame `match: sample` does not take: `hold` (the nearest keyframe), `drop`, or `error`. |
+| `match` | `bracket` | `bracket` places every frame inside the first and last keyframe, including the midpoint. `sample` uses each keyframe at most once: the exact PTS, or the nearest unused keyframe strictly less than half the smallest gap away (one tick when there is a single keyframe). A frame exactly halfway matches neither. `sample` requires `interpolate: hold`. `Close` then fails if a keyframe was never used. |
 | `aspect` | `free` | `free` interpolates `w` and `h`. `output` interpolates `w` and sets `h` from the output aspect on every frame. A supplied `h` is discarded. If that height is taller than the visible picture, the height clamp is independent and the scale stretches the picture. |
 | `align` | `chroma` | `chroma` aligns `x` and `y` down to the chroma grid, as `crop` does. `exact` leaves integer luma positions. `w` and `h` are multiples of the chroma step in both modes. |
 | `flags` | `bicubic` | swscale algorithm: `bilinear`, `bicubic`, `lanczos`, `spline`, `area`, `neighbor`. |
@@ -54,23 +57,23 @@ before the first frame is decoded.
 
 ## Matching
 
-Keyframes bracket time. They are not consumed, and there is no half-step
-tolerance. A frame whose PTS equals a keyframe uses that rectangle. A frame
-strictly between two keyframes is interpolated, including the exact midpoint.
-With one keyframe, `hold` paints every frame with that rectangle and `drop`
-emits only the exact hit.
+With `match: bracket` (the default), keyframes bracket time. They are not
+consumed, and there is no half-step tolerance. A frame whose PTS equals a
+keyframe uses that rectangle. A frame strictly between two keyframes is
+interpolated, including the exact midpoint. With one keyframe, `hold` paints
+every frame with that rectangle and `drop` emits only the exact hit.
+`Close` returns nil.
 
 A frame PTS outside ±2^53 is outside the bracket, so `unmatched` applies.
 `AV_NOPTS_VALUE` has no nearest keyframe: the frame is dropped under `hold`
 and `drop`, and `error` returns from `Process`. `unmatched: error` returns
-from `Process` on the first frame outside the bracket. `Close` returns nil
-and does not report unused keyframes.
+from `Process` on the first frame outside the bracket. `match: sample` is
+below.
 
 `t` is checked at `Init` for finite, non-negative, strictly increasing
 values. The conversion on the first video frame can still fail: a zero or
 negative time base, a tick outside ±2^53, or two times that land on the same
-tick. Each of those is a `Process` error. `path_crop` does not read the time
-base.
+tick. Each of those is a `Process` error.
 
 ## Interpolation
 
@@ -147,24 +150,34 @@ keyframe, and `interpolate: hold` are false.
 go_processor handler. Hosts that already know the time base can keep using
 `pts` and ignore `t`.
 
-## Relationship to `path_crop`
+## Sample matching
 
-`path_crop` is the trim: one full-height window per frame, frames off the
-path dropped, and `Close` fails when a sample matched nothing. The same
-pixels come out of `moving_crop_scale` when every frame PTS equals a
-keyframe, `y` is 0, `h` and `output.height` both equal the visible height
-(so nothing is scaled), the height is even, and `align` is `chroma`.
+`match: sample` with `unmatched: drop` is a path of windows. A frame takes
+the unused keyframe at its PTS, or the nearest unused keyframe strictly
+less than half the smallest gap away. One keyframe allows one tick. A frame
+exactly halfway between two keyframes matches neither, so a keyframe on
+every second frame is not taken by the frame before it. Each keyframe is
+used at most once. Anything else is dropped, including a frame with no PTS.
 
-| `path_crop` | `moving_crop_scale` |
-|---|---|
-| `width` | `output.width`, and every keyframe's `w` |
-| full height | `output.height` and every keyframe's `h` equal the visible height |
-| `frames[].cx` | `keyframes[].cx`, with `cy` at half the height |
-| one sample per frame | one keyframe per frame, `interpolate: hold` |
-| off-path frame dropped | `unmatched: drop` drops only the head and the tail |
-| chroma-aligned `x` | `align: chroma` |
-| `Close` fails on an unused sample | `Close` returns nil |
+```json
+{
+  "output": {"width": 608, "height": 1080},
+  "match": "sample",
+  "interpolate": "hold",
+  "unmatched": "drop",
+  "keyframes": [
+    {"pts": 0, "cx": 960, "cy": 540, "w": 608, "h": 1080},
+    {"pts": 3003, "cx": 1000, "cy": 540, "w": 608, "h": 1080}
+  ]
+}
+```
 
-A sparse path is a different processor. `path_crop` keeps its half-step
-matching. Follow `path_crop` with `scale` when the encoder must open at the
-window size. `moving_crop_scale` does not need that node.
+`Close` returns an error naming the first unused keyframe PTS. That catches
+a missing `copy_ts`, a filter that changed PTS or the time base, or a
+source that ends before the last keyframe. `unmatched: hold` still emits
+the nearest keyframe for a frame that matched nothing, and that emission
+does not count as using the keyframe. `interpolate` must be `hold`: sample
+matching does not glide between keyframes.
+
+`match: bracket` does not consume keyframes. A frame between two keyframes
+is interpolated, including the exact midpoint, and `Close` returns nil.

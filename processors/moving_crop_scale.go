@@ -26,24 +26,31 @@ func init() {
 //	keyframes  — [{pts|t, x,y|cx,cy, w,h|zoom}, ...], time strictly increasing
 //	interpolate — hold | linear | smooth (default linear)
 //	unmatched   — hold | drop | error (default hold)
+//	match       — bracket | sample (default bracket). sample uses each
+//	              keyframe at most once, within half the gap to the next,
+//	              and Close reports a keyframe no frame used.
 //	aspect      — free | output (default free)
 //	align       — chroma | exact (default chroma)
 //	flags       — swscale algorithm (default bicubic)
 //	emit_rect   — metadata with the applied integer rectangle (default false)
 type MovingCropScale struct {
-	outW, outH int
-	pts        []int64
-	times      []float64
-	useT       bool
-	bound      bool
-	rects      []cropRect
-	logSize    bool
-	aspectOut  bool
-	interp     string
-	unmatched  string
-	exact      bool
-	emitRect   bool
-	scaler     *av.Scaler
+	outW, outH  int
+	pts         []int64
+	times       []float64
+	useT        bool
+	bound       bool
+	rects       []cropRect
+	logSize     bool
+	aspectOut   bool
+	interp      string
+	unmatched   string
+	matchSample bool
+	exact       bool
+	emitRect    bool
+	scaler      *av.Scaler
+	used        []bool
+	nUsed       int
+	step        int64
 }
 
 // cropRect is one keyframe after cx/cy and zoom have been converted to a
@@ -64,6 +71,13 @@ func (p *MovingCropScale) Init(params map[string]any) error {
 	unmatched, err := mcsChoice(params["unmatched"], "unmatched", "hold", "hold", "drop", "error")
 	if err != nil {
 		return err
+	}
+	matchMode, err := mcsChoice(params["match"], "match", "bracket", "bracket", "sample")
+	if err != nil {
+		return err
+	}
+	if matchMode == "sample" && interp != "hold" {
+		return fmt.Errorf("moving_crop_scale: match \"sample\" only allows interpolate \"hold\"")
 	}
 	aspect, err := mcsChoice(params["aspect"], "aspect", "free", "free", "output")
 	if err != nil {
@@ -99,8 +113,12 @@ func (p *MovingCropScale) Init(params map[string]any) error {
 	p.logSize = logSize
 	p.aspectOut = aspect == "output"
 	p.interp, p.unmatched = interp, unmatched
+	p.matchSample = matchMode == "sample"
 	p.exact, p.emitRect = align == "exact", emit
 	p.scaler = sc
+	p.used = make([]bool, len(rects))
+	p.nUsed = 0
+	p.step = keyframeStep(pts)
 	return nil
 }
 
@@ -176,14 +194,35 @@ func (p *MovingCropScale) Process(frame *av.Frame, ctx ProcessorContext) (*av.Fr
 	return out, md, nil
 }
 
-// Close releases the scaler. It returns nil: a frame outside the keyframes
-// is reported by Process, and Close does not consult a context.
+// Close releases the scaler. Bracket matching returns nil. Sample matching
+// returns an error when a keyframe was never used, which is how a missing
+// copy_ts or a source that ends early fails the job instead of writing a
+// short file. Close does not consult a context.
 func (p *MovingCropScale) Close() error {
 	if p != nil && p.scaler != nil {
 		p.scaler.Close()
 		p.scaler = nil
 	}
-	return nil
+	if p == nil || !p.matchSample || p.nUsed == len(p.rects) {
+		return nil
+	}
+	first := 0
+	for first < len(p.used) && p.used[first] {
+		first++
+	}
+	unused := len(p.rects) - p.nUsed
+	if p.useT && !p.bound {
+		return fmt.Errorf("moving_crop_scale: %d of %d keyframes matched no frame (first unused keyframes[%d]); "+
+			"check copy_ts, the time base before the processor, and the in/out points",
+			unused, len(p.rects), first)
+	}
+	var pts int64
+	if first < len(p.pts) {
+		pts = p.pts[first]
+	}
+	return fmt.Errorf("moving_crop_scale: %d of %d keyframes matched no frame (first unused pts %d); "+
+		"check copy_ts, the time base before the processor, and the in/out points",
+		unused, len(p.rects), pts)
 }
 
 // ScaleReinits reports how many times swscale built its graph. The first
@@ -227,8 +266,22 @@ func (p *MovingCropScale) bindTime(tb [2]int) error {
 		prev = tick
 	}
 	p.pts = pts
+	p.step = keyframeStep(pts)
 	p.bound = true
 	return nil
+}
+
+func keyframeStep(pts []int64) int64 {
+	if len(pts) < 2 {
+		return 0
+	}
+	step := int64(math.MaxInt64)
+	for i := 1; i < len(pts); i++ {
+		if d := pts[i] - pts[i-1]; d < step {
+			step = d
+		}
+	}
+	return step
 }
 
 // sample returns the rectangle for pts. interpolated is true only when the
@@ -236,6 +289,9 @@ func (p *MovingCropScale) bindTime(tb [2]int) error {
 // smooth. drop is a frame with no bracket under unmatched drop, or a frame
 // with no PTS under hold or drop.
 func (p *MovingCropScale) sample(pts int64) (cropRect, bool, bool, error) {
+	if p.matchSample {
+		return p.sampleOnce(pts)
+	}
 	if pts == av.NoPTSValue {
 		if p.unmatched == "error" {
 			return cropRect{}, false, false, fmt.Errorf("moving_crop_scale: frame has no PTS")
@@ -262,6 +318,82 @@ func (p *MovingCropScale) sample(pts int64) (cropRect, bool, bool, error) {
 	}
 	r, interpolated := p.blend(i-1, pts)
 	return r, interpolated, false, nil
+}
+
+// sampleOnce is the trim match. A keyframe is used at most once: an exact
+// PTS wins, otherwise the nearest unused keyframe strictly less than half
+// the smallest gap away. One keyframe allows a single tick. A frame exactly
+// halfway, or with no PTS, matches nothing.
+func (p *MovingCropScale) sampleOnce(pts int64) (cropRect, bool, bool, error) {
+	if pts == av.NoPTSValue {
+		if p.unmatched == "error" {
+			return cropRect{}, false, false, fmt.Errorf("moving_crop_scale: frame has no PTS")
+		}
+		return cropRect{}, false, true, nil
+	}
+	if pts >= -2*maxExactJSONInt && pts <= 2*maxExactJSONInt {
+		if i, ok := p.take(pts); ok {
+			p.used[i] = true
+			p.nUsed++
+			return p.rects[i], false, false, nil
+		}
+	}
+	switch p.unmatched {
+	case "error":
+		return cropRect{}, false, false, fmt.Errorf("moving_crop_scale: pts %d is outside the keyframes", pts)
+	case "drop":
+		return cropRect{}, false, true, nil
+	default:
+		return p.rects[p.nearest(pts)], false, false, nil
+	}
+}
+
+// take returns the unused keyframe for pts. Only the keyframes either side
+// of pts can be in range.
+func (p *MovingCropScale) take(pts int64) (int, bool) {
+	i := sort.Search(len(p.pts), func(k int) bool { return p.pts[k] >= pts })
+	if i < len(p.pts) && p.pts[i] == pts {
+		return i, !p.used[i]
+	}
+	best, bestD := -1, int64(0)
+	for _, k := range [2]int{i - 1, i} {
+		if k < 0 || k >= len(p.pts) || p.used[k] {
+			continue
+		}
+		d := p.pts[k] - pts
+		if d < 0 {
+			d = -d
+		}
+		if p.within(d) && (best < 0 || d < bestD) {
+			best, bestD = k, d
+		}
+	}
+	return best, best >= 0
+}
+
+// within reports whether a frame d ticks from a keyframe may take it.
+func (p *MovingCropScale) within(d int64) bool {
+	if p.step == 0 {
+		return d <= 1
+	}
+	return 2*d < p.step
+}
+
+// nearest is the keyframe closest to pts. A tie goes to the earlier one.
+// A pts outside the list is the first or the last keyframe.
+func (p *MovingCropScale) nearest(pts int64) int {
+	last := len(p.pts) - 1
+	if pts <= p.pts[0] {
+		return 0
+	}
+	if pts >= p.pts[last] {
+		return last
+	}
+	i := sort.Search(len(p.pts), func(k int) bool { return p.pts[k] >= pts })
+	if p.pts[i]-pts < pts-p.pts[i-1] {
+		return i
+	}
+	return i - 1
 }
 
 func (p *MovingCropScale) blend(i int, pts int64) (cropRect, bool) {

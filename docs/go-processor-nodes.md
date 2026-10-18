@@ -26,7 +26,6 @@ Everything runs in-process: no subprocesses, no network calls, no Python. Your p
 		- [`scene_change_histogram`](#scene_change_histogram)
 		- [`metadata_file_writer`](#metadata_file_writer)
 		- [`sei_hello`](#sei_hello)
-		- [`path_crop`](#path_crop)
 		- [`moving_crop_scale`](#moving_crop_scale)
 		- [`vidi_analyzer`](#vidi_analyzer)
 		- [`twelvelabs_indexer`](#twelvelabs_indexer)
@@ -554,44 +553,6 @@ Non-video frames are passed through untouched.
 > Production processors should use a proper UUID to avoid bitstream collisions
 > with other SEI producers.
 
-### `path_crop`
-
-Crops each video frame to a full-height window whose left edge follows a path
-of per-frame samples, and drops frames that are not on the path. Each sample
-pairs a source PTS with the window's horizontal centre `cx`. The left edge is
-`cx − width/2`, rounded to the nearest integer (ties to the lower), clamped to
-the frame, then aligned down to the chroma step like FFmpeg's `crop` filter.
-The window is cut with `av_frame_apply_cropping`, so every software pixel
-format works (8-bit, 10-bit, `nv12`, packed RGB). Side data passes through.
-
-| Param    | Type   | Description |
-|----------|--------|-------------|
-| `width`  | int    | Window width in luma pixels. Even, at least 2. |
-| `frames` | array  | `[{"pts": int, "cx": number}, …]`, PTS strictly increasing. |
-
-
-```json
-{
-  "id": "crop",
-  "type": "go_processor",
-  "processor": "path_crop",
-  "params": {
-    "width": 608,
-    "frames": [
-      {"pts": 18399380, "cx": 1285.23},
-      {"pts": 18402383, "cx": 1285.82}
-    ]
-  }
-}
-```
-
-A frame matches the unused sample with the same PTS, or the nearest one less
-than half the smallest path step away. The job needs `copy_ts`, and no node before the
-processor may change PTS or the time base (`fps`, `setpts`, `bwdif`, `yadif`,
-…). `Close` fails the job if any sample matched no frame. The encoder opens at
-the size of the last filter before the processor, so follow it with a `scale`
-to `width` × frame height. See [Path crop](path-crop-processor.md).
-
 ### `moving_crop_scale`
 
 Crops each video frame to a keyframed window and scales that window to a
@@ -600,13 +561,16 @@ graph does not need a following `scale`. Keyframes bracket PTS (or seconds,
 via `t` and `ProcessorContext.TimeBase`). Between them the window can hold,
 move linearly, or follow a Catmull-Rom spline. A `zoom` list interpolates in
 log size. `aspect: output` derives the height from the output aspect.
+`match: sample` uses each keyframe at most once, within half the gap to the
+next, and `Close` fails if a keyframe matched no frame.
 
 | Param | Default | Description |
 |-------|---------|-------------|
 | `output.width`, `output.height` | required | Even, at least 2. |
 | `keyframes` | required | `pts` or `t`, `x`/`y` or `cx`/`cy`, `w`/`h` or `zoom`. Time strictly increasing. |
 | `interpolate` | `linear` | `hold`, `linear`, or `smooth`. |
-| `unmatched` | `hold` | `hold`, `drop`, or `error` outside the first and last keyframe. |
+| `unmatched` | `hold` | `hold`, `drop`, or `error` outside the bracket. With `sample`, the same choice applies to a frame that took no keyframe. |
+| `match` | `bracket` | `bracket`, or `sample` to consume each keyframe once. `sample` requires `interpolate: hold`. |
 | `aspect` | `free` | `free`, or `output` to keep the output aspect unless the derived height is clamped to the picture. |
 | `align` | `chroma` | `chroma` or `exact`. |
 | `flags` | `bicubic` | swscale algorithm name. |

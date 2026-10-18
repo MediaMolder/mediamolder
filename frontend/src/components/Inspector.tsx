@@ -2041,6 +2041,18 @@ function MovingCropScaleParams({
     onChange({ ...params, output: next });
   };
   const setChoice = (key: string, value: string) => onChange({ ...params, [key]: value });
+  const setMatch = (value: string) => {
+    if (value === 'sample') {
+      onChange({ ...params, match: value, interpolate: 'hold' });
+      return;
+    }
+    setChoice('match', value);
+  };
+  useEffect(() => {
+    if (params.match === 'sample' && params.interpolate !== 'hold') {
+      onChange({ ...params, interpolate: 'hold' });
+    }
+  }, [params.match, params.interpolate]);
   const writeRows = (nextRows: Record<string, unknown>[]) =>
     onChange({ ...params, keyframes: nextRows });
   const setCell = (index: number, key: string, raw: string) => {
@@ -2058,6 +2070,7 @@ function MovingCropScaleParams({
   const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? String(v) : '');
   const choice = (key: string, fallback: string) =>
     typeof params[key] === 'string' ? (params[key] as string) : fallback;
+  const sampleMatch = choice('match', 'bracket') === 'sample';
 
   return (
     <>
@@ -2071,7 +2084,11 @@ function MovingCropScaleParams({
       <input type="number" min={2} step={2} value={num(output.height)} onChange={(e) => setOutput('height', e.target.value)} />
 
       <label style={{ marginTop: 8 }}>Interpolate</label>
-      <select value={choice('interpolate', 'linear')} onChange={(e) => setChoice('interpolate', e.target.value)}>
+      <select
+        value={sampleMatch ? 'hold' : choice('interpolate', 'linear')}
+        disabled={sampleMatch}
+        onChange={(e) => setChoice('interpolate', e.target.value)}
+      >
         <option value="hold">Hold</option>
         <option value="linear">Linear</option>
         <option value="smooth">Smooth</option>
@@ -2081,6 +2098,11 @@ function MovingCropScaleParams({
         <option value="hold">Hold</option>
         <option value="drop">Drop</option>
         <option value="error">Error</option>
+      </select>
+      <label style={{ marginTop: 8 }}>Match</label>
+      <select value={choice('match', 'bracket')} onChange={(e) => setMatch(e.target.value)}>
+        <option value="bracket">Bracket</option>
+        <option value="sample">Sample</option>
       </select>
       <label style={{ marginTop: 8 }}>Aspect</label>
       <select value={choice('aspect', 'free')} onChange={(e) => setChoice('aspect', e.target.value)}>
