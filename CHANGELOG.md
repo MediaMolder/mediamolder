@@ -9,10 +9,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 - **Frame-index walks.** `frameindex.Estimate`, `WalkPackets`, and `WalkDecode`
   build a presentation-order PTS table for one video stream. The packet walk
-  does not decode. The decode walk records one row per decoded frame. An
-  interlaced stream is deinterlaced with `bwdif=mode=send_frame` first, so a
-  field is not a row, and the row's PTS stays in the stream timebase. Both
-  walks honour context cancellation and stop past `MaxIndexFrames` (1,000,000).
+  does not decode. The decode walk records one row per decoded frame, and both
+  walks sort into presentation order. `Estimate` uses the average frame rate,
+  and the tick rate only when the average is missing. An interlaced stream is
+  deinterlaced with `bwdif=mode=send_frame` first, so a field is not a row, and
+  the row's PTS stays in the stream timebase. Both walks honour context
+  cancellation and stop past `MaxIndexFrames` (1,000,000).
   See [docs/architecture/frame-index.md](docs/architecture/frame-index.md).
 - **Bitstream trace validation: violations list, structure checks, `--validate`.**
   Reports now carry a top-level `violations` list: every unit parse failure the

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Thomas Vaughan
+// SPDX-License-Identifier: LGPL-2.1-or-later
+
 package frameindex
 
 import (
@@ -203,6 +206,13 @@ func TestVFRTableIsNotNominal(t *testing.T) {
 	}
 	if len(seen) < 2 {
 		t.Fatalf("PTS gaps are uniform (%v); this fixture must be variable", gaps)
+	}
+	est, _, _, err := Estimate(path, -1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if est != int64(len(pk.PTS)) {
+		t.Fatalf("estimate %d, rows %d (the tick rate must not count this clip)", est, len(pk.PTS))
 	}
 }
 

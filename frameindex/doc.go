@@ -1,9 +1,13 @@
+// Copyright (C) 2026 Thomas Vaughan
+// SPDX-License-Identifier: LGPL-2.1-or-later
+
 // Package frameindex builds a presentation-order PTS table for one video stream.
 //
 // The table is the clock: one row is one decoded frame, and its PTS is in the
 // stream timebase. WalkPackets does not decode. It reads packet timestamps and
 // sorts them into presentation order. That table is provisional. WalkDecode
-// replaces it with the timestamps of the frames the decoder actually outputs.
+// replaces it with the timestamps of the frames the decoder actually outputs,
+// sorted the same way.
 //
 // An interlaced stream is deinterlaced with bwdif in send_frame mode before a
 // row is recorded, so a field is not a row. The filter's own timestamps are
