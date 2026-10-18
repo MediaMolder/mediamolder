@@ -47,7 +47,31 @@ func columnFrame(t *testing.T, w, h int, fmtName string) *Frame {
 		}
 	}
 	f.SetPTS(4242)
+	// The last luma sample of each row holds the row index, so a vertical
+	// crop can be checked. The crops above do not include that column.
+	stampRow(f, fmtName)
 	return f
+}
+
+func stampRow(f *Frame, fmtName string) {
+	ls := f.Linesize(0)
+	data := f.Plane(0)
+	w := f.Width()
+	bpp := 1
+	switch fmtName {
+	case "yuv420p10le":
+		bpp = 2
+	case "rgb24":
+		bpp = 3
+	}
+	for row := 0; row < f.Height(); row++ {
+		off := row*ls + (w-1)*bpp
+		if fmtName == "yuv420p10le" {
+			binary.LittleEndian.PutUint16(data[off:], uint16(row))
+			continue
+		}
+		data[off] = byte(row)
+	}
 }
 
 func TestCropColumns_PlaneOffsets(t *testing.T) {
@@ -198,6 +222,12 @@ func TestVisibleWidth(t *testing.T) {
 	if got := f.VisibleWidth(); got != 57 {
 		t.Errorf("VisibleWidth = %d, want 57", got)
 	}
+	if got := f.VisibleHeight(); got != 13 {
+		t.Errorf("VisibleHeight = %d, want 13", got)
+	}
+	if got := (*Frame)(nil).VisibleHeight(); got != 0 {
+		t.Errorf("nil VisibleHeight = %d", got)
+	}
 }
 
 func TestLog2ChromaW(t *testing.T) {
@@ -213,5 +243,193 @@ func TestLog2ChromaW(t *testing.T) {
 	}
 	if PixFmtByName("no_such_format") != -1 {
 		t.Error("PixFmtByName(unknown) != -1")
+	}
+}
+
+func TestCropRect_PlaneOffsets(t *testing.T) {
+	const x, y, w, h = 92, 40, 136, 80
+	for _, fmtName := range []string{"yuv420p", "yuv420p10le", "nv12", "rgb24"} {
+		t.Run(fmtName, func(t *testing.T) {
+			src := columnFrame(t, 320, 240, fmtName)
+			defer src.Close()
+			out, err := src.CropRect(x, y, w, h)
+			if err != nil {
+				t.Fatalf("CropRect: %v", err)
+			}
+			defer out.Close()
+			if out.Width() != w || out.Height() != h || out.PixFmt() != src.PixFmt() {
+				t.Fatalf("out = %dx%d, want %dx%d", out.Width(), out.Height(), w, h)
+			}
+			if out.PTS() != 4242 {
+				t.Errorf("PTS = %d, want 4242", out.PTS())
+			}
+			if top, bottom, left, right := out.Crop(); top != 0 || bottom != 0 || left != 0 || right != 0 {
+				t.Errorf("crop fields = %d %d %d %d, want clear", top, bottom, left, right)
+			}
+			checkCropOrigin(t, out, fmtName, x, y)
+			// The row stamp lives in the source's last column, which this
+			// window does not include. A second crop of that column checks y.
+			edge, err := src.CropRect(320-16, y, 16, h)
+			if err != nil {
+				t.Fatalf("edge crop: %v", err)
+			}
+			defer edge.Close()
+			if got := rowStamp(edge, fmtName, 15, 0); got != y {
+				t.Errorf("row stamp = %d, want %d", got, y)
+			}
+		})
+	}
+}
+
+func checkCropOrigin(t *testing.T, out *Frame, fmtName string, x, y int) {
+	t.Helper()
+	switch fmtName {
+	case "yuv420p10le":
+		pix := binary.LittleEndian.Uint16(out.Plane(0))
+		if pix != uint16(x) {
+			t.Errorf("luma origin = %d, want column %d", pix, x)
+		}
+	case "rgb24":
+		px := out.Plane(0)
+		if px[0] != byte(x) || px[1] != 1 || px[2] != 2 {
+			t.Errorf("rgb origin = %v, want [%d 1 2]", px[:3], x)
+		}
+		if px[1] == byte(y) && y != 1 {
+			t.Errorf("rgb G was overwritten with the row")
+		}
+	default:
+		if got := out.Plane(0)[0]; got != byte(x) {
+			t.Errorf("luma origin = %d, want column %d", got, x)
+		}
+	}
+	_ = y
+}
+
+func rowStamp(f *Frame, fmtName string, col, row int) int {
+	ls := f.Linesize(0)
+	data := f.Plane(0)
+	bpp := 1
+	switch fmtName {
+	case "yuv420p10le":
+		bpp = 2
+	case "rgb24":
+		bpp = 3
+	}
+	off := row*ls + col*bpp
+	if fmtName == "yuv420p10le" {
+		return int(binary.LittleEndian.Uint16(data[off:]))
+	}
+	return int(data[off])
+}
+
+func TestCropRect_FoldsPendingCrop(t *testing.T) {
+	src := columnFrame(t, 64, 32, "yuv420p")
+	defer src.Close()
+	src.SetCrop(4, 2, 6, 8)
+	out, err := src.CropRect(10, 6, 16, 8)
+	if err != nil {
+		t.Fatalf("CropRect: %v", err)
+	}
+	defer out.Close()
+	if out.Width() != 16 || out.Height() != 8 {
+		t.Fatalf("out = %dx%d, want 16x8", out.Width(), out.Height())
+	}
+	if got := out.Plane(0)[0]; got != 16 {
+		t.Errorf("luma origin = %d, want 16 (crop_left 6 + x 10)", got)
+	}
+	// Stamp source column 16 with the row so the vertical fold is visible.
+	// Visible (10, 6) is source (16, 10) once crop_left 6 and crop_top 4
+	// are folded.
+	ls := src.Linesize(0)
+	for row := 0; row < src.Height(); row++ {
+		src.Plane(0)[row*ls+16] = byte(row)
+	}
+	folded, err := src.CropRect(10, 6, 16, 8)
+	if err != nil {
+		t.Fatalf("CropRect after stamp: %v", err)
+	}
+	defer folded.Close()
+	if got := folded.Plane(0)[0]; got != 10 {
+		t.Errorf("folded row = %d, want source row 10", got)
+	}
+}
+
+func TestCropWindow_OwnsReference(t *testing.T) {
+	src := columnFrame(t, 64, 16, "yuv420p")
+	src.SetPTS(7)
+	before := src.Plane(0)[0]
+	win, err := src.CropWindow(8, 2, 16, 8)
+	if err != nil {
+		src.Close()
+		t.Fatalf("CropWindow: %v", err)
+	}
+	if src.Width() != 64 || src.Height() != 16 || src.Plane(0)[0] != before {
+		t.Errorf("source changed: %dx%d luma0 %d", src.Width(), src.Height(), src.Plane(0)[0])
+	}
+	if top, _, left, _ := src.Crop(); top != 0 || left != 0 {
+		t.Errorf("source crop = %d,%d", top, left)
+	}
+	src.Close()
+	if win.Width() != 16 || win.Height() != 8 || win.PTS() != 7 {
+		t.Fatalf("window = %dx%d pts %d, want 16x8 pts 7", win.Width(), win.Height(), win.PTS())
+	}
+	if got := win.Plane(0)[0]; got != 8 {
+		t.Errorf("window luma = %d, want 8", got)
+	}
+	if top, bottom, left, right := win.Crop(); top|bottom|left|right != 0 {
+		t.Errorf("window crop fields = %d %d %d %d", top, bottom, left, right)
+	}
+	win.Close()
+}
+
+func TestCropWindow_FoldsPendingCrop(t *testing.T) {
+	src := columnFrame(t, 64, 16, "yuv420p")
+	defer src.Close()
+	src.SetCrop(0, 0, 8, 0)
+	win, err := src.CropWindow(4, 0, 16, 16)
+	if err != nil {
+		t.Fatalf("CropWindow: %v", err)
+	}
+	defer win.Close()
+	if got := win.Plane(0)[0]; got != 12 {
+		t.Errorf("window luma = %d, want 12 (pending 8 + x 4)", got)
+	}
+	if _, _, left, _ := src.Crop(); left != 8 {
+		t.Errorf("source crop_left = %d, want 8", left)
+	}
+	rect, err := src.CropRect(4, 0, 16, 16)
+	if err != nil {
+		t.Fatalf("CropRect: %v", err)
+	}
+	defer rect.Close()
+	if rect.Plane(0)[0] != win.Plane(0)[0] {
+		t.Errorf("CropRect luma %d, CropWindow luma %d", rect.Plane(0)[0], win.Plane(0)[0])
+	}
+}
+
+func TestCropWindow_RejectsHardware(t *testing.T) {
+	pf := PixFmtByName("cuda")
+	if pf < 0 {
+		pf = PixFmtByName("videotoolbox")
+	}
+	if pf < 0 {
+		t.Skip("no hardware pixel format in this build")
+	}
+	f, err := NewVideoFrame(16, 16, PixFmtByName("yuv420p"))
+	if err != nil {
+		t.Fatalf("NewVideoFrame: %v", err)
+	}
+	defer f.Close()
+	f.setTestPixFmt(pf)
+	if !f.Hardware() {
+		t.Fatal("Hardware() = false")
+	}
+	if out, err := f.CropWindow(0, 0, 8, 8); err == nil {
+		out.Close()
+		t.Fatal("CropWindow succeeded on a hardware format")
+	}
+	if out, err := f.CropRect(0, 0, 8, 8); err == nil {
+		out.Close()
+		t.Fatal("CropRect succeeded on a hardware format")
 	}
 }
