@@ -48,7 +48,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   frame downstream and leaked the new one. A cropping processor's output
   never reached the encoder: a following `scale` squashed the full frame
   instead. Dropping a frame while returning metadata no longer panics.
-
+  Frames held in a lookahead delay buffer are released when the handler
+  returns early, instead of leaking.
 - **smartcopy: constant-rate sources give constant-rate cuts.** Re-encoded
   packets took their first DTS values from the priming GOP (a jump of
   several frames at the head), and a copied keyframe whose leading pictures

@@ -225,6 +225,14 @@ func (r *graphRunner) handleGoProcessor(ctx context.Context, node *graph.Node, i
 	}
 	type delayEntry struct{ frame *av.Frame }
 	var delayBuf []delayEntry
+	// Frames still held back when the handler returns early (a processor
+	// error, a cancelled send) are released here; the EOS drain below pops
+	// each entry as it goes, so a clean exit leaves nothing to close.
+	defer func() {
+		for _, e := range delayBuf {
+			e.frame.Close()
+		}
+	}()
 	tb := r.goProcessorInputTB[node.ID]
 
 	// sendFrame forwards f to all downstream AV channels.
@@ -337,14 +345,17 @@ func (r *graphRunner) handleGoProcessor(ctx context.Context, node *graph.Node, i
 		// Set IDR annotation: on the cut frame (delayBuf[0]) when using a
 		// delay buffer, on the current frame otherwise.
 		if cutSignaled {
+			var kerr error
 			if lookback > 0 && len(delayBuf) > 0 {
-				if err := markFrameForceKeyframe(delayBuf[0].frame); err != nil {
-					return fmt.Errorf("go_processor %q: mark force keyframe: %w", node.ID, err)
-				}
+				kerr = markFrameForceKeyframe(delayBuf[0].frame)
 			} else if f != nil {
-				if err := markFrameForceKeyframe(f); err != nil {
-					return fmt.Errorf("go_processor %q: mark force keyframe: %w", node.ID, err)
+				kerr = markFrameForceKeyframe(f)
+			}
+			if kerr != nil {
+				if f != nil {
+					f.Close()
 				}
+				return fmt.Errorf("go_processor %q: mark force keyframe: %w", node.ID, kerr)
 			}
 		}
 
@@ -399,7 +410,9 @@ func (r *graphRunner) handleGoProcessor(ctx context.Context, node *graph.Node, i
 	}
 
 	// Drain any frames still in the delay buffer at EOS.
-	for _, e := range delayBuf {
+	for len(delayBuf) > 0 {
+		e := delayBuf[0]
+		delayBuf = delayBuf[1:]
 		if len(outs) == 0 {
 			e.frame.Close()
 			continue
