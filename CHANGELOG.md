@@ -130,9 +130,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   to a full-height window whose left edge follows a per-PTS path of
   centre-x samples, and drops frames off the path. Window offsets come from
   `av_frame_apply_cropping`, so 8-bit, high-bit-depth, semi-planar and
-  packed formats are all cut correctly. `Close` fails the job when a path
-  sample matched no frame. The path is a `frames: [{pts, cx}]` array. New
-  `av.Frame.CropColumns`, `av.Frame.Log2ChromaW` and `av.PixFmtByName`.
+  packed formats are all cut correctly, and cropping a frame still carries
+  (`crop_*` fields) is folded first. A frame exactly half a step between
+  two samples, or without a PTS, matches neither. `Close` fails the job
+  when a path sample matched no frame, except after a cancelled run. The
+  path is a `frames: [{pts, cx}]` array. New `av.Frame.CropColumns`,
+  `av.Frame.VisibleWidth`, `av.Frame.Crop`, `av.Frame.SetCrop`,
+  `av.Frame.Log2ChromaW` and `av.PixFmtByName`.
   See [docs/path-crop-processor.md](docs/path-crop-processor.md).
 - **Bitstream trace validation: violations list, structure checks, `--validate`.**
   Reports now carry a top-level `violations` list: every unit parse failure the

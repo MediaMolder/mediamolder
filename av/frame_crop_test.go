@@ -151,6 +151,55 @@ func TestCropColumns_RejectsOutOfRange(t *testing.T) {
 	}
 }
 
+// A frame that still carries crop fields (a decoder with apply_cropping off
+// leaves the conformance window there) is cut in visible coordinates and the
+// result carries no crop fields of its own.
+func TestCropColumns_FoldsPendingCrop(t *testing.T) {
+	src := columnFrame(t, 64, 16, "yuv420p")
+	defer src.Close()
+	src.SetCrop(2, 0, 4, 8)
+	if got := src.VisibleWidth(); got != 52 {
+		t.Fatalf("VisibleWidth = %d, want 52", got)
+	}
+	out, err := src.CropColumns(10, 16)
+	if err != nil {
+		t.Fatalf("CropColumns: %v", err)
+	}
+	defer out.Close()
+	if out.Width() != 16 || out.Height() != 14 || out.VisibleWidth() != 16 {
+		t.Fatalf("out %dx%d visible %d, want 16x14 visible 16", out.Width(), out.Height(), out.VisibleWidth())
+	}
+	if got := out.Plane(0)[0]; got != 14 {
+		t.Errorf("luma column 0 = %d, want 14 (4 folded + 10)", got)
+	}
+	if got := out.Plane(1)[0]; got != 7 {
+		t.Errorf("chroma column 0 = %d, want 7", got)
+	}
+	if o, err := src.CropColumns(40, 16); err == nil {
+		o.Close()
+		t.Error("window past the visible width succeeded, want error")
+	}
+}
+
+func TestVisibleWidth(t *testing.T) {
+	if got := (*Frame)(nil).VisibleWidth(); got != 0 {
+		t.Errorf("nil VisibleWidth = %d", got)
+	}
+	(*Frame)(nil).SetCrop(1, 1, 1, 1)
+	f := columnFrame(t, 64, 16, "yuv420p")
+	defer f.Close()
+	if got := f.VisibleWidth(); got != 64 {
+		t.Errorf("VisibleWidth = %d, want 64", got)
+	}
+	f.SetCrop(1, 2, 3, 4)
+	if top, bottom, left, right := f.Crop(); top != 1 || bottom != 2 || left != 3 || right != 4 {
+		t.Errorf("Crop = %d %d %d %d", top, bottom, left, right)
+	}
+	if got := f.VisibleWidth(); got != 57 {
+		t.Errorf("VisibleWidth = %d, want 57", got)
+	}
+}
+
 func TestLog2ChromaW(t *testing.T) {
 	for name, want := range map[string]int{"yuv420p": 1, "yuv422p": 1, "yuv444p": 0, "yuv411p": 2, "nv12": 1, "rgb24": 0} {
 		f, err := NewVideoFrame(16, 16, PixFmtByName(name))
