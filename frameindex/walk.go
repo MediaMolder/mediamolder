@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Thomas Vaughan
+// SPDX-License-Identifier: LGPL-2.1-or-later
+
 package frameindex
 
 import (
@@ -186,6 +189,7 @@ func WalkDecode(ctx context.Context, path string, stream int, progress func(n in
 			return nil, fmt.Errorf("frameindex: deinterlace held %d frame(s) back", len(di.q))
 		}
 	}
+	sort.SliceStable(pts, func(i, j int) bool { return pts[i] < pts[j] })
 	return &Table{Stream: si.Index, TimeBase: si.TimeBase, PTS: pts}, nil
 }
 
@@ -248,9 +252,12 @@ func openVideo(path string, stream int) (*av.InputFormatContext, av.StreamInfo, 
 }
 
 func framesEst(si av.StreamInfo) int64 {
-	fps := si.RFrameRate
+	// The average rate is the frame count over the duration. The tick rate
+	// (r_frame_rate) is higher on a variable-rate clip and on field-coded
+	// video, so it is only the fallback when the average is missing.
+	fps := si.FrameRate
 	if fps[0] <= 0 || fps[1] <= 0 {
-		fps = si.FrameRate
+		fps = si.RFrameRate
 	}
 	tbN, tbD := si.TimeBase[0], si.TimeBase[1]
 	if si.Duration <= 0 || tbN <= 0 || tbD <= 0 || fps[0] <= 0 || fps[1] <= 0 {
