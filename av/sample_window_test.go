@@ -592,3 +592,120 @@ func luma10(f *Frame, x, y int) int {
 	off := y*ls + x*2
 	return int(p[off]) | int(p[off+1])<<8
 }
+
+// A 320×180 frame is large enough that the separable filter splits rows
+// across threads. The second Apply reuses the store at a new origin, which
+// fails if the weight table from the first call is left in place.
+func TestResampleWindow_ThreadedRowsAndStoreReuse(t *testing.T) {
+	const w, h = 320, 180
+	src, err := NewVideoFrame(w, h, PixFmtByName("yuv420p"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer src.Close()
+	if err := src.FillBlack(); err != nil {
+		t.Fatal(err)
+	}
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			v := byte(0)
+			if x%2 == 1 {
+				v = 100
+			}
+			setLuma(src, x, y, v)
+		}
+	}
+	dst, err := NewVideoFrame(w, h, src.PixFmt())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer dst.Close()
+	if err := dst.CopyPropsFrom(src); err != nil {
+		t.Fatal(err)
+	}
+	poisonPlane(dst, 0xFF)
+	if !SampleCentresInside(w, h, w, h, 0.25, 0, float64(w), float64(h)) {
+		t.Fatal("quarter shift of the full picture should cover every centre")
+	}
+	store, err := NewResampleStore()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err := store.Apply(dst, src, 0.25, 0, w, h, "bilinear"); err != nil {
+		t.Fatal(err)
+	}
+	// sx = i + 0.25. Even source columns are 0 and odd columns are 100,
+	// so pixel 10 is 25 and pixel 11 is 75. The last centre mixes column
+	// 319 (100) with the black sample past the edge (16), which is 79.
+	for _, y := range []int{0, 90, h - 1} {
+		if got := lumaAt(dst, 10, y); got != 25 {
+			t.Fatalf("row %d col 10 = %d, want 25", y, got)
+		}
+		if got := lumaAt(dst, 11, y); got != 75 {
+			t.Fatalf("row %d col 11 = %d, want 75", y, got)
+		}
+		if got := lumaAt(dst, w-1, y); got != 79 {
+			t.Fatalf("row %d last = %d, want 79", y, got)
+		}
+	}
+	u, uls := dst.Plane(1), dst.Linesize(1)
+	if int(u[0]) != 128 || int(u[(h/2-1)*uls+w/2-1]) != 128 {
+		t.Fatalf("chroma = %d %d, want 128", u[0], u[(h/2-1)*uls+w/2-1])
+	}
+	if err := store.Apply(dst, src, 1.25, 0, w, h, "bilinear"); err != nil {
+		t.Fatal(err)
+	}
+	// sx = i + 1.25. Pixel 10 reads column 11 and pixel 11 reads column 12.
+	if got := lumaAt(dst, 10, 0); got != 75 {
+		t.Fatalf("reused store col 10 = %d, want 75", got)
+	}
+	if got := lumaAt(dst, 11, 90); got != 25 {
+		t.Fatalf("reused store col 11 = %d, want 25", got)
+	}
+	store.Close()
+	if err := store.Apply(dst, src, 0.25, 0, w, h, "bilinear"); err == nil {
+		t.Fatal("Apply after Close succeeded")
+	}
+}
+
+func BenchmarkResampleWindow(b *testing.B) {
+	const w, h = 320, 180
+	src, err := NewVideoFrame(w, h, PixFmtByName("yuv420p"))
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer src.Close()
+	dst, err := NewVideoFrame(w, h, src.PixFmt())
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer dst.Close()
+	if err := src.FillBlack(); err != nil {
+		b.Fatal(err)
+	}
+	store, err := NewResampleStore()
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer store.Close()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := store.Apply(dst, src, 0.25, 0.25, float64(w), float64(h), "bicubic"); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func poisonPlane(f *Frame, v byte) {
+	for p := 0; p < f.NumPlanes(); p++ {
+		data, ls := f.Plane(p), f.Linesize(p)
+		pw, ph := f.PlaneWidth(p), f.PlaneHeight(p)
+		for y := 0; y < ph; y++ {
+			row := data[y*ls : y*ls+pw]
+			for i := range row {
+				row[i] = v
+			}
+		}
+	}
+}

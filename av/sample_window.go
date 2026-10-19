@@ -3,9 +3,15 @@
 
 package av
 
+// #cgo LDFLAGS: -pthread
+//
 // #include <math.h>
+// #include <pthread.h>
 // #include <stddef.h>
+// #include <stdint.h>
 // #include <stdlib.h>
+// #include <string.h>
+// #include <unistd.h>
 // #include "libavutil/frame.h"
 // #include "libavutil/pixdesc.h"
 // #include "libavutil/pixfmt.h"
@@ -175,6 +181,20 @@ package av
 //     return (int)floor(v + 0.5 + 1e-10);
 // }
 //
+// static void mm_put_byte(AVFrame *f, const MMComp *c, int x, int y, int value) {
+//     uint8_t *p = f->data[c->plane] + (ptrdiff_t)y * f->linesize[c->plane] +
+//                  (ptrdiff_t)x * c->step + c->offset;
+//     p[0] = (uint8_t)value;
+// }
+//
+// static void mm_put_u16le(AVFrame *f, const MMComp *c, int x, int y, int value) {
+//     uint8_t *p = f->data[c->plane] + (ptrdiff_t)y * f->linesize[c->plane] +
+//                  (ptrdiff_t)x * c->step + c->offset;
+//     uint32_t bits = ((uint32_t)value << c->shift) & ((uint32_t)c->maxv << c->shift);
+//     p[0] = (uint8_t)bits;
+//     p[1] = (uint8_t)(bits >> 8);
+// }
+//
 // static int mm_fill_black(AVFrame *f) {
 //     MMFmt fmt;
 //     int ret = mm_load_fmt(f, &fmt);
@@ -188,10 +208,37 @@ package av
 //             return -3;
 //         int pw = (f->width + c->sub_x - 1) / c->sub_x;
 //         int ph = (f->height + c->sub_y - 1) / c->sub_y;
-//         for (int y = 0; y < ph; y++) {
+//         // An 8-bit plane with one byte per sample is a memset. A sole
+//         // little-endian word stores the sample bits and clears the rest,
+//         // which is what a 10-bit reader consumes.
+//         if (!fmt.be && c->depth == 8 && c->shift == 0 && c->step == 1 && c->offset == 0) {
+//             for (int y = 0; y < ph; y++) {
+//                 uint8_t *p = f->data[c->plane] + (ptrdiff_t)y * f->linesize[c->plane];
+//                 memset(p, c->black, (size_t)pw);
+//             }
+//             continue;
+//         }
+//         int wide = c->depth > 8 || c->shift + c->depth > 8;
+//         if (!fmt.be && wide && c->sole && c->step == 2 && c->offset == 0) {
+//             uint32_t bits = ((uint32_t)c->black << c->shift) & ((uint32_t)c->maxv << c->shift);
+//             for (int y = 0; y < ph; y++) {
+//                 uint8_t *p = f->data[c->plane] + (ptrdiff_t)y * f->linesize[c->plane];
+//                 for (int x = 0; x < pw; x++) {
+//                     p[x * 2] = (uint8_t)bits;
+//                     p[x * 2 + 1] = (uint8_t)(bits >> 8);
+//                 }
+//             }
+//             continue;
+//         }
+//         if (!fmt.be && c->depth == 8 && c->shift == 0) {
+//             for (int y = 0; y < ph; y++)
+//                 for (int x = 0; x < pw; x++)
+//                     mm_put_byte(f, c, x, y, c->black);
+//             continue;
+//         }
+//         for (int y = 0; y < ph; y++)
 //             for (int x = 0; x < pw; x++)
 //                 mm_write(f, c, fmt.be, x, y, c->black);
-//         }
 //     }
 //     return 0;
 // }
@@ -321,13 +368,304 @@ package av
 // // A chroma sample is written when any luma pixel it covers is inside.
 // // Taps outside src are digital black. A downscale stretches the kernel
 // // by the scale so the footprint covers the source under that pixel.
+// // One output column or row. Weights stay unnormalized: the inner loop
+// // divides by norm once, in the same order the per-pixel loop used to.
+// typedef struct {
+//     int k0, n, skip;
+//     double norm;
+//     double *w;
+// } MMSpan;
+//
+// // Scratch reused across frames. One caller at a time.
+// typedef struct MMStore {
+//     double *tmp;
+//     size_t tmp_n;
+//     double *weights;
+//     size_t weights_n;
+//     MMSpan *span;
+//     size_t span_n;
+// } MMStore;
+//
+// static MMStore *mm_store_new(void) {
+//     return calloc(1, sizeof(MMStore));
+// }
+//
+// static void mm_store_free(MMStore *s) {
+//     if (!s)
+//         return;
+//     free(s->tmp);
+//     free(s->weights);
+//     free(s->span);
+//     free(s);
+// }
+//
+// static int mm_grow_double(double **p, size_t *cap, size_t n) {
+//     if (n <= *cap)
+//         return 0;
+//     if (n > SIZE_MAX / sizeof(double))
+//         return -3;
+//     double *q = realloc(*p, n * sizeof(double));
+//     if (!q)
+//         return -3;
+//     *p = q;
+//     *cap = n;
+//     return 0;
+// }
+//
+// static int mm_grow_span(MMSpan **p, size_t *cap, size_t n) {
+//     if (n <= *cap)
+//         return 0;
+//     MMSpan *q = realloc(*p, n * sizeof(MMSpan));
+//     if (!q)
+//         return -3;
+//     *p = q;
+//     *cap = n;
+//     return 0;
+// }
+//
+// // True when every luma sample centre of the output lies inside src.
+// // A chroma sample is then kept as well, because it covers those centres.
+// static int mm_covers_all(double x, double y, double w, double h,
+//                          int dw, int dh, int sw, int sh) {
+//     if (dw < 1 || dh < 1 || sw < 1 || sh < 1)
+//         return 0;
+//     if (!(w > 0) || !(h > 0) || !isfinite(x) || !isfinite(y) || !isfinite(w) || !isfinite(h))
+//         return 0;
+//     double sx0 = x + 0.5 * w / (double)dw - 0.5;
+//     double sx1 = x + ((double)dw - 0.5) * w / (double)dw - 0.5;
+//     double sy0 = y + 0.5 * h / (double)dh - 0.5;
+//     double sy1 = y + ((double)dh - 0.5) * h / (double)dh - 0.5;
+//     return sx0 >= -0.5 && sx1 < (double)sw - 0.5 &&
+//            sy0 >= -0.5 && sy1 < (double)sh - 0.5;
+// }
+//
+// static int mm_max_taps(double rad) {
+//     if (!(rad >= 0) || !isfinite(rad))
+//         return -1;
+//     double t = floor(2 * rad) + 3;
+//     if (t < 1 || t > 1000000)
+//         return -1;
+//     return (int)t;
+// }
+//
+// static int mm_build_spans(MMSpan *span, double *weights, int nout, int max_taps,
+//                           double origin, double scale, double rad, double stretch, int kernel) {
+//     for (int i = 0; i < nout; i++) {
+//         MMSpan *sp = &span[i];
+//         sp->w = weights + (size_t)i * (size_t)max_taps;
+//         sp->k0 = 0;
+//         sp->n = 0;
+//         sp->norm = 0;
+//         sp->skip = 0;
+//         double s = origin + ((double)i + 0.5) * scale - 0.5;
+//         if (!isfinite(s) || s < -1e9 || s > 1e9) {
+//             sp->skip = 1;
+//             continue;
+//         }
+//         int k0 = (int)floor(s - rad);
+//         int k1 = (int)ceil(s + rad);
+//         int n = k1 - k0 + 1;
+//         if (n < 1 || n > max_taps)
+//             return -3;
+//         sp->k0 = k0;
+//         sp->n = n;
+//         double norm = 0;
+//         for (int t = 0; t < n; t++) {
+//             double wx = mm_scaled_kern(kernel, s - (double)(k0 + t), stretch);
+//             sp->w[t] = wx;
+//             if (wx != 0)
+//                 norm += wx;
+//         }
+//         sp->norm = norm;
+//     }
+//     return 0;
+// }
+//
+// static int mm_byte_at(const AVFrame *f, const MMComp *c, int x, int y, int pw, int ph) {
+//     if (x < 0 || y < 0 || x >= pw || y >= ph)
+//         return c->black;
+//     const uint8_t *p = f->data[c->plane] + (ptrdiff_t)y * f->linesize[c->plane] +
+//                        (ptrdiff_t)x * c->step + c->offset;
+//     return p[0];
+// }
+//
+// static int mm_u16le_at(const AVFrame *f, const MMComp *c, int x, int y, int pw, int ph) {
+//     if (x < 0 || y < 0 || x >= pw || y >= ph)
+//         return c->black;
+//     const uint8_t *p = f->data[c->plane] + (ptrdiff_t)y * f->linesize[c->plane] +
+//                        (ptrdiff_t)x * c->step + c->offset;
+//     uint32_t v = (uint32_t)p[0] | ((uint32_t)p[1] << 8);
+//     return (int)((v >> c->shift) & (uint32_t)c->maxv);
+// }
+//
+// typedef struct MMJob {
+//     const AVFrame *src;
+//     AVFrame *dst;
+//     const MMComp *c;
+//     int be, sw, sh, dw, dh, row0, row1;
+//     int all_inside, tid, nthreads;
+//     double x, y, w, h;
+//     double *tmp;
+//     MMSpan *hspan;
+//     MMSpan *vspan;
+// } MMJob;
+//
+// #define MM_HORIZ(FETCH)                                                                  \
+//     for (int yy = j->row0 + j->tid; yy <= j->row1; yy += j->nthreads) {                  \
+//         double *row = j->tmp + (size_t)(yy - j->row0) * (size_t)j->dw;                   \
+//         for (int i = 0; i < j->dw; i++) {                                                \
+//             MMSpan *sp = &j->hspan[i];                                                   \
+//             if (sp->skip || sp->norm == 0) {                                             \
+//                 row[i] = j->c->black;                                                    \
+//                 continue;                                                                \
+//             }                                                                            \
+//             double acc = 0;                                                             \
+//             for (int t = 0; t < sp->n; t++) {                                            \
+//                 double wx = sp->w[t];                                                    \
+//                 if (wx == 0)                                                             \
+//                     continue;                                                            \
+//                 acc += wx * (double)(FETCH);                                             \
+//             }                                                                            \
+//             row[i] = acc / sp->norm;                                                     \
+//         }                                                                                \
+//     }
+//
+// static void *mm_horiz_byte(void *arg) {
+//     MMJob *j = arg;
+//     MM_HORIZ(mm_byte_at(j->src, j->c, sp->k0 + t, yy, j->sw, j->sh))
+//     return NULL;
+// }
+//
+// static void *mm_horiz_u16(void *arg) {
+//     MMJob *j = arg;
+//     MM_HORIZ(mm_u16le_at(j->src, j->c, sp->k0 + t, yy, j->sw, j->sh))
+//     return NULL;
+// }
+//
+// static void *mm_horiz_generic(void *arg) {
+//     MMJob *j = arg;
+//     MM_HORIZ(mm_sample(j->src, j->c, j->be, sp->k0 + t, yy, j->sw, j->sh))
+//     return NULL;
+// }
+//
+// #define MM_VERT(STORE)                                                                                          \
+//     for (int jy = j->tid; jy < j->dh; jy += j->nthreads) {                                                      \
+//         MMSpan *sp = &j->vspan[jy];                                                                             \
+//         if (sp->skip)                                                                                           \
+//             continue;                                                                                           \
+//         if (!j->all_inside && j->c->sub_x == 1 && j->c->sub_y == 1) {                                           \
+//             double sy = j->y + ((double)jy + 0.5) * j->h / (double)j->dst->height - 0.5;                        \
+//             if (sy < -0.5 || sy >= (double)j->src->height - 0.5)                                                \
+//                 continue;                                                                                       \
+//         }                                                                                                       \
+//         for (int i = 0; i < j->dw; i++) {                                                                       \
+//             if (!j->all_inside &&                                                                               \
+//                 !mm_keep_pixel(j->x, j->y, j->w, j->h, j->dst->width, j->dst->height, j->src->width,            \
+//                                j->src->height, j->c->sub_x, j->c->sub_y, i, jy))                               \
+//                 continue;                                                                                       \
+//             int value;                                                                                          \
+//             if (sp->norm == 0) {                                                                                \
+//                 value = j->c->black;                                                                            \
+//             } else {                                                                                            \
+//                 double acc = 0;                                                                                 \
+//                 for (int t = 0; t < sp->n; t++) {                                                               \
+//                     double wy = sp->w[t];                                                                       \
+//                     if (wy == 0)                                                                                \
+//                         continue;                                                                               \
+//                     int k = sp->k0 + t;                                                                         \
+//                     double sample = j->c->black;                                                                \
+//                     if (j->tmp && k >= j->row0 && k <= j->row1)                                                 \
+//                         sample = j->tmp[(size_t)(k - j->row0) * (size_t)j->dw + (size_t)i];                     \
+//                     acc += wy * sample;                                                                         \
+//                 }                                                                                               \
+//                 value = mm_round_comp(acc / sp->norm, j->c->maxv);                                              \
+//             }                                                                                                   \
+//             STORE                                                                                               \
+//         }                                                                                                       \
+//     }
+//
+// static void *mm_vert_byte(void *arg) {
+//     MMJob *j = arg;
+//     MM_VERT(mm_put_byte(j->dst, j->c, i, jy, value);)
+//     return NULL;
+// }
+//
+// static void *mm_vert_u16(void *arg) {
+//     MMJob *j = arg;
+//     MM_VERT(mm_put_u16le(j->dst, j->c, i, jy, value);)
+//     return NULL;
+// }
+//
+// static void *mm_vert_generic(void *arg) {
+//     MMJob *j = arg;
+//     MM_VERT(mm_write(j->dst, j->c, j->be, i, jy, value);)
+//     return NULL;
+// }
+//
+// static int mm_choose_threads(int rows, int cols) {
+//     if (rows < 2 || cols < 1)
+//         return 1;
+//     if ((long)rows * (long)cols < 256L * 128L)
+//         return 1;
+//     long n = sysconf(_SC_NPROCESSORS_ONLN);
+//     if (n < 1)
+//         n = 1;
+//     if (n > 16)
+//         n = 16;
+//     if (n > rows)
+//         n = rows;
+//     return (int)n;
+// }
+//
+// static void mm_parallel(void *(*fn)(void *), MMJob *proto, int nthreads) {
+//     if (nthreads < 1)
+//         nthreads = 1;
+//     if (nthreads > 16)
+//         nthreads = 16;
+//     if (nthreads == 1) {
+//         proto->tid = 0;
+//         proto->nthreads = 1;
+//         fn(proto);
+//         return;
+//     }
+//     pthread_t th[16];
+//     MMJob jobs[16];
+//     int started[16];
+//     for (int t = 0; t < nthreads; t++) {
+//         jobs[t] = *proto;
+//         jobs[t].tid = t;
+//         jobs[t].nthreads = nthreads;
+//         started[t] = pthread_create(&th[t], NULL, fn, &jobs[t]) == 0;
+//         if (!started[t])
+//             fn(&jobs[t]);
+//     }
+//     for (int t = 0; t < nthreads; t++) {
+//         if (started[t])
+//             pthread_join(th[t], NULL);
+//     }
+// }
+//
+// static int mm_fast_kind(const MMComp *c, int be) {
+//     if (be)
+//         return 0;
+//     if (c->depth == 8 && c->shift == 0)
+//         return 1;
+//     if (c->sole && c->step >= 2 && (c->depth > 8 || c->shift + c->depth > 8))
+//         return 2;
+//     return 0;
+// }
+//
+// // Samples one component. Horizontal weights depend only on the column and
+// // vertical weights only on the row, so each is built once. Rows of a large
+// // frame run on several threads, joined before return.
 // static int mm_filter_separable(AVFrame *dst, const AVFrame *src, const MMComp *c,
-//                                int be, double x, double y, double w, double h, int kernel) {
+//                                int be, double x, double y, double w, double h, int kernel,
+//                                MMStore *store) {
 //     int dw = (dst->width + c->sub_x - 1) / c->sub_x;
 //     int dh = (dst->height + c->sub_y - 1) / c->sub_y;
 //     int sw = (src->width + c->sub_x - 1) / c->sub_x;
 //     int sh = (src->height + c->sub_y - 1) / c->sub_y;
-//     if (dw < 1 || dh < 1)
+//     if (dw < 1 || dh < 1 || !store)
 //         return -3;
 //     double ox = x / c->sub_x;
 //     double oy = y / c->sub_y;
@@ -340,6 +678,10 @@ package av
 //     double support = mm_support(kernel);
 //     double radx = support * fx;
 //     double rady = support * fy;
+//     int max_hx = mm_max_taps(radx);
+//     int max_vy = mm_max_taps(rady);
+//     if (max_hx < 1 || max_vy < 1)
+//         return -3;
 //     double sy0 = oy + 0.5 * sy_scale - 0.5;
 //     double sy1 = oy + (dh - 0.5) * sy_scale - 0.5;
 //     if (!isfinite(sy0) || !isfinite(sy1))
@@ -361,71 +703,73 @@ package av
 //             row1 = sh - 1;
 //     }
 //     int nrows = row1 >= row0 ? row1 - row0 + 1 : 0;
+//     size_t span_need = (size_t)(dw > dh ? dw : dh);
+//     if (mm_grow_span(&store->span, &store->span_n, span_need) < 0)
+//         return -3;
+//     if ((size_t)max_hx == 0 || (size_t)dw > SIZE_MAX / sizeof(double) / (size_t)max_hx)
+//         return -3;
+//     if (mm_grow_double(&store->weights, &store->weights_n, (size_t)dw * (size_t)max_hx) < 0)
+//         return -3;
+//     if (mm_build_spans(store->span, store->weights, dw, max_hx, ox, sx_scale, radx, fx, kernel) < 0)
+//         return -3;
 //     double *tmp = NULL;
 //     if (nrows > 0) {
 //         if ((size_t)dw > SIZE_MAX / sizeof(double) / (size_t)nrows)
 //             return -3;
-//         tmp = malloc((size_t)nrows * (size_t)dw * sizeof(double));
-//         if (!tmp)
+//         if (mm_grow_double(&store->tmp, &store->tmp_n, (size_t)nrows * (size_t)dw) < 0)
 //             return -3;
-//         for (int yy = row0; yy <= row1; yy++) {
-//             double *row = tmp + (size_t)(yy - row0) * (size_t)dw;
-//             for (int i = 0; i < dw; i++) {
-//                 double sx = ox + (i + 0.5) * sx_scale - 0.5;
-//                 // A huge origin must not be cast to int. The pixel is
-//                 // outside the picture, so the vertical pass will skip it.
-//                 if (!isfinite(sx) || sx < -1e9 || sx > 1e9) {
-//                     row[i] = c->black;
-//                     continue;
-//                 }
-//                 int k0 = (int)floor(sx - radx);
-//                 int k1 = (int)ceil(sx + radx);
-//                 double acc = 0, norm = 0;
-//                 for (int k = k0; k <= k1; k++) {
-//                     double wx = mm_scaled_kern(kernel, sx - k, fx);
-//                     if (wx == 0)
-//                         continue;
-//                     norm += wx;
-//                     acc += wx * mm_sample(src, c, be, k, yy, sw, sh);
-//                 }
-//                 row[i] = norm == 0 ? c->black : acc / norm;
-//             }
-//         }
+//         tmp = store->tmp;
 //     }
-//     for (int j = 0; j < dh; j++) {
-//         double sy = oy + (j + 0.5) * sy_scale - 0.5;
-//         if (!isfinite(sy) || sy < -1e9 || sy > 1e9)
-//             continue;
-//         int k0 = (int)floor(sy - rady);
-//         int k1 = (int)ceil(sy + rady);
-//         for (int i = 0; i < dw; i++) {
-//             if (!mm_keep_pixel(x, y, w, h, dst->width, dst->height, src->width, src->height,
-//                                c->sub_x, c->sub_y, i, j))
-//                 continue;
-//             double acc = 0, norm = 0;
-//             for (int k = k0; k <= k1; k++) {
-//                 double wy = mm_scaled_kern(kernel, sy - k, fy);
-//                 if (wy == 0)
-//                     continue;
-//                 norm += wy;
-//                 double sample = c->black;
-//                 if (tmp && k >= row0 && k <= row1)
-//                     sample = tmp[(size_t)(k - row0) * (size_t)dw + (size_t)i];
-//                 acc += wy * sample;
-//             }
-//             if (norm == 0)
-//                 acc = c->black;
-//             else
-//                 acc /= norm;
-//             mm_write(dst, c, be, i, j, mm_round_comp(acc, c->maxv));
-//         }
+//     int kind = mm_fast_kind(c, be);
+//     MMJob job;
+//     memset(&job, 0, sizeof job);
+//     job.src = src;
+//     job.dst = dst;
+//     job.c = c;
+//     job.be = be;
+//     job.sw = sw;
+//     job.sh = sh;
+//     job.dw = dw;
+//     job.dh = dh;
+//     job.row0 = row0;
+//     job.row1 = row1;
+//     job.all_inside = mm_covers_all(x, y, w, h, dst->width, dst->height, src->width, src->height);
+//     job.x = x;
+//     job.y = y;
+//     job.w = w;
+//     job.h = h;
+//     job.tmp = tmp;
+//     job.hspan = store->span;
+//     if (nrows > 0) {
+//         void *(*fn)(void *) = mm_horiz_generic;
+//         if (kind == 1)
+//             fn = mm_horiz_byte;
+//         else if (kind == 2)
+//             fn = mm_horiz_u16;
+//         mm_parallel(fn, &job, mm_choose_threads(nrows, dw));
 //     }
-//     free(tmp);
+//     // Horizontal is finished, so the weight buffer and the span table
+//     // can hold the vertical kernel.
+//     if ((size_t)max_vy == 0 || (size_t)dh > SIZE_MAX / sizeof(double) / (size_t)max_vy)
+//         return -3;
+//     if (mm_grow_double(&store->weights, &store->weights_n, (size_t)dh * (size_t)max_vy) < 0)
+//         return -3;
+//     if (mm_build_spans(store->span, store->weights, dh, max_vy, oy, sy_scale, rady, fy, kernel) < 0)
+//         return -3;
+//     job.vspan = store->span;
+//     job.hspan = NULL;
+//     void *(*vfn)(void *) = mm_vert_generic;
+//     if (kind == 1)
+//         vfn = mm_vert_byte;
+//     else if (kind == 2)
+//         vfn = mm_vert_u16;
+//     mm_parallel(vfn, &job, mm_choose_threads(dh, dw));
 //     return 0;
 // }
 //
 // static int mm_resample_window(AVFrame *dst, const AVFrame *src,
-//                               double x, double y, double w, double h, int kernel) {
+//                               double x, double y, double w, double h, int kernel,
+//                               MMStore *store) {
 //     if (!isfinite(x) || !isfinite(y) || !isfinite(w) || !isfinite(h) || w <= 0 || h <= 0)
 //         return -3;
 //     if (kernel < MM_POINT || kernel > MM_SPLINE)
@@ -436,12 +780,13 @@ package av
 //     int ret = mm_load_fmt(dst, &fmt);
 //     if (ret < 0)
 //         return ret;
+//     int all_inside = mm_covers_all(x, y, w, h, dst->width, dst->height, src->width, src->height);
 //     for (int ci = 0; ci < fmt.n; ci++) {
 //         MMComp *c = &fmt.comp[ci];
 //         if (!dst->data[c->plane] || !src->data[c->plane])
 //             return -3;
 //         if (kernel != MM_POINT && kernel != MM_AREA) {
-//             ret = mm_filter_separable(dst, src, c, fmt.be, x, y, w, h, kernel);
+//             ret = mm_filter_separable(dst, src, c, fmt.be, x, y, w, h, kernel, store);
 //             if (ret < 0)
 //                 return ret;
 //             continue;
@@ -458,7 +803,8 @@ package av
 //             double sy = oy + (j + 0.5) * sy_scale - 0.5;
 //             for (int i = 0; i < dw; i++) {
 //                 double sx = ox + (i + 0.5) * sx_scale - 0.5;
-//                 if (!mm_keep_pixel(x, y, w, h, dst->width, dst->height, src->width, src->height,
+//                 if (!all_inside &&
+//                     !mm_keep_pixel(x, y, w, h, dst->width, dst->height, src->width, src->height,
 //                                    c->sub_x, c->sub_y, i, j))
 //                     continue;
 //                 double acc;
@@ -546,6 +892,40 @@ func (f *Frame) FillBlack() error {
 	return nil
 }
 
+// ResampleStore is the scratch ResampleWindow reuses across frames: the
+// separable weight tables and the horizontal buffer. One caller at a time.
+// Close frees it. Closing a nil store does nothing.
+type ResampleStore struct {
+	p *C.MMStore
+}
+
+// NewResampleStore allocates an empty scratch buffer.
+func NewResampleStore() (*ResampleStore, error) {
+	p := C.mm_store_new()
+	if p == nil {
+		return nil, fmt.Errorf("av: resample: out of memory")
+	}
+	return &ResampleStore{p: p}, nil
+}
+
+// Close frees the scratch. A second call is safe.
+func (s *ResampleStore) Close() {
+	if s == nil || s.p == nil {
+		return
+	}
+	C.mm_store_free(s.p)
+	s.p = nil
+}
+
+// SampleCentresInside reports whether every output luma sample centre of
+// the window lies inside the source picture. The output is dstW by dstH
+// and the picture is srcW by srcH. When it is true, resampling writes
+// every destination pixel.
+func SampleCentresInside(dstW, dstH, srcW, srcH int, x, y, w, h float64) bool {
+	return C.mm_covers_all(C.double(x), C.double(y), C.double(w), C.double(h),
+		C.int(dstW), C.int(dstH), C.int(srcW), C.int(srcH)) != 0
+}
+
 // ResampleWindow writes dst by sampling the window (x, y, w, h) of src.
 // Both frames are the same pixel format. Output pixel (i, j) reads source
 // luma sx = x + (i+0.5)*w/dstWidth - 0.5, and the same mapping on each
@@ -560,7 +940,23 @@ func (f *Frame) FillBlack() error {
 // bilinear, bicubic, lanczos, spline, or area. bicubic is Catmull-Rom.
 // spline is a cubic B-spline. area averages the source rectangle each
 // output pixel covers.
+//
+// The scratch is allocated for this call. A series of frames should use
+// ResampleStore.Apply so the tables survive from one frame to the next.
 func ResampleWindow(dst, src *Frame, x, y, w, h float64, kernel string) error {
+	s, err := NewResampleStore()
+	if err != nil {
+		return err
+	}
+	defer s.Close()
+	return s.Apply(dst, src, x, y, w, h, kernel)
+}
+
+// Apply samples the window into dst using s as scratch. See ResampleWindow.
+func (s *ResampleStore) Apply(dst, src *Frame, x, y, w, h float64, kernel string) error {
+	if s == nil || s.p == nil {
+		return fmt.Errorf("av: resample: nil store")
+	}
 	if dst == nil || dst.p == nil || src == nil || src.p == nil {
 		return fmt.Errorf("av: resample: nil frame")
 	}
@@ -568,7 +964,7 @@ func ResampleWindow(dst, src *Frame, x, y, w, h float64, kernel string) error {
 	if err != nil {
 		return err
 	}
-	if ret := C.mm_resample_window(dst.p, src.p, C.double(x), C.double(y), C.double(w), C.double(h), k); ret < 0 {
+	if ret := C.mm_resample_window(dst.p, src.p, C.double(x), C.double(y), C.double(w), C.double(h), k, s.p); ret < 0 {
 		return fmt.Errorf("av: resample: %s", C.GoString(C.mm_sample_err(ret)))
 	}
 	return nil
