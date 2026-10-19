@@ -138,9 +138,10 @@ in-app help dialog.
      [Bitstream Trace](bitstream-trace.md).
      The **Moving crop and scale** node (`moving_crop_scale`) crops each
      frame to a keyframed window and scales it to a fixed output size.
-     Sample matching drops frames off the path. The Inspector edits the
-     output size, the interpolation, match, and alignment options, and the
-     keyframes row by row. See [Moving crop and scale](moving-crop-scale.md).
+     The window can extend past the picture, and that gap is black.
+     Position is sub-pixel. Sample matching drops frames off the path.
+     The Inspector edits the output size, the interpolation and match,
+     and the keyframes row by row. See [Moving crop and scale](moving-crop-scale.md).
      See [§ Scene detection processors](#scene-detection-processors).
 4. **Add a Sink.** Drag *Output file* from **Sinks**, click **Browse…** and
    pick **Save** mode in the dialog to choose a destination path and

@@ -560,9 +560,11 @@ fixed output size. The encoder opens at `output` width and height, so the
 graph does not need a following `scale`. Keyframes bracket PTS (or seconds,
 via `t` and `ProcessorContext.TimeBase`). Between them the window can hold,
 move linearly, or follow a Catmull-Rom spline. A `zoom` list interpolates in
-log size. `aspect: output` derives the height from the output aspect.
-`match: sample` uses each keyframe at most once, within half the gap to the
-next, and `Close` fails if a keyframe matched no frame.
+log size, from 1/16 to 64. The window is placed at sub-pixel positions and
+may extend past the picture; the gap is digital black. `aspect: output`
+derives the height from the output aspect. `match: sample` uses each
+keyframe at most once, within half the gap to the next, and `Close` fails
+if a keyframe matched no frame.
 
 | Param | Default | Description |
 |-------|---------|-------------|
@@ -571,12 +573,12 @@ next, and `Close` fails if a keyframe matched no frame.
 | `interpolate` | `linear` | `hold`, `linear`, or `smooth`. |
 | `unmatched` | `hold` | `hold`, `drop`, or `error` outside the bracket. With `sample`, the same choice applies to a frame that took no keyframe. |
 | `match` | `bracket` | `bracket`, or `sample` to consume each keyframe once. `sample` requires `interpolate: hold`. |
-| `aspect` | `free` | `free`, or `output` to keep the output aspect unless the derived height is clamped to the picture. |
-| `align` | `chroma` | `chroma` or `exact`. |
-| `flags` | `bicubic` | swscale algorithm name. |
-| `emit_rect` | `false` | Metadata with the applied integer rectangle. |
+| `aspect` | `free` | `free`, or `output` to keep the output aspect. A derived height past the picture is black. |
+| `align` | `chroma` | `chroma` or `exact`. Accepted so an older job opens. Sampling is sub-pixel either way. |
+| `flags` | `bicubic` | Resample kernel: `bilinear`, `bicubic`, `lanczos`, `spline`, `area`, `neighbor`. |
+| `emit_rect` | `false` | Metadata with the window rounded half away from zero. |
 
-On 4:2:0 the window steps by 2 luma pixels. See [Moving crop and scale](moving-crop-scale.md).
+See [Moving crop and scale](moving-crop-scale.md).
 
 ### `vidi_analyzer`
 

@@ -174,9 +174,13 @@ func TestMovingCropScale_InitRejects(t *testing.T) {
 		{"bad flags", mcsParams(64, 64, map[string]any{"flags": "sinc"}, ok), "sinc"},
 		{"zoom zero", mcsParams(64, 64, nil, map[string]any{"pts": 0, "x": 0, "y": 0, "zoom": 0}), "greater than 0"},
 		{"zoom negative", mcsParams(64, 64, nil, map[string]any{"pts": 0, "x": 0, "y": 0, "zoom": -1}), "greater than 0"},
-		{"side below 2", mcsParams(64, 64, nil, map[string]any{"pts": 0, "x": 0, "y": 0, "w": 1, "h": 32}), "below 2"},
+		{"zoom too far in", mcsParams(640, 640, nil, map[string]any{"pts": 0, "x": 0, "y": 0, "zoom": 65}), "1/16 to 64"},
+		{"zoom too far out", mcsParams(640, 640, nil, map[string]any{"pts": 0, "x": 0, "y": 0, "zoom": 1.0 / 17}), "1/16 to 64"},
+		{"side below 1", mcsParams(64, 64, nil, map[string]any{"pts": 0, "x": 0, "y": 0, "w": 0.5, "h": 32}), "below 1"},
+		{"side zooms in", mcsParams(128, 128, nil, map[string]any{"pts": 0, "x": 0, "y": 0, "w": 1, "h": 32}), "more than 64x"},
+		{"side zooms out", mcsParams(64, 64, nil, map[string]any{"pts": 0, "x": 0, "y": 0, "w": 1025, "h": 32}), "more than 16x"},
 		{"missing h", mcsParams(64, 64, nil, map[string]any{"pts": 0, "x": 0, "y": 0, "w": 32}), "needs h"},
-		{"derived h", mcsParams(100, 4, map[string]any{"aspect": "output"}, map[string]any{"pts": 0, "x": 0, "y": 0, "w": 2}), "below 2"},
+		{"derived h", mcsParams(100, 4, map[string]any{"aspect": "output"}, map[string]any{"pts": 0, "x": 0, "y": 0, "w": 2}), "below 1"},
 		{"nonfinite", mcsParams(64, 64, nil, map[string]any{"pts": 0, "x": math.NaN(), "y": 0, "w": 32, "h": 32}), "not finite"},
 		{"negative t", mcsParams(64, 64, nil, map[string]any{"t": -0.1, "x": 0, "y": 0, "w": 32, "h": 32}), "negative"},
 		{"bad emit", mcsParams(64, 64, map[string]any{"emit_rect": "yes"}, ok), "bool"},
@@ -207,8 +211,9 @@ func TestMovingCropScale_Sqrt2Zoom(t *testing.T) {
 	out, md := runOne(t, p, f)
 	defer out.Close()
 	_, x, y, w, h, interp := appliedRect(t, md)
-	if !interp || x != 0 || y != 0 || w != 70 || h != 70 {
-		t.Fatalf("rect x,y,w,h=%d,%d,%d,%d interp=%v, want 0,0,70,70 true", x, y, w, h, interp)
+	// 100/√2 ≈ 70.71, rounded half away from zero.
+	if !interp || x != 0 || y != 0 || w != 71 || h != 71 {
+		t.Fatalf("rect x,y,w,h=%d,%d,%d,%d interp=%v, want 0,0,71,71 true", x, y, w, h, interp)
 	}
 }
 
@@ -293,10 +298,9 @@ func TestMovingCropScale_LinearMidpointAndHold(t *testing.T) {
 	f := pixFrame(t, "yuv420p", 64, 64, 50)
 	out, md := runOne(t, p, f)
 	defer out.Close()
-	// 5 aligns down to 4 on 4:2:0.
 	_, x, _, _, _, interp := appliedRect(t, md)
-	if !interp || x != 4 {
-		t.Fatalf("linear x=%d interp=%v, want 4 true", x, interp)
+	if !interp || x != 5 {
+		t.Fatalf("linear x=%d interp=%v, want 5 true", x, interp)
 	}
 
 	hold := mcsInit(t, mcsParams(32, 32, map[string]any{"interpolate": "hold", "emit_rect": true},
@@ -364,30 +368,26 @@ func TestMovingCropScale_UnmatchedAndNoPTS(t *testing.T) {
 	}
 }
 
-func TestMovingCropScale_ChromaAlign(t *testing.T) {
-	cases := []struct {
-		format     string
-		align      string
-		x, y, w, h int
-	}{
-		{"yuv420p", "chroma", 4, 4, 18, 18},
-		{"yuv422p", "chroma", 4, 5, 18, 18},
-		{"yuv444p", "chroma", 5, 5, 18, 18},
-		{"yuv420p", "exact", 5, 5, 18, 18},
-	}
-	for _, tc := range cases {
-		t.Run(tc.format+"_"+tc.align, func(t *testing.T) {
-			p := mcsInit(t, mcsParams(8, 8, map[string]any{"align": tc.align, "emit_rect": true},
-				map[string]any{"pts": 0, "x": 5.2, "y": 5.2, "w": 17.2, "h": 17.2},
-			))
-			f := pixFrame(t, tc.format, 64, 64, 0)
-			out, md := runOne(t, p, f)
-			defer out.Close()
-			_, x, y, w, h, interp := appliedRect(t, md)
-			if interp || x != tc.x || y != tc.y || w != tc.w || h != tc.h {
-				t.Fatalf("got %d,%d %dx%d, want %d,%d %dx%d", x, y, w, h, tc.x, tc.y, tc.w, tc.h)
-			}
-		})
+func TestMovingCropScale_FractionalRectRoundsHalfAway(t *testing.T) {
+	// align is accepted and does not snap the window onto the chroma grid.
+	for _, align := range []string{"chroma", "exact"} {
+		for _, format := range []string{"yuv420p", "yuv422p", "yuv444p"} {
+			t.Run(format+"_"+align, func(t *testing.T) {
+				p := mcsInit(t, mcsParams(8, 8, map[string]any{"align": align, "emit_rect": true},
+					map[string]any{"pts": 0, "x": 5.2, "y": 5.2, "w": 17.2, "h": 17.2},
+				))
+				f := pixFrame(t, format, 64, 64, 0)
+				out, md := runOne(t, p, f)
+				defer out.Close()
+				_, x, y, w, h, interp := appliedRect(t, md)
+				if interp || x != 5 || y != 5 || w != 17 || h != 17 {
+					t.Fatalf("got %d,%d %dx%d, want 5,5 17x17", x, y, w, h)
+				}
+				if out.Width() != 8 || out.Height() != 8 {
+					t.Fatalf("out %dx%d", out.Width(), out.Height())
+				}
+			})
+		}
 	}
 }
 
@@ -407,8 +407,9 @@ func TestMovingCropScale_OddVisibleWidth(t *testing.T) {
 	}
 	defer out.Close()
 	_, x, _, w, h, _ := appliedRect(t, md)
-	if x != 0 || w != 1918 || h != 16 || out.Width() != 1918 || out.Height() != 16 {
-		t.Fatalf("rect %d %dx%d frame %dx%d, want x=0 1918x16", x, w, h, out.Width(), out.Height())
+	// The odd visible width is scaled to the output. It is not trimmed to 1918.
+	if x != 0 || w != 1919 || h != 16 || out.Width() != 1918 || out.Height() != 16 {
+		t.Fatalf("rect %d %dx%d frame %dx%d, want x=0 w=1919 frame 1918x16", x, w, h, out.Width(), out.Height())
 	}
 }
 
@@ -421,9 +422,9 @@ func TestMovingCropScale_FastPathLeftEdge(t *testing.T) {
 	}{
 		{0, 100, 32},
 		{10, 100, 32},
-		{20, 160.6, 92},
-		{30, 250.2, 182},
-		{40, 160.5, 92},
+		{20, 160.6, 93},  // x = 92.6, Catmull-Rom reproduces the ramp
+		{30, 250.2, 182}, // x = 182.2
+		{40, 160.5, 93},  // x = 92.5 rounds half away
 	}
 	kfs := make([]any, len(samples))
 	for i, s := range samples {
@@ -455,7 +456,7 @@ func TestMovingCropScale_FastPathLeftEdge(t *testing.T) {
 		out.Close()
 	}
 	if mov.ScaleReinits() != 0 {
-		t.Fatalf("fast path rebuilt swscale %d times", mov.ScaleReinits())
+		t.Fatalf("resample path reported swscale builds %d", mov.ScaleReinits())
 	}
 }
 
@@ -465,9 +466,15 @@ func TestMovingCropScale_ScaleChangesSize(t *testing.T) {
 		kf(10, 0, 0, 48, 48),
 		kf(20, 0, 0, 32, 32),
 	))
-	var want int64 = 1
 	for _, pts := range []int64{0, 10, 20} {
 		f := pixFrame(t, "yuv420p", 80, 80, pts)
+		// A flat picture stays flat through the resample, at every integer size.
+		for y := 0; y < f.Height(); y++ {
+			row := f.Plane(0)[y*f.Linesize(0):]
+			for x := 0; x < f.Width(); x++ {
+				row[x] = 90
+			}
+		}
 		out, _, err := p.Process(f, videoCtx)
 		f.Close()
 		if err != nil {
@@ -476,11 +483,15 @@ func TestMovingCropScale_ScaleChangesSize(t *testing.T) {
 		if out.Width() != 16 || out.Height() != 16 || out.PTS() != pts {
 			t.Fatalf("out %dx%d pts %d", out.Width(), out.Height(), out.PTS())
 		}
-		out.Close()
-		if got := p.ScaleReinits(); got != want {
-			t.Fatalf("after pts %d reinits %d, want %d", pts, got, want)
+		// The corner kernel reads past the picture, so check the middle.
+		mid := 8*out.Linesize(0) + 8
+		if got := int(out.Plane(0)[mid]); got != 90 {
+			t.Fatalf("pts %d centre luma = %d, want 90", pts, got)
 		}
-		want++
+		out.Close()
+	}
+	if got := p.ScaleReinits(); got != 0 {
+		t.Fatalf("reinits %d, want 0", got)
 	}
 }
 
@@ -682,7 +693,9 @@ func TestMovingCropScale_SampleHalfStepMatchesNeither(t *testing.T) {
 		{10, false, 0},
 		{20, true, 168},
 		{30, false, 0},
-		{40, true, 0},
+		// cx 300 puts the window at x=268. The source is 320 wide, so the
+		// window hangs off the right and the first column is source column 268.
+		{40, true, 12},
 	} {
 		src := columnFrame(t, 320, 16, tc.pts)
 		out, _, err := p.Process(src, videoCtx)
@@ -840,5 +853,152 @@ func TestMovingCropScale_SampleHoldDoesNotConsume(t *testing.T) {
 			t.Fatalf("pts %d: out=%v err=%v", pts, got != nil, err)
 		}
 		got.Close()
+	}
+}
+
+func TestMovingCropScale_ZoomLimitsAccepted(t *testing.T) {
+	// 64× in and 16× out are the inclusive bounds. The window may be far
+	// larger than the picture; that is how a later frame letterboxes.
+	mcsInit(t, mcsParams(640, 640, nil, map[string]any{"pts": 0, "x": 0, "y": 0, "zoom": 64}))
+	mcsInit(t, mcsParams(640, 640, nil, map[string]any{"pts": 0, "x": 0, "y": 0, "zoom": 1.0 / 16}))
+	mcsInit(t, mcsParams(64, 64, nil, map[string]any{"pts": 0, "x": 0, "y": 0, "w": 1, "h": 1}))
+	mcsInit(t, mcsParams(64, 64, nil, map[string]any{"pts": 0, "x": 0, "y": 0, "w": 1024, "h": 1024}))
+}
+
+func TestMovingCropScale_LimitWindowClampsOvershoot(t *testing.T) {
+	p := &MovingCropScale{outW: 64, outH: 32}
+	got, err := p.limitWindow(cropRect{x: 1, y: -4, w: 100000, h: 0.1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.w != 64*16 || got.h != 0.5 || got.x != 1 || got.y != -4 {
+		t.Fatalf("clamped %+v, want w=1024 h=0.5", got)
+	}
+	if _, err := p.limitWindow(cropRect{w: -3, h: 8}); err == nil || !strings.Contains(err.Error(), "collapsed") {
+		t.Fatalf("err = %v, want collapsed", err)
+	}
+}
+
+func TestMovingCropScale_SubpixelBlend(t *testing.T) {
+	p := mcsInit(t, mcsParams(4, 4, map[string]any{"flags": "bilinear"},
+		map[string]any{"pts": 0, "x": 10.25, "y": 0, "w": 4, "h": 4},
+	))
+	f := pixFrame(t, "yuv420p", 16, 8, 0)
+	ls := f.Linesize(0)
+	plane := f.Plane(0)
+	for y := 0; y < f.Height(); y++ {
+		for x := 0; x < f.Width(); x++ {
+			plane[y*ls+x] = 0
+		}
+	}
+	plane[10] = 0
+	plane[11] = 100
+	plane[12] = 0
+	out, _, err := p.Process(f, videoCtx)
+	f.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer out.Close()
+	// 0.75*0 + 0.25*100 = 25, then 0.75*100 + 0.25*0 = 75.
+	row := out.Plane(0)
+	if int(row[0]) != 25 || int(row[1]) != 75 {
+		t.Fatalf("luma = %d %d, want 25 75", row[0], row[1])
+	}
+}
+
+func TestMovingCropScale_HangOffLeftIsBlack(t *testing.T) {
+	p := mcsInit(t, mcsParams(16, 8, map[string]any{"flags": "bilinear"},
+		map[string]any{"pts": 0, "x": -8, "y": 0, "w": 16, "h": 8},
+	))
+	f := columnFrame(t, 32, 8, 0)
+	out, _, err := p.Process(f, videoCtx)
+	f.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer out.Close()
+	row := out.Plane(0)
+	if int(row[0]) != 16 || int(row[7]) != 16 {
+		t.Fatalf("left black = %d %d, want 16", row[0], row[7])
+	}
+	if int(row[8]) != 0 || int(row[15]) != 7 {
+		t.Fatalf("visible = %d %d, want 0 and 7", row[8], row[15])
+	}
+}
+
+func TestMovingCropScale_SplineDoesNotCopyInteger(t *testing.T) {
+	// An even 1:1 window inside the picture would be a CropRect for an
+	// interpolating kernel. spline must still blur, or a zoom that lands
+	// on that frame pops sharp for one frame.
+	p := mcsInit(t, mcsParams(4, 4, map[string]any{"flags": "spline"},
+		map[string]any{"pts": 0, "x": 0, "y": 2, "w": 4, "h": 4},
+	))
+	f := pixFrame(t, "yuv420p", 8, 8, 0)
+	ls := f.Linesize(0)
+	plane := f.Plane(0)
+	for y := 0; y < f.Height(); y++ {
+		for x := 0; x < f.Width(); x++ {
+			plane[y*ls+x] = 0
+		}
+		plane[y*ls+2] = 100
+	}
+	out, _, err := p.Process(f, videoCtx)
+	f.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer out.Close()
+	// Output (2,0) reads source (2,2). Centre 4/6 and each neighbour 1/6.
+	if got := int(out.Plane(0)[2]); got != 67 {
+		t.Fatalf("spline luma = %d, want 67", got)
+	}
+}
+
+func TestMovingCropScale_Letterbox(t *testing.T) {
+	// 32×18 (16:9) into 18×32 (9:16). The window is the full width and tall
+	// enough that the picture sits between black bars.
+	const srcW, srcH = 32, 18
+	const outW, outH = 18, 32
+	p := mcsInit(t, mcsParams(outW, outH, map[string]any{"aspect": "output", "flags": "bilinear"},
+		map[string]any{"pts": 0, "cx": float64(srcW) / 2, "cy": float64(srcH) / 2, "w": float64(srcW)},
+	))
+	f := pixFrame(t, "yuv420p", srcW, srcH, 0)
+	ls := f.Linesize(0)
+	plane := f.Plane(0)
+	for y := 0; y < srcH; y++ {
+		for x := 0; x < srcW; x++ {
+			plane[y*ls+x] = 200
+		}
+	}
+	out, _, err := p.Process(f, videoCtx)
+	f.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer out.Close()
+	if out.Width() != outW || out.Height() != outH {
+		t.Fatalf("out %dx%d", out.Width(), out.Height())
+	}
+	at := func(x, y int) int {
+		return int(out.Plane(0)[y*out.Linesize(0)+x])
+	}
+	for _, y := range []int{0, 10, 21, 31} {
+		if got := at(0, y); got != 16 {
+			t.Fatalf("row %d luma = %d, want black 16", y, got)
+		}
+		if got := at(outW/2, y); got != 16 {
+			t.Fatalf("row %d mid luma = %d, want black 16", y, got)
+		}
+		if got := at(outW-1, y); got != 16 {
+			t.Fatalf("row %d right luma = %d, want black 16", y, got)
+		}
+	}
+	// The content band is the unstretched field. Edge pixels of that band
+	// mix black through the widened kernel, so the check is the interior.
+	for _, x := range []int{4, outW / 2, outW - 5} {
+		if got := at(x, 15); got != 200 {
+			t.Fatalf("interior (%d,15) = %d, want 200", x, got)
+		}
 	}
 }

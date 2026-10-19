@@ -2076,7 +2076,8 @@ function MovingCropScaleParams({
     <>
       <div style={{ fontSize: 11, color: 'var(--text-dim)', marginBottom: 8 }}>
         <strong style={{ color: 'var(--text)' }}>Moving crop and scale</strong> — crop to a
-        keyframed window and scale it to the output size. The encoder opens at that size.
+        keyframed window and scale it to the output size. The window can extend past the
+        picture, and that gap is black. Position is sub-pixel. The encoder opens at that size.
       </div>
       <label>Output width</label>
       <input type="number" min={2} step={2} value={num(output.width)} onChange={(e) => setOutput('width', e.target.value)} />
@@ -2108,11 +2109,6 @@ function MovingCropScaleParams({
       <select value={choice('aspect', 'free')} onChange={(e) => setChoice('aspect', e.target.value)}>
         <option value="free">Free</option>
         <option value="output">Output</option>
-      </select>
-      <label style={{ marginTop: 8 }}>Align</label>
-      <select value={choice('align', 'chroma')} onChange={(e) => setChoice('align', e.target.value)}>
-        <option value="chroma">Chroma</option>
-        <option value="exact">Exact</option>
       </select>
       <label style={{ marginTop: 8 }}>Scale flags</label>
       <select value={choice('flags', 'bicubic')} onChange={(e) => setChoice('flags', e.target.value)}>

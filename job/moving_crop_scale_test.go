@@ -161,8 +161,8 @@ func TestHandleGoProcessor_RecordsSwsReinits(t *testing.T) {
 	if n != 3 {
 		t.Fatalf("got %d frames", n)
 	}
-	if got := pipe.Metrics().Node("p").Snapshot().SwsReinits; got != 3 {
-		t.Fatalf("SwsReinits = %d, want 3", got)
+	if got := pipe.Metrics().Node("p").Snapshot().SwsReinits; got != 0 {
+		t.Fatalf("SwsReinits = %d, want 0", got)
 	}
 }
 

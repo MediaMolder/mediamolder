@@ -56,36 +56,3 @@ func cropFloat(v any) (float64, error) {
 	}
 	return f, nil
 }
-
-// cropRoundTiesDown rounds to the nearest integer, and a value halfway
-// between two integers goes to the lower one. Values at or below zero
-// round to zero.
-func cropRoundTiesDown(e float64) int {
-	if e <= 0 {
-		return 0
-	}
-	floor := math.Floor(e)
-	x := int(floor)
-	if e-floor > 0.5 {
-		x++
-	}
-	return x
-}
-
-// cropAlignDown clears the low log2 bits, the same mask vf_crop uses
-// (x &= ~((1<<hsub)-1)). log2 <= 0 leaves x unchanged.
-func cropAlignDown(x, log2 int) int {
-	if log2 <= 0 {
-		return x
-	}
-	return x &^ ((1 << log2) - 1)
-}
-
-// cropRoundEven rounds to the nearest even integer. A value halfway between
-// two even integers goes away from zero (math.Round on v/2).
-func cropRoundEven(v float64) int {
-	if v <= 0 || math.IsNaN(v) {
-		return 0
-	}
-	return int(math.Round(v/2)) * 2
-}

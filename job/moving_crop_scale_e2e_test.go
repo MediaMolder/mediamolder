@@ -172,8 +172,15 @@ func TestMovingCropScale_SampleMatchEndToEnd(t *testing.T) {
 
 	// Matroska time base is 1/1000; at 25 fps frames are 40 ticks apart.
 	// Keyframes cover frames 10..19. Frames outside that window are dropped.
+	// x = cx - width/2. Bilinear on the luma ramp, so a fractional edge
+	// blends the two source columns and rounds half away from zero.
+	// cx 300 is entirely past the picture (digital black, luma 16).
+	// cx 5 starts 11 pixels left of the picture.
 	cx := []float64{16.3, 36.3, 36.3, 77.6, 100.2, 140.5, 141.5, 200, 300, 5}
-	want := []int{0, 20, 20, 62, 84, 124, 124, 184, 224, 0}
+	want := [][2]int{
+		{0, 31}, {20, 51}, {20, 51}, {62, 93}, {84, 115},
+		{125, 156}, {126, 157}, {184, 215}, {16, 16}, {16, 20},
+	}
 	kfs := make([]map[string]any, len(cx))
 	for i := range cx {
 		kfs[i] = map[string]any{"pts": 400 + 40*i, "cx": cx[i], "cy": h / 2, "w": width, "h": h}
@@ -185,6 +192,7 @@ func TestMovingCropScale_SampleMatchEndToEnd(t *testing.T) {
 			"match":       "sample",
 			"interpolate": "hold",
 			"unmatched":   "drop",
+			"flags":       "bilinear",
 			"keyframes":   keyframes,
 		})
 		if err != nil {
@@ -240,14 +248,14 @@ func TestMovingCropScale_SampleMatchEndToEnd(t *testing.T) {
 		t.Fatalf("output has %d bytes = %.2f frames of %dx%d, want %d frames",
 			len(raw), float64(len(raw))/float64(frameSize), width, h, len(want))
 	}
-	for i, x := range want {
+	for i, edge := range want {
 		luma := raw[i*frameSize:]
 		for _, row := range []int{0, h - 1} {
-			if got := int(luma[row*width]); got != x {
-				t.Errorf("frame %d row %d: first luma column = %d, want %d", i, row, got, x)
+			if got := int(luma[row*width]); got != edge[0] {
+				t.Errorf("frame %d row %d: first luma column = %d, want %d", i, row, got, edge[0])
 			}
-			if got := int(luma[row*width+width-1]); got != x+width-1 {
-				t.Errorf("frame %d row %d: last luma column = %d, want %d", i, row, got, x+width-1)
+			if got := int(luma[row*width+width-1]); got != edge[1] {
+				t.Errorf("frame %d row %d: last luma column = %d, want %d", i, row, got, edge[1])
 			}
 		}
 	}

@@ -30,9 +30,10 @@ func init() {
 //	              keyframe at most once, within half the gap to the next,
 //	              and Close reports a keyframe no frame used.
 //	aspect      — free | output (default free)
-//	align       — chroma | exact (default chroma)
-//	flags       — swscale algorithm (default bicubic)
-//	emit_rect   — metadata with the applied integer rectangle (default false)
+//	align       — chroma | exact (default chroma). Accepted so older jobs
+//	              still open. Both values sample at sub-pixel positions.
+//	flags       — resample kernel (default bicubic)
+//	emit_rect   — metadata with the window rounded half away from zero
 type MovingCropScale struct {
 	outW, outH  int
 	pts         []int64
@@ -45,13 +46,19 @@ type MovingCropScale struct {
 	interp      string
 	unmatched   string
 	matchSample bool
-	exact       bool
+	flags       string
 	emitRect    bool
-	scaler      *av.Scaler
 	used        []bool
 	nUsed       int
 	step        int64
 }
+
+// Zoom is output-relative: zoom 64 maps one output pixel onto 1/64 of a
+// source pixel, and zoom 1/16 maps one output pixel onto 16 source pixels.
+const (
+	mcsMaxZoomIn  = 64.0
+	mcsMaxZoomOut = 16.0
+)
 
 // cropRect is one keyframe after cx/cy and zoom have been converted to a
 // top-left origin and a size, in luma pixels. Values may be fractional.
@@ -83,8 +90,7 @@ func (p *MovingCropScale) Init(params map[string]any) error {
 	if err != nil {
 		return err
 	}
-	align, err := mcsChoice(params["align"], "align", "chroma", "chroma", "exact")
-	if err != nil {
+	if _, err = mcsChoice(params["align"], "align", "chroma", "chroma", "exact"); err != nil {
 		return err
 	}
 	flags, err := mcsChoice(params["flags"], "flags", "bicubic", "bilinear", "bicubic", "lanczos", "spline", "area", "neighbor")
@@ -99,13 +105,6 @@ func (p *MovingCropScale) Init(params map[string]any) error {
 	if err != nil {
 		return err
 	}
-	sc, err := av.NewScaler(av.ScalerOptions{Width: outW, Height: outH, PixFmt: -1, Flags: flags})
-	if err != nil {
-		return fmt.Errorf("moving_crop_scale: %w", err)
-	}
-	if p.scaler != nil {
-		p.scaler.Close()
-	}
 	p.outW, p.outH = outW, outH
 	p.pts, p.times = pts, times
 	p.useT, p.bound = useT, false
@@ -114,8 +113,7 @@ func (p *MovingCropScale) Init(params map[string]any) error {
 	p.aspectOut = aspect == "output"
 	p.interp, p.unmatched = interp, unmatched
 	p.matchSample = matchMode == "sample"
-	p.exact, p.emitRect = align == "exact", emit
-	p.scaler = sc
+	p.flags, p.emitRect = flags, emit
 	p.used = make([]bool, len(rects))
 	p.nUsed = 0
 	p.step = keyframeStep(pts)
@@ -129,7 +127,7 @@ func (p *MovingCropScale) Process(frame *av.Frame, ctx ProcessorContext) (*av.Fr
 	if ctx.MediaType != av.MediaTypeVideo {
 		return frame, nil, nil
 	}
-	if len(p.rects) == 0 || p.scaler == nil {
+	if len(p.rects) == 0 {
 		return nil, nil, fmt.Errorf("moving_crop_scale: not initialised")
 	}
 	if frame.Hardware() {
@@ -159,50 +157,33 @@ func (p *MovingCropScale) Process(frame *av.Frame, ctx ProcessorContext) (*av.Fr
 	if p.aspectOut {
 		r.h = r.w * float64(p.outH) / float64(p.outW)
 	}
-	x, y, w, h, err := p.quantise(frame, r)
+	r, err = p.limitWindow(r)
 	if err != nil {
 		return nil, nil, err
 	}
-	var out *av.Frame
-	if w == p.outW && h == p.outH {
-		out, err = frame.CropRect(x, y, w, h)
-		if err != nil {
-			return nil, nil, fmt.Errorf("moving_crop_scale: %w", err)
-		}
-	} else {
-		win, werr := frame.CropWindow(x, y, w, h)
-		if werr != nil {
-			return nil, nil, fmt.Errorf("moving_crop_scale: %w", werr)
-		}
-		out, err = p.scaler.Scale(win)
-		win.Close()
-		if err != nil {
-			return nil, nil, fmt.Errorf("moving_crop_scale: %w", err)
-		}
+	out, err := p.paint(frame, r)
+	if err != nil {
+		return nil, nil, err
 	}
 	var md *Metadata
 	if p.emitRect {
 		md = &Metadata{Custom: map[string]any{
 			"pts":          frame.PTS(),
-			"x":            x,
-			"y":            y,
-			"w":            w,
-			"h":            h,
+			"x":            mcsRound(r.x),
+			"y":            mcsRound(r.y),
+			"w":            mcsRound(r.w),
+			"h":            mcsRound(r.h),
 			"interpolated": interpolated,
 		}}
 	}
 	return out, md, nil
 }
 
-// Close releases the scaler. Bracket matching returns nil. Sample matching
-// returns an error when a keyframe was never used, which is how a missing
-// copy_ts or a source that ends early fails the job instead of writing a
-// short file. Close does not consult a context.
+// Close releases nothing held across frames. Bracket matching returns nil.
+// Sample matching returns an error when a keyframe was never used, which is
+// how a missing copy_ts or a source that ends early fails the job instead of
+// writing a short file. Close does not consult a context.
 func (p *MovingCropScale) Close() error {
-	if p != nil && p.scaler != nil {
-		p.scaler.Close()
-		p.scaler = nil
-	}
 	if p == nil || !p.matchSample || p.nUsed == len(p.rects) {
 		return nil
 	}
@@ -225,13 +206,10 @@ func (p *MovingCropScale) Close() error {
 		unused, len(p.rects), pts)
 }
 
-// ScaleReinits reports how many times swscale built its graph. The first
-// scaled frame counts as one. Fast-path crops do not.
+// ScaleReinits reports swscale graph builds. Sampling is done in process,
+// so the count stays 0. The method remains for the node-metrics hook.
 func (p *MovingCropScale) ScaleReinits() int64 {
-	if p == nil || p.scaler == nil {
-		return 0
-	}
-	return int64(p.scaler.ReinitCount())
+	return 0
 }
 
 // TransformStreamInfo sets the output width and height and leaves the pixel
@@ -462,66 +440,121 @@ func catmull(p0, p1, p2, p3, t float64) float64 {
 	return 0.5 * ((2 * p1) + (-p0+p2)*t + (2*p0-5*p1+4*p2-p3)*t2 + (-p0+3*p1-3*p2+p3)*t3)
 }
 
-// quantise applies the crop order: raise a negative size to 0, clamp to the
-// visible picture, round to even, align to the chroma step, and clamp again
-// when rounding stepped past the picture. Position is clamped, rounded with
-// ties down, then aligned unless align is exact.
-func (p *MovingCropScale) quantise(frame *av.Frame, r cropRect) (x, y, w, h int, err error) {
+// limitWindow rejects a non-positive size and clamps a positive size into
+// [output/64, output*16]. A Catmull-Rom segment can leave that range even
+// when every keyframe is inside it. The origin is not clamped: a window
+// past the picture is painted with digital black.
+func (p *MovingCropScale) limitWindow(r cropRect) (cropRect, error) {
+	if !mcsFinite(r.w) || !mcsFinite(r.h) || r.w <= 0 || r.h <= 0 {
+		return r, fmt.Errorf("moving_crop_scale: crop side collapsed to 0")
+	}
+	r.w = mcsClamp(r.w, float64(p.outW)/mcsMaxZoomIn, float64(p.outW)*mcsMaxZoomOut)
+	r.h = mcsClamp(r.h, float64(p.outH)/mcsMaxZoomIn, float64(p.outH)*mcsMaxZoomOut)
+	if !mcsFinite(r.x) || !mcsFinite(r.y) {
+		return r, fmt.Errorf("moving_crop_scale: crop origin is not finite")
+	}
+	return r, nil
+}
+
+// paint copies an integer 1:1 window that sits on the chroma grid and inside
+// the picture, when the kernel reproduces that pixel. spline is a cubic
+// B-spline and blurs an integer coordinate, so it always resamples. Every
+// other window is resampled too, which is what lets a fractional position
+// generate the in-between pixels and lets a window hang off the picture.
+func (p *MovingCropScale) paint(frame *av.Frame, r cropRect) (*av.Frame, error) {
 	vw, vh := frame.VisibleWidth(), frame.VisibleHeight()
+	if vw < 1 || vh < 1 {
+		return nil, fmt.Errorf("moving_crop_scale: empty picture")
+	}
+	if x, y, w, h, ok := copyWindow(frame, r, vw, vh); ok && w == p.outW && h == p.outH && p.flags != "spline" {
+		out, err := frame.CropRect(x, y, w, h)
+		if err != nil {
+			return nil, fmt.Errorf("moving_crop_scale: %w", err)
+		}
+		return out, nil
+	}
+	src, err := frame.CropWindow(0, 0, vw, vh)
+	if err != nil {
+		return nil, fmt.Errorf("moving_crop_scale: %w", err)
+	}
+	defer src.Close()
+	dst, err := av.NewVideoFrame(p.outW, p.outH, frame.PixFmt())
+	if err != nil {
+		return nil, fmt.Errorf("moving_crop_scale: %w", err)
+	}
+	if err := dst.CopyPropsFrom(frame); err != nil {
+		dst.Close()
+		return nil, fmt.Errorf("moving_crop_scale: %w", err)
+	}
+	dst.SetCrop(0, 0, 0, 0)
+	if err := dst.FillBlack(); err != nil {
+		dst.Close()
+		return nil, fmt.Errorf("moving_crop_scale: %w", err)
+	}
+	if err := av.ResampleWindow(dst, src, r.x, r.y, r.w, r.h, p.flags); err != nil {
+		dst.Close()
+		return nil, fmt.Errorf("moving_crop_scale: %w", err)
+	}
+	return dst, nil
+}
+
+// copyWindow reports the integer window when a CropRect of it is the same
+// picture the resampler would produce: every edge is an integer, the window
+// is inside the visible picture, and the origin is on the chroma grid.
+func copyWindow(frame *av.Frame, r cropRect, vw, vh int) (x, y, w, h int, ok bool) {
+	if !mcsNearlyInt(r.x) || !mcsNearlyInt(r.y) || !mcsNearlyInt(r.w) || !mcsNearlyInt(r.h) {
+		return 0, 0, 0, 0, false
+	}
+	x = int(math.Round(r.x))
+	y = int(math.Round(r.y))
+	w = int(math.Round(r.w))
+	h = int(math.Round(r.h))
+	if w < 1 || h < 1 || x < 0 || y < 0 || x+w > vw || y+h > vh {
+		return 0, 0, 0, 0, false
+	}
 	logW, logH := frame.Log2ChromaW(), frame.Log2ChromaH()
-	if logW < 0 || logH < 0 {
-		return 0, 0, 0, 0, fmt.Errorf("moving_crop_scale: unknown pixel format %d", frame.PixFmt())
+	if !chromaAligned(x, logW) || !chromaAligned(y, logH) {
+		return 0, 0, 0, 0, false
 	}
-	w = fitSide(r.w, vw, logW)
-	h = fitSide(r.h, vh, logH)
-	if w < 1 || h < 1 {
-		return 0, 0, 0, 0, fmt.Errorf("moving_crop_scale: crop side collapsed to 0")
-	}
-	x = place(r.x, vw-w, logW, p.exact)
-	y = place(r.y, vh-h, logH, p.exact)
-	return x, y, w, h, nil
+	return x, y, w, h, true
 }
 
-func fitSide(v float64, visible, log2 int) int {
-	if visible < 1 || math.IsNaN(v) || v <= 0 {
-		return 0
+func chromaAligned(v, log2 int) bool {
+	if log2 <= 0 {
+		return true
 	}
-	if v > float64(visible) {
-		v = float64(visible)
-	}
-	n := cropAlignDown(cropRoundEven(v), log2)
-	if n > visible {
-		// 1919 rounds to 1920. Align the visible size down and keep it even.
-		n = cropAlignDown(visible, log2)
-		n &^= 1
-	}
-	if n > visible || n < 1 {
-		return 0
-	}
-	return n
+	return v&((1<<log2)-1) == 0
 }
 
-func place(e float64, maxPos, log2 int, exact bool) int {
-	if maxPos < 0 {
-		maxPos = 0
+func mcsFinite(v float64) bool { return !math.IsNaN(v) && !math.IsInf(v, 0) }
+
+func mcsClamp(v, lo, hi float64) float64 {
+	if v < lo {
+		return lo
 	}
-	if math.IsNaN(e) || e < 0 {
-		e = 0
+	if v > hi {
+		return hi
 	}
-	if e > float64(maxPos) {
-		e = float64(maxPos)
-	}
-	x := cropRoundTiesDown(e)
-	if x > maxPos {
-		x = maxPos
-	}
-	if !exact {
-		x = cropAlignDown(x, log2)
-	}
-	if x < 0 {
+	return v
+}
+
+func mcsNearlyInt(v float64) bool {
+	return mcsFinite(v) && math.Abs(v-math.Round(v)) <= 1e-6
+}
+
+// mcsRound rounds half away from zero. math.Round does that for finite values.
+func mcsRound(v float64) int {
+	if !mcsFinite(v) {
 		return 0
 	}
-	return x
+	r := math.Round(v)
+	if r >= float64(math.MaxInt) {
+		return math.MaxInt
+	}
+	if r <= float64(math.MinInt) {
+		return math.MinInt
+	}
+	return int(r)
 }
 
 func mcsOutput(v any) (int, int, error) {
@@ -705,6 +738,9 @@ func mcsRect(m map[string]any, i, outW, outH int, aspectOut bool, haveSize, logS
 		if z <= 0 {
 			return cropRect{}, fmt.Errorf("moving_crop_scale: keyframes[%d].zoom %v must be greater than 0", i, z)
 		}
+		if z > mcsMaxZoomIn || z < 1/mcsMaxZoomOut {
+			return cropRect{}, fmt.Errorf("moving_crop_scale: keyframes[%d].zoom %v must be from 1/16 to 64", i, z)
+		}
 		w = float64(outW) / z
 		h = float64(outH) / z
 	} else {
@@ -728,11 +764,11 @@ func mcsRect(m map[string]any, i, outW, outH int, aspectOut bool, haveSize, logS
 	if aspectOut {
 		h = w * float64(outH) / float64(outW)
 	}
-	if w < 2 {
-		return cropRect{}, fmt.Errorf("moving_crop_scale: keyframes[%d].w %v is below 2", i, w)
+	if err := mcsCheckSide(w, outW, i, "w"); err != nil {
+		return cropRect{}, err
 	}
-	if h < 2 {
-		return cropRect{}, fmt.Errorf("moving_crop_scale: keyframes[%d].h %v is below 2", i, h)
+	if err := mcsCheckSide(h, outH, i, "h"); err != nil {
+		return cropRect{}, err
 	}
 
 	hasXY := mcsHas(m, "x") || mcsHas(m, "y")
@@ -777,4 +813,22 @@ func mcsRect(m map[string]any, i, outW, outH int, aspectOut bool, haveSize, logS
 func mcsHas(m map[string]any, k string) bool {
 	v, ok := m[k]
 	return ok && v != nil
+}
+
+// mcsCheckSide rejects a side below 1 pixel, a side smaller than output/64
+// (more than 64× in), and a side larger than output×16 (more than 16× out).
+func mcsCheckSide(side float64, out, index int, name string) error {
+	if !mcsFinite(side) || side < 1 {
+		return fmt.Errorf("moving_crop_scale: keyframes[%d].%s %v is below 1", index, name, side)
+	}
+	minS := float64(out) / mcsMaxZoomIn
+	maxS := float64(out) * mcsMaxZoomOut
+	const eps = 1e-9
+	if side < minS*(1-eps) {
+		return fmt.Errorf("moving_crop_scale: keyframes[%d].%s %v zooms in more than 64x", index, name, side)
+	}
+	if side > maxS*(1+eps) {
+		return fmt.Errorf("moving_crop_scale: keyframes[%d].%s %v zooms out more than 16x", index, name, side)
+	}
+	return nil
 }
