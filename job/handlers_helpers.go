@@ -202,7 +202,22 @@ func (r *graphRunner) resolveEdgeStreamInfo(dag *graph.Graph, e *graph.Edge) (av
 			}
 		}
 		// Fall back to walking upstream edges for processors with inbound edges.
-		return r.resolveStreamInfo(dag, from)
+		// A processor that changes geometry (moving_crop_scale) then replaces
+		// the width and height the encoder and downstream filters open at.
+		si, err := r.resolveStreamInfo(dag, from)
+		if err != nil {
+			return av.StreamInfo{}, err
+		}
+		if proc, ok := r.goProcessors[from.ID]; ok {
+			if tf, ok := proc.(processors.FrameTransformInfo); ok {
+				out, terr := tf.TransformStreamInfo(si)
+				if terr != nil {
+					return av.StreamInfo{}, fmt.Errorf("node %q: %w", from.ID, terr)
+				}
+				return out, nil
+			}
+		}
+		return si, nil
 	default:
 		return av.StreamInfo{}, fmt.Errorf("cannot resolve stream info from node %q (kind=%v)", from.ID, from.Kind)
 	}

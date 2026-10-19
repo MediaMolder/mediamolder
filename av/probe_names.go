@@ -46,6 +46,14 @@ func PixFmtName(pixFmt int) string {
 	return C.GoString(cstr)
 }
 
+// PixFmtByName returns the AVPixelFormat value for an FFmpeg pixel format
+// name (e.g. "nv12"), or -1 if the name is unknown.
+func PixFmtByName(name string) int {
+	cstr := C.CString(name)
+	defer C.free(unsafe.Pointer(cstr))
+	return int(C.av_get_pix_fmt(cstr))
+}
+
 // SampleFmtName returns the canonical FFmpeg name for an AVSampleFormat value
 // (e.g. "fltp"). Returns "" if the format is unknown.
 func SampleFmtName(sampleFmt int) string {

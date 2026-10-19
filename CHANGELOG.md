@@ -7,6 +7,25 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- **`moving_crop_scale` processor.** Crops each video frame to a keyframed
+  window and scales it to a fixed output size. Keyframes bracket PTS, or
+  seconds via `t`, and interpolate with hold, linear, or Catmull-Rom. A
+  `zoom` list moves in log size, from 1/16 to 64. The window may extend
+  past the picture, and the gap is digital black, so a 16:9 source can
+  become a 9:16 frame with bars. Position is sampled at sub-pixel
+  accuracy. `aspect: output` derives the height from the output aspect,
+  and a height taller than the picture hangs off the frame. `match: sample`
+  uses each keyframe at most once, within half the gap to the next
+  keyframe, and `Close` fails when a keyframe matched no frame. The
+  encoder opens at `output` width and height through `FrameTransformInfo`.
+  `ProcessorContext.TimeBase` carries the input time base. The node
+  resamples the window itself, so `SwsReinits` stays 0. New
+  `av.Frame.CropRect`, `av.Frame.CropWindow`, `av.Frame.VisibleWidth`,
+  `av.Frame.VisibleHeight`, `av.Frame.Log2ChromaW`, `av.Frame.FillBlack`,
+  `av.ResampleWindow`, `av.Scaler`, and `av.SecondsToTicks`. Also new:
+  `av.Frame.CropColumns`, `av.Frame.Crop`,
+  `av.Frame.SetCrop`, and `av.PixFmtByName`.
+  See [docs/moving-crop-scale.md](docs/moving-crop-scale.md).
 - **Frame-index walks.** `frameindex.Estimate`, `WalkPackets`, and `WalkDecode`
   build a presentation-order PTS table for one video stream. The packet walk
   does not decode. The decode walk records one row per decoded frame, and both
@@ -42,6 +61,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- **`go_processor` nodes that return a new frame without metadata now
+  forward that frame.** The runtime only swapped in the processor's output
+  when the processor also returned metadata. Otherwise it sent the original
+  frame downstream and leaked the new one. A cropping processor's output
+  never reached the encoder: a following `scale` squashed the full frame
+  instead. Dropping a frame while returning metadata no longer panics.
+  Frames held in a lookahead delay buffer are released when the handler
+  returns early, instead of leaking.
 - **smartcopy: constant-rate sources give constant-rate cuts.** Re-encoded
   packets took their first DTS values from the priming GOP (a jump of
   several frames at the head), and a copied keyframe whose leading pictures

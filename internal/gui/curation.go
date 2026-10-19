@@ -134,9 +134,10 @@ var curatedNodes = map[string]NodeMeta{
 	"anullsrc":  {Friendly: "Silent audio", Aliases: []string{"silence"}},
 
 	// ── Built-in processors ──────────────────────────────────────────
-	"frame_counter": {Friendly: "Frame counter", Aliases: []string{"count"}},
-	"frame_info":    {Friendly: "Frame info logger", Aliases: []string{"debug", "stats"}},
-	"scene_change":  {Friendly: "Scene change detector", Aliases: []string{"scdet", "cuts"}},
+	"frame_counter":     {Friendly: "Frame counter", Aliases: []string{"count"}},
+	"frame_info":        {Friendly: "Frame info logger", Aliases: []string{"debug", "stats"}},
+	"moving_crop_scale": {Friendly: "Moving crop and scale", Aliases: []string{"reframe", "pan", "zoom", "crop"}},
+	"scene_change":      {Friendly: "Scene change detector", Aliases: []string{"scdet", "cuts"}},
 
 	// ── go-scene-detect processors ─────────────────────────────────────
 	// scene_change_content and scene_change_adaptive are the recommended

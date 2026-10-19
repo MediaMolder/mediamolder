@@ -225,6 +225,14 @@ func (r *graphRunner) handleGoProcessor(ctx context.Context, node *graph.Node, i
 	}
 	type delayEntry struct{ frame *av.Frame }
 	var delayBuf []delayEntry
+	// Frames still held back when the handler returns early (a processor
+	// error, a cancelled send) are released here; the EOS drain below pops
+	// each entry as it goes, so a clean exit leaves nothing to close.
+	defer func() {
+		for _, e := range delayBuf {
+			e.frame.Close()
+		}
+	}()
 	tb := r.goProcessorInputTB[node.ID]
 
 	// sendFrame forwards f to all downstream AV channels.
@@ -250,6 +258,7 @@ func (r *graphRunner) handleGoProcessor(ctx context.Context, node *graph.Node, i
 			PTS:        f.PTS(),
 			FrameIndex: frameIndex,
 			Context:    ctx,
+			TimeBase:   tb,
 		}
 
 		out, md, err := proc.Process(f, pctx)
@@ -279,6 +288,7 @@ func (r *graphRunner) handleGoProcessor(ctx context.Context, node *graph.Node, i
 		}
 
 		// Emit metadata on the event bus if provided.
+		cutSignaled := false
 		if md != nil && r.pipe != nil {
 			// When a delay buffer is active, the cut was detected looking back
 			// at delayBuf[0] — update the metadata PTS to that frame's PTS so
@@ -301,7 +311,6 @@ func (r *graphRunner) handleGoProcessor(ctx context.Context, node *graph.Node, i
 			// Signal segment_sink outputs watching any of the Custom keys.
 			// Track whether any cut flag was set so we can force an IDR on the
 			// correct output frame (the cut frame, not the current frame).
-			cutSignaled := false
 			for key, val := range md.Custom {
 				if val == true {
 					gates := r.segmentCuts[key]
@@ -326,34 +335,41 @@ func (r *graphRunner) handleGoProcessor(ctx context.Context, node *graph.Node, i
 					cutSignaled = true
 				}
 			}
-			// Only close the input frame if the processor returned a new one.
-			// When out == f (pass-through) closing f would free the AVFrame
-			// that out still points to, making f.p nil on the next line.
-			if out != f {
-				f.Close()
+		}
+		// Only close the input frame if the processor returned a new one.
+		// When out == f (pass-through) closing f would free the AVFrame
+		// that out still points to, making f.p nil on the next line.
+		if out != f {
+			f.Close()
+		}
+		f = out
+		// Set IDR annotation: on the cut frame (delayBuf[0]) when using a
+		// delay buffer, on the current frame otherwise.
+		if cutSignaled {
+			var kerr error
+			if lookback > 0 && len(delayBuf) > 0 {
+				kerr = markFrameForceKeyframe(delayBuf[0].frame)
+			} else if f != nil {
+				kerr = markFrameForceKeyframe(f)
 			}
-			f = out
-			// Set IDR annotation: on the cut frame (delayBuf[0]) when using a
-			// delay buffer, on the current frame otherwise.
-			if cutSignaled {
-				if lookback > 0 && len(delayBuf) > 0 {
-					if err := markFrameForceKeyframe(delayBuf[0].frame); err != nil {
-						return fmt.Errorf("go_processor %q: mark force keyframe: %w", node.ID, err)
-					}
-				} else if f != nil {
-					if err := markFrameForceKeyframe(f); err != nil {
-						return fmt.Errorf("go_processor %q: mark force keyframe: %w", node.ID, err)
-					}
+			if kerr != nil {
+				if f != nil {
+					f.Close()
 				}
+				return fmt.Errorf("go_processor %q: mark force keyframe: %w", node.ID, kerr)
 			}
 		}
 
 		frameIndex++
-		r.pipe.Metrics().Node(node.ID).RecordLatency(time.Since(frameStart))
+		nm := r.pipe.Metrics().Node(node.ID)
+		nm.RecordLatency(time.Since(frameStart))
+		if counter, ok := proc.(interface{ ScaleReinits() int64 }); ok {
+			nm.SetSwsReinits(counter.ScaleReinits())
+		}
 
 		// nil output means the processor consumed (dropped) the frame.
+		// The input frame was closed above.
 		if out == nil {
-			f.Close()
 			// With a delay buffer still forward the oldest held frame so
 			// the buffer does not grow unboundedly.
 			if lookback > 0 && len(delayBuf) >= lookback {
@@ -399,7 +415,9 @@ func (r *graphRunner) handleGoProcessor(ctx context.Context, node *graph.Node, i
 	}
 
 	// Drain any frames still in the delay buffer at EOS.
-	for _, e := range delayBuf {
+	for len(delayBuf) > 0 {
+		e := delayBuf[0]
+		delayBuf = delayBuf[1:]
 		if len(outs) == 0 {
 			e.frame.Close()
 			continue
