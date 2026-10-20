@@ -15,7 +15,7 @@ import (
 	ort "github.com/yalue/onnxruntime_go"
 )
 
-// YOLOv8Detector is a go_processor that runs YOLOv8 object detection via
+// YOLODetector is a go_processor that runs YOLOv8 object detection via
 // ONNX Runtime. It is only compiled when the "with_onnx" build tag is set.
 //
 // Required params:
@@ -34,7 +34,7 @@ import (
 //	"ort_lib"       — path to onnxruntime shared library (or set ONNXRUNTIME_SHARED_LIBRARY_PATH env)
 //	"device"        — "cpu" (default) or "cuda" / "cuda:N"
 //	"process_every" — run inference every N video frames, default 1 (every frame). Non-processed frames pass through with no metadata.
-type YOLOv8Detector struct {
+type YOLODetector struct {
 	session      *ort.AdvancedSession
 	inputTensor  *ort.Tensor[float32]
 	outputTensor *ort.Tensor[float32]
@@ -48,7 +48,7 @@ type YOLOv8Detector struct {
 	processEvery uint64 // run inference every N frames (1 = every frame)
 }
 
-func (p *YOLOv8Detector) Init(params map[string]any) error {
+func (p *YOLODetector) Init(params map[string]any) error {
 	modelPath, _ := params["model"].(string)
 	if modelPath == "" {
 		return fmt.Errorf("yolo_v8: \"model\" param is required (path to .onnx file)")
@@ -169,7 +169,7 @@ func (p *YOLOv8Detector) Init(params map[string]any) error {
 	return nil
 }
 
-func (p *YOLOv8Detector) Process(frame *av.Frame, ctx ProcessorContext) (*av.Frame, *Metadata, error) {
+func (p *YOLODetector) Process(frame *av.Frame, ctx ProcessorContext) (*av.Frame, *Metadata, error) {
 	if ctx.MediaType != av.MediaTypeVideo {
 		return frame, nil, nil
 	}
@@ -207,12 +207,12 @@ func (p *YOLOv8Detector) Process(frame *av.Frame, ctx ProcessorContext) (*av.Fra
 	return frame, md, nil
 }
 
-func (p *YOLOv8Detector) Close() error {
+func (p *YOLODetector) Close() error {
 	p.cleanup()
 	return nil
 }
 
-func (p *YOLOv8Detector) cleanup() {
+func (p *YOLODetector) cleanup() {
 	if p.session != nil {
 		p.session.Destroy()
 		p.session = nil
@@ -228,5 +228,5 @@ func (p *YOLOv8Detector) cleanup() {
 }
 
 func init() {
-	Register("yolo_v8", func() Processor { return &YOLOv8Detector{} })
+	Register("yolo_v8", func() Processor { return &YOLODetector{} })
 }

@@ -62,6 +62,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   tile-list OBUs count as `vcl` in rate splits.
   See [docs/bitstream-trace.md](docs/bitstream-trace.md).
 
+### Changed
+
+- **Exported type `YOLOv8Detector` is now `YOLODetector`.** The ONNX
+  detector lives in `processors/yolo_onnx.go` and still registers only
+  `yolo_v8`.
+
 ### Fixed
 
 - **`go_processor` nodes that return a new frame without metadata now

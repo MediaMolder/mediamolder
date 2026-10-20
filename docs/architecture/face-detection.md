@@ -128,7 +128,7 @@ mediamolder face-detect [flags] <input.{jpg,png,mp4,…}>
 ## Layer 2 — Pipeline processor: `face_detect`
 
 Direct analog of the existing `yolo_v8` ONNX processor
-([`processors/yolov8_onnx.go`](../../processors/yolov8_onnx.go)). New file
+([`processors/yolo_onnx.go`](../../processors/yolo_onnx.go)). New file
 `processors/face_detect.go`, `//go:build with_onnx`:
 
 ```go
