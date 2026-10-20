@@ -51,6 +51,8 @@ type MovingCropScale struct {
 	used        []bool
 	nUsed       int
 	step        int64
+	// store is the resample scratch. Process handles one frame at a time.
+	store *av.ResampleStore
 }
 
 // Zoom is output-relative: zoom 64 maps one output pixel onto 1/64 of a
@@ -179,11 +181,15 @@ func (p *MovingCropScale) Process(frame *av.Frame, ctx ProcessorContext) (*av.Fr
 	return out, md, nil
 }
 
-// Close releases nothing held across frames. Bracket matching returns nil.
+// Close frees the resample scratch. Bracket matching returns nil.
 // Sample matching returns an error when a keyframe was never used, which is
 // how a missing copy_ts or a source that ends early fails the job instead of
 // writing a short file. Close does not consult a context.
 func (p *MovingCropScale) Close() error {
+	if p != nil && p.store != nil {
+		p.store.Close()
+		p.store = nil
+	}
 	if p == nil || !p.matchSample || p.nUsed == len(p.rects) {
 		return nil
 	}
@@ -487,11 +493,23 @@ func (p *MovingCropScale) paint(frame *av.Frame, r cropRect) (*av.Frame, error) 
 		return nil, fmt.Errorf("moving_crop_scale: %w", err)
 	}
 	dst.SetCrop(0, 0, 0, 0)
-	if err := dst.FillBlack(); err != nil {
-		dst.Close()
-		return nil, fmt.Errorf("moving_crop_scale: %w", err)
+	// A window whose luma centres all lie inside the picture overwrites every
+	// output pixel, so the fresh buffer does not need a black fill. A window
+	// that hangs off leaves the uncovered pixels as digital black.
+	if !av.SampleCentresInside(dst.Width(), dst.Height(), src.Width(), src.Height(), r.x, r.y, r.w, r.h) {
+		if err := dst.FillBlack(); err != nil {
+			dst.Close()
+			return nil, fmt.Errorf("moving_crop_scale: %w", err)
+		}
 	}
-	if err := av.ResampleWindow(dst, src, r.x, r.y, r.w, r.h, p.flags); err != nil {
+	if p.store == nil {
+		p.store, err = av.NewResampleStore()
+		if err != nil {
+			dst.Close()
+			return nil, fmt.Errorf("moving_crop_scale: %w", err)
+		}
+	}
+	if err := p.store.Apply(dst, src, r.x, r.y, r.w, r.h, p.flags); err != nil {
 		dst.Close()
 		return nil, fmt.Errorf("moving_crop_scale: %w", err)
 	}
