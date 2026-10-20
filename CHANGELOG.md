@@ -7,6 +7,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- **Detection `class_id`.** Detection JSON always includes `class_id`.
+  YOLO decoders set the class index (`0` is a real class). `face_detect`
+  and `vidi_analyzer` set `-1`, because they have no class index.
 - **`moving_crop_scale` processor.** Crops each video frame to a keyframed
   window and scales it to a fixed output size. Keyframes bracket PTS, or
   seconds via `t`, and interpolate with hold, linear, or Catmull-Rom. A

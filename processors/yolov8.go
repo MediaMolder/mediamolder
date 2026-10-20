@@ -22,6 +22,7 @@ import (
 //
 // origW and origH are the original frame dimensions before letterboxing.
 // Returned BBox values are in original-frame pixel coordinates.
+// ClassID is the winning class index. A missing label is still "unknown".
 func ParseYOLOv8Output(raw []float32, numClasses, numPreds, inputSize int, confThresh float64, labels []string, origW, origH int) []Detection {
 	attrCount := 4 + numClasses
 	if len(raw) < attrCount*numPreds {
@@ -64,6 +65,7 @@ func ParseYOLOv8Output(raw []float32, numClasses, numPreds, inputSize int, confT
 
 		dets = append(dets, Detection{
 			Label:      label,
+			ClassID:    bestClass,
 			Confidence: bestScore,
 			BBox:       [4]float64{x1, y1, x2, y2},
 		})

@@ -95,6 +95,7 @@ func (p *FaceDetect) Process(frame *av.Frame, ctx ProcessorContext) (*av.Frame, 
 		// Detection boxes are x1,y1,x2,y2; Face.BBox is x,y,w,h.
 		dets[i] = Detection{
 			Label:      "face",
+			ClassID:    -1,
 			Confidence: float64(f.Score),
 			BBox: [4]float64{
 				float64(f.BBox[0]), float64(f.BBox[1]),

@@ -247,6 +247,7 @@ func (p *VidiAnalyzer) toMetadata(vresp *vidiResponse) *Metadata {
 	for _, box := range vresp.Boxes {
 		dets = append(dets, Detection{
 			Label:      box.Label,
+			ClassID:    -1,
 			Confidence: box.Confidence,
 			BBox:       box.Box2D,
 		})
