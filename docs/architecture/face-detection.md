@@ -2,7 +2,7 @@
 
 Status: **design + phased implementation**. Owner: face/CLI/GUI.
 Related: [`face/`](../../face) package, [scene-detection.md](scene-detection.md),
-[yolov8-guide.md](../yolov8-guide.md), [twelvelabs_integration.md](twelvelabs_integration.md).
+[yolo-guide.md](../yolo-guide.md), [twelvelabs_integration.md](twelvelabs_integration.md).
 
 ## Motivation
 
@@ -127,8 +127,8 @@ mediamolder face-detect [flags] <input.{jpg,png,mp4,…}>
 
 ## Layer 2 — Pipeline processor: `face_detect`
 
-Direct analog of the existing `yolo_v8` ONNX processor
-([`processors/yolov8_onnx.go`](../../processors/yolov8_onnx.go)). New file
+Direct analog of the `yolo` / `yolo_v8` ONNX processor
+([`processors/yolo_onnx.go`](../../processors/yolo_onnx.go)). New file
 `processors/face_detect.go`, `//go:build with_onnx`:
 
 ```go
@@ -203,7 +203,7 @@ requires `make build-gui-static` to reflect.
 
 ## Build, models, packaging
 
-- **Tag:** reuse `with_onnx` (the same tag `yolo_v8` uses — one ONNX switch for the
+- **Tag:** reuse `with_onnx` (the same tag `yolo` and the `yolo_v8` alias use — one ONNX switch for the
   project). The default build keeps the stub: zero ML dependency.
 - **GUI build:** `make build-gui-whisper EXTRA_TAGS=with_onnx` already enables it; a
   dedicated `make build-gui-onnx` target is added for the no-whisper case.

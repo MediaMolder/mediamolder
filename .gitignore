@@ -30,6 +30,7 @@ go.work.sum
 # OS
 .DS_Store
 Thumbs.db
+.bash_history
 
 # Test media corpus (handled by Git LFS)
 /testdata/dental_video.mp4

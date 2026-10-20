@@ -139,8 +139,11 @@ type Metadata struct {
 }
 
 // Detection represents a single detected object in a video frame.
+// ClassID is the class index. Zero is a real class (COCO "person"), so
+// producers that have no index set -1. The field is always serialized.
 type Detection struct {
 	Label      string     `json:"label"`
+	ClassID    int        `json:"class_id"`
 	Confidence float64    `json:"confidence"`
 	BBox       [4]float64 `json:"bbox"` // x1, y1, x2, y2 (pixel coordinates)
 	TrackID    int        `json:"track_id,omitempty"`

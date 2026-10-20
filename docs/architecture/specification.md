@@ -526,7 +526,8 @@ The runtime resolves `NodeDef.Processor` against the registry at graph-build tim
 | `frame_counter` | Counts frames passing through; emits count at EOS. Useful for testing and batch-size assertions. |
 | `metadata_writer` | Wraps an inner processor and writes its `Metadata` output as JSON Lines to a file or stdout, decoupling metadata I/O from frame processing logic. |
 | `null` | No-op pass-through. Used in tests. |
-| `yolo_v8` | YOLOv8 object detection via ONNX Runtime (build tag `with_onnx`). Emits bounding-box metadata per frame. Model path and confidence threshold are configurable via `params`. |
+| `yolo` | Object detection for YOLOv8, YOLO11, and YOLO26 via ONNX Runtime (build tag `with_onnx`). Reads the model shape, decodes a raw or end-to-end head, and emits bounding-box metadata with `class_id`. See [docs/yolo-guide.md](../yolo-guide.md). |
+| `yolo_v8` | Permanent alias of `yolo` with the previous letterbox, class-agnostic NMS, and nil metadata when a frame has no detections. |
 
 #### 19.4 Metadata Events
 

@@ -1421,11 +1421,12 @@ directly in the JSON `params`). Use the **Format** selector (or the
 
 Leave `output_file` blank (or omit it) to emit events to the event bus only.
 
-For processors that don't have built-in `output_file` support (e.g. custom
-YOLO detectors), the **Metadata file writer** (`metadata_file_writer`) node
-is still available as a generic wrapper — see example
-[32](../testdata/examples/32_yolov8_metadata_to_file.json). The
-`metadata_file_writer` node also accepts `output_format`.
+For processors that don't have built-in `output_file` support (for example the
+built-in `yolo` detector), the **Metadata file writer** (`metadata_file_writer`)
+node is still available as a generic wrapper — see example
+[32](../testdata/examples/32_yolov8_metadata_to_file.json) and the
+[YOLO guide](yolo-guide.md). The `metadata_file_writer` node also accepts
+`output_format`.
 
 ### Choosing a detector
 

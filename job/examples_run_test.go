@@ -117,24 +117,34 @@ func runExample(t *testing.T, jsonPath, name, inputAbs, _, _ string) {
 		t.Skip("subtitles/ass filter not compiled in this FFmpeg build (rebuild with --enable-libass)")
 	}
 
-	// --- Skip: YOLOv8 requires with_onnx build tag and model files ---
-	if strings.Contains(raw, `"yolo_v8"`) {
-		if _, err := processors.Get("yolo_v8"); err != nil {
-			t.Skip("yolo_v8 processor not registered (rebuild with -tags with_onnx)")
+	// --- Skip: YOLO requires the with_onnx build tag and model files ---
+	// The closing quote keeps "yolo" and "yolo_v8" distinct. Check the
+	// alias first so a graph that named both resolves to yolo_v8.
+	yoloName := ""
+	switch {
+	case strings.Contains(raw, `"yolo_v8"`):
+		yoloName = "yolo_v8"
+	case strings.Contains(raw, `"yolo"`):
+		yoloName = "yolo"
+	}
+	if yoloName != "" {
+		if _, err := processors.Get(yoloName); err != nil {
+			t.Skipf("%s processor not registered (rebuild with -tags with_onnx)", yoloName)
 		}
-		// Skip CUDA-mode YOLOv8 if no NVENC (proxy for CUDA availability)
+		// Skip CUDA mode if no NVENC (proxy for CUDA availability).
 		if strings.Contains(raw, `"device": "cuda"`) && !av.FindEncoder("h264_nvenc") {
-			t.Skip("yolo_v8 CUDA mode requires NVIDIA GPU")
+			t.Skipf("%s CUDA mode requires NVIDIA GPU", yoloName)
 		}
-		// Skip if the model file is missing
-		if strings.Contains(raw, "/models/yolov8n.onnx") {
-			if _, err := os.Stat("/models/yolov8n.onnx"); err != nil {
-				t.Skip("YOLOv8 model not found at /models/yolov8n.onnx")
-			}
-		}
-		if strings.Contains(raw, "/models/custom_5class.onnx") {
-			if _, err := os.Stat("/models/custom_5class.onnx"); err != nil {
-				t.Skip("custom YOLOv8 model not found at /models/custom_5class.onnx")
+		for _, model := range []string{
+			"/models/yolov8n.onnx",
+			"/models/custom_5class.onnx",
+			"/models/yolo11n.onnx",
+			"/models/yolo26n.onnx",
+		} {
+			if strings.Contains(raw, model) {
+				if _, err := os.Stat(model); err != nil {
+					t.Skipf("YOLO model not found at %s", model)
+				}
 			}
 		}
 	}

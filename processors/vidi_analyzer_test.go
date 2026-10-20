@@ -189,6 +189,9 @@ func TestVidiAnalyzer_Process_InferenceRoundTrip(t *testing.T) {
 		if det.Label != "bird" {
 			t.Errorf("detection label = %q, want bird", det.Label)
 		}
+		if det.ClassID != -1 {
+			t.Errorf("class_id = %d, want -1", det.ClassID)
+		}
 		if det.Confidence != 0.92 {
 			t.Errorf("detection confidence = %v, want 0.92", det.Confidence)
 		}

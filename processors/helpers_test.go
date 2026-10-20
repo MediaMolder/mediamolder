@@ -206,3 +206,51 @@ func fill(img *image.RGBA, c color.RGBA) {
 		}
 	}
 }
+
+func TestLetterboxTensor_NearestPad0MatchesImageTensor(t *testing.T) {
+	src := image.NewRGBA(image.Rect(0, 0, 20, 10))
+	fill(src, color.RGBA{R: 10, G: 20, B: 30, A: 255})
+	want := ImageToFloat32Tensor(src, 16)
+	got := LetterboxTensor(src, 16, 0, ResizeNearest)
+	if len(got) != len(want) {
+		t.Fatalf("len = %d, want %d", len(got), len(want))
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("tensor[%d] = %v, want %v", i, got[i], want[i])
+		}
+	}
+}
+
+func TestLetterboxTensor_Pad114(t *testing.T) {
+	src := image.NewRGBA(image.Rect(0, 0, 20, 10))
+	fill(src, color.RGBA{R: 0, G: 255, B: 0, A: 255})
+	got := LetterboxTensor(src, 16, 114, ResizeNearest)
+	// 20×10 into 16 is a wide frame: top bar is pad.
+	if math.Abs(float64(got[0])-114.0/255.0) > 1e-6 {
+		t.Fatalf("top-left R = %v, want 114/255", got[0])
+	}
+	plane := 16 * 16
+	mid := 8*16 + 8
+	if math.Abs(float64(got[plane+mid])-1) > 1e-6 {
+		t.Fatalf("centre G = %v, want 1", got[plane+mid])
+	}
+}
+
+func TestLetterboxTensor_BilinearDiffersFromNearest(t *testing.T) {
+	src := image.NewRGBA(image.Rect(0, 0, 2, 2))
+	src.SetRGBA(0, 0, color.RGBA{A: 255})
+	src.SetRGBA(1, 0, color.RGBA{R: 255, A: 255})
+	src.SetRGBA(0, 1, color.RGBA{R: 255, A: 255})
+	src.SetRGBA(1, 1, color.RGBA{A: 255})
+	nearest := LetterboxTensor(src, 4, 0, ResizeNearest)
+	bilinear := LetterboxTensor(src, 4, 0, ResizeBilinear)
+	// Pixel (1, 0) is a neighbour blend, not a copy of either source pixel.
+	if math.Abs(float64(nearest[1])-1) > 1e-6 {
+		t.Fatalf("nearest R(1,0) = %v, want 1", nearest[1])
+	}
+	want := float64(float32(64) / 255)
+	if math.Abs(float64(bilinear[1])-want) > 1e-5 {
+		t.Fatalf("bilinear R(1,0) = %v, want %v", bilinear[1], want)
+	}
+}
