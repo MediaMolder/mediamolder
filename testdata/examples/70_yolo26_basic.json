@@ -1,0 +1,62 @@
+{
+  "schema_version": "1.1",
+  "description": "Decode in.mp4, run YOLO26 object detection on every video frame, encode to H.264, copy audio, and write out.mp4. Detections are emitted on the event bus. Class names come from the model.",
+  "ffmpeg_cmd": "# No equivalent FFmpeg command — yolo node detect0 has no FFmpeg equivalent.",
+  "inputs": [
+    {
+      "id": "in0",
+      "url": "{{input}}",
+      "map_metadata": true,
+      "map_chapters": true,
+      "streams": [
+        {
+          "input_index": 0,
+          "type": "video",
+          "track": 0
+        },
+        {
+          "input_index": 0,
+          "type": "audio",
+          "track": 0
+        }
+      ]
+    }
+  ],
+  "graph": {
+    "nodes": [
+      {
+        "id": "detect0",
+        "type": "go_processor",
+        "processor": "yolo",
+        "params": {
+          "model": "/models/yolo26n.onnx"
+        }
+      }
+    ],
+    "edges": [
+      {
+        "from": "in0:v:0",
+        "to": "detect0:default",
+        "type": "video"
+      },
+      {
+        "from": "detect0:default",
+        "to": "out0:v",
+        "type": "video"
+      },
+      {
+        "from": "in0:a:0",
+        "to": "out0:a",
+        "type": "audio"
+      }
+    ]
+  },
+  "outputs": [
+    {
+      "id": "out0",
+      "url": "{{output}}",
+      "codec_video": "libx264",
+      "codec_audio": "copy"
+    }
+  ]
+}

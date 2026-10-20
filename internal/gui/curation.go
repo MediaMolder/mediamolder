@@ -204,6 +204,18 @@ var curatedNodes = map[string]NodeMeta{
 		Aliases:  []string{"twelvelabs", "ai", "marengo", "embedding", "vector", "clip"},
 	},
 
+	// ── Object detection ─────────────────────────────────────────────
+	// Registered only with the with_onnx build tag, so curation_test.go
+	// tolerates their absence (optional set).
+	"yolo": {
+		Friendly: "Object detection",
+		Aliases:  []string{"yolo11", "yolo26", "yolov8", "object detection", "detect"},
+	},
+	"yolo_v8": {
+		Friendly: "Object detection (YOLOv8 alias)",
+		Aliases:  []string{"yolov8", "object detection", "detect"},
+	},
+
 	// ── Native face detection ────────────────────────────────────────
 	// YOLOv8-face detect + 5-point align + SFace embed, behind the face
 	// package's with_onnx-gated API. Registered only with the with_onnx

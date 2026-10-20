@@ -4,12 +4,35 @@
 package processors
 
 import (
+	"errors"
 	"fmt"
 	"math"
 	"sort"
 	"strconv"
 	"strings"
 )
+
+// errYOLODynamic means the model shape is not concrete. New yolo fails
+// Init with this message. The yolo_v8 alias falls back to the fixed
+// input_size / num_classes formula instead.
+var errYOLODynamic = errors.New("output shape is dynamic; re-export without dynamic=True")
+
+// yoloMaxFloats is the largest tensor Init will allocate. A model that
+// declares a larger shape fails with an error instead of panicking in make.
+const yoloMaxFloats int64 = 64 << 20
+
+// yoloFloatCount returns the element count of a dense float tensor.
+// A non-positive dimension or a product above yoloMaxFloats is an error.
+func yoloFloatCount(dims ...int64) (int, error) {
+	n := int64(1)
+	for _, d := range dims {
+		if d < 1 || n > yoloMaxFloats/d {
+			return 0, fmt.Errorf("shape %v exceeds %d elements", dims, yoloMaxFloats)
+		}
+		n *= d
+	}
+	return int(n), nil
+}
 
 // YOLOLayout is the detection-head layout of a model output tensor.
 // Later heads (pose, OBB) can be added without renumbering these values.
@@ -297,4 +320,187 @@ func (p *nameParser) quoted() (string, bool) {
 		b.WriteByte(c)
 	}
 	return "", false
+}
+
+// yoloIO is one concrete tensor from an ONNX model, detached from the
+// runtime types so layout checks can run without ONNX Runtime.
+type yoloIO struct {
+	Name     string
+	Dims     []int64
+	DataType string
+}
+
+// yoloModel is the decoded shape of a detection model.
+type yoloModel struct {
+	Layout     YOLOLayout
+	InputName  string
+	OutputName string
+	InputSize  int
+	NumClasses int
+	NumPreds   int
+	MaxDet     int
+}
+
+// interpretYOLOIO checks a single-input, single-output detection model.
+// inputSize and numClasses are the user params; 0 means unset.
+// namesOK is false when names were absent or failed to parse. A failed
+// parse is not reported here. On an end-to-end head, numClasses is
+// checked only when names parsed.
+func interpretYOLOIO(inputs, outputs []yoloIO, task string, taskSet bool, names []string, namesOK bool, inputSize, numClasses int, inputName, outputName, layout string) (yoloModel, error) {
+	if taskSet && task != "detect" {
+		return yoloModel{}, fmt.Errorf("task %q is not detect", task)
+	}
+	if len(inputs) != 1 || len(outputs) != 1 {
+		return yoloModel{}, fmt.Errorf("model has %d inputs and %d outputs, want 1 and 1", len(inputs), len(outputs))
+	}
+	in, out := inputs[0], outputs[0]
+	if dynamicDims(in.Dims) || dynamicDims(out.Dims) {
+		return yoloModel{}, errYOLODynamic
+	}
+	if in.DataType != "float32" {
+		return yoloModel{}, fmt.Errorf("input data type %s, want float32", in.DataType)
+	}
+	if out.DataType != "float32" {
+		return yoloModel{}, fmt.Errorf("output data type %s, want float32", out.DataType)
+	}
+	if len(in.Dims) != 4 || in.Dims[1] != 3 {
+		return yoloModel{}, fmt.Errorf("input shape %v, want [1, 3, S, S]", in.Dims)
+	}
+	if in.Dims[0] != 1 {
+		return yoloModel{}, fmt.Errorf("input batch %d, want 1", in.Dims[0])
+	}
+	if in.Dims[2] != in.Dims[3] || in.Dims[2] < 1 {
+		return yoloModel{}, fmt.Errorf("input shape %v is not square", in.Dims)
+	}
+	if len(out.Dims) != 3 {
+		return yoloModel{}, fmt.Errorf("output shape %v, want rank 3", out.Dims)
+	}
+	if out.Dims[0] != 1 {
+		return yoloModel{}, fmt.Errorf("output batch %d, want 1", out.Dims[0])
+	}
+	yoloLayout, err := DetectYOLOLayout(out.Dims)
+	if err != nil {
+		return yoloModel{}, err
+	}
+	switch layout {
+	case "", "auto":
+	case "raw":
+		if yoloLayout != YOLOLayoutRaw {
+			return yoloModel{}, fmt.Errorf("layout %q does not match output shape %v", layout, out.Dims)
+		}
+	case "e2e":
+		if yoloLayout != YOLOLayoutE2E {
+			return yoloModel{}, fmt.Errorf("layout %q does not match output shape %v", layout, out.Dims)
+		}
+	default:
+		return yoloModel{}, fmt.Errorf("layout %q is not auto, raw, or e2e", layout)
+	}
+	s := int(in.Dims[2])
+	if inputSize > 0 && inputSize != s {
+		return yoloModel{}, fmt.Errorf("input_size %d does not match model (%d)", inputSize, s)
+	}
+	spec := yoloModel{
+		Layout:     yoloLayout,
+		InputName:  in.Name,
+		OutputName: out.Name,
+		InputSize:  s,
+	}
+	if inputName != "" {
+		spec.InputName = inputName
+	}
+	if outputName != "" {
+		spec.OutputName = outputName
+	}
+	if yoloLayout == YOLOLayoutE2E {
+		spec.MaxDet = int(out.Dims[1])
+		if namesOK {
+			spec.NumClasses = len(names)
+			if numClasses > 0 && numClasses != len(names) {
+				return yoloModel{}, fmt.Errorf("num_classes %d does not match model (%d)", numClasses, len(names))
+			}
+		}
+		return spec, nil
+	}
+	spec.NumClasses = int(out.Dims[1]) - 4
+	spec.NumPreds = int(out.Dims[2])
+	if spec.NumClasses < 1 || spec.NumPreds < 1 {
+		return yoloModel{}, fmt.Errorf("output shape %v has no classes", out.Dims)
+	}
+	if namesOK && len(names) != spec.NumClasses {
+		return yoloModel{}, fmt.Errorf("names list has %d classes, model has %d", len(names), spec.NumClasses)
+	}
+	if numClasses > 0 && numClasses != spec.NumClasses {
+		return yoloModel{}, fmt.Errorf("num_classes %d does not match model (%d)", numClasses, spec.NumClasses)
+	}
+	return spec, nil
+}
+
+func dynamicDims(dims []int64) bool {
+	for _, d := range dims {
+		if d < 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// yoloExternalDataError names the sibling .onnx.data file when err is an
+// ONNX Runtime external-data failure. A nil result means err is some
+// other failure and the caller should keep it.
+func yoloExternalDataError(name, modelPath string, err error) error {
+	if err == nil || !yoloExternalData(err) {
+		return nil
+	}
+	return fmt.Errorf("%s: model uses external data (%s); re-export a single-file ONNX: %w", name, modelPath+".data", err)
+}
+
+func yoloExternalData(err error) bool {
+	s := strings.ToLower(err.Error())
+	return strings.Contains(s, "external data") || strings.Contains(s, "external_data")
+}
+
+// decodeYOLO turns a model output into detections. legacy keeps the
+// yolo_v8 label rule ("unknown" on a miss) and agnostic selects
+// class-agnostic NMS. An end-to-end head is already de-duplicated.
+func decodeYOLO(layout YOLOLayout, raw []float32, numClasses, numPreds, maxDet, inputSize int, confThresh, iouThresh float64, labels []string, origW, origH int, legacy, agnostic bool) []Detection {
+	var dets []Detection
+	if layout == YOLOLayoutE2E {
+		dets = ParseYOLOE2EOutput(raw, maxDet, inputSize, confThresh, labels, origW, origH)
+		if legacy {
+			for i := range dets {
+				if dets[i].ClassID < 0 || dets[i].ClassID >= len(labels) {
+					dets[i].Label = "unknown"
+				}
+			}
+		}
+		return dets
+	}
+	dets = ParseYOLOv8Output(raw, numClasses, numPreds, inputSize, confThresh, labels, origW, origH)
+	if !legacy {
+		for i := range dets {
+			if dets[i].ClassID < 0 || dets[i].ClassID >= len(labels) {
+				dets[i].Label = strconv.Itoa(dets[i].ClassID)
+			}
+		}
+	}
+	if agnostic {
+		return NMS(dets, iouThresh)
+	}
+	return NMSPerClass(dets, iouThresh)
+}
+
+// yoloResultMetadata builds the Process result. The alias returns nil
+// when nothing was found. yolo returns a non-nil metadata value with an
+// empty detection list, which JSON still omits.
+func yoloResultMetadata(legacy bool, dets []Detection) *Metadata {
+	if legacy {
+		if len(dets) == 0 {
+			return nil
+		}
+		return &Metadata{Detections: dets}
+	}
+	if dets == nil {
+		dets = []Detection{}
+	}
+	return &Metadata{Detections: dets}
 }

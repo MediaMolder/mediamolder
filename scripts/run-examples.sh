@@ -140,6 +140,8 @@ skip_example "29_yolov8_basic"        "requires YOLOv8 ONNX model"
 skip_example "30_yolov8_cuda_nth_frame" "requires NVIDIA GPU + YOLOv8 model"
 skip_example "31_yolov8_custom_model" "requires custom YOLOv8 ONNX model"
 skip_example "32_yolov8_metadata_to_file" "requires YOLOv8 ONNX model"
+skip_example "69_yolo11_basic"        "requires YOLO11 ONNX model"
+skip_example "70_yolo26_basic"        "requires YOLO26 ONNX model"
 
 run_example "33_frame_info_to_file"   "$EXAMPLES/33_frame_info_to_file.json"   "33.mp4"
 run_example "34_scene_change_to_file" "$EXAMPLES/34_scene_change_to_file.json" "34.mp4"

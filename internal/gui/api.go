@@ -564,8 +564,10 @@ func processorDescription(name string) string {
 		return "Wrap another processor and write its metadata to a JSON Lines file."
 	case "bitstream_trace":
 		return "Report every H.264/H.265/AV1 NAL unit / OBU in a stream to a JSON, JSONL, or CSV file — parameter sets, SEI, coded-picture records with derived POC, per-unit class and timing for bit-rate analysis — without decoding. An improved, machine-readable version of FFmpeg's trace_headers. See docs/bitstream-trace.md."
+	case "yolo":
+		return "Object detection for YOLO11, YOLO26, and YOLOv8. Reads the model shape and selects the decoder. Requires the with_onnx build tag."
 	case "yolo_v8":
-		return "YOLOv8 object detection (requires the with_onnx build tag)."
+		return "YOLOv8 object detection alias. Prefer yolo for new graphs. Requires the with_onnx build tag."
 	case "face_detect":
 		return "Detect faces (YOLOv8-face), align each, and optionally embed them (SFace) for recognition/clustering. Requires the with_onnx build tag and bundled models. Video passes through; emits per-face boxes, 5-point landmarks, and optional 128-d embeddings as metadata."
 	case "whisper_stt":

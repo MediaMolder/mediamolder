@@ -61,6 +61,8 @@ func TestCuratedNodesResolveToRealEntries(t *testing.T) {
 		"scene_change_threshold": {}, "scene_change_hash": {}, "scene_change_histogram": {},
 		"whisper_stt": {}, // registered only with the with_whisper build tag
 		"face_detect": {}, // registered only with the with_onnx build tag
+		"yolo":        {}, // registered only with the with_onnx build tag
+		"yolo_v8":     {}, // registered only with the with_onnx build tag
 	}
 
 	for name := range curatedNodes {

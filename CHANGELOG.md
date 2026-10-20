@@ -7,6 +7,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- **`yolo` processor.** Object detection for YOLOv8, YOLO11, and YOLO26.
+  The node reads the ONNX shapes, decodes a raw head with per-class NMS
+  or an end-to-end head with no NMS, and takes class names from the model
+  when no labels file is set. Letterbox padding defaults to 114 with
+  bilinear resize. A processed frame with no detections returns empty
+  metadata. `yolo_v8` remains an alias: black nearest-neighbour letterbox,
+  class-agnostic NMS, and nil metadata when a frame has no detections.
+  A dynamic-shape export fails on `yolo` and still loads on the alias.
+  Requires the `with_onnx` build tag.
 - **Detection `class_id`.** Detection JSON always includes `class_id`.
   YOLO decoders set the class index (`0` is a real class). `face_detect`
   and `vidi_analyzer` set `-1`, because they have no class index.
@@ -65,8 +74,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 ### Changed
 
 - **Exported type `YOLOv8Detector` is now `YOLODetector`.** The ONNX
-  detector lives in `processors/yolo_onnx.go` and still registers only
-  `yolo_v8`.
+  detector lives in `processors/yolo_onnx.go`. `yolo` and `yolo_v8`
+  both register it.
 
 ### Fixed
 

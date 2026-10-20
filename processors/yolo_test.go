@@ -6,6 +6,7 @@ package processors
 import (
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"strings"
@@ -463,6 +464,169 @@ func FuzzParseYOLONames(f *testing.F) {
 		_, _ = parseYOLONames(s, 80)
 		_, _ = parseYOLONames(s, yoloE2EMaxClassID)
 	})
+}
+
+func TestInterpretYOLOIO(t *testing.T) {
+	in := yoloIO{Name: "images", Dims: []int64{1, 3, 640, 640}, DataType: "float32"}
+	raw := yoloIO{Name: "output0", Dims: []int64{1, 84, 8400}, DataType: "float32"}
+	spec, err := interpretYOLOIO([]yoloIO{in}, []yoloIO{raw}, "detect", true, nil, false, 0, 0, "", "", "auto")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if spec.Layout != YOLOLayoutRaw || spec.InputSize != 640 || spec.NumClasses != 80 || spec.NumPreds != 8400 {
+		t.Fatalf("spec = %+v", spec)
+	}
+	if spec.InputName != "images" || spec.OutputName != "output0" {
+		t.Fatalf("names = %s %s", spec.InputName, spec.OutputName)
+	}
+
+	e2e := yoloIO{Name: "output0", Dims: []int64{1, 300, 6}, DataType: "float32"}
+	spec, err = interpretYOLOIO([]yoloIO{in}, []yoloIO{e2e}, "", false, []string{"a", "b", "c"}, true, 0, 0, "", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if spec.Layout != YOLOLayoutE2E || spec.MaxDet != 300 || spec.NumClasses != 3 {
+		t.Fatalf("e2e spec = %+v", spec)
+	}
+
+	five := yoloIO{Name: "output0", Dims: []int64{1, 9, 2100}, DataType: "float32"}
+	spec, err = interpretYOLOIO([]yoloIO{in}, []yoloIO{five}, "", false, nil, false, 0, 0, "in", "out", "raw")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if spec.NumClasses != 5 || spec.NumPreds != 2100 || spec.InputName != "in" || spec.OutputName != "out" {
+		t.Fatalf("5-class spec = %+v", spec)
+	}
+
+	poseRaw := yoloIO{Name: "output0", Dims: []int64{1, 56, 8400}, DataType: "float32"}
+	if _, err := interpretYOLOIO([]yoloIO{in}, []yoloIO{poseRaw}, "", false, nil, false, 0, 0, "", "", "auto"); err != nil {
+		t.Fatal(err)
+	}
+
+	cases := []struct {
+		name    string
+		in      yoloIO
+		out     []yoloIO
+		task    string
+		taskSet bool
+		names   []string
+		namesOK bool
+		size    int
+		classes int
+		layout  string
+		want    string
+	}{
+		{name: "two outputs", in: in, out: []yoloIO{raw, raw}, want: "2 outputs"},
+		{name: "float16", in: in, out: []yoloIO{{Name: "output0", Dims: []int64{1, 84, 8400}, DataType: "float16"}}, want: "float16"},
+		{name: "dynamic", in: in, out: []yoloIO{{Name: "output0", Dims: []int64{1, 84, -1}, DataType: "float32"}}, want: "dynamic=True"},
+		{name: "batch", in: yoloIO{Dims: []int64{2, 3, 640, 640}, DataType: "float32"}, out: []yoloIO{raw}, want: "batch"},
+		{name: "not square", in: yoloIO{Dims: []int64{1, 3, 640, 480}, DataType: "float32"}, out: []yoloIO{raw}, want: "not square"},
+		{name: "pose e2e", in: in, out: []yoloIO{{Name: "output0", Dims: []int64{1, 300, 56}, DataType: "float32"}}, want: "pose/OBB"},
+		{name: "layout mismatch", in: in, out: []yoloIO{raw}, layout: "e2e", want: "does not match"},
+		{name: "num_classes", in: in, out: []yoloIO{five}, classes: 80, want: "num_classes 80"},
+		{name: "input_size", in: in, out: []yoloIO{raw}, size: 320, want: "input_size 320"},
+		{name: "task", in: in, out: []yoloIO{raw}, task: "segment", taskSet: true, want: "segment"},
+		{name: "names vs nc", in: in, out: []yoloIO{{Name: "output0", Dims: []int64{1, 116, 8400}, DataType: "float32"}}, names: make([]string, 80), namesOK: true, want: "names list has 80"},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := interpretYOLOIO([]yoloIO{tt.in}, tt.out, tt.task, tt.taskSet, tt.names, tt.namesOK, tt.size, tt.classes, "", "", tt.layout)
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("error = %v, want substring %q", err, tt.want)
+			}
+		})
+	}
+
+	if _, err := interpretYOLOIO([]yoloIO{in}, []yoloIO{e2e}, "", false, nil, false, 0, 80, "", "", "auto"); err != nil {
+		t.Fatalf("e2e without names should ignore num_classes, got %v", err)
+	}
+	if _, err := interpretYOLOIO([]yoloIO{in}, []yoloIO{e2e}, "", false, []string{"a"}, true, 0, 2, "", "", "auto"); err == nil {
+		t.Fatal("e2e names length should be checked against num_classes")
+	}
+}
+
+func TestDecodeYOLO_LabelAndNMSPolicy(t *testing.T) {
+	raw := buildYOLOv8Raw(2, 2,
+		[][4]float32{{50, 50, 40, 40}, {52, 52, 40, 40}},
+		[][]float32{{0.95, 0.1}, {0.1, 0.9}},
+	)
+	alias := decodeYOLO(YOLOLayoutRaw, raw, 2, 2, 0, 640, 0.5, 0.5, nil, 640, 640, true, true)
+	if len(alias) != 1 || alias[0].Label != "unknown" || alias[0].ClassID != 0 {
+		t.Fatalf("alias = %+v", alias)
+	}
+	perClass := decodeYOLO(YOLOLayoutRaw, raw, 2, 2, 0, 640, 0.5, 0.5, nil, 640, 640, false, false)
+	if len(perClass) != 2 || perClass[0].Label != "0" || perClass[1].Label != "1" {
+		t.Fatalf("per-class = %+v", perClass)
+	}
+	same := decodeYOLO(YOLOLayoutRaw, raw, 2, 2, 0, 640, 0.5, 0.5, []string{"cat", "dog"}, 640, 640, false, true)
+	aliasLabeled := decodeYOLO(YOLOLayoutRaw, raw, 2, 2, 0, 640, 0.5, 0.5, []string{"cat", "dog"}, 640, 640, true, true)
+	if len(same) != 1 || len(aliasLabeled) != 1 || same[0].Label != aliasLabeled[0].Label || same[0].BBox != aliasLabeled[0].BBox {
+		t.Fatalf("agnostic identity = %+v vs %+v", same, aliasLabeled)
+	}
+
+	e2e := e2eRaw(
+		[6]float32{1, 1, 4, 4, 0.9, 0},
+		[6]float32{1, 1, 4, 4, 0.8, 5},
+	)
+	legacy := decodeYOLO(YOLOLayoutE2E, e2e, 0, 0, 2, 64, 0.25, 0.5, []string{"person"}, 64, 64, true, true)
+	if len(legacy) != 2 || legacy[0].Label != "person" || legacy[1].Label != "unknown" {
+		t.Fatalf("legacy e2e = %+v", legacy)
+	}
+	next := decodeYOLO(YOLOLayoutE2E, e2e, 0, 0, 2, 64, 0.25, 0.5, []string{"person"}, 64, 64, false, false)
+	if len(next) != 2 || next[0].Label != "person" || next[1].Label != "5" {
+		t.Fatalf("yolo e2e = %+v", next)
+	}
+}
+
+func TestYOLOResultMetadata(t *testing.T) {
+	if yoloResultMetadata(true, nil) != nil {
+		t.Fatal("alias empty metadata should be nil")
+	}
+	md := yoloResultMetadata(false, nil)
+	if md == nil || md.Detections == nil || len(md.Detections) != 0 {
+		t.Fatalf("empty yolo metadata = %+v", md)
+	}
+	b, err := json.Marshal(md)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), "detections") {
+		t.Fatalf("empty metadata json = %s", b)
+	}
+	hit := yoloResultMetadata(false, []Detection{{Label: "person", ClassID: 0, Confidence: 0.5}})
+	b, err = json.Marshal(hit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), `"class_id":0`) || !strings.Contains(string(b), `"detections"`) {
+		t.Fatalf("hit json = %s", b)
+	}
+}
+
+func TestYOLOFloatCount(t *testing.T) {
+	n, err := yoloFloatCount(1, 3, 640, 640)
+	if err != nil || n != 3*640*640 {
+		t.Fatalf("640 = %d, %v", n, err)
+	}
+	if _, err := yoloFloatCount(1, 3, 100_000, 100_000); err == nil {
+		t.Fatal("huge input shape was accepted")
+	}
+	if _, err := yoloFloatCount(1, 84, -1); err == nil {
+		t.Fatal("negative dimension was accepted")
+	}
+	if _, err := yoloFloatCount(1, 0, 640); err == nil {
+		t.Fatal("zero dimension was accepted")
+	}
+}
+
+func TestYOLOExternalDataError(t *testing.T) {
+	err := yoloExternalDataError("yolo", "/models/yolo26n.onnx", errors.New("can't load external data"))
+	if err == nil || !strings.Contains(err.Error(), "/models/yolo26n.onnx.data") || !strings.Contains(err.Error(), "single-file") {
+		t.Fatalf("error = %v", err)
+	}
+	if yoloExternalDataError("yolo", "/models/y.onnx", errors.New("unsupported shape")) != nil {
+		t.Fatal("unrelated error was treated as external data")
+	}
 }
 
 func FuzzParseYOLOE2EOutput(f *testing.F) {
