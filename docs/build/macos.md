@@ -244,7 +244,7 @@ service. Install the prerequisites below **before** building or running.
 | Node | Build tag | Needs | Runtime env / config |
 | --- | --- | --- | --- |
 | `whisper_stt` (speech-to-text) | `with_whisper` | whisper.cpp / `libwhisper` + a ggml model | `model` param → ggml model path |
-| `yolo_v8` (object detection) | `with_onnx` | ONNX Runtime shared lib + a `.onnx` model | ONNX Runtime auto-discovered (or `ONNXRUNTIME_SHARED_LIBRARY_PATH`); `model` + `labels_file` params |
+| `yolo`, `yolo_v8` (object detection) | `with_onnx` | ONNX Runtime shared lib + a `.onnx` model | ONNX Runtime auto-discovered (or `ONNXRUNTIME_SHARED_LIBRARY_PATH`); `model` param. See the [YOLO guide](../yolo-guide.md) |
 | `face_detect` (face detection + embeddings) | `with_onnx` | ONNX Runtime shared lib + the two face models | ONNX Runtime auto-discovered; `MEDIAMOLDER_FACE_MODELS` |
 | `vidi_analyzer` (multimodal) | *(none)* | a running Vidi 2.5 service | `service_url` param |
 | `twelvelabs_*` (cloud understanding) | *(none)* | TwelveLabs API key | `TWELVELABS_API_KEY` |
@@ -252,7 +252,7 @@ service. Install the prerequisites below **before** building or running.
 > `whisper_stt` binds **whisper.cpp** (`ggml-org/whisper.cpp`), **not** the
 > OpenAI Python `whisper` package — the latter does not produce `libwhisper`.
 >
-> `with_onnx` enables **both** `yolo_v8` **and** `face_detect` (and the
+> `with_onnx` enables `yolo`, the `yolo_v8` alias, and `face_detect` (and the
 > `mediamolder face-detect` CLI) — one tag, all ONNX nodes.
 
 ### Downloading models — how and when
@@ -267,7 +267,7 @@ node reports the models are unavailable when it runs).
 | --- | --- | --- | --- |
 | `whisper_stt` | a ggml/gguf speech model | `whisper.cpp/models/download-ggml-model.sh base.en` | the node's `model` param |
 | `face_detect` / `face-detect` | YOLOv8-face + SFace `.onnx` | `./scripts/fetch-face-models.sh` (SHA-256-verified) | `MEDIAMOLDER_FACE_MODELS` (a dir) or `--models-dir` |
-| `yolo_v8` | a YOLOv8 `.onnx` + labels file | export from Ultralytics / your own | the `model` + `labels_file` params |
+| `yolo`, `yolo_v8` | a detection `.onnx` you export (weights are not shipped) | Ultralytics export; see the [YOLO guide](../yolo-guide.md) | the `model` param |
 
 Models can be large and (for the face detector) carry a **copyleft** licence, so
 they are **never committed**. `scripts/fetch-face-models.sh` defaults to the
@@ -323,7 +323,7 @@ Pass the model path in the node's `model` param. Usage, params, and output
 formats: [Whisper Speech-to-Text Guide](../whisper-stt-guide.md). Without the
 tag, a config using `whisper_stt` fails with `unknown processor "whisper_stt"`.
 
-### yolo_v8 (ONNX Runtime)
+### yolo (ONNX Runtime)
 
 ```bash
 brew install onnxruntime          # auto-discovered after install — no env var needed
@@ -332,15 +332,15 @@ go build -tags=with_onnx ./cmd/mediamolder  # add ffstatic too for a static FFmp
 # Non-standard install only: export ONNXRUNTIME_SHARED_LIBRARY_PATH=… (or the `ort_lib` param)
 ```
 
-`yolo_v8` shares `face_detect`'s ONNX Runtime auto-discovery, so a normal
+`yolo` and the `yolo_v8` alias share `face_detect`'s ONNX Runtime auto-discovery, so a normal
 `brew install onnxruntime` needs no env var.
-You also need a `.onnx` model and a labels file — see the
-[YOLOv8 Guide](../yolov8-guide.md).
+You also need a `.onnx` model you export yourself — see the
+[YOLO guide](../yolo-guide.md).
 
 ### face_detect (ONNX Runtime + face models)
 
 `face_detect` and the `mediamolder face-detect` CLI share the `with_onnx` tag
-with `yolo_v8`, plus two bundled face models. Build with the tag, then fetch and
+with `yolo` and the `yolo_v8` alias, plus two bundled face models. Build with the tag, then fetch and
 point at the models:
 
 ```bash
@@ -393,7 +393,7 @@ Linked statically — no runtime library or rpath. See
 
 **The everything build.** `make build-gui-all` produces one GUI binary with
 every optional node family compiled in — static FFmpeg + `whisper_stt` +
-`yolo_v8`/`face_detect` + `raw_decode` (effective tags
+`yolo` (and the `yolo_v8` alias) + `face_detect` + `raw_decode` (effective tags
 `ffstatic,with_whisper,with_onnx,with_libraw`):
 
 ```bash
@@ -416,7 +416,7 @@ target's built-in tags.
 # build-gui-whisper already implies `ffstatic,with_whisper`.
 # EXTRA_TAGS adds to that:
 
-# + the ONNX nodes (yolo_v8 AND face_detect):
+# + the ONNX nodes (yolo, the yolo_v8 alias, and face_detect):
 make build-gui-whisper EXTRA_TAGS=with_onnx
 #   → effective tags: ffstatic,with_whisper,with_onnx
 
@@ -428,8 +428,8 @@ make build-gui-whisper EXTRA_TAGS=with_onnx,whisperstatic
 make build-whisper EXTRA_TAGS=with_onnx
 ```
 
-`with_onnx` is a **single** tag that enables every ONNX node (`yolo_v8`,
-`face_detect`, and the `face-detect` CLI) — you don't list them separately.
+`with_onnx` is a **single** tag that enables every ONNX node (`yolo`,
+`yolo_v8`, `face_detect`, and the `face-detect` CLI) — you don't list them separately.
 Each enabled node keeps its own runtime requirement: `libwhisper` for
 `whisper_stt` (resolved by the embedded rpath), and the ONNX Runtime shared
 library (`ONNXRUNTIME_SHARED_LIBRARY_PATH`) plus `MEDIAMOLDER_FACE_MODELS` for

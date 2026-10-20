@@ -15,7 +15,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   metadata. `yolo_v8` remains an alias: black nearest-neighbour letterbox,
   class-agnostic NMS, and nil metadata when a frame has no detections.
   A dynamic-shape export fails on `yolo` and still loads on the alias.
-  Requires the `with_onnx` build tag.
+  When the file has a concrete shape, both nodes allocate tensors from
+  that shape. Requires the `with_onnx` build tag.
+  See [docs/yolo-guide.md](docs/yolo-guide.md). The previous
+  [docs/yolov8-guide.md](docs/yolov8-guide.md) path now points there.
 - **Detection `class_id`.** Detection JSON always includes `class_id`.
   YOLO decoders set the class index (`0` is a real class). `face_detect`
   and `vidi_analyzer` set `-1`, because they have no class index.

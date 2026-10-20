@@ -156,8 +156,8 @@ identically to built-in nodes. For more details, see [go-processor-nodes.md](doc
 
 Processors may also implement the optional `FrameSource` sub-interface to **generate their own frames** rather than processing inbound ones — the built-in `sequence_editor` timeline node is one example (see [Video editing built in](#video-editing-built-in)).
 
-You can add a custom Yolo-v8 object-detection node to a graph and it will 
-run directly inside your media graph. See [Yolo-V8 Guide](docs/yolov8-guide.md)
+You can add a YOLO object-detection node to a graph and it will
+run directly inside your media graph. See [YOLO Guide](docs/yolo-guide.md)
 
 For multimodal scene understanding — captions, temporal grounding, edit plans, QA — the built-in `vidi_analyzer` node connects any graph to a [Vidi 2.5](https://github.com/bytedance/vidi) inference service. See [Vidi 2.5 Guide](docs/vidi-guide.md)
 
@@ -328,7 +328,7 @@ For detailed instructions see [MacOS](docs/build/macos.md), [Windows](docs/build
 - [Go Processor Nodes](docs/go-processor-nodes.md) — `Processor` interface, `FrameSource` interface, built-in processors (`sequence_editor`, scene detectors, TwelveLabs, Vidi, …), writing custom nodes
 - [Moving crop and scale](docs/moving-crop-scale.md) — crop to a keyframed window, including past the picture, and scale it to a fixed output size with sub-pixel positioning (`moving_crop_scale`)
 - [Scene Detection](docs/scene-detection.md) — seven detectors: go-scene-detect ports (content, adaptive, threshold, hash, histogram), FFmpeg scdet, and the motion-compensated `scene_change_mc` (frame-accurate dissolve/fade detection)
-- [Yolov8 object detection/classification](docs/yolov8-guide.md)
+- [YOLO object detection](docs/yolo-guide.md) — YOLOv8, YOLO11, and YOLO26 (`yolo`, with `yolo_v8` kept as an alias)
 - [Vidi 2.5 multimodal analysis](docs/vidi-guide.md)
 - [TwelveLabs video understanding](docs/twelvelabs.md)
 - [Whisper speech-to-text](docs/whisper-stt-guide.md) — local, offline transcription to SRT/VTT/JSON/TXT (`whisper_stt`)

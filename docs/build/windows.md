@@ -257,7 +257,7 @@ service. Install the prerequisites below **before** building or running.
 | Node | Build tag | Needs | Runtime env / config |
 | --- | --- | --- | --- |
 | `whisper_stt` (speech-to-text) | `with_whisper` | whisper.cpp / `libwhisper` + a ggml model | `model` param → ggml model path |
-| `yolo_v8` (object detection) | `with_onnx` | ONNX Runtime DLL + a `.onnx` model | `ONNXRUNTIME_SHARED_LIBRARY_PATH`; `model` + `labels_file` params |
+| `yolo`, `yolo_v8` (object detection) | `with_onnx` | ONNX Runtime DLL + a `.onnx` model | `ONNXRUNTIME_SHARED_LIBRARY_PATH`; `model` param. See the [YOLO guide](../yolo-guide.md) |
 | `face_detect` (face detection + embeddings) | `with_onnx` | ONNX Runtime DLL + the two face models | `ONNXRUNTIME_SHARED_LIBRARY_PATH`, `MEDIAMOLDER_FACE_MODELS` |
 | `vidi_analyzer` (multimodal) | *(none)* | a running Vidi 2.5 service | `service_url` param |
 | `twelvelabs_*` (cloud understanding) | *(none)* | TwelveLabs API key | `TWELVELABS_API_KEY` |
@@ -265,7 +265,7 @@ service. Install the prerequisites below **before** building or running.
 > `whisper_stt` binds **whisper.cpp** (`ggml-org/whisper.cpp`), **not** the
 > OpenAI Python `whisper` package — the latter does not produce `libwhisper`.
 >
-> `with_onnx` enables **both** `yolo_v8` **and** `face_detect` (and the
+> `with_onnx` enables `yolo`, the `yolo_v8` alias, and `face_detect` (and the
 > `mediamolder face-detect` CLI) — one tag, all ONNX nodes.
 
 ### Combining tags
@@ -288,7 +288,7 @@ them before running.
 | --- | --- | --- | --- |
 | `whisper_stt` | a ggml/gguf speech model | `whisper.cpp/models/download-ggml-model.sh base.en` | the node's `model` param |
 | `face_detect` / `face-detect` | YOLOv8-face + SFace `.onnx` | `./scripts/fetch-face-models.sh` (SHA-256-verified) | `MEDIAMOLDER_FACE_MODELS` or `--models-dir` |
-| `yolo_v8` | a YOLOv8 `.onnx` + labels | export from Ultralytics / your own | `model` + `labels_file` params |
+| `yolo`, `yolo_v8` | a detection `.onnx` you export (weights are not shipped) | Ultralytics export; see the [YOLO guide](../yolo-guide.md) | the `model` param |
 
 Models can be large and (for the face detector) carry a **copyleft** licence, so
 they are **never committed** — `fetch-face-models.sh` defaults to the git-ignored
@@ -334,7 +334,7 @@ go test -tags "with_whisper" .\av\... .\processors\...
 > Windows branch) — do not use it here. Usage, params, and output formats:
 > [Whisper Speech-to-Text Guide](../whisper-stt-guide.md).
 
-### yolo_v8 (ONNX Runtime)
+### yolo (ONNX Runtime)
 
 Download the Windows zip from the
 [ONNX Runtime releases](https://github.com/microsoft/onnxruntime/releases),
@@ -345,13 +345,13 @@ $env:ONNXRUNTIME_SHARED_LIBRARY_PATH = "C:\path\to\onnxruntime.dll"
 go build -tags=with_onnx -o mediamolder.exe .\cmd\mediamolder\
 ```
 
-You also need a `.onnx` model and a labels file — see the
-[YOLOv8 Guide](../yolov8-guide.md).
+You also need a `.onnx` model you export yourself — see the
+[YOLO guide](../yolo-guide.md).
 
 ### face_detect (ONNX Runtime + face models)
 
 `face_detect` and the `mediamolder face-detect` CLI share the `with_onnx` tag
-with `yolo_v8` (same `onnxruntime.dll`), plus two bundled face models. Fetch the
+with `yolo` and the `yolo_v8` alias (same `onnxruntime.dll`), plus two bundled face models. Fetch the
 models in the MSYS2 shell, then build with the tag:
 
 ```bash
@@ -405,7 +405,7 @@ See [Camera-RAW Decode Guide](../raw-decode-guide.md).
 
 The build tags stack, so one binary can carry several nodes. The `Makefile` is
 Unix-only, so combine the tags directly — static FFmpeg + `whisper_stt` +
-`yolo_v8`:
+`yolo` (and the `yolo_v8` alias):
 
 ```powershell
 go build -tags "ffstatic,ffstatic_windows_msys2,with_whisper,with_onnx" -o mediamolder.exe .\cmd\mediamolder\
@@ -414,7 +414,7 @@ go build -tags "ffstatic,ffstatic_windows_msys2,with_whisper,with_onnx" -o media
 For a GUI single-binary, build and embed the frontend first (see §4), then run
 the same command. Each enabled node keeps its own runtime requirement:
 `whisper.dll` + ggml DLLs for `whisper_stt`, and `onnxruntime.dll` +
-`ONNXRUNTIME_SHARED_LIBRARY_PATH` for `yolo_v8` — on `PATH` or beside the exe.
+`ONNXRUNTIME_SHARED_LIBRARY_PATH` for `yolo` and the `yolo_v8` alias — on `PATH` or beside the exe.
 
 ## Troubleshooting linker errors
 

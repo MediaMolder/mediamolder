@@ -370,5 +370,5 @@ Vidi 2.5 model weights are released under [CC-BY-NC-4.0](https://creativecommons
 ## See also
 
 - [Go Processor Nodes](go-processor-nodes.md) — full processor interface reference
-- [YOLOv8 Guide](yolov8-guide.md) — in-process object detection without a separate service
+- [YOLO Guide](yolo-guide.md) — in-process object detection for YOLOv8, YOLO11, and YOLO26
 - [JSON Config Reference](json-config-reference.md) — graph schema

@@ -60,11 +60,10 @@ Everything runs in-process: no subprocesses, no network calls, no Python. Your p
 		- [Frame counting with periodic metadata](#frame-counting-with-periodic-metadata)
 		- [Chained processors (filter → processor → encoder)](#chained-processors-filter--processor--encoder)
 		- [Custom AI processor](#custom-ai-processor)
-	- [YOLOv8 built-in processor (optional)](#yolov8-built-in-processor-optional)
+	- [YOLO object detection (optional)](#yolo-object-detection-optional)
 		- [Building with ONNX support](#building-with-onnx-support)
 		- [JSON config](#json-config-1)
 		- [Parameters](#parameters)
-		- [What it does](#what-it-does)
 	- [Vidi 2.5 multimodal analysis](#vidi-25-multimodal-analysis)
 	- [TwelveLabs video understanding](#twelvelabs-video-understanding)
 	- [Schema version](#schema-version)
@@ -519,11 +518,11 @@ In the GUI, drag from the **pink (events) handle** on the right of a `go_process
 Each line in the output file is a JSON object:
 
 ```json
-{"frame_index":0,"pts":0,"metadata":{"detections":[{"label":"person","confidence":0.92,"bbox":[120,45,380,510]}]}}
-{"frame_index":5,"pts":5000,"metadata":{"detections":[{"label":"car","confidence":0.87,"bbox":[400,200,700,450]}]}}
+{"frame_index":0,"pts":0,"metadata":{"detections":[{"label":"person","class_id":0,"confidence":0.92,"bbox":[120,45,380,510]}]}}
+{"frame_index":5,"pts":5000,"metadata":{"detections":[{"label":"car","class_id":2,"confidence":0.87,"bbox":[400,200,700,450]}]}}
 ```
 
-Frames where the processor returns no metadata produce no output line.
+Frames where the processor returns no metadata produce no output line. The `yolo` node returns metadata after every processed frame, including frames with no boxes, so those frames still produce a line. See the [YOLO guide](yolo-guide.md).
 
 ---
 
@@ -1275,7 +1274,7 @@ This example shows how you'd wire a custom YOLO object detector into a graph. Th
       {
         "id": "detect",
         "type": "go_processor",
-        "processor": "yolo_v8_detector",
+        "processor": "my_detector",
         "params": {
           "model": "/models/yolov8n.onnx",
           "conf": 0.5,
@@ -1295,15 +1294,15 @@ This example shows how you'd wire a custom YOLO object detector into a graph. Th
 }
 ```
 
-The `yolo_v8_detector` name must be registered in your Go code before the graph runs:
+The `my_detector` name must be registered in your Go code before the graph runs:
 
 ```go
-processors.Register("yolo_v8_detector", func() processors.Processor {
-    return &YOLODetector{}
+processors.Register("my_detector", func() processors.Processor {
+    return &myDetector{}
 })
 ```
 
-Inside `YOLODetector.Process()`, you'd use `FrameToFloat32Tensor` to prepare the frame, run your ONNX model, then return the detections as `*Metadata`.
+Inside `myDetector.Process()`, you'd use `FrameToFloat32Tensor` to prepare the frame, run your ONNX model, then return the detections as `*Metadata`. The built-in detector is `yolo` (see below); this sample is a processor you write yourself, so its type is not `processors.YOLODetector`.
 
 ---
 
@@ -1330,19 +1329,17 @@ Full guide: [docs/twelvelabs.md](twelvelabs.md).
 
 ---
 
-## YOLOv8 built-in processor (optional)
+## YOLO object detection (optional)
 
-When built with the `with_onnx` build tag, MediaMolder includes a ready-to-use `yolo_v8` processor that runs YOLOv8 object detection via [ONNX Runtime](https://onnxruntime.ai/).
+When built with the `with_onnx` build tag, MediaMolder includes `yolo` for YOLOv8, YOLO11, and YOLO26 detection via [ONNX Runtime](https://onnxruntime.ai/). `yolo_v8` is a permanent alias with the previous letterbox and class-agnostic NMS. The full export, layout, label, and empty-frame contract is in the [YOLO guide](yolo-guide.md).
 
 ### Building with ONNX support
-
-You need the ONNX Runtime shared library installed on your system. Then:
 
 ```bash
 go build -tags with_onnx ./cmd/mediamolder
 ```
 
-Set `ONNXRUNTIME_SHARED_LIBRARY_PATH` to the library location, or pass it via the `ort_lib` param.
+ONNX Runtime is auto-discovered. Set `ONNXRUNTIME_SHARED_LIBRARY_PATH` or the `ort_lib` param for a non-standard install.
 
 ### JSON config
 
@@ -1350,45 +1347,42 @@ Set `ONNXRUNTIME_SHARED_LIBRARY_PATH` to the library location, or pass it via th
 {
   "id": "detect",
   "type": "go_processor",
-  "processor": "yolo_v8",
+  "processor": "yolo",
   "params": {
-    "model": "/models/yolov8n.onnx",
-    "conf": 0.5,
-    "iou": 0.45,
-    "input_size": 640,
-    "num_classes": 80,
-    "labels_file": "/models/coco.names",
-    "device": "cuda"
+    "model": "/models/yolo11n.onnx",
+    "conf": 0.25
   }
 }
 ```
 
+Class names come from the model when `labels_file` is omitted. A detection record includes `class_id` (`0` is a real class):
+
+```json
+{"frame_index":0,"pts":0,"metadata":{"detections":[{"label":"person","class_id":0,"confidence":0.92,"bbox":[120,45,380,510]}]}}
+```
+
 ### Parameters
 
-| Param         | Type   | Default      | Description                                              |
-|---------------|--------|--------------|----------------------------------------------------------|
-| `model`       | string | (required)   | Path to the YOLOv8 `.onnx` model file                   |
-| `conf`        | float  | 0.5          | Minimum confidence threshold for detections              |
-| `iou`         | float  | 0.45         | IoU threshold for NMS (non-maximum suppression)          |
-| `input_size`  | int    | 640          | Model input dimension (640 for YOLOv8n/s/m/l/x)         |
-| `num_classes` | int    | 80           | Number of classes the model detects (80 for COCO)        |
-| `labels_file` | string | —            | Newline-separated file mapping class index to label name |
-| `input_name`  | string | `"images"`   | ONNX input tensor name                                   |
-| `output_name` | string | `"output0"`  | ONNX output tensor name                                  |
-| `ort_lib`     | string | (env var)    | Path to onnxruntime shared library                       |
-| `device`      | string | `"cpu"`      | `"cpu"` or `"cuda"` for GPU acceleration                 |
-| `process_every`| int   | `1`          | Run inference every N-th frame; others pass through      |
+| Param | `yolo` | `yolo_v8` alias | Description |
+|-------|--------|-----------------|-------------|
+| `model` | required | required | Path to the `.onnx` file |
+| `layout` | `auto` | `auto` | `auto`, `raw`, or `e2e`; must match the tensor |
+| `agnostic_nms` | `false` | `true` | Class-agnostic NMS on a raw head |
+| `conf` | `0.5` | `0.5` | Minimum confidence |
+| `iou` | `0.45` | `0.45` | NMS overlap on a raw head. Ignored on an end-to-end head |
+| `input_size` | from the model | from the model, or 640 on the alias fallback | Cross-check against the file |
+| `num_classes` | from the model | from the model, or 80 on the alias fallback | Cross-check against the file |
+| `labels_file` | model names, else the decimal id | file, else `"unknown"` | One name per line |
+| `pad_value` | `114` | ignored | Letterbox fill, 0–255 |
+| `resize` | `bilinear` | ignored | `bilinear` or `nearest` |
+| `input_name`, `output_name` | from the model | from the model, or `images` / `output0` on the alias fallback | Bound tensor names |
+| `device` | `cpu` | `cpu` | `cpu` or `cuda`. `cuda:N` is accepted; the index is not read |
+| `ort_lib` | discovery | discovery | ONNX Runtime shared library |
+| `process_every` | `1` | `1` | Infer every Nth video frame |
 
-### What it does
+`yolo` returns metadata for every processed frame, including frames with no boxes. The alias returns metadata only when a frame has at least one detection. `process_every` skips return no metadata for both.
 
-1. Letterboxes the frame to `input_size × input_size` and converts it to a `[1, 3, H, W]` float32 tensor.
-2. Runs ONNX inference using pre-allocated tensors (zero allocation per frame).
-3. Parses the YOLOv8 transposed output `[1, 4+num_classes, num_predictions]`.
-4. Applies greedy NMS to remove duplicate detections.
-5. Maps bounding boxes back from model coordinates to original frame pixel coordinates (reversing the letterbox transform).
-6. Returns the frame unchanged plus `*Metadata` containing the detections.
-
-The post-processing code (`ParseYOLOv8Output`, `NMS`, `IoU`) lives in `processors/yolov8.go` with no external dependencies, so it compiles and is testable without ONNX Runtime installed.
+The pure-Go decoders (`ParseYOLOv8Output`, `ParseYOLOE2EOutput`, `NMS`, `NMSPerClass`) live in `processors/yolov8.go` and `processors/yolo.go` and compile without ONNX Runtime.
 
 ---
 
