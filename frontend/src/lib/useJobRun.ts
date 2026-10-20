@@ -19,6 +19,7 @@ export interface NodeMetric {
   MediaPTS: number;      // ns — latest input timestamp processed (source nodes only)
   MediaDuration: number; // ns — total input duration (0 = live / unknown)
   OutputPTS: number;     // ns — latest output timestamp written (sink nodes only)
+  SwsReinits?: number;   // swscale graph rebuilds (moving_crop_scale)
 }
 
 // NodePerfSnapshot mirrors pipeline/snap.NodePerfSnapshot.

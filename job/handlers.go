@@ -406,6 +406,11 @@ type graphRunner struct {
 	// the consumer is closed. Populated by the events-wiring loop.
 	// Any processor not in this list is closed afterwards in map order.
 	goProcessorCloseOrder []string
+	// smartCopyPlans caches the per-node smartcopy video plan (boundary
+	// encoder configuration, output extradata, packet framing) keyed by
+	// node ID, so the sink that registers the output stream and the
+	// handler that re-encodes boundary GOPs agree on one plan.
+	smartCopyPlans sync.Map
 }
 
 func newGraphRunner(cfg *Config, pipe *Pipeline) *graphRunner {

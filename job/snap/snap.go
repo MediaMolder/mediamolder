@@ -28,6 +28,9 @@ type NodeMetricsSnapshot struct {
 	// actually been encoded + muxed, which is what the GUI uses for
 	// progress/speed/ETA.
 	OutputPTS time.Duration
+	// SwsReinits counts swscale graph builds on a node that scales
+	// (moving_crop_scale). Zero on every other node.
+	SwsReinits int64 `json:",omitempty"`
 }
 
 // MetricsSnapshot is a complete metrics snapshot for the pipeline.

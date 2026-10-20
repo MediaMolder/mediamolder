@@ -213,9 +213,10 @@ export function RunPanel({ run, nodeKinds, onClose }: Props) {
                     const perf = perfMap.get(n.NodeID);
                     const stalledPct = perf != null ? (perf.StalledFrac * 100).toFixed(0) + '%' : '—';
                     const preset = perf?.CurrentPreset ? ` [${perf.CurrentPreset}]` : '';
+                    const sws = n.SwsReinits ? ` [sws ×${n.SwsReinits}]` : '';
                     return (
                       <tr key={n.NodeID}>
-                        <td>{n.NodeID}{preset}</td>
+                        <td>{n.NodeID}{preset}{sws}</td>
                         <td>{n.Frames}</td>
                         <td>{rate.toFixed(1)} {unit}</td>
                         <td className={n.Errors > 0 ? 'cell-error' : ''}>{n.Errors}</td>

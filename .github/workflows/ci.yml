@@ -206,7 +206,7 @@ jobs:
         run: |
           sudo apt-get update -y
           sudo apt-get install -y \
-            build-essential nasm pkg-config clang \
+            build-essential nasm pkg-config clang-19 libclang-rt-19-dev \
             libx264-dev libx265-dev libvpx-dev libopus-dev \
             libass-dev libfreetype6-dev libfontconfig1-dev \
             libharfbuzz-dev libfribidi-dev libmp3lame-dev \
@@ -286,9 +286,20 @@ jobs:
 
       - name: Test with ASan
         # CGO_ENABLED=1 is the default; -asan instruments C and Go allocations.
+        # CC is Clang 19, not the default GCC. GCC's libasan races with the
+        # Go runtime in ThreadRegistry::StartThread when an instrumented C
+        # file registers its globals (llvm/llvm-project#87324). The check
+        # aborts or wedges the process until the test kill alarm. Clang 19
+        # has the allocator fix (llvm/llvm-project#88177). FFmpeg itself
+        # stays a normal GCC build.
         # ASAN_OPTIONS=detect_leaks=1 enables LSan (included in ASan on Linux).
+        # LSAN_OPTIONS points at the known third-party leaks we cannot fix
+        # (see .github/lsan.supp).
         env:
+          CC: clang-19
+          CXX: clang++-19
           ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
+          LSAN_OPTIONS: suppressions=${{ github.workspace }}/.github/lsan.supp:print_suppressions=0
         run: go test -asan -short ./...
 
   lint:

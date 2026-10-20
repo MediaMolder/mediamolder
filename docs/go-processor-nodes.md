@@ -26,6 +26,7 @@ Everything runs in-process: no subprocesses, no network calls, no Python. Your p
 		- [`scene_change_histogram`](#scene_change_histogram)
 		- [`metadata_file_writer`](#metadata_file_writer)
 		- [`sei_hello`](#sei_hello)
+		- [`moving_crop_scale`](#moving_crop_scale)
 		- [`vidi_analyzer`](#vidi_analyzer)
 		- [`twelvelabs_indexer`](#twelvelabs_indexer)
 		- [`twelvelabs_analyzer`](#twelvelabs_analyzer)
@@ -162,10 +163,11 @@ type ProcessorContext struct {
     PTS        int64           // presentation timestamp (in stream timebase units)
     FrameIndex uint64          // how many frames this node has seen so far (starts at 0)
     Context    context.Context // standard Go context — check this for cancellation
+    TimeBase   [2]int          // input time base, {numerator, denominator}; {0, 0} when unknown
 }
 ```
 
-You can use `MediaType` to handle video and audio frames differently, and `FrameIndex` for logic that depends on position (e.g. "skip the first 100 frames").
+You can use `MediaType` to handle video and audio frames differently, and `FrameIndex` for logic that depends on position (e.g. "skip the first 100 frames"). `TimeBase` is the input edge's time base. `moving_crop_scale` uses it to turn keyframe times in seconds into PTS.
 
 ### Metadata
 
@@ -550,6 +552,33 @@ Non-video frames are passed through untouched.
 > **Note:** `seiHelloUUID` is an ASCII placeholder, not an RFC 4122 UUID.
 > Production processors should use a proper UUID to avoid bitstream collisions
 > with other SEI producers.
+
+### `moving_crop_scale`
+
+Crops each video frame to a keyframed window and scales that window to a
+fixed output size. The encoder opens at `output` width and height, so the
+graph does not need a following `scale`. Keyframes bracket PTS (or seconds,
+via `t` and `ProcessorContext.TimeBase`). Between them the window can hold,
+move linearly, or follow a Catmull-Rom spline. A `zoom` list interpolates in
+log size, from 1/16 to 64. The window is placed at sub-pixel positions and
+may extend past the picture; the gap is digital black. `aspect: output`
+derives the height from the output aspect. `match: sample` uses each
+keyframe at most once, within half the gap to the next, and `Close` fails
+if a keyframe matched no frame.
+
+| Param | Default | Description |
+|-------|---------|-------------|
+| `output.width`, `output.height` | required | Even, at least 2. |
+| `keyframes` | required | `pts` or `t`, `x`/`y` or `cx`/`cy`, `w`/`h` or `zoom`. Time strictly increasing. |
+| `interpolate` | `linear` | `hold`, `linear`, or `smooth`. |
+| `unmatched` | `hold` | `hold`, `drop`, or `error` outside the bracket. With `sample`, the same choice applies to a frame that took no keyframe. |
+| `match` | `bracket` | `bracket`, or `sample` to consume each keyframe once. `sample` requires `interpolate: hold`. |
+| `aspect` | `free` | `free`, or `output` to keep the output aspect. A derived height past the picture is black. |
+| `align` | `chroma` | `chroma` or `exact`. Accepted so an older job opens. Sampling is sub-pixel either way. |
+| `flags` | `bicubic` | Resample kernel: `bilinear`, `bicubic`, `lanczos`, `spline`, `area`, `neighbor`. |
+| `emit_rect` | `false` | Metadata with the window rounded half away from zero. |
+
+See [Moving crop and scale](moving-crop-scale.md).
 
 ### `vidi_analyzer`
 

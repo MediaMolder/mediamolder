@@ -1794,6 +1794,8 @@ function NodeForm({ def, onChange, streams, padHints, hwDevices = [], inputIds =
 /* ---------- Smart-copy (frame-accurate trim) node form ---------- */
 
 // Reserved keys that are not boundary-encoder AVOptions.
+// smartcopy_global_header is legacy: the engine derives parameter-set
+// placement from the source and ignores it, but older graphs may carry it.
 const SMARTCOPY_RESERVED = new Set([
   'smartcopy_encoder',
   'smartcopy_global_header',
@@ -1838,7 +1840,6 @@ function SmartCopyForm({ def, onChange, isAudio = false }: { def: NodeDef; onCha
   if (isAudio) return <SmartAudioCopyForm />;
   const params = def.params ?? {};
   const encName = (params.smartcopy_encoder as string | undefined)?.trim() || 'libx264';
-  const globalHeader = params.smartcopy_global_header;
 
   // Edit a smartcopy-specific param directly (merges into def.params).
   const setSmartParam = (key: string, value: unknown) => {
@@ -1901,25 +1902,6 @@ function SmartCopyForm({ def, onChange, isAudio = false }: { def: NodeDef; onCha
       />
 
       <EncoderForm def={shimDef} onChange={handleEncoderChange} />
-
-      <label
-        style={{ display: 'flex', alignItems: 'flex-start', gap: 6, marginTop: 10, cursor: 'pointer' }}
-      >
-        <input
-          type="checkbox"
-          checked={globalHeader === undefined ? true : globalHeader !== false}
-          onChange={(e) => setSmartParam('smartcopy_global_header', e.target.checked)}
-          style={{ marginTop: 2, flexShrink: 0 }}
-        />
-        <span>
-          Global header (<code>smartcopy_global_header</code>)
-          <div style={{ fontSize: 11, color: 'var(--text-dim)', fontWeight: 'normal', marginTop: 2 }}>
-            Place codec parameter sets in the container header (avcC/hvcC) rather
-            than in-band. Required for MP4/MOV; leave on unless the container
-            needs in-band parameter sets (e.g. MPEG-TS).
-          </div>
-        </span>
-      </label>
     </>
   );
 }
@@ -1990,6 +1972,199 @@ function FilterAdvanced({
   );
 }
 
+/* ---------- Moving crop and scale ----------
+ * Output size, the enums, and one row per keyframe. A timeline editor is
+ * out of scope; empty cells are omitted from the keyframe object. */
+const MCS_KF_FIELDS = ['pts', 't', 'x', 'y', 'cx', 'cy', 'w', 'h', 'zoom'] as const;
+
+function NumericCell({
+  label,
+  value,
+  onCommit,
+}: {
+  label: string;
+  value: unknown;
+  onCommit: (raw: string) => void;
+}) {
+  const shown = typeof value === 'number' && Number.isFinite(value) ? String(value) : '';
+  const [local, setLocal] = useState(shown);
+  useEffect(() => setLocal(shown), [shown]);
+  return (
+    <label style={{ fontSize: 11 }}>
+      {label}
+      <input
+        type="text"
+        inputMode="decimal"
+        value={local}
+        onChange={(e) => setLocal(e.target.value)}
+        onBlur={() => {
+          if (local.trim() === '') {
+            if (shown !== '') onCommit('');
+            return;
+          }
+          const n = Number(local);
+          if (!Number.isFinite(n)) {
+            setLocal(shown);
+            return;
+          }
+          if (String(n) !== shown) onCommit(local.trim());
+        }}
+      />
+    </label>
+  );
+}
+
+function MovingCropScaleParams({
+  params,
+  onChange,
+}: {
+  params: Record<string, unknown>;
+  onChange: (next: Record<string, unknown>) => void;
+}) {
+  const output = params.output && typeof params.output === 'object'
+    ? (params.output as Record<string, unknown>)
+    : {};
+  const rows = Array.isArray(params.keyframes)
+    ? params.keyframes.map((row) =>
+        row && typeof row === 'object' ? { ...(row as Record<string, unknown>) } : {},
+      )
+    : [];
+
+  const setOutput = (key: 'width' | 'height', raw: string) => {
+    const next = { ...output };
+    if (raw.trim() === '') delete next[key];
+    else {
+      const n = Number(raw);
+      if (!Number.isFinite(n)) return;
+      next[key] = n;
+    }
+    onChange({ ...params, output: next });
+  };
+  const setChoice = (key: string, value: string) => onChange({ ...params, [key]: value });
+  const setMatch = (value: string) => {
+    if (value === 'sample') {
+      onChange({ ...params, match: value, interpolate: 'hold' });
+      return;
+    }
+    setChoice('match', value);
+  };
+  useEffect(() => {
+    if (params.match === 'sample' && params.interpolate !== 'hold') {
+      onChange({ ...params, interpolate: 'hold' });
+    }
+  }, [params.match, params.interpolate]);
+  const writeRows = (nextRows: Record<string, unknown>[]) =>
+    onChange({ ...params, keyframes: nextRows });
+  const setCell = (index: number, key: string, raw: string) => {
+    const nextRows = rows.map((row) => ({ ...row }));
+    const row = nextRows[index] ?? {};
+    if (raw.trim() === '') delete row[key];
+    else {
+      const n = Number(raw);
+      if (!Number.isFinite(n)) return;
+      row[key] = n;
+    }
+    nextRows[index] = row;
+    writeRows(nextRows);
+  };
+  const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? String(v) : '');
+  const choice = (key: string, fallback: string) =>
+    typeof params[key] === 'string' ? (params[key] as string) : fallback;
+  const sampleMatch = choice('match', 'bracket') === 'sample';
+
+  return (
+    <>
+      <div style={{ fontSize: 11, color: 'var(--text-dim)', marginBottom: 8 }}>
+        <strong style={{ color: 'var(--text)' }}>Moving crop and scale</strong> — crop to a
+        keyframed window and scale it to the output size. The window can extend past the
+        picture, and that gap is black. Position is sub-pixel. The encoder opens at that size.
+      </div>
+      <label>Output width</label>
+      <input type="number" min={2} step={2} value={num(output.width)} onChange={(e) => setOutput('width', e.target.value)} />
+      <label>Output height</label>
+      <input type="number" min={2} step={2} value={num(output.height)} onChange={(e) => setOutput('height', e.target.value)} />
+
+      <label style={{ marginTop: 8 }}>Interpolate</label>
+      <select
+        value={sampleMatch ? 'hold' : choice('interpolate', 'linear')}
+        disabled={sampleMatch}
+        onChange={(e) => setChoice('interpolate', e.target.value)}
+      >
+        <option value="hold">Hold</option>
+        <option value="linear">Linear</option>
+        <option value="smooth">Smooth</option>
+      </select>
+      <label style={{ marginTop: 8 }}>Outside keyframes</label>
+      <select value={choice('unmatched', 'hold')} onChange={(e) => setChoice('unmatched', e.target.value)}>
+        <option value="hold">Hold</option>
+        <option value="drop">Drop</option>
+        <option value="error">Error</option>
+      </select>
+      <label style={{ marginTop: 8 }}>Match</label>
+      <select value={choice('match', 'bracket')} onChange={(e) => setMatch(e.target.value)}>
+        <option value="bracket">Bracket</option>
+        <option value="sample">Sample</option>
+      </select>
+      <label style={{ marginTop: 8 }}>Aspect</label>
+      <select value={choice('aspect', 'free')} onChange={(e) => setChoice('aspect', e.target.value)}>
+        <option value="free">Free</option>
+        <option value="output">Output</option>
+      </select>
+      <label style={{ marginTop: 8 }}>Scale flags</label>
+      <select value={choice('flags', 'bicubic')} onChange={(e) => setChoice('flags', e.target.value)}>
+        <option value="bilinear">Bilinear</option>
+        <option value="bicubic">Bicubic</option>
+        <option value="lanczos">Lanczos</option>
+        <option value="spline">Spline</option>
+        <option value="area">Area</option>
+        <option value="neighbor">Neighbor</option>
+      </select>
+      <label style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 8, cursor: 'pointer' }}>
+        <input
+          type="checkbox"
+          checked={params.emit_rect === true}
+          onChange={(e) => {
+            const next = { ...params };
+            if (e.target.checked) next.emit_rect = true;
+            else delete next.emit_rect;
+            onChange(next);
+          }}
+        />
+        <span>Emit the applied rectangle</span>
+      </label>
+
+      <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 10 }}>
+        Keyframes. Use <code>pts</code> or <code>t</code>, <code>x</code>/<code>y</code> or <code>cx</code>/<code>cy</code>, and <code>w</code>/<code>h</code> or <code>zoom</code>. Leave the other cells empty.
+      </div>
+      {rows.map((row, i) => (
+        <div key={i} style={{ borderTop: '1px solid var(--border)', marginTop: 8, paddingTop: 6 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ fontSize: 11 }}>Keyframe {i + 1}</span>
+            <button
+              type="button"
+              onClick={() => writeRows(rows.filter((_, j) => j !== i))}
+            >
+              Remove
+            </button>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6 }}>
+            {MCS_KF_FIELDS.map((key) => (
+              <NumericCell key={key} label={key} value={row[key]} onCommit={(raw) => setCell(i, key, raw)} />
+            ))}
+          </div>
+        </div>
+      ))}
+      <button
+        type="button"
+        style={{ marginTop: 8 }}
+        onClick={() => writeRows([...rows, { pts: 0, x: 0, y: 0, w: 64, h: 64 }])}
+      >
+        Add keyframe
+      </button>
+    </>
+  );
+}
+
 /* ---------- Params editor (key/value rows) ---------- */
 /* ---------- Go-processor params editor ----------
  * Renders known file-path params (output_file) as a FileField with a
@@ -2030,6 +2205,10 @@ function GoProcessorParams({
 
   if (processorName === 'face_detect') {
     return <FaceDetectParams params={params} onChange={onChange} />;
+  }
+
+  if (processorName === 'moving_crop_scale') {
+    return <MovingCropScaleParams params={params} onChange={onChange} />;
   }
 
   if (processorName === 'metadata_file_writer') {

@@ -533,6 +533,8 @@ func processorStreams(name string) []string {
 		return []string{"video"}
 	case "face_detect":
 		return []string{"video", "events"}
+	case "moving_crop_scale":
+		return []string{"video"}
 	}
 	return nil
 }
@@ -578,6 +580,8 @@ func processorDescription(name string) string {
 		return "Generate Marengo video embeddings per segment, inline or to disk (json / jsonl)."
 	case "sequence_editor":
 		return "Multi-track NLE timeline: place clips on tracks with cuts, layering, and the full transition set (native Go engine). Optionally mixes audio from the same clips with auto-coupled crossfades. A FrameSource — clips reference inputs by id; no graph inputs needed."
+	case "moving_crop_scale":
+		return "Crop each video frame to a keyframed window and scale it to a fixed output size. The window may extend past the picture, and the gap is black. Position is sub-pixel. Sample matching drops frames off the path and fails the job if a keyframe is missed. The encoder opens at the output size. See docs/moving-crop-scale.md."
 	case "raw_decode":
 		return "Develop a camera-RAW file (NEF/CR2/CR3/ARW/RAF/ORF/RW2/PEF/SRW/DNG) to a full-resolution 8-bit sRGB frame via the bundled LibRaw (requires the with_libraw build tag). A FrameSource — set the input file; no graph inputs needed. libav renders RAW black, so use this node for a real develop."
 	}

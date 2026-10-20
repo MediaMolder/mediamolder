@@ -60,6 +60,15 @@ type NodeMetrics struct {
 	streamOutputPTS map[int]int64
 
 	mu sync.Mutex
+
+	// swsReinits is the latest swscale graph-build count reported by a
+	// processor that scales. The handler stores the cumulative total.
+	swsReinits atomic.Int64
+}
+
+// SetSwsReinits stores the processor's cumulative swscale graph-build count.
+func (m *NodeMetrics) SetSwsReinits(n int64) {
+	m.swsReinits.Store(n)
 }
 
 // RecordLatency records a single frame's processing duration and
@@ -191,6 +200,7 @@ func (m *NodeMetrics) Snapshot() NodeMetricsSnapshot {
 		MediaPTS:      time.Duration(m.mediaPTSNs.Load()),
 		MediaDuration: time.Duration(m.mediaDurationNs.Load()),
 		OutputPTS:     time.Duration(outputPTSns),
+		SwsReinits:    m.swsReinits.Load(),
 	}
 }
 

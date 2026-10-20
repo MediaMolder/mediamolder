@@ -7,6 +7,34 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- **`moving_crop_scale` processor.** Crops each video frame to a keyframed
+  window and scales it to a fixed output size. Keyframes bracket PTS, or
+  seconds via `t`, and interpolate with hold, linear, or Catmull-Rom. A
+  `zoom` list moves in log size, from 1/16 to 64. The window may extend
+  past the picture, and the gap is digital black, so a 16:9 source can
+  become a 9:16 frame with bars. Position is sampled at sub-pixel
+  accuracy. `aspect: output` derives the height from the output aspect,
+  and a height taller than the picture hangs off the frame. `match: sample`
+  uses each keyframe at most once, within half the gap to the next
+  keyframe, and `Close` fails when a keyframe matched no frame. The
+  encoder opens at `output` width and height through `FrameTransformInfo`.
+  `ProcessorContext.TimeBase` carries the input time base. The node
+  resamples the window itself, so `SwsReinits` stays 0. New
+  `av.Frame.CropRect`, `av.Frame.CropWindow`, `av.Frame.VisibleWidth`,
+  `av.Frame.VisibleHeight`, `av.Frame.Log2ChromaW`, `av.Frame.FillBlack`,
+  `av.ResampleWindow`, `av.Scaler`, and `av.SecondsToTicks`. Also new:
+  `av.Frame.CropColumns`, `av.Frame.Crop`,
+  `av.Frame.SetCrop`, and `av.PixFmtByName`.
+  See [docs/moving-crop-scale.md](docs/moving-crop-scale.md).
+- **Frame-index walks.** `frameindex.Estimate`, `WalkPackets`, and `WalkDecode`
+  build a presentation-order PTS table for one video stream. The packet walk
+  does not decode. The decode walk records one row per decoded frame, and both
+  walks sort into presentation order. `Estimate` uses the average frame rate,
+  and the tick rate only when the average is missing. An interlaced stream is
+  deinterlaced with `bwdif=mode=send_frame` first, so a field is not a row, and
+  the row's PTS stays in the stream timebase. Both walks honour context
+  cancellation and stop past `MaxIndexFrames` (1,000,000).
+  See [docs/architecture/frame-index.md](docs/architecture/frame-index.md).
 - **Bitstream trace validation: violations list, structure checks, `--validate`.**
   Reports now carry a top-level `violations` list: every unit parse failure the
   syntax templates detect (out-of-range elements, truncation, missing
@@ -33,6 +61,49 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- **`go_processor` nodes that return a new frame without metadata now
+  forward that frame.** The runtime only swapped in the processor's output
+  when the processor also returned metadata. Otherwise it sent the original
+  frame downstream and leaked the new one. A cropping processor's output
+  never reached the encoder: a following `scale` squashed the full frame
+  instead. Dropping a frame while returning metadata no longer panics.
+  Frames held in a lookahead delay buffer are released when the handler
+  returns early, instead of leaking.
+- **smartcopy: constant-rate sources give constant-rate cuts.** Re-encoded
+  packets took their first DTS values from the priming GOP (a jump of
+  several frames at the head), and a copied keyframe whose leading pictures
+  were re-encoded kept a DTS two frames early, which the monotonic clamp
+  turned into 1-tick and 2001-tick steps. Every DTS step is now one frame
+  for H.264 (closed and open GOP) and HEVC cuts, so `stts` has one entry and
+  completed-file probes no longer call the cut variable frame rate.
+- **smartcopy: HEVC cuts keep `hvc1` and decode in AVFoundation.** The
+  boundary VPS/SPS/PPS are renumbered to free ids and appended to the output
+  hvcC, with the re-encoded slice headers renumbered to match, instead of
+  travelling in-band under `hev1`, which AVFoundation does not decode.
+- **Re-encoded audio trims keep the head of the window.** The auto-inserted
+  `atrim` is now followed by `asetpts=PTS-STARTPTS` (unless `copy_ts`) and
+  the sink no longer applies its packet-level ss/to drop or start shift to
+  that stream (segment re-anchors still apply), so the encoder's priming packet (AAC: -1024 samples) and, for a
+  start that is not sample-aligned, the packet holding the window's first
+  samples reach the muxer. AAC output now starts at 0, lasts exactly the
+  window and decodes identically to `ffmpeg -af atrim,asetpts -c:a aac`;
+  it used to begin one AAC frame late behind a 21 ms empty edit.
+- **smartcopy: re-encoded boundary GOPs now decode, and open-GOP cuts keep
+  every in-window frame.** Boundary packets were forwarded as Annex B with
+  parameter sets the output never carried, so every re-encoded frame was
+  dropped or garbled next to the copied interior (H.264 and HEVC, MP4 and
+  MOV). Re-encoded packets are now re-framed to the source's NAL framing;
+  with libx264 the boundary SPS/PPS take a free id and join the output avcC;
+  for HEVC they are renumbered into the output hvcC (see the `hvc1` entry
+  above); with other H.264 encoders they travel in-band with the source's
+  parameter sets re-inserted on copied keyframes and an `avc3` sample entry. GOPs are classified by presentation span, so leading
+  pictures of open GOPs are neither dropped nor copied against missing
+  references; splices use BLA (HEVC) or in-place POC / frame_num
+  renumbering (H.264). Re-encoded packets carry durations and display-order
+  DTS so the MP4 edit list and timeline stay intact. Covered by decode-based
+  tests on generated H.264/HEVC, open/closed-GOP, MP4/MOV fixtures.
+  `smartcopy_global_header` is ignored (placement is derived from the
+  source) and the GUI toggle is gone.
 - **Source node tolerates decoder errors the way ffmpeg does.** A packet a
   decoder rejects mid-stream (a damaged AC-3 frame in a camcorder transport
   stream, a slice with a bad header) used to end the whole run with a bare

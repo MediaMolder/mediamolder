@@ -116,3 +116,33 @@ func (f *Frame) SetPictType(pt int) { f.p.pict_type = uint32(pt) }
 
 // raw returns the underlying C pointer. For use within the av package only.
 func (f *Frame) raw() *C.AVFrame { return f.p }
+
+// DecodeErrorFlags returns AVFrame.decode_error_flags: a bit set of
+// FF_DECODE_ERROR_* values (invalid bitstream, missing reference,
+// concealment active, ...) the decoder raised while producing this frame.
+// Zero means the decoder reported no error.
+func (f *Frame) DecodeErrorFlags() int {
+	if f == nil || f.p == nil {
+		return 0
+	}
+	return int(f.p.decode_error_flags)
+}
+
+// Duration returns the frame's duration in stream time_base units
+// (AVFrame.duration; 0 when unknown).
+func (f *Frame) Duration() int64 {
+	if f == nil || f.p == nil {
+		return 0
+	}
+	return int64(f.p.duration)
+}
+
+// SetDuration sets AVFrame.duration. Encoders that keep per-frame
+// bookkeeping (libx264, libx265) stamp it on the packet they emit for the
+// frame.
+func (f *Frame) SetDuration(d int64) {
+	if f == nil || f.p == nil {
+		return
+	}
+	f.p.duration = C.int64_t(d)
+}

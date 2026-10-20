@@ -4,6 +4,9 @@
 
 This document applies the **C4 Model** (Context, Containers, Components, Code) — a lightweight, hierarchical approach to software architecture documentation created by Simon Brown. It is ideal for this project because the codebase is well-structured into clear layers (CLI, HTTP, graph, runtime, processors, AV bindings, frontend).
 
+> **See also:** [frame-index.md](frame-index.md) — presentation-order PTS table
+> for one video stream (packet walk, then a decode walk).
+>
 > **See also:** [field-ownership.md](field-ownership.md) — authoritative
 > classification of every `Config` / `Output` / `GlobalOptions` / `Input`
 > field as node-local, authoring shorthand, muxer-owned, true global, or
@@ -148,6 +151,7 @@ graph TD
 | **Runtime Executor**   | `runtime/`, `pipeline/`     | State machine (NULL→READY→PLAYING→NULL), goroutine groups per node, channel plumbing, backpressure watchdog, graceful shutdown, clock sync (`clock/`) |
 | **Processor Registry** | `processors/`               | Global `RegisterProcessor(name, factory)`, built-in nodes (decoder, filter, encoder, split, overlay, …), interface for custom Go processors |
 | **AV Bindings**        | `av/`                       | Idiomatic Go wrappers around libav* (`FormatContext`, `CodecContext`, `FilterGraph`, `Frame`, `Packet`), resource safety (`io.Closer`), HW accel contexts |
+| **Frame index**        | `frameindex/`               | Presentation-order PTS table for one video stream: a packet walk, then a decode walk |
 | **Coded Bitstream**    | `cbs/`, `cbs/report/`       | cgo-free read-only Go port of FFmpeg's CBS framework: H.264/H.265/AV1 NAL/OBU splitting and header decomposition with a trace-callback model validated byte-for-byte against `trace_headers`; `report` renders JSON/JSONL/CSV/text (used by `bitstream_trace` and the `trace-headers` CLI) |
 | **Observability**      | `observability/`            | Prometheus collectors, OTel spans around build/open/execute phases, typed event bus (`StateChanged`, `Error`, `FrameProcessed`) |
 | **Compatibility**      | `compat/`, `docs/`          | FFmpeg CLI → JSON parser, migration guide, capability matrix |
@@ -260,6 +264,8 @@ mediamolder.RegisterProcessor("scene-detector", func() processors.Processor {
     return &SceneDetector{threshold: 0.3}
 })
 ```
+
+`moving_crop_scale` changes the picture size. It implements `FrameTransformInfo`, and `resolveEdgeStreamInfo` reports that output width and height to the encoder and to downstream filters. `ProcessorContext.TimeBase` is the input edge time base, `{numerator, denominator}`, filled by the go_processor handler. Both live in `processors/processor.go`.
 
 **Pipeline Lifecycle (high-level):**
 ```go
