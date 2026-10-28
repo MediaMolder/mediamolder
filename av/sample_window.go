@@ -11,7 +11,11 @@ package av
 // #include <stdint.h>
 // #include <stdlib.h>
 // #include <string.h>
+// #ifdef _WIN32
+// #include <windows.h>
+// #else
 // #include <unistd.h>
+// #endif
 // #include "libavutil/frame.h"
 // #include "libavutil/pixdesc.h"
 // #include "libavutil/pixfmt.h"
@@ -602,12 +606,24 @@ package av
 //     return NULL;
 // }
 //
+// // mm_online_cpus is the processor count the resampler may spread over. sysconf is
+// // POSIX; MinGW has neither it nor _SC_NPROCESSORS_ONLN, so Windows asks the kernel.
+// static long mm_online_cpus(void) {
+// #ifdef _WIN32
+//     SYSTEM_INFO si;
+//     GetSystemInfo(&si);
+//     return (long)si.dwNumberOfProcessors;
+// #else
+//     return sysconf(_SC_NPROCESSORS_ONLN);
+// #endif
+// }
+//
 // static int mm_choose_threads(int rows, int cols) {
 //     if (rows < 2 || cols < 1)
 //         return 1;
 //     if ((long)rows * (long)cols < 256L * 128L)
 //         return 1;
-//     long n = sysconf(_SC_NPROCESSORS_ONLN);
+//     long n = mm_online_cpus();
 //     if (n < 1)
 //         n = 1;
 //     if (n > 16)
