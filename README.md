@@ -335,6 +335,7 @@ For detailed instructions see [MacOS](docs/build/macos.md), [Windows](docs/build
 - [Bitstream Trace](docs/bitstream-trace.md) — report every H.264/H.265/AV1 NAL unit / OBU as JSON without decoding; an improved, machine-readable trace_headers (`trace-headers` CLI + `bitstream_trace` node)
 - [Camera-RAW Decode](docs/raw-decode-guide.md) — develop NEF/CR2/CR3/ARW/RAF/ORF/RW2/PEF/SRW/DNG to 8-bit sRGB via bundled LibRaw (`raw-decode` CLI + `raw_decode` node)
 - [Face Detection](docs/face-detection-guide.md) — detect, align, and embed faces in images/video for recognition/clustering (`face-detect` CLI + `face_detect` node)
+- [People, ball, and face detection from Go](docs/detect-guide.md) — one decoded picture in, person, sports-ball, and face boxes out (`detect` package)
 - [Real-Time Controller](docs/realtime-controller.md) — adaptive control loop, encoder preset stepping, output buffers, `mediamolder watch`, HTTP API
 
 ### Code
