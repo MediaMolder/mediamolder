@@ -12,6 +12,7 @@ import (
 	_ "image/jpeg"
 	_ "image/png"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -125,18 +126,38 @@ func faceSettings(t *testing.T) func(when string) {
 	}
 }
 
-// This test is first in the file so that it reaches face.Available before
-// any other test has started ONNX Runtime or loaded the face pipeline.
+// envRestoreChild marks the re-executed test binary that runs the body of
+// TestOpenFailureRestoresFaceSettings.
+const envRestoreChild = "MEDIAMOLDER_DETECT_RESTORE_CHILD"
+
+// The failure path needs a process in which ONNX Runtime has not started
+// and no face pipeline is loaded, so the test re-executes the test binary
+// to run only itself. In that child, anything but the expected failure is
+// a test failure, never a skip.
 func TestOpenFailureRestoresFaceSettings(t *testing.T) {
 	dir := faceModels(t)
-	if face.LoadedModelsDir() != "" {
-		t.Skip("the face pipeline is already loaded in this process")
+	if os.Getenv(envRestoreChild) == "" {
+		const name = "TestOpenFailureRestoresFaceSettings"
+		cmd := exec.Command(os.Args[0], "-test.run=^"+name+"$", "-test.v", "-test.count=1")
+		cmd.Env = append(os.Environ(), envRestoreChild+"=1")
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("fresh process failed: %v\n%s", err, out)
+		}
+		if !strings.Contains(string(out), "--- PASS: "+name) {
+			t.Fatalf("fresh process did not run the check:\n%s", out)
+		}
+		return
+	}
+
+	if got := face.LoadedModelsDir(); got != "" {
+		t.Fatalf("the face pipeline is already loaded from %q in a fresh process", got)
 	}
 	check := faceSettings(t)
 	d, err := Open(Config{FaceModels: dir, ONNXRuntime: filepath.Join(t.TempDir(), "missing-runtime")})
 	if err == nil {
 		d.Close()
-		t.Skip("ONNX Runtime was already started, so the bad library path was not loaded")
+		t.Fatal("Open succeeded with an ONNX Runtime library that does not exist")
 	}
 	if !strings.HasPrefix(err.Error(), "face models:") {
 		t.Fatalf("Open = %v", err)
