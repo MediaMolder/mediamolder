@@ -203,24 +203,30 @@ func (d *Detector) Detect(img image.Image, want Want) (Result, error) {
 }
 
 // ObjectInputSize is the object model's square input side, or 0 when no
-// object model is open.
+// object model is open, including after Close.
 func (d *Detector) ObjectInputSize() int {
+	d.mu.Lock()
+	defer d.mu.Unlock()
 	return d.inputSize
 }
 
 // HasObjects reports whether an object model is open.
 func (d *Detector) HasObjects() bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
 	return d.objects != nil
 }
 
 // HasFaces reports whether the face models are open.
 func (d *Detector) HasFaces() bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
 	return d.faces != nil
 }
 
-// Close releases the object model and marks the detector closed. It is
-// safe to call twice. The face pipeline is shared by the whole process
-// and stays loaded.
+// Close releases the object model and marks the detector closed, after
+// which it reports no model as open. It is safe to call twice. The face
+// pipeline is shared by the whole process and stays loaded.
 func (d *Detector) Close() error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -228,6 +234,9 @@ func (d *Detector) Close() error {
 		return nil
 	}
 	d.closed = true
+	d.objects = nil
+	d.faces = nil
+	d.inputSize = 0
 	if d.closeFn != nil {
 		return d.closeFn()
 	}

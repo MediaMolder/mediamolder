@@ -18,6 +18,9 @@ func Capable() bool { return false }
 // Available returns the reason face analysis is unavailable; always ErrUnsupported here.
 func Available() error { return ErrUnsupported }
 
+// LoadedModelsDir returns "": this build never loads a pipeline.
+func LoadedModelsDir() string { return "" }
+
 // Analyze is unavailable without the `with_onnx` build tag.
 func Analyze(path string) ([]Face, error) { return nil, ErrUnsupported }
 

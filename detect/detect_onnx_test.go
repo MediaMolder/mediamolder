@@ -102,6 +102,51 @@ func inside(b Box, img image.Image) bool {
 	return b.X >= 0 && b.Y >= 0 && b.X+b.W <= float64(r.Dx()) && b.Y+b.H <= float64(r.Dy())
 }
 
+// faceSettings pins the face package's overrides for one test and returns
+// a check that they still hold.
+func faceSettings(t *testing.T) func(when string) {
+	t.Helper()
+	prevDir, prevLib := face.ModelsDir(), face.ONNXLib()
+	t.Cleanup(func() {
+		face.SetModelsDir(prevDir)
+		face.SetONNXLib(prevLib)
+	})
+	const dir, lib = "/face-settings/models", "/face-settings/libonnxruntime"
+	face.SetModelsDir(dir)
+	face.SetONNXLib(lib)
+	return func(when string) {
+		t.Helper()
+		if got := face.ModelsDir(); got != dir {
+			t.Errorf("%s: face models dir = %q, want %q", when, got, dir)
+		}
+		if got := face.ONNXLib(); got != lib {
+			t.Errorf("%s: face ONNX library = %q, want %q", when, got, lib)
+		}
+	}
+}
+
+// This test is first in the file so that it reaches face.Available before
+// any other test has started ONNX Runtime or loaded the face pipeline.
+func TestOpenFailureRestoresFaceSettings(t *testing.T) {
+	dir := faceModels(t)
+	if face.LoadedModelsDir() != "" {
+		t.Skip("the face pipeline is already loaded in this process")
+	}
+	check := faceSettings(t)
+	d, err := Open(Config{FaceModels: dir, ONNXRuntime: filepath.Join(t.TempDir(), "missing-runtime")})
+	if err == nil {
+		d.Close()
+		t.Skip("ONNX Runtime was already started, so the bad library path was not loaded")
+	}
+	if !strings.HasPrefix(err.Error(), "face models:") {
+		t.Fatalf("Open = %v", err)
+	}
+	check("after a failed Open")
+	if got := face.LoadedModelsDir(); got != "" {
+		t.Fatalf("a failed Open loaded the face pipeline from %q", got)
+	}
+}
+
 func TestAvailable(t *testing.T) {
 	if err := Available(); err != nil {
 		t.Fatalf("Available = %v", err)
@@ -257,9 +302,15 @@ func TestOpenSecondFaceDirectory(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	d, err := Open(Config{FaceModels: other})
+	check := faceSettings(t)
+	d, err := Open(Config{FaceModels: other, ONNXRuntime: "/other/libonnxruntime"})
 	if d != nil || err == nil || !strings.HasPrefix(err.Error(), "face models:") {
 		t.Fatalf("Open from a second directory = %v, %v", d, err)
 	}
-	open(t, Config{FaceModels: dir})
+	check("after Open from a second directory")
+	open(t, Config{FaceModels: dir, ONNXRuntime: "/other/libonnxruntime"})
+	check("after Open on the loaded directory")
+	if got, _ := filepath.Abs(face.LoadedModelsDir()); got != dir {
+		t.Fatalf("face pipeline loaded from %q, want %q", got, dir)
+	}
 }

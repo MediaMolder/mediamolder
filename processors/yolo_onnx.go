@@ -445,8 +445,8 @@ func (p *YOLODetector) letterbox(img image.Image) []float32 {
 	return LetterboxTensor(img, p.inputSize, p.pad, mode)
 }
 
-// infer copies a preprocessed tensor into the bound input, runs the
-// session, and decodes the output into origW×origH pixels.
+// infer reuses the session's bound input and output tensors, so it is not
+// safe to call concurrently on one detector.
 func (p *YOLODetector) infer(tensor []float32, origW, origH int) ([]Detection, error) {
 	inSlice := p.inputTensor.GetData()
 	if len(tensor) != len(inSlice) {

@@ -229,7 +229,12 @@ func TestDetectBadInput(t *testing.T) {
 
 	closes := 0
 	d := scripted(&oc, &fc)
+	d.inputSize = 640
 	d.closeFn = func() error { closes++; return nil }
+	if !d.HasObjects() || !d.HasFaces() || d.ObjectInputSize() != 640 {
+		t.Fatalf("open detector reports HasObjects %v, HasFaces %v, input size %d",
+			d.HasObjects(), d.HasFaces(), d.ObjectInputSize())
+	}
 	if err := d.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -238,6 +243,10 @@ func TestDetectBadInput(t *testing.T) {
 	}
 	if closes != 1 {
 		t.Fatalf("the model was closed %d times", closes)
+	}
+	if d.HasObjects() || d.HasFaces() || d.ObjectInputSize() != 0 {
+		t.Fatalf("closed detector reports HasObjects %v, HasFaces %v, input size %d",
+			d.HasObjects(), d.HasFaces(), d.ObjectInputSize())
 	}
 	if _, err := d.Detect(testImage(8, 8), all); err == nil || !strings.Contains(err.Error(), "closed") {
 		t.Fatalf("closed detector: %v", err)

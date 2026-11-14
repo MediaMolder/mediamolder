@@ -106,3 +106,24 @@ func TestInputTensorLayoutAndScale(t *testing.T) {
 		t.Errorf("swapRB: first plane (0,0) = %v, want 0.0", sw[0])
 	}
 }
+
+func TestOverrideGetters(t *testing.T) {
+	prevDir, prevLib := ModelsDir(), ONNXLib()
+	t.Cleanup(func() {
+		SetModelsDir(prevDir)
+		SetONNXLib(prevLib)
+	})
+	SetModelsDir("/models/face")
+	SetONNXLib("/lib/libonnxruntime.so")
+	if got := ModelsDir(); got != "/models/face" {
+		t.Fatalf("ModelsDir = %q", got)
+	}
+	if got := ONNXLib(); got != "/lib/libonnxruntime.so" {
+		t.Fatalf("ONNXLib = %q", got)
+	}
+	SetModelsDir("")
+	SetONNXLib("")
+	if ModelsDir() != "" || ONNXLib() != "" {
+		t.Fatalf("cleared overrides = %q, %q", ModelsDir(), ONNXLib())
+	}
+}

@@ -14,6 +14,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   midpoint. Score floors default to 0.05 for objects and 0.6 for faces.
   Requires the `with_onnx` build tag; without it `Open` returns
   `detect.ErrUnsupported`. See [docs/detect-guide.md](docs/detect-guide.md).
+- **`face.ModelsDir`, `face.ONNXLib`, and `face.LoadedModelsDir`.** Read
+  the two overrides and the directory the loaded face detector came from,
+  so a caller can set an override for one attempt and put it back.
 - **`YOLODetector.DetectImage` and `InputSize`.** The `yolo` processor
   runs on an `image.Image` through the same inference path as `Process`,
   and reports the model's input size. The `yolo_v8` alias has no image

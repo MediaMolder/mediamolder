@@ -16,10 +16,8 @@ import (
 	"github.com/MediaMolder/MediaMolder/processors"
 )
 
-var (
-	faceMu  sync.Mutex
-	faceDir string // directory of the first face pipeline this package loaded
-)
+// faceMu serializes openFaces, which changes process-wide face settings.
+var faceMu sync.Mutex
 
 // Available returns nil: this build can run the models. Whether a given
 // model file loads is reported by Open.
@@ -84,6 +82,10 @@ func openObjects(cfg Config) (*processors.YOLODetector, error) {
 	return yolo, nil
 }
 
+// openFaces loads the process-wide face pipeline from cfg.FaceModels, or
+// confirms that the one already loaded came from there. The face
+// package's settings are changed only by a call that loads the pipeline;
+// a failed call leaves them as it found them.
 func openFaces(cfg Config) error {
 	dir, err := filepath.Abs(cfg.FaceModels)
 	if err != nil {
@@ -91,24 +93,37 @@ func openFaces(cfg Config) error {
 	}
 	faceMu.Lock()
 	defer faceMu.Unlock()
-	if faceDir != "" {
-		if dir != faceDir {
-			return fmt.Errorf("the face pipeline is already loaded from %s and cannot be reloaded from %s in this process", faceDir, dir)
-		}
-		return nil
+	if loaded := face.LoadedModelsDir(); loaded != "" {
+		return sameFaceDir(loaded, dir)
 	}
-	// The pipeline may already be loaded by another caller, in which case
-	// Available cannot report on dir. CheckModels reads dir itself.
 	if err := face.CheckModels(dir); err != nil {
 		return err
 	}
+	prevDir, prevLib := face.ModelsDir(), face.ONNXLib()
 	face.SetModelsDir(dir)
 	if cfg.ONNXRuntime != "" {
 		face.SetONNXLib(cfg.ONNXRuntime)
 	}
-	if err := face.Available(); err != nil {
+	err = face.Available()
+	if err == nil {
+		// Another caller of the face package may have loaded the
+		// pipeline from its own directory in the meantime.
+		err = sameFaceDir(face.LoadedModelsDir(), dir)
+	}
+	if err != nil {
+		face.SetModelsDir(prevDir)
+		face.SetONNXLib(prevLib)
 		return err
 	}
-	faceDir = dir
+	return nil
+}
+
+func sameFaceDir(loaded, dir string) error {
+	if abs, err := filepath.Abs(loaded); err == nil {
+		loaded = abs
+	}
+	if loaded != dir {
+		return fmt.Errorf("the face pipeline is already loaded from %s and cannot be reloaded from %s in this process", loaded, dir)
+	}
 	return nil
 }

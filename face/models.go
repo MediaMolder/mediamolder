@@ -42,6 +42,19 @@ func SetONNXLib(path string) {
 	cfgMu.Unlock()
 }
 
+// ModelsDir returns the SetModelsDir override, or "" when none is set. A caller that sets the
+// override for one attempt can read it first and put it back.
+func ModelsDir() string {
+	cfgMu.RLock()
+	defer cfgMu.RUnlock()
+	return modelsDir
+}
+
+// ONNXLib returns the SetONNXLib override, or "" when none is set.
+func ONNXLib() string {
+	return onnxLibOverridePath()
+}
+
 // onnxLibOverridePath returns the SetONNXLib override (passed to onnxrt.Init in with_onnx builds).
 func onnxLibOverridePath() string {
 	cfgMu.RLock()

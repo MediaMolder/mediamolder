@@ -67,7 +67,9 @@ The object model keeps the `yolo` processor's defaults: layout read from the fil
 
 Both face files must be present and match their pinned SHA-256, although this package never computes embeddings. Fetch them with `scripts/fetch-face-models.sh`.
 
-The face detector is one per process and keeps the first directory that loaded. `Open` with a different `FaceModels` directory than an earlier successful `Open` in the same process returns an error. `Close` releases the object model only; the face detector stays loaded for the life of the process.
+The face detector is one per process and keeps the first directory that loaded. `Open` with a different `FaceModels` directory than an earlier successful `Open` in the same process returns an error. The same rule applies when another part of the program loaded the face detector first. A failed `Open` leaves the `face` package's models directory and ONNX Runtime settings as it found them.
+
+`Close` releases the object model only; the face detector stays loaded for the life of the process. After `Close`, `HasObjects()` and `HasFaces()` report false and `ObjectInputSize()` reports `0`.
 
 ## What Detect returns
 
