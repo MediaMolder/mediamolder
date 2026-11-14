@@ -8,11 +8,14 @@ package processors
 import (
 	"errors"
 	"fmt"
+	"image"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
+	"github.com/MediaMolder/MediaMolder/av"
 	"github.com/MediaMolder/MediaMolder/internal/onnxrt"
 )
 
@@ -205,5 +208,144 @@ func TestYOLOInitModels(t *testing.T) {
 				t.Fatal(err)
 			}
 		})
+	}
+}
+
+func TestYOLODetectImageRejects(t *testing.T) {
+	img := image.NewRGBA(image.Rect(0, 0, 8, 8))
+
+	alias := &YOLODetector{name: "yolo_v8", legacyV8: true}
+	if _, err := alias.DetectImage(img); err == nil || !strings.HasPrefix(err.Error(), "yolo_v8:") || !strings.Contains(err.Error(), "use yolo") {
+		t.Fatalf("alias DetectImage: %v", err)
+	}
+
+	yolo := &YOLODetector{name: "yolo"}
+	if _, err := yolo.DetectImage(img); err == nil || !strings.Contains(err.Error(), "before Init") {
+		t.Fatalf("DetectImage before Init: %v", err)
+	}
+	if got := yolo.InputSize(); got != 0 {
+		t.Fatalf("InputSize before Init = %d", got)
+	}
+}
+
+// yoloTestModel returns a detect-task model for the yolo registration:
+// MEDIAMOLDER_DETECT_YOLO_MODEL, else the first TestYOLOInitModels path
+// that exists.
+func yoloTestModel(t *testing.T) string {
+	t.Helper()
+	paths := []string{os.Getenv("MEDIAMOLDER_DETECT_YOLO_MODEL"), "/models/yolo26n.onnx", "/models/yolo11n.onnx"}
+	for _, p := range paths {
+		if p == "" {
+			continue
+		}
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+	}
+	t.Skip("no yolo model found (set MEDIAMOLDER_DETECT_YOLO_MODEL)")
+	return ""
+}
+
+// firstFrame decodes the first video frame of path. The caller closes it.
+func firstFrame(t *testing.T, path string) *av.Frame {
+	t.Helper()
+	input, err := av.OpenInput(path, nil)
+	if err != nil {
+		t.Skipf("test image: %v", err)
+	}
+	defer input.Close()
+	vid := -1
+	for i := 0; i < input.NumStreams(); i++ {
+		if si, err := input.StreamInfo(i); err == nil && si.Type == av.MediaTypeVideo {
+			vid = i
+			break
+		}
+	}
+	if vid < 0 {
+		t.Fatalf("no video stream in %s", path)
+	}
+	dec, err := av.OpenDecoder(input, vid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer dec.Close()
+	pkt, err := av.AllocPacket()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pkt.Close()
+	frame, err := av.AllocFrame()
+	if err != nil {
+		t.Fatal(err)
+	}
+	drained := false
+	for dec.ReceiveFrame(frame) != nil {
+		pkt.Unref()
+		if err := input.ReadPacket(pkt); err != nil {
+			if av.IsEOF(err) && !drained {
+				_ = dec.Flush()
+				drained = true
+				continue
+			}
+			frame.Close()
+			t.Fatalf("no frame decoded from %s: %v", path, err)
+		}
+		if pkt.StreamIndex() == vid {
+			_ = dec.SendPacket(pkt)
+		}
+	}
+	return frame
+}
+
+func TestYOLODetectImageMatchesProcess(t *testing.T) {
+	model := yoloTestModel(t)
+	imgPath := os.Getenv("MEDIAMOLDER_FACE_TEST_IMAGE")
+	if imgPath == "" {
+		t.Skip("set MEDIAMOLDER_FACE_TEST_IMAGE to a photo with a visible person")
+	}
+	if err := onnxrt.Init(""); err != nil {
+		t.Skipf("onnxruntime not available: %v", err)
+	}
+	p, err := Get("yolo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	yolo := p.(*YOLODetector)
+	if err := yolo.Init(map[string]any{"model": model, "conf": 0.05}); err != nil {
+		t.Fatal(err)
+	}
+	if yolo.InputSize() <= 0 {
+		t.Fatalf("InputSize = %d", yolo.InputSize())
+	}
+
+	frame := firstFrame(t, imgPath)
+	defer frame.Close()
+	_, meta, err := yolo.Process(frame, ProcessorContext{MediaType: av.MediaTypeVideo})
+	if err != nil {
+		t.Fatal(err)
+	}
+	img, err := FrameToRGBA(frame)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dets, err := yolo.DetectImage(img)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dets == nil {
+		t.Fatal("DetectImage returned a nil slice")
+	}
+	if len(dets) == 0 {
+		t.Fatal("no detections in the test image, so the comparison proves nothing")
+	}
+	if !reflect.DeepEqual(dets, meta.Detections) {
+		t.Fatalf("DetectImage and Process differ:\n%+v\n%+v", dets, meta.Detections)
+	}
+
+	if err := yolo.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := yolo.DetectImage(img); err == nil || !strings.Contains(err.Error(), "after Close") {
+		t.Fatalf("DetectImage after Close: %v", err)
 	}
 }
