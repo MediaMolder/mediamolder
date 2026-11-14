@@ -54,6 +54,8 @@ const (
 type pipeline struct {
 	mu sync.Mutex
 
+	dir string // models directory the pipeline loaded from
+
 	detectSpec     ModelSpec
 	detectNumPreds int
 	detect         *ort.AdvancedSession
@@ -104,6 +106,18 @@ func Capable() bool { return Available() == nil }
 func Available() error {
 	_, err := ensurePipeline()
 	return err
+}
+
+// LoadedModelsDir returns the directory the loaded pipeline read its models from, or "" when
+// no pipeline is loaded. The pipeline is one per process and keeps that directory; a later
+// SetModelsDir does not reload it.
+func LoadedModelsDir() string {
+	initMu.Lock()
+	defer initMu.Unlock()
+	if pipe == nil {
+		return ""
+	}
+	return pipe.dir
 }
 
 // Analyze decodes path with MediaMolder's deterministic software decoder, detects faces with
@@ -304,6 +318,7 @@ func newPipeline() (*pipeline, error) {
 	}
 	dir := resolveModelsDir()
 	p := &pipeline{
+		dir:        dir,
 		detectSpec: DefaultDetectSpec, embedSpec: DefaultEmbedSpec, visSpec: DefaultVisibilitySpec,
 		exprMeshSpec: DefaultExpressionMeshSpec, exprBSSpec: DefaultExpressionBlendshapesSpec,
 	}

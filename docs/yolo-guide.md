@@ -20,6 +20,7 @@ The processor is compiled only with the `with_onnx` build tag. See [Building wit
 - [Small objects](#small-objects)
 - [The yolo_v8 alias](#the-yolo_v8-alias)
 - [Reading detections](#reading-detections)
+- [Calling the detector from Go](#calling-the-detector-from-go)
 - [CUDA](#cuda)
 - [Troubleshooting](#troubleshooting)
 
@@ -294,6 +295,34 @@ Each detection has:
 | `BBox` | `bbox` | `[x1, y1, x2, y2]` in original-frame pixels |
 | `TrackID` | `track_id` | Omitted. This node leaves it 0 |
 
+## Calling the detector from Go
+
+A Go program that already holds a decoded picture can run the model without a graph or an `*av.Frame`. `YOLODetector` has two methods for this:
+
+```go
+p, err := processors.Get("yolo")
+if err != nil {
+	return err
+}
+yolo := p.(*processors.YOLODetector)
+if err := yolo.Init(map[string]any{"model": "/models/yolo26n.onnx", "conf": 0.25}); err != nil {
+	return err
+}
+defer yolo.Close()
+
+size := yolo.InputSize()          // the model's square input side, e.g. 640
+dets, err := yolo.DetectImage(img) // img is any image.Image
+```
+
+- `DetectImage` runs the same letterbox, inference, and decode as `Process`, so an image and the frame it was converted from give the same detections.
+- Boxes are in the image's own pixels, measured from its top-left corner.
+- The result is an empty, non-nil slice when nothing is found.
+- It returns an error before `Init`, after `Close`, and on the `yolo_v8` alias, which has no image path.
+- It is not safe for concurrent use. Serialize calls on one detector.
+- `InputSize` is read from the model file at `Init` and is `0` before that.
+
+The [`detect`](detect-guide.md) package builds on these to return people, sports balls, and faces from one picture.
+
 ## CUDA
 
 Install the CUDA toolkit and the GPU build of ONNX Runtime, then set `device` to `cuda` and point `ort_lib` at that build. Any value that starts with `cuda`, including `cuda:N`, selects that provider. The index is not read, so the session uses the provider's default device.
@@ -345,6 +374,7 @@ go build -tags with_onnx ./cmd/mediamolder
 
 ## See also
 
+- [People, ball, and face detection from Go](detect-guide.md)
 - [Go Processor Nodes](go-processor-nodes.md)
 - [JSON Config Reference](json-config-reference.md)
 - [Ultralytics export](https://docs.ultralytics.com/modes/export/)

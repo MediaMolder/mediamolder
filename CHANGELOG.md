@@ -7,6 +7,20 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- **`detect` package.** A Go API that takes one decoded picture and
+  returns the people, sports balls, and faces in it. It runs a YOLO
+  detect-task model for COCO classes 0 and 32 and the `face` detector,
+  and reports each box in the picture's pixels with the face's mouth
+  midpoint. Score floors default to 0.05 for objects and 0.6 for faces.
+  Requires the `with_onnx` build tag; without it `Open` returns
+  `detect.ErrUnsupported`. See [docs/detect-guide.md](docs/detect-guide.md).
+- **`face.ModelsDir`, `face.ONNXLib`, and `face.LoadedModelsDir`.** Read
+  the two overrides and the directory the loaded face detector came from,
+  so a caller can set an override for one attempt and put it back.
+- **`YOLODetector.DetectImage` and `InputSize`.** The `yolo` processor
+  runs on an `image.Image` through the same inference path as `Process`,
+  and reports the model's input size. The `yolo_v8` alias has no image
+  path. See [docs/yolo-guide.md](docs/yolo-guide.md#calling-the-detector-from-go).
 - **`yolo` processor.** Object detection for YOLOv8, YOLO11, and YOLO26.
   The node reads the ONNX shapes, decodes a raw head with per-class NMS
   or an end-to-end head with no NMS, and takes class names from the model

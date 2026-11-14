@@ -8,6 +8,7 @@ package processors
 import (
 	"errors"
 	"fmt"
+	"image"
 	"os"
 	"strings"
 
@@ -376,36 +377,87 @@ func (p *YOLODetector) Process(frame *av.Frame, ctx ProcessorContext) (*av.Frame
 	}
 
 	var tensor []float32
-	var err error
 	if p.legacyV8 {
-		tensor, err = FrameToFloat32Tensor(frame, p.inputSize)
-	} else {
-		img, err2 := FrameToRGBA(frame)
-		if err2 != nil {
-			err = err2
-		} else {
-			mode := ResizeNearest
-			if p.bilinear {
-				mode = ResizeBilinear
-			}
-			tensor = LetterboxTensor(img, p.inputSize, p.pad, mode)
+		t, err := FrameToFloat32Tensor(frame, p.inputSize)
+		if err != nil {
+			return nil, nil, fmt.Errorf("%s: preprocess: %w", p.name, err)
 		}
+		tensor = t
+	} else {
+		img, err := FrameToRGBA(frame)
+		if err != nil {
+			return nil, nil, fmt.Errorf("%s: preprocess: %w", p.name, err)
+		}
+		tensor = p.letterbox(img)
 	}
+	dets, err := p.infer(tensor, frame.Width(), frame.Height())
 	if err != nil {
-		return nil, nil, fmt.Errorf("%s: preprocess: %w", p.name, err)
+		return nil, nil, err
 	}
+	return frame, yoloResultMetadata(p.legacyV8, dets), nil
+}
 
+// DetectImage runs the model on one decoded image and returns detections
+// in that image's pixels, measured from its top-left corner. The result
+// is an empty, non-nil slice when nothing is found. It is the same
+// inference path Process uses for the yolo registration. The yolo_v8
+// alias has no image path and returns an error. It is not safe for
+// concurrent use.
+func (p *YOLODetector) DetectImage(img image.Image) ([]Detection, error) {
+	name := p.name
+	if name == "" {
+		name = "yolo"
+	}
+	if p.legacyV8 {
+		return nil, fmt.Errorf("%s: DetectImage is not available on the yolo_v8 alias; use yolo", name)
+	}
+	if p.session == nil {
+		return nil, fmt.Errorf("%s: DetectImage called before Init or after Close", name)
+	}
+	if img == nil {
+		return nil, fmt.Errorf("%s: nil image", name)
+	}
+	b := img.Bounds()
+	if b.Dx() <= 0 || b.Dy() <= 0 {
+		return nil, fmt.Errorf("%s: invalid image dimensions %d×%d", name, b.Dx(), b.Dy())
+	}
+	dets, err := p.infer(p.letterbox(img), b.Dx(), b.Dy())
+	if err != nil {
+		return nil, err
+	}
+	if dets == nil {
+		dets = []Detection{}
+	}
+	return dets, nil
+}
+
+// InputSize is the model's square input side, read from the file at Init.
+// It is 0 before Init.
+func (p *YOLODetector) InputSize() int {
+	return p.inputSize
+}
+
+func (p *YOLODetector) letterbox(img image.Image) []float32 {
+	mode := ResizeNearest
+	if p.bilinear {
+		mode = ResizeBilinear
+	}
+	return LetterboxTensor(img, p.inputSize, p.pad, mode)
+}
+
+// infer reuses the session's bound input and output tensors, so it is not
+// safe to call concurrently on one detector.
+func (p *YOLODetector) infer(tensor []float32, origW, origH int) ([]Detection, error) {
 	inSlice := p.inputTensor.GetData()
 	if len(tensor) != len(inSlice) {
-		return nil, nil, fmt.Errorf("%s: preprocess produced %d values, want %d", p.name, len(tensor), len(inSlice))
+		return nil, fmt.Errorf("%s: preprocess produced %d values, want %d", p.name, len(tensor), len(inSlice))
 	}
 	copy(inSlice, tensor)
 	if err := p.session.Run(); err != nil {
-		return nil, nil, fmt.Errorf("%s: inference: %w", p.name, err)
+		return nil, fmt.Errorf("%s: inference: %w", p.name, err)
 	}
-	dets := decodeYOLO(p.layout, p.outputTensor.GetData(), p.numClasses, p.numPreds, p.maxDet, p.inputSize,
-		p.confThresh, p.iouThresh, p.labels, frame.Width(), frame.Height(), p.legacyV8, p.agnosticNMS)
-	return frame, yoloResultMetadata(p.legacyV8, dets), nil
+	return decodeYOLO(p.layout, p.outputTensor.GetData(), p.numClasses, p.numPreds, p.maxDet, p.inputSize,
+		p.confThresh, p.iouThresh, p.labels, origW, origH, p.legacyV8, p.agnosticNMS), nil
 }
 
 func (p *YOLODetector) Close() error {

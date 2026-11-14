@@ -186,5 +186,8 @@ The GUI binary must be built with the node (`make build-gui-onnx`).
   when you only need boxes/landmarks (the CLI's `DetectImage` fast path). Use `--every`
   / `every` to sub-sample long videos.
 
+- **People and balls too.** The [`detect`](detect-guide.md) package returns people, sports
+  balls, and faces from one decoded picture through a single Go call.
+
 See [architecture/face-detection.md](architecture/face-detection.md) for the full
 design, the package API, and the development plan.
