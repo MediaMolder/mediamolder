@@ -356,7 +356,8 @@ type graphRunner struct {
 	// keyed by encoder node ID. Populated by createEncoder alongside
 	// encoders; used by handleEncoder to reopen the encoder with the
 	// first frame's actual coded dimensions when the container metadata
-	// disagrees with the real bitstream (e.g. anamorphic AVI).
+	// disagrees with the real bitstream (e.g. anamorphic AVI). The runner
+	// owns any hardware frames contexts stored here across encoder restarts.
 	encoderOpts map[string]av.EncoderOptions
 	// passLogFiles holds open pass-1 statistics files for video
 	// encoders that consume `Output.Pass` / `Output.PassLogFile`
@@ -475,6 +476,11 @@ func (r *graphRunner) close() error {
 	}
 	for _, enc := range r.encoders {
 		enc.Close()
+	}
+	for _, opts := range r.encoderOpts {
+		if opts.HWFrames != nil {
+			_ = opts.HWFrames.Close()
+		}
 	}
 	var errs []error
 	// Close go_processors in topological order (event producers first) so that

@@ -65,12 +65,12 @@ func (r *graphRunner) handleGoProcessor(ctx context.Context, node *graph.Node, i
 			// type matches its media type. Mirrors handleSource's per-type
 			// routing so a frame reaches only consumers that asked for that
 			// media type.
-			streamToChans := make([][]int, len(streams))
+			streamToChans := make([][]chan<- any, len(streams))
 			anyMatched := false
 			for si := range streams {
 				for j, e := range node.Outbound {
 					if portTypeToAVMediaType(e.Type) == streams[si].Type {
-						streamToChans[si] = append(streamToChans[si], j)
+						streamToChans[si] = append(streamToChans[si], outs[j])
 						anyMatched = true
 					}
 				}
@@ -79,11 +79,7 @@ func (r *graphRunner) handleGoProcessor(ctx context.Context, node *graph.Node, i
 			// "default" edge), broadcast stream 0 to every channel — the
 			// historical single-stream behaviour.
 			if !anyMatched && len(outs) > 0 {
-				all := make([]int, len(outs))
-				for j := range outs {
-					all[j] = j
-				}
-				streamToChans[0] = all
+				streamToChans[0] = outs
 			}
 
 			// Master stream drives metrics/progress: the first video stream,
@@ -132,34 +128,14 @@ func (r *graphRunner) handleGoProcessor(ctx context.Context, node *graph.Node, i
 				})
 			}
 
-			// sendStream forwards f to the channels mapped to the given stream,
-			// cloning for all but the last recipient so each consumer owns an
-			// independent reference. Closes f when the stream has no consumer.
+			// sendStream forwards f to the channels mapped to the given stream.
 			sendStream := func(stream int, f *av.Frame) error {
 				if stream < 0 || stream >= len(streamToChans) || len(streamToChans[stream]) == 0 {
 					f.Close()
 					return nil
 				}
-				chans := streamToChans[stream]
-				for i, idx := range chans {
-					toSend := f
-					if i < len(chans)-1 {
-						cl, err := f.Clone()
-						if err != nil {
-							f.Close()
-							return err
-						}
-						toSend = cl
-					}
-					select {
-					case outs[idx] <- toSend:
-					case <-ctx.Done():
-						if toSend != f {
-							toSend.Close()
-						}
-						f.Close()
-						return ctx.Err()
-					}
+				if err := sendGoProcessorFrame(ctx, f, streamToChans[stream]); err != nil {
+					return err
 				}
 				if stream == master {
 					produced++
@@ -234,19 +210,7 @@ func (r *graphRunner) handleGoProcessor(ctx context.Context, node *graph.Node, i
 		}
 	}()
 	tb := r.goProcessorInputTB[node.ID]
-
-	// sendFrame forwards f to all downstream AV channels.
-	sendFrame := func(f *av.Frame) error {
-		for _, ch := range outs {
-			select {
-			case ch <- f:
-			case <-ctx.Done():
-				f.Close()
-				return ctx.Err()
-			}
-		}
-		return nil
-	}
+	hwDevice := r.hwDevices[node.Device]
 
 	for v := range ins[0] {
 		f := v.(*av.Frame)
@@ -259,6 +223,7 @@ func (r *graphRunner) handleGoProcessor(ctx context.Context, node *graph.Node, i
 			FrameIndex: frameIndex,
 			Context:    ctx,
 			TimeBase:   tb,
+			HWDevice:   hwDevice,
 		}
 
 		out, md, err := proc.Process(f, pctx)
@@ -375,12 +340,8 @@ func (r *graphRunner) handleGoProcessor(ctx context.Context, node *graph.Node, i
 			if lookback > 0 && len(delayBuf) >= lookback {
 				oldest := delayBuf[0]
 				delayBuf = delayBuf[1:]
-				if len(outs) == 0 {
-					oldest.frame.Close()
-				} else {
-					if err := sendFrame(oldest.frame); err != nil {
-						return err
-					}
+				if err := sendGoProcessorFrame(ctx, oldest.frame, outs); err != nil {
+					return err
 				}
 			}
 			continue
@@ -402,13 +363,13 @@ func (r *graphRunner) handleGoProcessor(ctx context.Context, node *graph.Node, i
 			if len(delayBuf) > lookback {
 				oldest := delayBuf[0]
 				delayBuf = delayBuf[1:]
-				if err := sendFrame(oldest.frame); err != nil {
+				if err := sendGoProcessorFrame(ctx, oldest.frame, outs); err != nil {
 					return err
 				}
 			}
 		} else {
 			// No delay buffer: send immediately.
-			if err := sendFrame(f); err != nil {
+			if err := sendGoProcessorFrame(ctx, f, outs); err != nil {
 				return err
 			}
 		}
@@ -418,12 +379,40 @@ func (r *graphRunner) handleGoProcessor(ctx context.Context, node *graph.Node, i
 	for len(delayBuf) > 0 {
 		e := delayBuf[0]
 		delayBuf = delayBuf[1:]
-		if len(outs) == 0 {
-			e.frame.Close()
-			continue
-		}
-		if err := sendFrame(e.frame); err != nil {
+		if err := sendGoProcessorFrame(ctx, e.frame, outs); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+// sendGoProcessorFrame takes ownership of f. Each recipient gets its own
+// AVFrame reference so it can close the reference independently.
+func sendGoProcessorFrame(ctx context.Context, f *av.Frame, outs []chan<- any) error {
+	if len(outs) == 0 {
+		f.Close()
+		return nil
+	}
+	for i, ch := range outs {
+		toSend := f
+		// Keep the original reference until the final send so consumers can
+		// close their references while the remaining ones are being cloned.
+		if i < len(outs)-1 {
+			cl, err := f.Clone()
+			if err != nil {
+				f.Close()
+				return err
+			}
+			toSend = cl
+		}
+		select {
+		case ch <- toSend:
+		case <-ctx.Done():
+			if toSend != f {
+				toSend.Close()
+			}
+			f.Close()
+			return ctx.Err()
 		}
 	}
 	return nil

@@ -107,6 +107,10 @@ type ProcessorContext struct {
 	// TimeBase is the input edge time base as {numerator, denominator}.
 	// Both are zero when the runtime could not resolve one.
 	TimeBase [2]int
+	// HWDevice is the graph's named hardware device for this node, or nil
+	// when no device was configured. The processor borrows it until Close
+	// returns and must not close it itself.
+	HWDevice *av.HWDeviceContext
 }
 
 // Metadata carries arbitrary results produced by a processor (detections,

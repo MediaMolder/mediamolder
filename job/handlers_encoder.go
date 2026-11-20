@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -228,7 +229,8 @@ func (s *encoderSession) run(ctx context.Context, in <-chan any) error {
 		// DivX/Xvid AVIs), while the actual decoded frame reports the real
 		// coded size. Mirrors FFmpeg enc_open() in fftools/ffmpeg_enc.c
 		// which uses the frame's own width/height rather than codecpar.
-		if !s.checkedDim && s.enc.MediaType() == av.MediaTypeVideo {
+		// CUDA inputs must match the dimensions used for the hardware pool.
+		if !s.checkedDim && s.encOpts.HWFrames == nil && s.enc.MediaType() == av.MediaTypeVideo {
 			s.checkedDim = true
 			fw, fh := f.Width(), f.Height()
 			if fw > 0 && fh > 0 && (fw != s.enc.Width() || fh != s.enc.Height()) {
@@ -669,8 +671,40 @@ func (r *graphRunner) createEncoder(dag *graph.Graph, node *graph.Node) (*av.Enc
 		}
 	}
 
+	if paramString(node.Params, "pix_fmt") == "cuda" {
+		if node.Inbound[0].Type != graph.PortVideo || !strings.HasSuffix(codecName, "_nvenc") {
+			return nil, fmt.Errorf("pix_fmt cuda requires an NVENC video encoder")
+		}
+		name := paramString(node.Params, "sw_pix_fmt")
+		if name == "" {
+			return nil, fmt.Errorf("pix_fmt cuda requires sw_pix_fmt to describe the CUDA surface layout")
+		}
+		device := r.hwDevices[node.Device]
+		if device == nil || device.Type() != av.HWDeviceCUDA {
+			return nil, fmt.Errorf("pix_fmt cuda requires a named CUDA device")
+		}
+		pixFmt := av.PixFmtByName(name)
+		if !isSwPixFmtName(name) || !slices.Contains(av.EncoderPixFmts(codecName), pixFmt) {
+			return nil, fmt.Errorf("sw_pix_fmt %q is not a software pixel format supported by %s", name, codecName)
+		}
+		if opts.Width <= 0 || opts.Height <= 0 {
+			return nil, fmt.Errorf("pix_fmt cuda requires known width and height")
+		}
+		// NVENC opens before the first frame arrives. The pool describes the
+		// surfaces; the encoder registers each incoming frame on the device.
+		opts.HWFrames, err = av.NewHWFramesContext(device, opts.Width, opts.Height, pixFmt, 0)
+		if err != nil {
+			return nil, err
+		}
+		delete(opts.ExtraOpts, "pix_fmt")
+		delete(opts.ExtraOpts, "sw_pix_fmt")
+	}
+
 	enc, err := av.OpenEncoder(opts)
 	if err != nil {
+		if opts.HWFrames != nil {
+			_ = opts.HWFrames.Close()
+		}
 		return nil, err
 	}
 	// Store the options for potential first-frame reopen (anamorphic sources

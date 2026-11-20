@@ -43,6 +43,7 @@ Everything runs in-process: no subprocesses, no network calls, no Python. Your p
 		- [When to use what](#when-to-use-what)
 		- [Example](#example)
 	- [Writing a custom processor](#writing-a-custom-processor)
+	- [Processing CUDA frames](#processing-cuda-frames)
 	- [Writing a FrameSource processor](#writing-a-framesource-processor)
 		- [Step 1: Implement the interface](#step-1-implement-the-interface)
 		- [Step 2: Register it](#step-2-register-it)
@@ -163,6 +164,7 @@ type ProcessorContext struct {
     FrameIndex uint64          // how many frames this node has seen so far (starts at 0)
     Context    context.Context // standard Go context — check this for cancellation
     TimeBase   [2]int          // input time base, {numerator, denominator}; {0, 0} when unknown
+    HWDevice   *av.HWDeviceContext // borrowed named hardware device, if configured
 }
 ```
 
@@ -951,6 +953,66 @@ func init() {
 ```
 
 ---
+
+## Processing CUDA frames
+
+A processor can read a CUDA surface with `frame.CUDAFrame()`. The view reports the underlying format as `PixFmt`, the CUDA context and stream, and a device address and byte pitch for each plane. Use the frame's dimensions and each plane's pitch when launching kernels. For example, NV12 has a luma plane and an interleaved UV plane.
+
+Use `frame.AllocHWFrameLike()` for pixel transforms. It allocates a separate surface on the same device and preserves frame properties such as PTS and color metadata. Input buffers can be shared across graph branches. For a read-only processor, return the original frame.
+
+```go
+func (p *ChromaKey) Process(frame *av.Frame, _ processors.ProcessorContext) (*av.Frame, *processors.Metadata, error) {
+    src, ok := frame.CUDAFrame()
+    if !ok || src.PixFmt != av.PixFmtByName("nv12") {
+        return nil, nil, fmt.Errorf("chroma key requires a CUDA NV12 frame")
+    }
+    out, err := frame.AllocHWFrameLike()
+    if err != nil {
+        return nil, nil, err
+    }
+    dst, ok := out.CUDAFrame()
+    if !ok {
+        out.Close()
+        return nil, nil, fmt.Errorf("chroma key requires a CUDA output surface")
+    }
+    if err := p.launchChromaKey(src, dst, frame.Width(), frame.Height()); err != nil {
+        out.Close()
+        return nil, nil, err
+    }
+    return out, nil, nil
+}
+```
+
+In your CUDA wrapper, push the frame's context on the calling OS thread, launch the kernels on the frame's stream, wait for completion, then pop the context. A single C call can do all four steps. If you split them across Go calls, pin the goroutine with `runtime.LockOSThread`. Finish GPU work before returning from `Process`, including on error paths that release the output surface. The device addresses and CUDA handles are borrowed for the lifetime of the frame. A zero stream handle means the CUDA default stream.
+
+This graph processes an 8-bit 4:2:0 input with NVDEC and NVENC on the same CUDA device. The built-in `null` processor passes frames through for a first run. Replace it with your registered processor once its kernel accepts the surface layout.
+
+```json
+{
+  "schema_version": "1.1",
+  "hardware_devices": [{"name": "gpu0", "type": "cuda", "device": "0"}],
+  "inputs": [{
+    "id": "src", "url": "input.mp4",
+    "hwaccel": "cuda", "hwaccel_device": "gpu0", "hwaccel_output_format": "cuda",
+    "streams": [{"input_index": 0, "type": "video", "track": 0}]
+  }],
+  "graph": {
+    "nodes": [
+      {"id": "proc", "type": "go_processor", "processor": "null", "device": "gpu0"},
+      {"id": "enc", "type": "encoder", "device": "gpu0",
+       "params": {"codec": "h264_nvenc", "pix_fmt": "cuda", "sw_pix_fmt": "nv12"}}
+    ],
+    "edges": [
+      {"from": "src:v:0", "to": "proc", "type": "video"},
+      {"from": "proc", "to": "enc", "type": "video"},
+      {"from": "enc", "to": "out:v", "type": "video"}
+    ]
+  },
+  "outputs": [{"id": "out", "url": "output.mp4"}]
+}
+```
+
+For a source that delivers frames in system memory, set the processor's `device` to the same named CUDA device as the encoder. `ProcessorContext.HWDevice` gives the processor access to that device. Allocate a reusable pool with `av.NewHWFramesContext`, allocate a surface per frame with `av.AllocHWFrame`, and upload with `av.TransferToHW`. Match the host pixel format to the pool layout, copy the frame properties with `CopyPropsFrom`, and keep the host frame alive until the upload finishes. The processor closes its pool during `Close`. The graph owns the device.
 
 ## Writing a FrameSource processor
 

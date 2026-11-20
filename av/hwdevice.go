@@ -62,17 +62,6 @@ package av
 //     return (enum AVPixelFormat)f->format;
 // }
 //
-// // Helper: get frame hw_frames_ctx.
-// static AVBufferRef* frame_hw_frames_ctx(const AVFrame *f) {
-//     return f->hw_frames_ctx;
-// }
-//
-// // Helper: set hw_frames_ctx on an allocated frame and allocate hw buffer.
-// static int alloc_hw_frame(AVFrame *f, AVBufferRef *hw_frames_ref) {
-//     f->hw_frames_ctx = av_buffer_ref(hw_frames_ref);
-//     if (!f->hw_frames_ctx) return -1;
-//     return av_hwframe_get_buffer(f->hw_frames_ctx, f, 0);
-// }
 import "C"
 
 import (
@@ -219,11 +208,37 @@ func TransferToHW(dst, src *Frame) error {
 // AllocHWFrame allocates a hardware frame from the given frames context.
 // The returned frame has its hw_frames_ctx set and buffer allocated.
 func AllocHWFrame(framesCtx *HWFramesContext) (*Frame, error) {
+	if framesCtx == nil || framesCtx.ref == nil {
+		return nil, &Err{Code: -22, Message: "av: AllocHWFrame requires an open hardware frame pool"}
+	}
+	return allocHWFrame(framesCtx.ref)
+}
+
+// AllocHWFrameLike allocates a writable surface from f's hardware frame pool
+// and copies f's dimensions and properties. The new surface has no initialized
+// pixel data. The caller must Close the returned frame.
+func (f *Frame) AllocHWFrameLike() (*Frame, error) {
+	if f == nil || f.p == nil || f.p.hw_frames_ctx == nil {
+		return nil, &Err{Code: -22, Message: "av: AllocHWFrameLike requires a hardware frame pool"}
+	}
+	out, err := allocHWFrame(f.p.hw_frames_ctx)
+	if err != nil {
+		return nil, err
+	}
+	out.p.width, out.p.height = f.p.width, f.p.height
+	if err := out.CopyPropsFrom(f); err != nil {
+		out.Close()
+		return nil, err
+	}
+	return out, nil
+}
+
+func allocHWFrame(framesRef *C.AVBufferRef) (*Frame, error) {
 	f, err := AllocFrame()
 	if err != nil {
 		return nil, err
 	}
-	ret := C.alloc_hw_frame(f.raw(), framesCtx.ref)
+	ret := C.av_hwframe_get_buffer(framesRef, f.raw(), 0)
 	if ret < 0 {
 		f.Close()
 		return nil, fmt.Errorf("alloc hw frame: %w", newErr(ret))
