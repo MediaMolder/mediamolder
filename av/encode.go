@@ -44,7 +44,7 @@ package av
 //     ctx->sample_fmt = fmts[0];
 // }
 //
-// static int mm_send_encoder_frame(AVCodecContext *ctx, const AVFrame *frame) {
+// static int send_frame(AVCodecContext *ctx, const AVFrame *frame) {
 //     if (frame && ctx->pix_fmt == AV_PIX_FMT_CUDA && ctx->hw_frames_ctx) {
 //         const AVHWFramesContext *expected = (const AVHWFramesContext *)ctx->hw_frames_ctx->data;
 //         const AVHWFramesContext *actual = frame->hw_frames_ctx
@@ -342,7 +342,7 @@ func (e *EncoderContext) SendFrame(f *Frame) error {
 	if f != nil {
 		raw = f.raw()
 	}
-	ret := C.mm_send_encoder_frame(e.p, raw)
+	ret := C.send_frame(e.p, raw)
 	return newErr(ret)
 }
 

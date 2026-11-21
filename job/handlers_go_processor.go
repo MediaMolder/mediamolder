@@ -134,7 +134,7 @@ func (r *graphRunner) handleGoProcessor(ctx context.Context, node *graph.Node, i
 					f.Close()
 					return nil
 				}
-				if err := sendGoProcessorFrame(ctx, f, streamToChans[stream]); err != nil {
+				if err := sendFrame(ctx, f, streamToChans[stream]); err != nil {
 					return err
 				}
 				if stream == master {
@@ -340,7 +340,7 @@ func (r *graphRunner) handleGoProcessor(ctx context.Context, node *graph.Node, i
 			if lookback > 0 && len(delayBuf) >= lookback {
 				oldest := delayBuf[0]
 				delayBuf = delayBuf[1:]
-				if err := sendGoProcessorFrame(ctx, oldest.frame, outs); err != nil {
+				if err := sendFrame(ctx, oldest.frame, outs); err != nil {
 					return err
 				}
 			}
@@ -363,13 +363,13 @@ func (r *graphRunner) handleGoProcessor(ctx context.Context, node *graph.Node, i
 			if len(delayBuf) > lookback {
 				oldest := delayBuf[0]
 				delayBuf = delayBuf[1:]
-				if err := sendGoProcessorFrame(ctx, oldest.frame, outs); err != nil {
+				if err := sendFrame(ctx, oldest.frame, outs); err != nil {
 					return err
 				}
 			}
 		} else {
 			// No delay buffer: send immediately.
-			if err := sendGoProcessorFrame(ctx, f, outs); err != nil {
+			if err := sendFrame(ctx, f, outs); err != nil {
 				return err
 			}
 		}
@@ -379,16 +379,16 @@ func (r *graphRunner) handleGoProcessor(ctx context.Context, node *graph.Node, i
 	for len(delayBuf) > 0 {
 		e := delayBuf[0]
 		delayBuf = delayBuf[1:]
-		if err := sendGoProcessorFrame(ctx, e.frame, outs); err != nil {
+		if err := sendFrame(ctx, e.frame, outs); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-// sendGoProcessorFrame takes ownership of f. Each recipient gets its own
+// sendFrame takes ownership of f. Each recipient gets its own
 // AVFrame reference so it can close the reference independently.
-func sendGoProcessorFrame(ctx context.Context, f *av.Frame, outs []chan<- any) error {
+func sendFrame(ctx context.Context, f *av.Frame, outs []chan<- any) error {
 	if len(outs) == 0 {
 		f.Close()
 		return nil

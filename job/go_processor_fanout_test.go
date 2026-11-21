@@ -58,13 +58,13 @@ func TestGoProcessor_CancelFanoutPreservesSentFrame(t *testing.T) {
 	first := make(chan any)
 	done := make(chan error, 1)
 	go func() {
-		done <- sendGoProcessorFrame(ctx, f, []chan<- any{first, make(chan any)})
+		done <- sendFrame(ctx, f, []chan<- any{first, make(chan any)})
 	}()
 	a := (<-first).(*av.Frame)
 	defer a.Close()
 	cancel()
 	if err := <-done; !errors.Is(err, context.Canceled) {
-		t.Fatalf("sendGoProcessorFrame: got %v, want context.Canceled", err)
+		t.Fatalf("sendFrame: got %v, want context.Canceled", err)
 	}
 	if a == f {
 		t.Fatal("first output received the original frame reference")
