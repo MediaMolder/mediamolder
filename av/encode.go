@@ -6,6 +6,7 @@ package av
 // #include <string.h>
 // #include "libavcodec/avcodec.h"
 // #include "libavutil/cpu.h"
+// #include "libavutil/hwcontext.h"
 // #include "libavutil/mem.h"
 // #include "libavutil/opt.h"
 // #include "libavutil/pixdesc.h"
@@ -42,6 +43,21 @@ package av
 //     }
 //     ctx->sample_fmt = fmts[0];
 // }
+//
+// static int send_frame(AVCodecContext *ctx, const AVFrame *frame) {
+//     if (frame && ctx->pix_fmt == AV_PIX_FMT_CUDA && ctx->hw_frames_ctx) {
+//         const AVHWFramesContext *expected = (const AVHWFramesContext *)ctx->hw_frames_ctx->data;
+//         const AVHWFramesContext *actual = frame->hw_frames_ctx
+//             ? (const AVHWFramesContext *)frame->hw_frames_ctx->data : NULL;
+//         if (frame->format != AV_PIX_FMT_CUDA || !actual ||
+//             actual->device_ctx != expected->device_ctx || actual->sw_format != expected->sw_format ||
+//             frame->width != ctx->width || frame->height != ctx->height) {
+//             av_log(ctx, AV_LOG_ERROR, "Expected a CUDA frame on the encoder's device with matching pixel layout and dimensions\n");
+//             return AVERROR(EINVAL);
+//         }
+//     }
+//     return avcodec_send_frame(ctx, frame);
+// }
 import "C"
 
 import (
@@ -62,6 +78,10 @@ type EncoderOptions struct {
 	BitRate   int64
 	FrameRate [2]int // {num, den}
 	GOPSize   int
+
+	// HWFrames configures the encoder for hardware input surfaces and sets
+	// its pixel format from the pool. OpenEncoder retains its own reference.
+	HWFrames *HWFramesContext
 
 	// Profile and Level, when non-zero, stamp AVCodecContext.profile and
 	// AVCodecContext.level directly (FF_PROFILE_* / codec-specific level).
@@ -252,6 +272,19 @@ func OpenEncoder(opts EncoderOptions) (*EncoderContext, error) {
 	if opts.ThreadType != "" {
 		ctx.thread_type = C.int(parseThreadType(opts.ThreadType))
 	}
+	if opts.HWFrames != nil {
+		ref := opts.HWFrames.raw()
+		if ref == nil {
+			C.avcodec_free_context(&ctx)
+			return nil, fmt.Errorf("encoder %q: hardware frames context is closed", opts.CodecName)
+		}
+		ctx.hw_frames_ctx = C.av_buffer_ref(ref)
+		if ctx.hw_frames_ctx == nil {
+			C.avcodec_free_context(&ctx)
+			return nil, &Err{Code: -12, Message: "av_buffer_ref: out of memory"}
+		}
+		ctx.pix_fmt = (*C.AVHWFramesContext)(unsafe.Pointer(ref.data)).format
+	}
 
 	// Build AVDictionary for extra options (e.g. preset, crf).
 	var dict *C.AVDictionary
@@ -309,7 +342,7 @@ func (e *EncoderContext) SendFrame(f *Frame) error {
 	if f != nil {
 		raw = f.raw()
 	}
-	ret := C.avcodec_send_frame(e.p, raw)
+	ret := C.send_frame(e.p, raw)
 	return newErr(ret)
 }
 
