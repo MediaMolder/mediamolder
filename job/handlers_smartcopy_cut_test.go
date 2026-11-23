@@ -33,6 +33,13 @@ func cutFixtureSeconds(frame float64) float64 { return frame * 1001 / cutFixture
 // (H.264) / CRA (HEVC) with leading B-frames.
 func writeCutFixture(t *testing.T, path, format, codecName string, openGOP bool) {
 	t.Helper()
+	writeCutFixtureOpts(t, path, format, codecName, openGOP, nil)
+}
+
+// writeCutFixtureOpts is writeCutFixture with a hook to adjust the encoder
+// options before the fixture encoder opens.
+func writeCutFixtureOpts(t *testing.T, path, format, codecName string, openGOP bool, adjust func(*av.EncoderOptions)) {
+	t.Helper()
 	if !av.FindEncoder(codecName) {
 		t.Skipf("encoder %s not available", codecName)
 	}
@@ -51,7 +58,7 @@ func writeCutFixture(t *testing.T, path, format, codecName string, openGOP bool)
 		}
 		extra["x265-params"] = p
 	}
-	enc, err := av.OpenEncoder(av.EncoderOptions{
+	encOpts := av.EncoderOptions{
 		CodecName:    codecName,
 		Width:        64,
 		Height:       64,
@@ -61,7 +68,11 @@ func writeCutFixture(t *testing.T, path, format, codecName string, openGOP bool)
 		GOPSize:      12,
 		GlobalHeader: true,
 		ExtraOpts:    extra,
-	})
+	}
+	if adjust != nil {
+		adjust(&encOpts)
+	}
+	enc, err := av.OpenEncoder(encOpts)
 	if err != nil {
 		t.Fatalf("OpenEncoder(%s): %v", codecName, err)
 	}
@@ -432,6 +443,87 @@ func TestSmartCopyCutDecodes(t *testing.T) {
 			tail := filepath.Join(dir, "tail."+tc.format)
 			runSmartCut(t, src, tail, 17, -1)
 			verifySmartCut(t, tail, 17, -1)
+		})
+	}
+}
+
+// TestSmartCopyKeepsColour cuts a colour-tagged source off a keyframe at both
+// ends and checks that every parameter set in the output, the source's and
+// the re-encoded boundary's, carries the source's colour description. The
+// transfer characteristic stays unspecified so the mp4 muxer writes no colr
+// box and the stream-level values can only come from the bitstream.
+func TestSmartCopyKeepsColour(t *testing.T) {
+	const (
+		rangeMPEG = 1 // AVCOL_RANGE_MPEG
+		bt709     = 1 // AVCOL_PRI_BT709 / AVCOL_SPC_BT709
+		unspec    = 2 // AVCOL_TRC_UNSPECIFIED
+	)
+	type vui struct{ present, fullRange, described, primaries, transfer, matrix uint8 }
+	want := vui{1, 0, 1, bt709, unspec, bt709}
+	for _, codecName := range []string{"libx264", "libx265"} {
+		t.Run(codecName, func(t *testing.T) {
+			dir := t.TempDir()
+			src := filepath.Join(dir, "src.mp4")
+			writeCutFixtureOpts(t, src, "mp4", codecName, false, func(o *av.EncoderOptions) {
+				o.ColorRange = rangeMPEG
+				o.ColorPrimaries = bt709
+				o.ColorSpace = bt709
+				o.ColorTransfer = unspec
+			})
+			out := filepath.Join(dir, "cut.mp4")
+			runSmartCut(t, src, out, 17, 58)
+			verifySmartCut(t, out, 17, 58)
+
+			in, err := av.OpenInput(out, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			si, _ := in.StreamInfo(0)
+			ed := in.StreamExtraData(0)
+			in.Close()
+			if si.ColorRange != rangeMPEG || si.ColorPrimaries != bt709 || si.ColorSpace != bt709 || si.ColorTransfer != unspec {
+				t.Errorf("output stream colour: range %d, primaries %d, transfer %d, matrix %d; want %d, %d, %d, %d",
+					si.ColorRange, si.ColorPrimaries, si.ColorTransfer, si.ColorSpace, rangeMPEG, bt709, unspec, bt709)
+			}
+
+			codec := cbs.CodecH264
+			var nals [][]byte
+			if codecName == "libx265" {
+				codec = cbs.CodecH265
+				nals, err = hvcCParamSets(ed)
+			} else {
+				nals, _, _, err = avcCParamSets(ed)
+			}
+			if err != nil {
+				t.Fatalf("output parameter sets: %v", err)
+			}
+			c, _ := cbs.New(codec, nil)
+			frag, err := c.ReadExtradata(joinNALsAnnexB(nals))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var got []vui
+			for i := range frag.Units {
+				if frag.Units[i].Err != nil {
+					t.Fatalf("unit %d: %v", i, frag.Units[i].Err)
+				}
+				switch sps := frag.Units[i].Content.(type) {
+				case *cbs.H264RawSPS:
+					v := sps.Vui
+					got = append(got, vui{v.VideoSignalTypePresentFlag, v.VideoFullRangeFlag, v.ColourDescriptionPresentFlag, v.ColourPrimaries, v.TransferCharacteristics, v.MatrixCoefficients})
+				case *cbs.H265RawSPS:
+					v := sps.Vui
+					got = append(got, vui{v.VideoSignalTypePresentFlag, v.VideoFullRangeFlag, v.ColourDescriptionPresentFlag, v.ColourPrimaries, v.TransferCharacteristics, v.MatrixCoefficients})
+				}
+			}
+			if len(got) != 2 {
+				t.Fatalf("output holds %d SPS; want the source's and the boundary's", len(got))
+			}
+			for i, v := range got {
+				if v != want {
+					t.Errorf("SPS %d colour %+v, want %+v", i, v, want)
+				}
+			}
 		})
 	}
 }

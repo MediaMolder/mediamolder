@@ -98,6 +98,21 @@ type EncoderOptions struct {
 	// in libx264 / mpeg2video / libxavs2.
 	InterlacedEncode bool
 
+	// ColorRange, ColorSpace, ColorPrimaries, ColorTransfer and
+	// ChromaLocation stamp the encoder's `color_range`, `colorspace`,
+	// `color_primaries`, `color_trc` and `chroma_sample_location`
+	// (AVCOL_RANGE_* / AVCOL_SPC_* / AVCOL_PRI_* / AVCOL_TRC_* /
+	// AVCHROMA_LOC_*), which the encoder writes into its parameter sets
+	// (H.264 / HEVC VUI). Mirrors fftools/ffmpeg_enc.c, which copies the
+	// same five values from the first frame. 0 leaves the encoder default
+	// (unspecified), so an RGB matrix (AVCOL_SPC_RGB == 0) cannot be
+	// requested here.
+	ColorRange     int
+	ColorSpace     int
+	ColorPrimaries int
+	ColorTransfer  int
+	ChromaLocation int
+
 	// --- Audio ---
 	SampleFmt  int // AVSampleFormat
 	SampleRate int
@@ -207,6 +222,21 @@ func OpenEncoder(opts EncoderOptions) (*EncoderContext, error) {
 		}
 		if opts.InterlacedEncode {
 			ctx.flags |= C.AV_CODEC_FLAG_INTERLACED_DCT | C.AV_CODEC_FLAG_INTERLACED_ME
+		}
+		if opts.ColorRange > 0 {
+			ctx.color_range = C.enum_AVColorRange(opts.ColorRange)
+		}
+		if opts.ColorSpace > 0 {
+			ctx.colorspace = C.enum_AVColorSpace(opts.ColorSpace)
+		}
+		if opts.ColorPrimaries > 0 {
+			ctx.color_primaries = C.enum_AVColorPrimaries(opts.ColorPrimaries)
+		}
+		if opts.ColorTransfer > 0 {
+			ctx.color_trc = C.enum_AVColorTransferCharacteristic(opts.ColorTransfer)
+		}
+		if opts.ChromaLocation > 0 {
+			ctx.chroma_sample_location = C.enum_AVChromaLocation(opts.ChromaLocation)
 		}
 	}
 

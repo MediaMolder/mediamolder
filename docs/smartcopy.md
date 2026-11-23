@@ -74,6 +74,12 @@ frame rate, timebase) are always taken from the source and cannot be
 overridden — changing them would break decode compatibility with the
 copied interior.
 
+The colour description (`color_range`, `colorspace`, `color_primaries`,
+`color_trc`, `chroma_sample_location`) is taken from the source in the same
+way, so the re-encoded frames signal the same colour as the copied ones.
+Colour set inside `x264-params` / `x265-params` is not filtered and
+overrides it for the re-encoded frames only.
+
 ## How it works
 
 The graph splits the work along the existing source/copy boundary:
@@ -122,6 +128,13 @@ node arranges per codec (the *stream plan*, shared with the sink):
   libx264 and libx265 reorder exactly two deep whatever `bframes` is); a run
   that still reorders deeper is logged, and only the one step at its join
   is longer.
+- **Colour.** The boundary encoder is opened with the source stream's
+  colour range, matrix, primaries, transfer and chroma sample location, as
+  `ffmpeg` does for an encode, so its parameter sets carry the same VUI
+  colour description as the source's. Without it the re-encoded frames
+  would signal no colour while the copied ones kept the source's, and an
+  MP4 with no `colr` box would report none at stream level, because a
+  reader takes it from the first parameter set in use.
 - **H.264 with libx264.** The boundary encoder uses a free `sps-id`; its
   SPS/PPS are appended to the output's avcC next to the source's. Nothing
   travels in-band, and copied packets stay byte-identical — except after an
@@ -185,6 +198,9 @@ priming packet so the file carries the codec's edit list as FFmpeg writes it
 ## Limitations
 
 - Video parameters are identical source→target by design.
+- A source that signals an RGB matrix (`matrix_coefficients` 0) gets
+  boundary frames with the matrix unspecified: the encoder option treats 0
+  as unset.
 - For open-GOP H.264 sources the copied slice *headers* after the head
   cut are renumbered (slice data is byte-identical); when the head cut
   lands within a few frames of a non-IDR keyframe, the copied slices'

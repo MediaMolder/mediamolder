@@ -1065,8 +1065,8 @@ func (s *smartCopyState) send(pkt *av.Packet) error {
 // buildBoundaryEncoderOptions derives an encoder configuration that matches
 // the source stream so re-encoded boundary GOPs stay compatible with the
 // copied interior. Structural fields (codec, profile/level, resolution,
-// pixfmt, SAR, framerate, timebase) come from the source and are not
-// overridable; quality knobs (crf/preset/bitrate/...) may be supplied via the
+// pixfmt, SAR, framerate, timebase, colour description) come from the source
+// and are not overridable; quality knobs (crf/preset/bitrate/...) may be supplied via the
 // node params (from Output.EncoderParamsVideo).
 func buildBoundaryEncoderOptions(si av.StreamInfo, srcTB [2]int, params map[string]any) (av.EncoderOptions, error) {
 	name := paramString(params, "smartcopy_encoder")
@@ -1090,6 +1090,8 @@ func buildBoundaryEncoderOptions(si av.StreamInfo, srcTB [2]int, params map[stri
 		// they are taken from the source stream, never a GUI override.
 		"pix_fmt": true, "s": true, "r": true, "g": true,
 		"width": true, "height": true, "sar": true, "aspect": true,
+		"color_range": true, "colorspace": true, "color_primaries": true,
+		"color_trc": true, "chroma_sample_location": true,
 	}
 	extra := map[string]string{}
 	for k, v := range params {
@@ -1121,6 +1123,11 @@ func buildBoundaryEncoderOptions(si av.StreamInfo, srcTB [2]int, params map[stri
 		Profile:           si.Profile,
 		Level:             si.Level,
 		BitRate:           si.BitRate,
+		ColorRange:        si.ColorRange,
+		ColorSpace:        si.ColorSpace,
+		ColorPrimaries:    si.ColorPrimaries,
+		ColorTransfer:     si.ColorTransfer,
+		ChromaLocation:    si.ChromaLocation,
 		GOPSize:           1 << 20, // effectively single-GOP; keyframe forced at start
 		ExtraOpts:         extra,
 	}

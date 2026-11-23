@@ -123,6 +123,7 @@ type StreamInfo struct {
 	ColorRange         int    // AVColorRange
 	ColorPrimaries     int    // AVColorPrimaries
 	ColorTransfer      int    // AVColorTransferCharacteristic
+	ChromaLocation     int    // AVChromaLocation
 	BitsPerCodedSample int    // codec-reported coded bit depth (0 = unknown)
 	BitsPerRawSample   int    // codec-reported raw bit depth (0 = unknown)
 	BitDepth           int    // derived from PixFmt/SampleFmt component depth
@@ -354,6 +355,7 @@ func (f *InputFormatContext) StreamInfo(i int) (StreamInfo, error) {
 		ColorRange:         int(cp.color_range),
 		ColorPrimaries:     int(cp.color_primaries),
 		ColorTransfer:      int(cp.color_trc),
+		ChromaLocation:     int(cp.chroma_location),
 		BitsPerCodedSample: int(cp.bits_per_coded_sample),
 		BitsPerRawSample:   int(cp.bits_per_raw_sample),
 		BitDepth:           bitDepth,
