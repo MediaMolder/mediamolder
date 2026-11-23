@@ -96,6 +96,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- **`smartcopy` keeps the source's colour description on the frames it
+  re-encodes.** The boundary encoder opened with colour unspecified, so
+  its parameter sets carried no colour range, primaries, transfer, or
+  matrix while the copied frames kept the source's. A trimmed file could
+  change colour signalling partway through, and report none at stream
+  level when the cut started off a keyframe. The boundary encoder now
+  takes all four values and the chroma sample location from the source,
+  and the matching encoder options are no longer overridable. New
+  `av.EncoderOptions.ColorRange`, `ColorSpace`, `ColorPrimaries`,
+  `ColorTransfer`, and `ChromaLocation`, and `av.StreamInfo.ChromaLocation`.
 - **`go_processor` nodes that return a new frame without metadata now
   forward that frame.** The runtime only swapped in the processor's output
   when the processor also returned metadata. Otherwise it sent the original
