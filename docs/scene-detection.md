@@ -47,7 +47,7 @@ media graph — no subprocess, no Python runtime, no inter-process overhead.
 | `scene_change_threshold` | Mean brightness threshold (fade detection) | ★★★★★ | ★★★ | Fades to/from black or white |
 | `scene_change_hash` | Perceptual DCT hash, Hamming distance | ★★★★ | ★★★★ | Near-duplicate detection; robust to minor colour grading changes |
 | `scene_change_histogram` | Y-channel histogram correlation | ★★★★★ | ★★★ | Fast secondary check; low memory, one histogram per frame |
-| `scene_change_mc` | Motion-compensated lookahead (x264-style lowres inter/intra cost) | ★★ | ★★★★★ | **Dissolves and fades** with frame-accurate start/end bounds, plus hard cuts |
+| `scene_change_mc` | Motion-compensated lookahead (x264-style lowres inter/intra cost) + thumbnail linearity | ★★★ | ★★★★★ | Hard cuts, **dissolves and fades** with start/end bounds; sports and other fast-motion content |
 
 ---
 
@@ -366,22 +366,40 @@ the inter / intra prediction cost goes up.
 `scene_change_mc` is the only detector that finds **gradual transitions —
 cross-dissolves and fades — with frame-accurate boundaries**, in addition to
 hard cuts. The PySceneDetect detectors react to per-frame content deltas and
-fire on cuts. Other types of scene transitions, such as a dissolve, are more 
-gradual, occurring over many frames with no single large delta, so they miss it. 
+fire on cuts. Other types of scene transitions, such as a dissolve, are more
+gradual, occurring over many frames with no single large delta, so they miss it.
 `scene_change_mc` instead asks a motion-aware question:
 *how well can frame *j* be predicted from an earlier frame?*
 
-It runs an x264-style **lookahead** on a quarter-resolution copy of each frame:
-for several reference distances *k* it motion-compensates frame *j* from frame
-*j−k* and forms the **inter/intra cost ratio** (how much better real
-prediction does than coding the frame fresh). Across a dissolve from scene A
-to scene B, prediction from pure-A into the blend fails progressively, so the
-ratio rises into a saturated **plateau** whose flanks pin the transition's
-start and end. The detector is batch-only: it accumulates the whole input,
-runs a cheap coarse pass, then refines candidate regions with extra reference
-distances, forward/reverse narrowing, and complementary signals (per-frame AC
-texture energy and Y/U/V channel-mean steps) to drive the measured bounds
-toward frame accuracy. See the [design notes](#how-it-works) below.
+It runs an x264-style **lookahead** on a half-resolution copy of each frame:
+it motion-compensates frame *j* from frame *j−1* and forms the
+**inter/intra cost ratio** (how much better real prediction does than coding
+the frame fresh). Camera and subject motion keep that ratio low; a scene
+change makes prediction fail. Alongside it the detector keeps a tiny
+**thumbnail** of every frame (a 32×18 grid of cell means). The two signals
+together separate the three things that make prediction fail: a **cut** (one
+isolated failed frame), a **dissolve or fade** (the thumbnails travel in a
+straight line from the old scene to the new one), and a **fast pan** (the
+thumbnails slide sideways — not a transition).
+
+The detector is batch-only: it accumulates the whole input and reports at the
+end of the stream. With default settings it keeps a few hundred bytes per
+frame, so memory does not grow with clip length.
+
+### What it detects
+
+| Transition | How it is reported |
+|------------|--------------------|
+| Hard cut | `hard_cut` at the first frame of the new scene |
+| Cut with one mixed frame (frame-rate-converted sources) | `dissolve` spanning the mixed frame |
+| Dissolve / cross-fade, including "stepped" dissolves on repeated-frame content (30 fps material in a 60 fps stream) | `dissolve` from the last clean frame of the old scene to the first clean frame of the new one |
+| Fade to / from black or white | `fade_out` / `fade_in` |
+| Cut into a burst of flash frames or a short graphic that ends with another cut | one `dissolve` span from the first cut to the last |
+| Long dissolves (seconds) with frame-accurate edges | `dissolve` — requires the [staged analysis](#staged-long-dissolve-analysis) |
+
+Not detected today: graphic "stinger" wipes that animate over the picture,
+dissolves between two shots that are both in fast motion (or into a panning
+shot), and cuts between two near-identical camera angles.
 
 ### Output
 
@@ -389,27 +407,61 @@ Hard cuts emit a single frame; dissolves and fades emit a span. In JSONL,
 `frame_index` is the last fully-unblended frame **before** the transition and
 `dissolve_frames` is the inclusive length to the first fully-unblended frame
 **after** it (so a true *D*-frame blend reports `D + 2`). Both endpoints are
-clean frames suitable as encoder anchors.
+clean frames suitable as encoder anchors. The first frame of the transition
+itself is therefore `frame_index + 1`.
 
 ### Parameters
 
 | Param | Type | Default | Description |
 |-------|------|---------|-------------|
-| `coarse_prediction_distance` | int \| []int | `5` | Reference distance(s) used (with lag 1) in the cheap first pass over the whole video. A multi-scale set like `[30, 90]` localizes both short and long dissolves. Alias: `coarse_prediction_distances`. |
-| `refined_prediction_distances` | []int | built-in menu | Menu of distances the refinement stage draws from near an estimated dissolve duration (e.g. `[5,15,30,45,60,75,90,105,120]`). |
-| `threshold` | float64 | `0.50` | Hard-cut score-surface peak threshold. |
-| `dissolve_min_len` | int | `2` | Minimum measured blend length to call a dissolve. |
-| `dissolve_max_len` | int | `0` (= L/2) | Max transition width for dissolve/fade classification; raise for long dissolves. |
-| `agg_window` | int | `5` | Score-surface aggregation window (larger aids slow dissolves). |
-| `prediction_failure_threshold` | float64 | `0.985` | Inter/intra ratio level (0–1, near 1.0) treated as full prediction failure — the plateau saturation level. Per-distance overrides via `prediction_failure_thresholds`. |
-| `fade_threshold` / `fade_white_threshold` | float64 | `0.10` / `0.90` | Normalised luma below/above which a frame is dark/bright (fade detection); `>1.0` disables white fades. |
-| `fade_min_len` / `fade_max_len` | int | `3` / `120` | Min frames for a valid fade / max before treating as programme black/white. |
-| `min_scene_len` | int/float64/string | `15` | Min frames or duration (`"0.5s"`) between detections. |
-| `fullres_refine` | bool | `false` | Re-measure short/mid dissolve ends at full resolution via a windowed re-decode of `source_url` (sharper than the half-res lookahead on short blends). |
-| `source_url` | string | — | Input path the detector re-opens when `fullres_refine` is on. |
-| `cost_matrix_csv` | string | — | Debug: write the full augmented cost matrix (per-frame intra/luma/chroma/energy + per-distance inter/ratio, forward and reverse) to a CSV. |
+| `min_scene_len` | int/float64/string | `15` | Minimum scene length in frames or as a duration (`"0.5s"`). Transitions closer together than this merge into **one span** from the first one's start to the last one's end — the material between them is treated as part of the transition, not as a scene. |
+| `dissolve_max_len` | int | `0` (= 64 frames) | Longest dissolve/fade searched by the default analysis. Also the maximum blend length of the staged analysis (there `0` = half the longest prediction distance). |
+| `fade_min_len` | int | `3` | Minimum ramp length for a fade to digital black/white. |
 | `frame_rate` | float64 | `25.0` | Stream frame rate, for timecode generation. |
 | `output_file` / `output_format` | string | — / `"jsonl"` | Write results (`jsonl`, `csv`, `timecodes`). |
+| `cost_matrix_csv` | string | — | Debug: write the per-frame cost matrix (intra/luma/chroma/energy + per-distance inter/ratio, forward and reverse) to a CSV. |
+
+The cut and dissolve rules have no tuning knobs: every test is relative to
+the frames around it (a spike against its neighbours, a run against its
+flanks), so there is no content-dependent threshold to set.
+
+#### Staged long-dissolve analysis
+
+Setting `coarse_prediction_distance` or `refined_prediction_distances` (or
+`fullres_refine`) turns on the staged analysis, which measures long
+dissolves' start and end to the frame by re-measuring candidate regions at
+many prediction distances. It **retains every half-resolution frame until
+the end of the stream** — about 4.5 MB per 1080p frame — so use it on short
+clips or downscaled input. Its dissolves are merged with the default
+analysis; hard cuts always come from the default analysis.
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `coarse_prediction_distance` | int \| []int | unset | Reference distance(s) measured for every frame in the staged first pass. A multi-scale set like `[30, 90]` localizes both short and long dissolves. Alias: `coarse_prediction_distances`. |
+| `refined_prediction_distances` | []int | built-in menu | Menu of distances the refinement stage draws from near an estimated dissolve duration (e.g. `[5,15,30,45,60,75,90,105,120]`). |
+| `threshold` | float64 | `0.50` | Score-surface peak threshold used to seed candidate regions. |
+| `excess_threshold` | float64 | `0.15` | Minimum per-distance excess above baseline that counts as transition activity when seeding. |
+| `agg_window` | int | `5` | Score-surface aggregation window (larger aids slow dissolves). |
+| `dissolve_min_len` | int | `2` | Minimum measured blend length the staged analysis reports. |
+| `prediction_failure_threshold` | float64 | `0.985` | Inter/intra ratio level (0–1, near 1.0) treated as full prediction failure — the plateau saturation level. Per-distance overrides via `prediction_failure_thresholds`. |
+| `fullres_refine` | bool | `false` | Re-measure short/mid dissolve ends at full resolution via a windowed re-decode of `source_url` (sharper than the half-res lookahead on short blends). |
+| `source_url` | string | — | Input path the detector re-opens when `fullres_refine` is on. |
+
+`fade_threshold`, `fade_white_threshold` and `fade_max_len` are accepted for
+compatibility and currently unused.
+
+Default analysis:
+
+```json
+{
+  "id": "detect",
+  "type": "go_processor",
+  "processor": "scene_change_mc",
+  "params": { "output_file": "/abs/path/scenes.jsonl" }
+}
+```
+
+With the staged long-dissolve analysis:
 
 ```json
 {
@@ -420,22 +472,49 @@ clean frames suitable as encoder anchors.
     "coarse_prediction_distance": [30, 90],
     "refined_prediction_distances": [1, 2, 3, 5, 15, 30, 45, 60, 75, 90, 105, 120],
     "dissolve_max_len": 150,
-    "output_file": "scenes.jsonl"
+    "output_file": "/abs/path/scenes.jsonl"
   }
 }
 ```
 
 ### How it works
 
-The detector is a Go port of the x264 lowres lookahead (half-res SATD motion
-estimation and intra cost) plus a dissolve-detection pipeline built on top:
-multi-scale coarse plateau detection → region seeding → reference-distance
-ladder refinement → ramp-foot cross-distance consensus → forward/reverse edge
-narrowing → AC-energy and channel-mean witnesses. Because it ports x264's
-mature ME/intra logic, the cost engine is reliable; the novelty is the
-staged measurement architecture that turns those costs into frame-accurate
-transition bounds. (The `lookahead/` package is the engine; the detector
-itself is `processors/scene_change_mc.go`.)
+The cost engine is a Go port of the x264 lowres lookahead (half-res SATD
+motion estimation and intra cost); the `lookahead/` package is the engine and
+`processors/scene_change_mc.go` the detector. Frame costs are computed on all
+CPU cores.
+
+**Why not a threshold on the ratio.** On sports footage the lag-1 ratio sits
+anywhere from 0.05 to 0.6 in ordinary play and reaches 0.95 in a fast pan,
+while a dissolve between two views of the same pitch may peak at 0.6. No
+level separates transitions from motion, so every rule compares a frame with
+its own neighbourhood.
+
+**Hard cuts.** A cut is one frame the previous frame cannot predict, between
+frames that predict each other: the ratio at the cut is at least 0.75 and at
+least 0.30 above every frame within three frames on both sides. Repeated
+frames (every other ratio near zero) do not disturb this. Variants cover a
+cut with one mixed frame (the spike is two frames wide) and a cut into a shot
+that is itself in fast motion (isolated on the old-scene side only, confirmed
+by an isolated jump of the thumbnail).
+
+**Dissolves and fades.** Wherever the ratio rises above its local floor, the
+detector searches for a pair of frames *A*, *B* between which the thumbnails
+move in a straight line: every frame *M* in between satisfies
+`thumb[M] ≈ (1−α)·thumb[A] + α·thumb[B]` with α rising from 0 to 1. A
+pixel-wise blend does exactly this to any linear function of the picture;
+motion fast enough to defeat motion estimation does not. A hypothesis must
+also show that the endpoints differ, that the thumbnail moves faster and
+prediction is worse inside than on the flanks, that the change covers the
+frame (an overlay graphic fading in is a perfect blend of a small area), and
+that the steps are not global translations (a pan test at whole-cell and
+sub-cell shifts). The first frame with α > 0 and the first with α ≈ 1 give
+the reported bounds.
+
+**Staged long-dissolve analysis.** When enabled: multi-scale coarse plateau
+detection → region seeding → reference-distance ladder refinement →
+ramp-foot cross-distance consensus → forward/reverse edge narrowing →
+AC-energy and channel-mean witnesses.
 
 ---
 

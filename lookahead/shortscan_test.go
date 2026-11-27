@@ -1,0 +1,287 @@
+// Copyright (C) 2025-2026 MediaMolder contributors.
+// SPDX-License-Identifier: LGPL-2.1-or-later
+
+package lookahead
+
+import (
+	"testing"
+)
+
+// shortFixture builds a lag-1-only CostMatrix with luma thumbnails.
+type shortFixture struct {
+	m *CostMatrix
+}
+
+func newShortFixture(n int, floor float32) *shortFixture {
+	m := &CostMatrix{N: n, L: 1, Lags: []int{1}, ThumbC: 1}
+	for j := 0; j < n; j++ {
+		m.Ratio = append(m.Ratio, []float32{floor})
+		m.InterCost = append(m.InterCost, []float32{0})
+		m.IntraCost = append(m.IntraCost, 1000)
+		m.AvgLuma = append(m.AvgLuma, 100)
+		m.Thumb = append(m.Thumb, make([]float32, ThumbW*ThumbH))
+	}
+	return &shortFixture{m}
+}
+
+// scene returns a deterministic pseudo-random thumbnail.
+func scene(seed uint32) []float32 {
+	t := make([]float32, ThumbW*ThumbH)
+	s := seed*2654435761 + 12345
+	for i := range t {
+		s = s*1664525 + 1013904223
+		t[i] = float32(s>>24) * 0.8
+	}
+	return t
+}
+
+// wide returns a pseudo-random field wider than a thumbnail, for panning.
+func wide(seed uint32, w int) []float32 {
+	t := make([]float32, w*ThumbH)
+	s := seed*2654435761 + 999
+	for i := range t {
+		s = s*1664525 + 1013904223
+		t[i] = float32(s>>24) * 0.8
+	}
+	return t
+}
+
+func window(field []float32, w, x0 int) []float32 {
+	t := make([]float32, ThumbW*ThumbH)
+	for y := 0; y < ThumbH; y++ {
+		copy(t[y*ThumbW:(y+1)*ThumbW], field[y*w+x0:y*w+x0+ThumbW])
+	}
+	return t
+}
+
+func mix(a, b []float32, alpha float32) []float32 {
+	t := make([]float32, len(a))
+	for i := range t {
+		t[i] = (1-alpha)*a[i] + alpha*b[i]
+	}
+	return t
+}
+
+func (f *shortFixture) fill(lo, hi int, t []float32) {
+	for j := lo; j < hi; j++ {
+		f.m.Thumb[j] = t
+	}
+}
+
+func (f *shortFixture) set(j int, r float32) { f.m.Ratio[j][0] = r }
+
+func (f *shortFixture) detect() []SceneTransition {
+	cfg := (&LookaheadAnalyzer{}).withDefaults(f.m.L)
+	return cfg.detectShortTransitions(f.m)
+}
+
+func wantOne(t *testing.T, got []SceneTransition, typ TransitionType, start, end int) {
+	t.Helper()
+	if len(got) != 1 {
+		t.Fatalf("want 1 transition, got %d: %+v", len(got), got)
+	}
+	if got[0].Type != typ || got[0].StartFrame != start || got[0].EndFrame != end {
+		t.Fatalf("want type %d [%d,%d], got %+v", typ, start, end, got[0])
+	}
+}
+
+func TestShort_HardCut(t *testing.T) {
+	f := newShortFixture(100, 0.25)
+	f.fill(0, 50, scene(1))
+	f.fill(50, 100, scene(2))
+	f.set(50, 0.98)
+	wantOne(t, f.detect(), TransitionHardCut, 50, 50)
+}
+
+// A hard cut on repeated-frame content (30 fps in a 60 fps stream): every
+// other lag-1 ratio is near zero, and the cut is still a single isolated
+// spike.
+func TestShort_HardCut_RepeatedFrames(t *testing.T) {
+	f := newShortFixture(100, 0.05)
+	for j := 1; j < 100; j += 2 {
+		f.set(j, 0.27)
+	}
+	f.fill(0, 51, scene(1))
+	f.fill(51, 100, scene(2))
+	f.set(51, 0.99)
+	wantOne(t, f.detect(), TransitionHardCut, 51, 51)
+}
+
+// Periodic moderate spikes (e.g. keyframe quality pulses) are isolated but
+// far from prediction failure, and are not cuts.
+func TestShort_PeriodicPulsesNotCuts(t *testing.T) {
+	f := newShortFixture(200, 0.30)
+	f.fill(0, 200, scene(1))
+	for j := 15; j < 200; j += 30 {
+		f.set(j, 0.62)
+	}
+	if got := f.detect(); len(got) != 0 {
+		t.Fatalf("want no transitions, got %+v", got)
+	}
+}
+
+// One mixed frame between two scenes: reported as a 3-frame span whose
+// StartFrame is the last clean old-scene frame.
+func TestShort_TwoFrameCut(t *testing.T) {
+	f := newShortFixture(100, 0.2)
+	a, b := scene(1), scene(2)
+	f.fill(0, 50, a)
+	f.m.Thumb[50] = mix(a, b, 0.5)
+	f.fill(51, 100, b)
+	f.set(50, 0.80)
+	f.set(51, 0.97)
+	wantOne(t, f.detect(), TransitionDissolve, 49, 51)
+}
+
+// A cut into a shot in fast motion: the frames after the cut are not calm,
+// so the spike is isolated on the old-scene side only; the isolated
+// thumbnail jump confirms it.
+func TestShort_CutIntoMotion(t *testing.T) {
+	const w = 200
+	f := newShortFixture(100, 0.3)
+	f.fill(0, 50, scene(1))
+	field := wide(2, w)
+	for j := 50; j < 100; j++ {
+		f.m.Thumb[j] = window(field, w, (j-50)/8) // slow drift
+		f.set(j, 0.85)
+	}
+	f.set(50, 0.99)
+	wantOne(t, f.detect(), TransitionHardCut, 50, 50)
+}
+
+// A fast pan: prediction fails for many consecutive frames, and nothing is
+// reported.
+func TestShort_PanNotATransition(t *testing.T) {
+	const w = 200
+	f := newShortFixture(120, 0.25)
+	field := wide(3, w)
+	f.fill(0, 50, window(field, w, 0))
+	for j := 50; j < 62; j++ {
+		f.m.Thumb[j] = window(field, w, 2*(j-49))
+		f.set(j, 0.95)
+	}
+	f.fill(62, 120, window(field, w, 24))
+	if got := f.detect(); len(got) != 0 {
+		t.Fatalf("want no transitions for a pan, got %+v", got)
+	}
+}
+
+// A stepped dissolve on repeated-frame content: each mix level is held for
+// two frames. Bounds are the last clean old-scene frame and the first clean
+// new-scene frame.
+func TestShort_SteppedDissolve(t *testing.T) {
+	f := newShortFixture(120, 0.25)
+	a, b := scene(1), scene(2)
+	f.fill(0, 40, a)
+	for j := 40; j < 48; j++ {
+		f.m.Thumb[j] = mix(a, b, float32((j-40)/2+1)/5)
+	}
+	f.fill(48, 120, b)
+	for j := 40; j <= 48; j += 2 {
+		f.set(j, 0.62)
+	}
+	wantOne(t, f.detect(), TransitionDissolve, 39, 48)
+}
+
+// A linear dissolve with one mix level per frame.
+func TestShort_LinearDissolve(t *testing.T) {
+	f := newShortFixture(160, 0.25)
+	a, b := scene(4), scene(5)
+	f.fill(0, 60, a)
+	for j := 60; j < 72; j++ {
+		f.m.Thumb[j] = mix(a, b, float32(j-59)/13)
+		f.set(j, 0.55)
+	}
+	f.fill(72, 160, b)
+	f.set(72, 0.55)
+	wantOne(t, f.detect(), TransitionDissolve, 59, 72)
+}
+
+// An overlay graphic fading in is a perfect blend of a small area — not a
+// scene change.
+func TestShort_OverlayFadeNotATransition(t *testing.T) {
+	f := newShortFixture(120, 0.25)
+	a := scene(1)
+	b := append([]float32(nil), a...)
+	for y := 12; y < 16; y++ {
+		for x := 2; x < 10; x++ {
+			b[y*ThumbW+x] = 255
+		}
+	}
+	f.fill(0, 40, a)
+	for j := 40; j < 46; j++ {
+		f.m.Thumb[j] = mix(a, b, float32(j-39)/7)
+		f.set(j, 0.5)
+	}
+	f.fill(46, 120, b)
+	if got := f.detect(); len(got) != 0 {
+		t.Fatalf("want no transitions for an overlay fade, got %+v", got)
+	}
+}
+
+// Cuts closer than MinSceneLen merge into one span: the material between
+// them is transition, not a scene.
+func TestEnforceMinSceneLen_MergesCloseCuts(t *testing.T) {
+	in := []SceneTransition{
+		{Type: TransitionHardCut, StartFrame: 100, EndFrame: 100, Score: 0.6},
+		{Type: TransitionHardCut, StartFrame: 108, EndFrame: 108, Score: 0.7},
+		{Type: TransitionHardCut, StartFrame: 300, EndFrame: 300, Score: 0.5},
+	}
+	got := enforceMinSceneLen(in, 15)
+	if len(got) != 2 {
+		t.Fatalf("want 2 transitions, got %+v", got)
+	}
+	if got[0].Type != TransitionDissolve || got[0].StartFrame != 99 || got[0].EndFrame != 108 {
+		t.Fatalf("merged span: got %+v", got[0])
+	}
+	if got[1].Type != TransitionHardCut || got[1].StartFrame != 300 {
+		t.Fatalf("isolated cut changed: %+v", got[1])
+	}
+}
+
+// The short detector owns hard cuts; a legacy fade overlapping a short
+// gradual detection passes on its type, and non-overlapping legacy
+// dissolves are kept.
+func TestMergeShortAndLegacy(t *testing.T) {
+	short := []SceneTransition{
+		{Type: TransitionHardCut, StartFrame: 50, EndFrame: 50},
+		{Type: TransitionDissolve, StartFrame: 200, EndFrame: 230},
+	}
+	legacy := []SceneTransition{
+		{Type: TransitionHardCut, StartFrame: 80, EndFrame: 80},
+		{Type: TransitionFadeOut, StartFrame: 120, EndFrame: 231},
+		{Type: TransitionDissolve, StartFrame: 400, EndFrame: 460},
+	}
+	got := mergeShortAndLegacy(short, legacy)
+	if len(got) != 3 {
+		t.Fatalf("want 3 transitions, got %+v", got)
+	}
+	if got[0].Type != TransitionHardCut || got[0].StartFrame != 50 {
+		t.Fatalf("got[0] = %+v", got[0])
+	}
+	if got[1].Type != TransitionFadeOut || got[1].StartFrame != 200 || got[1].EndFrame != 230 {
+		t.Fatalf("got[1] = %+v", got[1])
+	}
+	if got[2].Type != TransitionDissolve || got[2].StartFrame != 400 {
+		t.Fatalf("got[2] = %+v", got[2])
+	}
+}
+
+func TestLumaThumb_CellMeans(t *testing.T) {
+	const w, h = 64, 36
+	luma := make([]byte, w*h)
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			luma[y*w+x] = byte(x / 2 * 4)
+		}
+	}
+	th := lumaThumb(luma, w, h, w)
+	if len(th) != ThumbW*ThumbH {
+		t.Fatalf("thumb len %d", len(th))
+	}
+	for cx := 0; cx < ThumbW; cx++ {
+		if got, want := th[5*ThumbW+cx], float32(cx*4); got != want {
+			t.Fatalf("cell %d: got %v want %v", cx, got, want)
+		}
+	}
+}

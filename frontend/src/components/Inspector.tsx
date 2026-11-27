@@ -2896,23 +2896,23 @@ const SCENE_DETECTOR_META: Record<string, SceneDetectorMeta> = {
     thresholdMax: 1,
     thresholdStep: 0.01,
     thresholdHint:
-      'Hard-cut score-surface peak threshold [0–1]. A frame is flagged as a cut when its ' +
-      'aggregated excess score exceeds this. Lower = more sensitive; raise to suppress false ' +
-      'positives on fast-motion content. Default 0.50.',
+      'Staged long-dissolve analysis only: score-surface peak threshold [0–1] used to seed ' +
+      'candidate regions. Hard cuts and short dissolves are found without a threshold. ' +
+      'Default 0.50.',
     extra: [
       {
         key: 'coarse_prediction_distance',
         label: 'Coarse prediction distance(s)',
         type: 'number-list',
-        defaultValue: [5],
+        defaultValue: [],
         placeholder: 'e.g. 15, 45',
         hint:
-          'Prediction distance(s) used (alongside lag 1) in the cheap coarse first pass over the ' +
-          'whole video. A lag k only forms a flat-top plateau on dissolves shorter than k, so a ' +
-          'single distance cannot localize both short and long blends — a multi-scale set (e.g. ' +
-          '15, 45 or 30, 90) is recommended: a short distance localizes short dissolves, a long ' +
-          'one localizes long dissolves. Main performance control; cost is (1 + count) lowres ME ' +
-          'per frame. Comma- or space-separated. Default 5.',
+          'Leave empty for the default analysis (hard cuts, short and medium dissolves; no ' +
+          'frames retained). Setting distance(s) enables the staged long-dissolve analysis: ' +
+          'they are measured for every frame alongside lag 1, and every half-resolution frame ' +
+          'is kept in memory until the end of the stream. A lag k only forms a flat-top ' +
+          'plateau on dissolves shorter than k, so a multi-scale set (e.g. 15, 45 or 30, 90) ' +
+          'is recommended. Comma- or space-separated.',
       },
       {
         key: 'refined_prediction_distances',

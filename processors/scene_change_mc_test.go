@@ -170,3 +170,56 @@ func bytesRepeat(px []byte, n int) []byte {
 	}
 	return out
 }
+
+func TestBgrThumbYUV_UniformAndMeans(t *testing.T) {
+	const w, h = 64, 36
+	bgr := make([]byte, w*h*3)
+	for i := 0; i < w*h; i++ {
+		bgr[i*3], bgr[i*3+1], bgr[i*3+2] = 30, 120, 200
+	}
+	th, u, v := bgrThumbYUV(bgr, w, h)
+	if len(th) != lookahead.ThumbW*lookahead.ThumbH*3 {
+		t.Fatalf("thumb len %d", len(th))
+	}
+	wantU, wantV := bgrMeanUV(bgr, w*h)
+	if d := u - wantU; d > 1e-3 || d < -1e-3 {
+		t.Fatalf("mean U %v, want %v", u, wantU)
+	}
+	if d := v - wantV; d > 1e-3 || d < -1e-3 {
+		t.Fatalf("mean V %v, want %v", v, wantV)
+	}
+	wantY := float32(0.299*200 + 0.587*120 + 0.114*30)
+	for c := 0; c < lookahead.ThumbW*lookahead.ThumbH; c++ {
+		if d := th[c*3] - wantY; d > 1e-3 || d < -1e-3 {
+			t.Fatalf("cell %d Y %v, want %v", c, th[c*3], wantY)
+		}
+		if d := th[c*3+1] - wantU; d > 1e-3 || d < -1e-3 {
+			t.Fatalf("cell %d U %v, want %v", c, th[c*3+1], wantU)
+		}
+	}
+}
+
+// The staged long-dissolve analysis — and with it the retention of every
+// lowres frame until Close — is opt-in.
+func TestSceneChangeMC_StagedIsOptIn(t *testing.T) {
+	p := &SceneChangeMC{}
+	if err := p.Init(map[string]any{}); err != nil {
+		t.Fatal(err)
+	}
+	if p.staged {
+		t.Fatal("default configuration must not enable staged analysis")
+	}
+	if got := p.scanner.Matrix().Lags; len(got) != 1 || got[0] != 1 {
+		t.Fatalf("default scan lags = %v, want [1]", got)
+	}
+	q := &SceneChangeMC{}
+	if err := q.Init(map[string]any{"coarse_prediction_distance": []any{30, 90}}); err != nil {
+		t.Fatal(err)
+	}
+	if !q.staged {
+		t.Fatal("coarse_prediction_distance must enable staged analysis")
+	}
+	if got := q.scanner.Matrix().Lags; len(got) != 3 {
+		t.Fatalf("staged scan lags = %v, want [1 30 90]", got)
+	}
+}

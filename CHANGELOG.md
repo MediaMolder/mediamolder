@@ -90,12 +90,42 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Changed
 
+- **`scene_change_mc` detects cuts and dissolves with a new default
+  analysis.** Hard cuts are isolated spikes of the lag-1 inter/intra cost
+  ratio, and dissolves and fades are runs in which a 32×18 thumbnail of
+  the frame travels in a straight line from the old scene to the new one;
+  fast pans are recognised and ignored. On 28 labelled sports and drama
+  clips at default settings the detector went from 50 of 124 transitions
+  found with 9 false detections to 113 found with 1. A cut with one
+  mixed frame, a "stepped" dissolve on repeated-frame content, and a cut
+  into a burst of flash frames are each reported as one span. There is no
+  score threshold to tune for cuts.
+  See [docs/scene-detection.md](docs/scene-detection.md#the-motion-compensated-detector-scene_change_mc).
+- **`scene_change_mc` staged long-dissolve analysis is opt-in.** It runs
+  when `coarse_prediction_distance`, `refined_prediction_distances` or
+  `fullres_refine` is set. Without them the detector scans lag 1 only and
+  keeps no frames: a 5,355-frame 1080p clip went from about 21 GB to
+  190 MB of memory. `threshold`, `excess_threshold` and `agg_window` now
+  only seed the staged analysis; hard cuts always come from the default
+  analysis.
+- **`scene_change_mc` `min_scene_len` merges close transitions into one
+  span** from the first one's start to the last one's end. Events closer
+  than the minimum were previously emitted, and raising the value could
+  drop well-separated cuts.
+- **`scene_change_mc` computes frame costs on all CPU cores.** The same
+  1080p clip takes 68 s instead of 327 s; costs are identical to the
+  sequential scan.
 - **Exported type `YOLOv8Detector` is now `YOLODetector`.** The ONNX
   detector lives in `processors/yolo_onnx.go`. `yolo` and `yolo_v8`
   both register it.
 
 ### Fixed
 
+- **`scene_change_mc` reports an analysis failure.** `Close` wrote no
+  events and returned no error when the analysis failed, so a failed run
+  looked like a clip with no transitions.
+- **`scene_change_mc` no longer reports a fade-in at the last frame** when
+  a black or white run lasts to the end of the stream.
 - **`smartcopy` keeps the source's colour description on the frames it
   re-encodes.** The boundary encoder opened with colour unspecified, so
   its parameter sets carried no colour range, primaries, transfer, or

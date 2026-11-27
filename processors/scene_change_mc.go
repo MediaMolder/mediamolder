@@ -3,33 +3,29 @@
 
 package processors
 
-// Motion-compensated scene-change detector using the lookahead cost-matrix
-// algorithm (batch only).
+// Motion-compensated scene-change detector (batch only).
 //
-// The processor accumulates frames during Process() (via the lowres lookahead
-// scanner) and performs the full (optionally staged) analysis in Close().
-// There is no streaming / low-latency emission path. Results (hard cuts,
-// dissolves, fades) are emitted only when the job finishes (or via
-// LookaheadDetector.PostProcess for the goscenedetect adapter).
+// The processor accumulates per-frame signals during Process() and performs
+// all analysis in Close(). There is no streaming / low-latency emission path:
+// results (hard cuts, dissolves, fades) are emitted when the job finishes.
 //
-// Dissolve detection uses the high-accuracy plateau method (per-lag saturated
-// high-ratio runs + ramp-foot extrapolation) when long lags are present in the
-// relevant regions, followed by progressive lag narrowing: each detected
-// dissolve's edges are re-measured with forward and reverse (future-reference)
-// prediction at distances 5→3→2→1 for frame-accurate bounds on short blends.
-// For performance the processor uses a cheap multi-scale coarse first pass
-// (lag 1 + coarse_prediction_distance(s) across the whole video) followed by
-// targeted refinement measurements only in windows around coarse candidates.
-// See the authoritative algorithm description in
-// private_local/dissolve_transition_detection_algorithm.md and the staged
-// design rationale in
-// private_local/incremental_motion_compensated_scene_detection.md.
+// Default analysis (lookahead/shortscan.go): every frame is scanned at lag 1
+// with the x264-ported lowres lookahead, and a 32×18 Y,U,V thumbnail is kept
+// per frame. Hard cuts are isolated spikes of the lag-1 inter/intra cost
+// ratio; dissolves and fades are runs in which the thumbnails travel in a
+// straight line from the old scene to the new one; fast pans are recognised
+// (global thumbnail shift) and ignored. No frames are retained.
 //
-// Because all detection happens in Close() after the frame progress bar reaches
-// 100 %, the processor implements AsyncMetadataProcessor and posts log-panel
-// updates for each staged-refinement step (coarse-pass result, each rough
-// dissolve region being refined, final analysis, and the detected transitions)
-// so the post-frames phase is no longer silent in the GUI.
+// Staged long-dissolve analysis (opt-in via coarse_prediction_distance /
+// refined_prediction_distances / fullres_refine): the plateau method
+// (per-lag saturated high-ratio runs + ramp-foot extrapolation) followed by
+// progressive lag narrowing, on a cheap multi-scale coarse pass plus targeted
+// refinement around candidates. It retains every lowres frame until Close().
+//
+// Because all detection happens in Close() after the frame progress bar
+// reaches 100 %, the processor implements AsyncMetadataProcessor and posts
+// log-panel updates for each analysis step so the post-frames phase is not
+// silent in the GUI.
 //
 // The processor is registered as "scene_change_mc".
 
@@ -50,20 +46,20 @@ import (
 )
 
 // SceneChangeMC detects scene changes using the motion-compensated lookahead
-// cost-matrix algorithm (batch only). All analysis and emission happens in
+// (batch only). All analysis and emission happens in
 // Close() after the full input has been accumulated.
 //
 // The processor is registered as "scene_change_mc".
 //
 // Params:
 //
-//	"coarse_prediction_distance": int | []int — prediction distance(s) used (alongside lag 1) in the cheap coarse
-//	                              first pass over the entire video (default 5). A single value keeps the legacy
-//	                              behaviour; a multi-scale set (e.g. [30, 90]) is recommended because a lag k only
-//	                              forms a flat-top saturated plateau on dissolves shorter than k — a short distance
-//	                              localizes short blends, a long one localizes long blends. Cost is (1 + count)
-//	                              lowres ME per frame, so this is the main performance control. Accepts the alias
-//	                              "coarse_prediction_distances".
+//	"coarse_prediction_distance": int | []int — enables the staged long-dissolve analysis and sets the
+//	                              prediction distance(s) measured (alongside lag 1) for every frame in its coarse
+//	                              first pass. Unset by default: the default analysis scans lag 1 only and retains
+//	                              no frames. A multi-scale set (e.g. [30, 90]) is recommended because a lag k only
+//	                              forms a flat-top saturated plateau on dissolves shorter than k. Cost is
+//	                              (1 + count) lowres ME per frame, plus retention of every lowres frame until
+//	                              Close(). Accepts the alias "coarse_prediction_distances".
 //	"refined_prediction_distances": []int — menu of prediction distances (formerly called "lags") from which the
 //	                              staged refinement stage chooses values near an estimated dissolve duration D
 //	                              (e.g. [5,15,30,45,60,75,90,105,120]). For each rough dissolve region found by the
@@ -74,15 +70,17 @@ import (
 //	                              evaluating them on stable content. If omitted, a built-in default menu is used.
 //	                              The cost_matrix_csv will contain the coarse columns for every frame and the
 //	                              additional refined columns only in the regions that were actually refined.
-//	"threshold":        float64 — hard-cut score surface peak threshold; default 0.50
-//	"excess_threshold": float64 — excess E[j][k] threshold for transition typing; default 0.15
-//	"dissolve_min_len": int     — min measured blend duration to call a dissolve; default 2
-//	"min_scene_len":    int/float64/string — min frames or duration like "0.5s" (default 15)
+//	"threshold":        float64 — staged analysis: score surface peak threshold for seeding; default 0.50
+//	"excess_threshold": float64 — staged analysis: excess E[j][k] threshold for transition typing; default 0.15
+//	"dissolve_min_len": int     — staged analysis: min measured blend duration to call a dissolve; default 2
+//	"min_scene_len":    int/float64/string — min frames or duration like "0.5s" (default 15); transitions
+//	                              closer than this merge into one span
 //	"fade_threshold":   float64 — normalised luma [0–1] below which a frame is dark; default 0.10 (valley fallback; new digital+linear path uses ~0/255 anchors)
 //	"fade_white_threshold": float64 — normalised luma [0–1] above which a frame is bright; default 0.90; >1.0 disables
 //	"fade_min_len":     int     — min dark/bright frames for a valid fade; default 3 (also min ramp frames to digital b/w)
 //	"fade_max_len":     int     — max dark/bright frames before treating as programme black/white; default 120
-//	"dissolve_max_len": int     — max active-lag width for dissolve/fade classification; 0=L/2. Increase for long dissolves (e.g. 30+ frames).
+//	"dissolve_max_len": int     — longest dissolve/fade searched (default analysis: 0 = 64 frames; staged
+//	                              analysis: 0 = L/2). Increase for long dissolves.
 //	"agg_window":       int     — frames for score-surface aggregation (larger aids slow dissolves); default 5.
 //	"prediction_failure_threshold": float64 — the inter/intra cost-ratio level (0–1, near 1.0) at which temporal prediction
 //	                              from a reference is treated as having completely failed (the frame looks like a different
@@ -113,20 +111,7 @@ import (
 //	                              every frame; refined/reverse ones only inside candidate-dissolve windows
 //	                              (0 elsewhere). For debugging the detector's internal costs.
 //
-// Tuning for synthetic dissolves generated by sequence_editor (see dissolve_test_xfs.json):
-// The exact blend windows are known (linear pixel blends of length "transition"."duration"
-// starting at each clip's nominal cut time). A custom lag set such as
-// [5,15,30,45,60,75,90,105,120] provides a small lag for short-D differential signal +
-// exact matches for the longer GT durations. The staged path (when enabled) uses a cheap
-// coarse prefix for candidate finding and then computes the relevant long lags only in
-// the windows around detected dissolves, dramatically reducing cost while still feeding
-// the plateau detector the lags it needs for accurate bounds.
-//
-// The ratio (inter vs intra) provides the strongest aligned signal.
-//
-// See also the design in private_local/incremental_motion_compensated_scene_detection.md
-// and the authoritative plateau algorithm description in
-// private_local/dissolve_transition_detection_algorithm.md.
+// See docs/scene-detection.md for the algorithm description.
 type SceneChangeMC struct {
 	hook         fileWriteHook
 	scanner      *lookahead.LookaheadScanner
@@ -139,6 +124,8 @@ type SceneChangeMC struct {
 	fullresRefine bool
 	sourceURL     string
 	framePTS      []int64
+	avgU, avgV    []float32   // per-frame mean chroma, attached to the matrix at Close
+	thumbs        [][]float32 // per-frame Y,U,V thumbnails, attached at Close
 	frProvider    *fullresProvider
 
 	// cost matrix logging (x264 intra/inter costs)
@@ -164,6 +151,10 @@ type SceneChangeMC struct {
 	// supporting long dissolves accurately without paying the full cost on
 	// every frame.
 	refinedPredictionDistances []int
+
+	// staged is true when the long-dissolve staged analysis is enabled (see
+	// Init); it controls lowres-frame retention.
+	staged bool
 
 	// emitted tracks StartFrame values for which we have already emitted an
 	// event (used for deduplication across any internal multi-pass logic).
@@ -381,17 +372,26 @@ func (p *SceneChangeMC) Init(params map[string]any) error {
 		p.analyzer.MinSceneLen = int(n)
 	}
 
-	// In staged mode we accumulate using a cheap coarse first pass over the whole
-	// video: lag 1 (hard cuts) plus the configured coarse prediction distance(s).
-	// A multi-scale set lets a short distance plateau on short blends and a long
-	// one on longer blends, since a lag k only forms a flat top for D < k.
-	coarseDists := p.coarsePredictionDistances
-	if len(coarseDists) == 0 {
-		coarseDists = []int{5}
-	}
+	// Every frame is scanned at lag 1, which is all the short-transition
+	// detector (hard cuts, cut bursts, short/medium dissolves) needs.
+	//
+	// The staged long-dissolve analysis is opt-in: it engages when the caller
+	// configures coarse or refined prediction distances (or full-resolution
+	// refinement). It adds the coarse distance(s) to the per-frame scan and
+	// RETAINS every lowres frame until Close() (several MB per 1080p frame)
+	// so that targeted refinement can re-measure candidate regions; a short
+	// distance forms plateaus on short blends and a long one on longer blends
+	// (a lag k only forms a flat top for D < k).
+	p.staged = len(p.coarsePredictionDistances) > 0 || len(p.refinedPredictionDistances) > 0 || p.fullresRefine
 	lagSet := map[int]bool{1: true}
-	for _, d := range coarseDists {
-		lagSet[d] = true
+	if p.staged {
+		coarseDists := p.coarsePredictionDistances
+		if len(coarseDists) == 0 {
+			coarseDists = []int{5}
+		}
+		for _, d := range coarseDists {
+			lagSet[d] = true
+		}
 	}
 	coarseLags := make([]int, 0, len(lagSet))
 	for d := range lagSet {
@@ -404,11 +404,10 @@ func (p *SceneChangeMC) Init(params map[string]any) error {
 	}
 	p.scanner = s
 	p.lookaheadLen = coarseLags[len(coarseLags)-1]
-
-	// Enable retention so the staged driver (AnalyzeStaged) can perform
-	// targeted refinement using distances from refined_prediction_distances
-	// only around the candidate regions discovered from the coarse pass.
-	p.scanner.RetainAllLowres()
+	p.scanner.DisableThumbs() // the processor supplies Y,U,V thumbnails
+	if p.staged {
+		p.scanner.RetainAllLowres()
+	}
 
 	p.emitted = make(map[int]bool)
 
@@ -473,6 +472,58 @@ func bgrMeanUV(bgr []byte, n int) (float32, float32) {
 	u := 128 - 0.168736*r - 0.331264*g + 0.5*b
 	v := 128 + 0.5*r - 0.418688*g - 0.081312*b
 	return float32(u), float32(v)
+}
+
+// bgrThumbYUV returns the frame's lookahead.ThumbW×ThumbH thumbnail as
+// per-cell mean Y,U,V (full-range BT.601, the bgrMeanUV transform applied
+// to the cell's mean B,G,R) together with the whole-frame mean U and V.
+func bgrThumbYUV(bgr []byte, w, h int) (thumb []float32, meanU, meanV float32) {
+	const tw, th = lookahead.ThumbW, lookahead.ThumbH
+	thumb = make([]float32, tw*th*3)
+	if w <= 0 || h <= 0 || len(bgr) < w*h*3 {
+		return thumb, 0, 0
+	}
+	var sum [tw * th][3]uint64
+	var cnt [tw * th]uint64
+	for y := 0; y < h; y++ {
+		cy := y * th / h
+		row := bgr[y*w*3 : (y+1)*w*3]
+		for cx := 0; cx < tw; cx++ {
+			x0, x1 := cx*w/tw, (cx+1)*w/tw
+			var b, g, r uint64
+			for x := x0; x < x1; x++ {
+				b += uint64(row[x*3])
+				g += uint64(row[x*3+1])
+				r += uint64(row[x*3+2])
+			}
+			c := &sum[cy*tw+cx]
+			c[0] += b
+			c[1] += g
+			c[2] += r
+			cnt[cy*tw+cx] += uint64(x1 - x0)
+		}
+	}
+	var tb, tg, tr, tn float64
+	for i := range sum {
+		n := float64(cnt[i])
+		if n == 0 {
+			continue
+		}
+		b, g, r := float64(sum[i][0])/n, float64(sum[i][1])/n, float64(sum[i][2])/n
+		thumb[i*3] = float32(0.299*r + 0.587*g + 0.114*b)
+		thumb[i*3+1] = float32(128 - 0.168736*r - 0.331264*g + 0.5*b)
+		thumb[i*3+2] = float32(128 + 0.5*r - 0.418688*g - 0.081312*b)
+		tb += float64(sum[i][0])
+		tg += float64(sum[i][1])
+		tr += float64(sum[i][2])
+		tn += n
+	}
+	if tn > 0 {
+		b, g, r := tb/tn, tg/tn, tr/tn
+		meanU = float32(128 - 0.168736*r - 0.331264*g + 0.5*b)
+		meanV = float32(128 + 0.5*r - 0.418688*g - 0.081312*b)
+	}
+	return thumb, meanU, meanV
 }
 
 func (p *SceneChangeMC) writeCostMatrixCSV() {
@@ -563,14 +614,16 @@ func (p *SceneChangeMC) Process(frame *av.Frame, ctx ProcessorContext) (*av.Fram
 	if err := p.scanner.AddFrame(luma, frame.Width(), frame.Height(), frame.Width()); err != nil {
 		return frame, nil, fmt.Errorf("scene_change_mc: AddFrame: %w", err)
 	}
-	// Mean chroma rides in the cost matrix next to AvgLuma: the scanner is
-	// luma-only, but the mean-step edge refinement and the CSV consume the
-	// U/V means as additional channels.
-	if mm := p.scanner.Matrix(); mm != nil {
-		u, v := bgrMeanUV(bgr, frame.Width()*frame.Height())
-		mm.AvgU = append(mm.AvgU, u)
-		mm.AvgV = append(mm.AvgV, v)
-	}
+	// Mean chroma and the Y,U,V thumbnail ride in the cost matrix next to
+	// AvgLuma: the scanner is luma-only, but the short-transition detector
+	// consumes the thumbnails and the mean-step edge refinement and the CSV
+	// the U/V means. (Collected here and attached at Close: Matrix() waits
+	// for the scanner's in-flight frame costs, so it must not be called per
+	// frame.)
+	th, u, v := bgrThumbYUV(bgr, frame.Width(), frame.Height())
+	p.thumbs = append(p.thumbs, th)
+	p.avgU = append(p.avgU, u)
+	p.avgV = append(p.avgV, v)
 	// The cost-matrix CSV is written in full at Close(), after staged refinement
 	// has populated every forward and reverse column.
 
@@ -592,16 +645,17 @@ func (p *SceneChangeMC) Process(frame *av.Frame, ctx ProcessorContext) (*av.Fram
 // cost matrix and emits all detected transitions. This is the only place
 // where scene changes are reported.
 func (p *SceneChangeMC) Close() error {
+	var analysisErr error
 	if p.scanner != nil {
+		if mm := p.scanner.Matrix(); mm != nil {
+			mm.AvgU, mm.AvgV = p.avgU, p.avgV
+			mm.Thumb, mm.ThumbC = p.thumbs, 3
+		}
 		if p.scanner != nil {
-			// Run the staged (incremental) analysis. The scanner was fed with a
-			// cheap coarse schedule (controlled by coarse_prediction_distance)
-			// and has retained lowres frames. AnalyzeStaged will discover rough
-			// dissolve regions from the cheap data, then selectively compute
-			// extra prediction distances drawn from refined_prediction_distances
-			// (the menu of distances near estimated D) only in the temporal
-			// windows around those regions. It finally runs the full high-quality
-			// Analyze on the augmented matrix.
+			// Run the analysis: the short-transition detector on the lag-1
+			// column and thumbnails, plus — when the staged analysis is enabled
+			// and lowres frames were retained — the coarse→refine long-dissolve
+			// measurement drawing on refined_prediction_distances.
 			if p.fullresRefine && p.sourceURL != "" {
 				p.frProvider = newFullresProvider(p.sourceURL, p.framePTS, p.scanner)
 				p.analyzer.FullresProvider = p.frProvider
@@ -613,20 +667,26 @@ func (p *SceneChangeMC) Close() error {
 				}
 			}
 			transitions, err := p.analyzer.AnalyzeStaged(p.scanner, p.refinedPredictionDistances, p.reportStaged)
-			if err == nil {
-				for _, tr := range transitions {
-					if p.emitted[tr.StartFrame] {
-						continue
-					}
-					md := p.transitionMetadata(tr)
-					p.hook.write(ProcessorContext{}, md)
-					// Surface the detection in the GUI log panel too (the file
-					// hook only writes to the output file). Best-effort, SSE-only.
-					if p.emit != nil && md.LogMessage != "" {
-						p.emit(&Metadata{Progress: true, LogMessage: md.LogMessage})
-					}
-					p.emitted[tr.StartFrame] = true
+			if err != nil {
+				// A failed analysis must not look like a clip with no
+				// transitions.
+				analysisErr = fmt.Errorf("scene_change_mc: analysis failed: %w", err)
+				if p.emit != nil {
+					p.emit(&Metadata{Progress: true, LogMessage: analysisErr.Error()})
 				}
+			}
+			for _, tr := range transitions {
+				if p.emitted[tr.StartFrame] {
+					continue
+				}
+				md := p.transitionMetadata(tr)
+				p.hook.write(ProcessorContext{}, md)
+				// Surface the detection in the GUI log panel too (the file
+				// hook only writes to the output file). Best-effort, SSE-only.
+				if p.emit != nil && md.LogMessage != "" {
+					p.emit(&Metadata{Progress: true, LogMessage: md.LogMessage})
+				}
+				p.emitted[tr.StartFrame] = true
 			}
 		}
 	}
@@ -641,7 +701,10 @@ func (p *SceneChangeMC) Close() error {
 		p.costCSV = nil
 		p.costFile = nil
 	}
-	return p.hook.close()
+	if err := p.hook.close(); err != nil {
+		return err
+	}
+	return analysisErr
 }
 
 // tcAt returns the timecode string for frame index i, or a frame-number
@@ -663,6 +726,8 @@ func (p *SceneChangeMC) reportStaged(pr lookahead.StagedProgress) {
 	}
 	var msg string
 	switch pr.Phase {
+	case "short":
+		msg = fmt.Sprintf("scene_change_mc: %d cut(s)/short transition(s) found", pr.Current)
 	case "coarse":
 		msg = fmt.Sprintf("scene_change_mc: coarse pass done — %d candidate region(s) to refine", pr.Current)
 	case "refine":

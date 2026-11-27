@@ -1189,7 +1189,7 @@ offers only the five streaming PySceneDetect detectors; `scene_change` and
 | `scene_change_threshold` | 12.0 | Fade to/from black or white |
 | `scene_change_hash` | 0.395 | Robust to colour-grading and compression artefacts |
 | `scene_change_histogram` | 0.05 | Fast coarse filter; low memory |
-| `scene_change_mc` | 0.50 | **Dissolves & fades** with frame-accurate bounds, plus hard cuts ([details](scene-detection.md#the-motion-compensated-detector-scene_change_mc)) |
+| `scene_change_mc` | — (no threshold to tune) | Hard cuts, **dissolves & fades** with start/end bounds; robust to fast pans ([details](scene-detection.md#the-motion-compensated-detector-scene_change_mc)) |
 
 #### Wiring rules for scene detector nodes
 

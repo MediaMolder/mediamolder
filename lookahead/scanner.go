@@ -70,6 +70,14 @@ type CostMatrix struct {
 	AvgU []float32 // [N] when populated
 	AvgV []float32 // [N] when populated
 
+	// Thumb[j] is a coarse thumbnail of frame j: ThumbW×ThumbH grid cells
+	// (row-major), ThumbC channel means per cell. The scanner fills a
+	// luma-only thumbnail (ThumbC = 1); callers with colour frames may
+	// replace it with a Y,U,V one (ThumbC = 3). Consumed by the
+	// short-transition detector (shortscan.go).
+	Thumb  [][]float32
+	ThumbC int
+
 	// Backward-looking (reverse) prediction, populated only where dissolve-end
 	// refinement ran (zero elsewhere). RevRatio[j][i] is the inter/intra ratio
 	// for predicting frame j from the FUTURE reference j + RevLags[i]. Indexed by
@@ -125,6 +133,8 @@ type LookaheadScanner struct {
 	m         *CostMatrix
 	retainAll bool                   // when true, every downscaled frame is also kept in all[]
 	all       []*imgmath.LowresFrame // retained lowres frames (only when retainAll)
+
+	noThumbs bool // caller supplies CostMatrix.Thumb itself
 
 	sem     chan struct{}  // bounds concurrent per-frame cost jobs
 	wg      sync.WaitGroup // outstanding per-frame cost jobs
@@ -226,6 +236,10 @@ func (s *LookaheadScanner) AddFrame(luma []byte, width, height, stride int) erro
 	}
 
 	j := s.n // 0-based index of this frame
+	if !s.noThumbs {
+		s.m.Thumb = append(s.m.Thumb, lumaThumb(luma, width, height, stride))
+		s.m.ThumbC = 1
+	}
 
 	// Store in ring buffer (overwrites the slot that is now l+1 frames old).
 	s.buf[j%(s.l+1)] = lrFrame
@@ -317,6 +331,41 @@ func NewLookaheadScannerWithLags(lags []int) (*LookaheadScanner, error) {
 		m:         &CostMatrix{L: maxL, Lags: ls},
 		retainAll: false,
 	}, nil
+}
+
+// DisableThumbs stops the scanner from computing its luma-only thumbnails;
+// for callers that fill CostMatrix.Thumb themselves (e.g. with Y,U,V cell
+// means). Call before the first AddFrame.
+func (s *LookaheadScanner) DisableThumbs() {
+	if s.n == 0 {
+		s.noThumbs = true
+	}
+}
+
+// lumaThumb returns the ThumbW×ThumbH grid of cell means of a luma plane.
+func lumaThumb(luma []byte, width, height, stride int) []float32 {
+	var sum [ThumbW * ThumbH]uint64
+	var cnt [ThumbW * ThumbH]uint32
+	for y := 0; y < height; y++ {
+		cy := y * ThumbH / height
+		row := luma[y*stride : y*stride+width]
+		for cx := 0; cx < ThumbW; cx++ {
+			x0, x1 := cx*width/ThumbW, (cx+1)*width/ThumbW
+			var acc uint64
+			for _, v := range row[x0:x1] {
+				acc += uint64(v)
+			}
+			sum[cy*ThumbW+cx] += acc
+			cnt[cy*ThumbW+cx] += uint32(x1 - x0)
+		}
+	}
+	out := make([]float32, ThumbW*ThumbH)
+	for i := range out {
+		if cnt[i] > 0 {
+			out[i] = float32(float64(sum[i]) / float64(cnt[i]))
+		}
+	}
+	return out
 }
 
 // Matrix returns the CostMatrix built so far, after waiting for any frame
