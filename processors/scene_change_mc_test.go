@@ -223,3 +223,28 @@ func TestSceneChangeMC_StagedIsOptIn(t *testing.T) {
 		t.Fatalf("staged scan lags = %v, want [1 30 90]", got)
 	}
 }
+
+// The default configuration retains no lowres frames, however many frames
+// are scanned.
+func TestSceneChangeMC_DefaultRetainsNoFrames(t *testing.T) {
+	p := &SceneChangeMC{}
+	if err := p.Init(map[string]any{}); err != nil {
+		t.Fatal(err)
+	}
+	const w, h = 64, 64
+	luma := make([]byte, w*h)
+	for i := 0; i < 20; i++ {
+		for j := range luma {
+			luma[j] = byte((j*7 + i*13) % 251)
+		}
+		if err := p.scanner.AddFrame(luma, w, h, w); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := p.scanner.Matrix().N; got != 20 {
+		t.Fatalf("scanned %d frames, want 20", got)
+	}
+	if got := len(p.scanner.AllLowres()); got != 0 {
+		t.Fatalf("default path retained %d lowres frames", got)
+	}
+}

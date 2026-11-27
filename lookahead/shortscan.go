@@ -55,6 +55,9 @@ const (
 	linMinMids      = 2
 	linMaxBackstep  = 0.06 // mix must not retreat by more than this
 	linFlank        = 12   // flank frames on each side for the contrasts
+	linMaxEdge      = 0.04 // largest mix margin separating clean from blended
+	linMinEdge      = 0.01 // smallest (long blends; see blendBounds)
+	linEndProbe     = 3    // frames beyond each endpoint checked for continued travel
 	linDefaultMax   = 64   // longest blend searched when DissolveMaxLen unset
 	linMaxSearch    = 240  // hard cap on the searched blend length
 
@@ -274,8 +277,10 @@ func thumbFlowRho(a, b []float32, c int) float64 {
 
 // detectShortTransitions returns the hard cuts, cut bursts and linear
 // (dissolve/fade) transitions of m, sorted by start. Cuts need only the lag-1
-// column; bursts and linear transitions also need thumbnails.
-func (cfg LookaheadAnalyzer) detectShortTransitions(m *CostMatrix) []SceneTransition {
+// column; bursts and linear transitions also need thumbnails. maxBlend is the
+// longest blend searched, in frames (the caller's DissolveMaxLen as
+// configured; ≤ 0 selects linDefaultMax).
+func (cfg LookaheadAnalyzer) detectShortTransitions(m *CostMatrix, maxBlend int) []SceneTransition {
 	s := newShortScan(m)
 	if s == nil {
 		return nil
@@ -283,13 +288,15 @@ func (cfg LookaheadAnalyzer) detectShortTransitions(m *CostMatrix) []SceneTransi
 	cuts := s.findCuts()
 	out := append([]SceneTransition(nil), cuts...)
 	if s.th != nil {
-		maxLen := cfg.DissolveMaxLen
-		if maxLen < linDefaultMax {
+		maxLen := maxBlend
+		if maxLen <= 0 {
 			maxLen = linDefaultMax
 		}
 		if maxLen > linMaxSearch {
 			maxLen = linMaxSearch
 		}
+		// A blend of D frames spans D+1 steps between its clean endpoints.
+		maxLen++
 		for _, t := range s.findLinear(cuts, maxLen) {
 			dup := false
 			for _, c := range cuts {
@@ -338,7 +345,7 @@ func (s *shortScan) findCuts() []SceneTransition {
 	n := s.n
 	last := -10
 	var onsets, offsets []int
-	for j := r + 1; j < n-r-1; j++ {
+	for j := r; j < n-r; j++ {
 		pre := maxOf(s.r1[j-r : j])
 		post := maxOf(s.r1[j+1 : j+1+r])
 		v := s.r1[j]
@@ -417,8 +424,15 @@ func (s *shortScan) findCuts() []SceneTransition {
 // The floor is the lower quartile of the 2-frame upper envelope over a wide
 // window (the envelope keeps repeated-frame cadences from halving it); single
 // low frames inside a run are bridged for the same reason.
-func (s *shortScan) candidateRegions() [][2]int {
+func (s *shortScan) candidateRegions(maxLen int) [][2]int {
 	n := s.n
+	// The floor window must see the flanks of the longest blend searched, or
+	// the middle of a long uniform run becomes its own floor and the run
+	// splits in two.
+	radius := candFloorRadius
+	if maxLen > radius {
+		radius = maxLen
+	}
 	u := make([]float64, n)
 	for j := 0; j < n; j++ {
 		u[j] = s.r1[j]
@@ -427,9 +441,9 @@ func (s *shortScan) candidateRegions() [][2]int {
 		}
 	}
 	el := make([]bool, n)
-	win := make([]float64, 0, 2*candFloorRadius+1)
+	win := make([]float64, 0, 2*radius+1)
 	for j := 0; j < n; j++ {
-		lo, hi := j-candFloorRadius, j+candFloorRadius+1
+		lo, hi := j-radius, j+radius+1
 		if lo < 0 {
 			lo = 0
 		}
@@ -525,10 +539,17 @@ func (s *shortScan) findLinear(cuts []SceneTransition, maxLen int) []SceneTransi
 			EndFrame:   h.e,
 			Score:      h.key / (h.travel + 1e-9), // 1 − residual
 		})
-		search(lo, h.a)
-		search(h.b, hi)
+		left, right := h.a, h.b
+		if h.s-1 < left {
+			left = h.s - 1
+		}
+		if h.e > right {
+			right = h.e
+		}
+		search(lo, left)
+		search(right, hi)
 	}
-	for _, r := range s.candidateRegions() {
+	for _, r := range s.candidateRegions(maxLen) {
 		search(r[0], r[1])
 	}
 	return out
@@ -582,7 +603,8 @@ func (s *shortScan) bestLinear(lo, hi, maxLen int, cutFrames []int) (linearHyp, 
 			flankR = append(flankR[:0], s.r1[fl0:a]...)
 			flankR = append(flankR, s.r1[b+1:fl1]...)
 			inR = append(inR[:0], s.r1[a+1:b+1]...)
-			if quantileOf(inR, 0.75)-medianOf(flankR) < linMinRatioGain {
+			flankMed := medianOf(flankR)
+			if quantileOf(inR, 0.75)-flankMed < linMinRatioGain {
 				continue
 			}
 
@@ -663,26 +685,162 @@ func (s *shortScan) bestLinear(lo, hi, maxLen int, cutFrames []int) (linearHyp, 
 				continue
 			}
 
-			h := linearHyp{a: a, b: b, s: b, e: b, key: key, travel: travel}
-			for i, al := range alpha {
-				if al > 0.04 {
-					h.s = a + 1 + i
-					break
-				}
-			}
-			for i, al := range alpha {
-				if al >= 0.96 {
-					h.e = a + 1 + i
-					break
-				}
-			}
-			if h.s > h.e {
-				h.s = h.e
+			h := linearHyp{a: a, b: b, key: key, travel: travel}
+			h.s, h.e = blendBounds(alpha, a, b)
+			h.s, h.e = s.extendAlongLine(a, b, h.s, h.e, d, dn, alpha, flankMed, cutFrames)
+			if h.e-h.s > maxLen {
+				continue // a piece of a blend longer than the caller allows
 			}
 			best, found = h, true
 		}
 	}
 	return best, found
+}
+
+// extendAlongLine follows a hypothesis's travel beyond its endpoints.
+//
+// When both shots are moving, only part of a blend is straight enough to
+// pass the linearity bound, and the accepted pair (a, b) is a piece of the
+// transition: the thumbnail keeps advancing along the same direction before
+// a or after b. The projection onto that direction still marks where the
+// travel starts and stops, so each end is walked outward while some frame
+// within linEndProbe advances by more than half the blend's own step
+// (several frames, because repeated frames do not advance) and prediction
+// failed on the way. An end that does
+// not move keeps its blendBounds value; a walk never crosses a cut.
+func (s *shortScan) extendAlongLine(a, b, start, end int, d []float64, dn float64, alpha []float64, flankRatio float64, cutFrames []int) (int, int) {
+	var incs []float64
+	prev := 0.0
+	for _, al := range alpha {
+		if dl := al - prev; dl > 1e-3 {
+			incs = append(incs, dl)
+		}
+		prev = al
+	}
+	if dl := 1 - prev; dl > 1e-3 {
+		incs = append(incs, dl)
+	}
+	if len(incs) == 0 {
+		return start, end
+	}
+	lim := 0.5 * medianOf(incs)
+	along := func(from, to int) float64 {
+		var dot float64
+		tf, tt := s.th[from], s.th[to]
+		for i := range d {
+			dot += (float64(tt[i]) - float64(tf[i])) * d[i]
+		}
+		return dot / dn
+	}
+	// A step counts only if prediction also failed on one of its frames:
+	// ordinary motion in the flanking shot projects onto the line too.
+	failed := func(from, to int) bool {
+		for q := from + 1; q <= to; q++ {
+			if s.r1[q] >= flankRatio+0.5*linMinRatioGain {
+				return true
+			}
+		}
+		return false
+	}
+	lo, hi := 0, s.n-1
+	if ci := sort.SearchInts(cutFrames, a+1); ci > 0 {
+		lo = cutFrames[ci-1]
+	}
+	if ci := sort.SearchInts(cutFrames, b+1); ci < len(cutFrames) {
+		hi = cutFrames[ci] - 1
+	}
+	f := b
+	for moved := true; moved; {
+		moved = false
+		for k := 1; k <= linEndProbe && f+k <= hi; k++ {
+			if along(f, f+k) > lim && failed(f, f+k) {
+				f += k
+				moved = true
+				break
+			}
+		}
+	}
+	if f > b {
+		end = f
+	}
+	g := a
+	for moved := true; moved; {
+		moved = false
+		for k := 1; k <= linEndProbe && g-k >= lo; k++ {
+			if along(g-k, g) > lim && failed(g-k, g) {
+				g -= k
+				moved = true
+				break
+			}
+		}
+	}
+	if g < a {
+		start = g + 1
+	} else {
+		// The first blended frame is one the previous frame failed to
+		// predict. When the endpoints are close together, drift in the old
+		// shot can lift the mix past the margin a frame or two early; snap
+		// forward to the first failed frame if one follows immediately.
+		for q := start; q <= start+linEndProbe-1 && q < end; q++ {
+			if failed(q-1, q) {
+				start = q
+				break
+			}
+		}
+	}
+	return start, end
+}
+
+// blendBounds returns the first blended frame and the first clean new-scene
+// frame of a hypothesis from the mix α of its interior frames a+1 … b−1.
+//
+// A frame is blended when its mix is distinguishable from 0 (still the old
+// scene) and from 1 (already the new one). "Distinguishable" is half the
+// blend's own step: a D-frame linear blend advances the mix by 1/(D+1) per
+// step, so a fixed margin would call the first frames of a long blend clean
+// and its last frames finished. The step is the median positive increment
+// (repeated frames contribute zero increments and are ignored), and the
+// margin is bounded to [linMinEdge, linMaxEdge]: the upper bound is the
+// short-blend calibration, the lower one keeps estimation noise in α on
+// moving footage from being read as a blend step.
+func blendBounds(alpha []float64, a, b int) (start, end int) {
+	var incs []float64
+	prev := 0.0
+	for _, al := range alpha {
+		if d := al - prev; d > 1e-3 {
+			incs = append(incs, d)
+		}
+		prev = al
+	}
+	if d := 1 - prev; d > 1e-3 {
+		incs = append(incs, d)
+	}
+	eps := linMaxEdge
+	if len(incs) > 0 {
+		if e := 0.5 * medianOf(incs); e < eps {
+			eps = e
+		}
+	}
+	if eps < linMinEdge {
+		eps = linMinEdge
+	}
+	start, end = b, b
+	for i, al := range alpha {
+		if al > eps {
+			start = a + 1 + i
+			break
+		}
+	}
+	for i, al := range alpha {
+		if al >= 1-eps {
+			end = a + 1 + i
+			break
+		}
+	}
+	if start > end {
+		start = end
+	}
+	return start, end
 }
 
 // mergeShortAndLegacy combines the short-transition detections with the

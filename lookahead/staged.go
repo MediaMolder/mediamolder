@@ -17,6 +17,7 @@
 package lookahead
 
 import (
+	"fmt"
 	"sort"
 )
 
@@ -258,7 +259,7 @@ func (a *LookaheadAnalyzer) AnalyzeStaged(s *LookaheadScanner, refinementMenu []
 	// Hard cuts, cut bursts and short-to-medium dissolves/fades come from the
 	// short-transition detector, which needs only the lag-1 column and the
 	// per-frame thumbnails (no retained frames).
-	short := cfg.detectShortTransitions(m)
+	short := cfg.detectShortTransitions(m, a.DissolveMaxLen)
 	if report != nil {
 		report(StagedProgress{Phase: "short", Current: len(short)})
 	}
@@ -276,7 +277,9 @@ func (a *LookaheadAnalyzer) AnalyzeStaged(s *LookaheadScanner, refinementMenu []
 		var err error
 		legacy, err = a.analyzeStagedLong(s, m, cfg, refinementMenu, report)
 		if err != nil {
-			return nil, err
+			// The short detections do not depend on the staged analysis:
+			// return them with the error rather than nothing.
+			return enforceMinSceneLen(short, cfg.MinSceneLen), err
 		}
 		if short == nil {
 			return legacy, nil
@@ -342,7 +345,7 @@ func (a *LookaheadAnalyzer) analyzeStagedLong(s *LookaheadScanner, m *CostMatrix
 	// narrow lags help produce tighter start/end for the refined events.
 	final, err := cfg.Analyze(m)
 	if err != nil {
-		return initial, nil
+		return nil, fmt.Errorf("lookahead: staged final analysis: %w", err)
 	}
 
 	// Lag escalation: a dissolve flagged underLagged had no two lags spanning

@@ -72,7 +72,7 @@ func (f *shortFixture) set(j int, r float32) { f.m.Ratio[j][0] = r }
 
 func (f *shortFixture) detect() []SceneTransition {
 	cfg := (&LookaheadAnalyzer{}).withDefaults(f.m.L)
-	return cfg.detectShortTransitions(f.m)
+	return cfg.detectShortTransitions(f.m, 0)
 }
 
 func wantOne(t *testing.T, got []SceneTransition, typ TransitionType, start, end int) {
@@ -195,6 +195,76 @@ func TestShort_LinearDissolve(t *testing.T) {
 	f.fill(72, 160, b)
 	f.set(72, 0.55)
 	wantOne(t, f.detect(), TransitionDissolve, 59, 72)
+}
+
+// A long dissolve: the mix advances by less than the short-blend margin per
+// frame, and the bounds must still be the last clean old-scene frame and the
+// first clean new-scene frame.
+func TestShort_LongDissolveBounds(t *testing.T) {
+	for _, d := range []int{25, 40, 60} {
+		f := newShortFixture(300, 0.25)
+		a, b := scene(6), scene(7)
+		f.fill(0, 100, a)
+		for j := 100; j < 100+d; j++ {
+			f.m.Thumb[j] = mix(a, b, float32(j-99)/float32(d+1))
+			f.set(j, 0.55)
+		}
+		f.fill(100+d, 300, b)
+		f.set(100+d, 0.55)
+		got := f.detect()
+		if len(got) != 1 || got[0].Type != TransitionDissolve || got[0].StartFrame != 99 || got[0].EndFrame != 100+d {
+			t.Fatalf("D=%d: want dissolve [99,%d], got %+v", d, 100+d, got)
+		}
+	}
+}
+
+// An explicit maximum blend length below the default is honoured.
+func TestShort_MaxBlendHonoured(t *testing.T) {
+	f := newShortFixture(160, 0.25)
+	a, b := scene(4), scene(5)
+	f.fill(0, 60, a)
+	for j := 60; j < 72; j++ {
+		f.m.Thumb[j] = mix(a, b, float32(j-59)/13)
+		f.set(j, 0.55)
+	}
+	f.fill(72, 160, b)
+	f.set(72, 0.55)
+	cfg := (&LookaheadAnalyzer{}).withDefaults(f.m.L)
+	if got := cfg.detectShortTransitions(f.m, 12); len(got) != 1 || got[0].EndFrame != 72 {
+		t.Fatalf("max 12 must admit a 12-frame blend, got %+v", got)
+	}
+	for _, tr := range cfg.detectShortTransitions(f.m, 8) {
+		if tr.EndFrame-tr.StartFrame-1 > 8 {
+			t.Fatalf("max 8 reported a longer blend: %+v", tr)
+		}
+	}
+}
+
+// The cut rule applies to every frame with a full neighbourhood, including
+// frame 3 and frame n−4.
+func TestShort_HardCutNearClipEnds(t *testing.T) {
+	f := newShortFixture(60, 0.25)
+	f.fill(0, 3, scene(1))
+	f.fill(3, 56, scene(2))
+	f.fill(56, 60, scene(3))
+	f.set(3, 0.98)
+	f.set(56, 0.98)
+	got := f.detect()
+	if len(got) != 2 || got[0].StartFrame != 3 || got[1].StartFrame != 56 {
+		t.Fatalf("want cuts at 3 and 56, got %+v", got)
+	}
+}
+
+// Hard cuts do not depend on the staged analysis's score threshold.
+func TestShort_HardCutIgnoresThreshold(t *testing.T) {
+	f := newShortFixture(100, 0.25)
+	f.fill(0, 50, scene(1))
+	f.fill(50, 100, scene(2))
+	f.set(50, 0.98)
+	for _, th := range []float64{0.05, 0.5, 0.99} {
+		cfg := (&LookaheadAnalyzer{HardCutThreshold: th}).withDefaults(f.m.L)
+		wantOne(t, cfg.detectShortTransitions(f.m, 0), TransitionHardCut, 50, 50)
+	}
 }
 
 // An overlay graphic fading in is a perfect blend of a small area — not a
