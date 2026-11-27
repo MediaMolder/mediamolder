@@ -131,6 +131,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   looked like a clip with no transitions.
 - **`scene_change_mc` no longer reports a fade-in at the last frame** when
   a black or white run lasts to the end of the stream.
+- **`scene_change_mc` accepts fades to white with a curved ramp.** The
+  ramp's straightness check squared R² twice, so the bound was about 0.775
+  rather than 0.60 and an accelerating fade to white was not reported.
 - **`smartcopy` keeps the source's colour description on the frames it
   re-encodes.** The boundary encoder opened with colour unspecified, so
   its parameter sets carried no colour range, primaries, transfer, or

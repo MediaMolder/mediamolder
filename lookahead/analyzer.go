@@ -406,8 +406,7 @@ func (cfg LookaheadAnalyzer) detectBatchDigitalLumaFades(m *CostMatrix) []SceneT
 			}
 		}
 		if len(seqL) >= minL {
-			slope, _, rr := linReg(seqF, seqL)
-			r2 := rr * rr
+			slope, _, r2 := linReg(seqF, seqL)
 			endL := seqL[len(seqL)-1]
 			goodEnd := (toWhite && endL >= 254.0) || (!toWhite && endL <= 1.0)
 			goodSlope := (toWhite && slope > 0) || (!toWhite && slope < 0)
