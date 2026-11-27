@@ -320,6 +320,27 @@ func TestShort_StingerIsOneSpan(t *testing.T) {
 	wantOne(t, f.detect(), TransitionDissolve, 59, 131)
 }
 
+// A full-screen graphic wiped off quickly at first and easing out at the
+// end, over a new scene with some motion of its own. The pair of frames that
+// captures the change most efficiently ends where the fast part does; the
+// slowing part still uncovers picture and belongs to the wipe.
+func TestShort_WipeTailSettles(t *testing.T) {
+	f := newShortFixture(200, 0.25)
+	g, b := scene(10), scene(9)
+	f.fill(0, 60, g)
+	for j := 60; j < 200; j++ {
+		f.m.Thumb[j] = movingBy(b, j, 0.08)
+	}
+	// Columns uncovered by each frame: 4 a frame, then 2, 1, ½, ½.
+	edges := []float32{4, 8, 12, 16, 20, 24, 28, 30, 31, 31.5, 32}
+	for i, edge := range edges {
+		j := 60 + i
+		f.m.Thumb[j] = wipeMix(g, movingBy(b, j, 0.08), edge)
+		f.set(j, 0.6)
+	}
+	wantOne(t, f.detect(), TransitionDissolve, 59, 70)
+}
+
 // The same two wipes around a hold that is a moving picture, not a frozen
 // one, stay two transitions.
 func TestShort_WipesAroundLiveSceneStaySeparate(t *testing.T) {
@@ -350,9 +371,12 @@ func TestShort_WipesAroundLiveSceneStaySeparate(t *testing.T) {
 // moving returns frame j of a shot in fast motion built on picture b: two
 // fifths of its content wanders through unrelated textures, a third of the
 // way to the next one per frame, so the thumbnail never settles.
-func moving(b []float32, j int) []float32 {
+func moving(b []float32, j int) []float32 { return movingBy(b, j, 0.4) }
+
+// movingBy is moving with the wandering share of the content given.
+func movingBy(b []float32, j int, share float32) []float32 {
 	k := uint32(700 + j/3)
-	return mix(b, mix(scene(k), scene(k+1), float32(j%3)/3), 0.4)
+	return mix(b, mix(scene(k), scene(k+1), float32(j%3)/3), share)
 }
 
 // A dissolve from a calm shot into one in fast motion, between two views of
@@ -456,6 +480,30 @@ func TestAttachWeakWipes(t *testing.T) {
 	}
 	if got[1].StartFrame != 300 || got[1].EndFrame != 350 || got[1].weak {
 		t.Fatalf("got[1] = %+v", got[1])
+	}
+}
+
+// Weak wipes whose bounds overlap each other still reach the transition
+// they lead into, but not across a hard cut.
+func TestAttachWeakWipes_OverlappingPieces(t *testing.T) {
+	in := []SceneTransition{
+		{Type: TransitionDissolve, StartFrame: 100, EndFrame: 115, weak: true},
+		{Type: TransitionDissolve, StartFrame: 100, EndFrame: 106, weak: true}, // 18 frames from the wipe, inside the piece above
+		{Type: TransitionDissolve, StartFrame: 124, EndFrame: 140},
+		{Type: TransitionDissolve, StartFrame: 300, EndFrame: 310, weak: true},
+		{Type: TransitionDissolve, StartFrame: 302, EndFrame: 306, weak: true},
+		{Type: TransitionHardCut, StartFrame: 312, EndFrame: 312},
+		{Type: TransitionDissolve, StartFrame: 316, EndFrame: 330},
+	}
+	got := attachWeakWipes(in)
+	if len(got) != 3 {
+		t.Fatalf("want 3 transitions, got %+v", got)
+	}
+	if got[0].StartFrame != 100 || got[0].EndFrame != 140 {
+		t.Fatalf("got[0] = %+v", got[0])
+	}
+	if got[1].Type != TransitionHardCut || got[2].StartFrame != 316 || got[2].EndFrame != 330 {
+		t.Fatalf("weak wipes attached across a hard cut: %+v", got)
 	}
 }
 

@@ -100,7 +100,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   burst of flash frames, and a graphic stinger (wipe on, hold, wipe off)
   are each reported as one span. A dissolve from a calm shot into one in
   fast motion is found by comparing the transition with each flank
-  separately. There is no score threshold to tune for cuts. On 28 sports
+  separately. A wipe's bounds extend to where the picture settles,
+  so a graphic that shrinks away slowly is covered to its last frame. There is no score threshold to tune for cuts. On 28 sports
   and drama clips with 132 hand-verified scene markers, at default
   settings, the detector went from 52 markers found with 9 other
   detections to 126 found with 2 other detections. A marker

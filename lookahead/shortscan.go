@@ -545,6 +545,7 @@ func (s *shortScan) findLinear(cuts []SceneTransition, maxLen int) []SceneTransi
 			return
 		}
 		h, ok := s.bestLinear(lo, hi, maxLen, cutFrames)
+		wipe := !ok
 		if !ok {
 			// No blend: look for a wipe, then for a weak one (kept only if
 			// it turns out to adjoin a transition that stands alone).
@@ -555,13 +556,6 @@ func (s *shortScan) findLinear(cuts []SceneTransition, maxLen int) []SceneTransi
 				h.weak = true
 			}
 		}
-		out = append(out, SceneTransition{
-			Type:       TransitionDissolve,
-			StartFrame: h.s - 1,
-			EndFrame:   h.e,
-			Score:      h.key / (h.travel + 1e-9), // 1 − residual, or η for a wipe
-			weak:       h.weak,
-		})
 		left, right := h.a, h.b
 		if h.s-1 < left {
 			left = h.s - 1
@@ -569,6 +563,18 @@ func (s *shortScan) findLinear(cuts []SceneTransition, maxLen int) []SceneTransi
 		if h.e > right {
 			right = h.e
 		}
+		if wipe {
+			// After the region is divided, so that a neighbouring piece of
+			// the same transition is still searched for in its own frames.
+			h.s, h.e = s.settleBounds(h.s, h.e, maxLen, cutFrames)
+		}
+		out = append(out, SceneTransition{
+			Type:       TransitionDissolve,
+			StartFrame: h.s - 1,
+			EndFrame:   h.e,
+			Score:      h.key / (h.travel + 1e-9), // 1 − residual, or η for a wipe
+			weak:       h.weak,
+		})
 		search(lo, left)
 		search(right, hi)
 	}
@@ -787,7 +793,7 @@ func (s *shortScan) bestLinear(lo, hi, maxLen int, cutFrames []int) (linearHyp, 
 //
 // The bounds are where the thumbnail's movement starts and stops: the first
 // frame past wipeEdge of the cumulative movement and the first frame at
-// 1 − wipeEdge of it.
+// 1 − wipeEdge of it. findLinear then walks them outward (settleBounds).
 func (s *shortScan) bestWipe(lo, hi, maxLen int, cutFrames []int, minEta float64) (linearHyp, bool) {
 	var best linearHyp
 	found := false
@@ -908,11 +914,86 @@ func (s *shortScan) bestWipe(lo, hi, maxLen int, cutFrames []int, minEta float64
 	return best, found
 }
 
+// settleBounds walks the bounds of a wipe outward to where the picture
+// settles.
+//
+// The hypothesis that wins in bestWipe is the one that captures the change
+// most efficiently, and that is usually shorter than the wipe: once most of
+// the picture has changed, further frames add movement (the graphic's own
+// animation, the new scene's motion) faster than they add net change, so η
+// falls and a shorter pair scores higher. The frames left out can still move
+// a large part of the picture — a full-screen graphic shrinking to nothing.
+//
+// Each bound therefore moves outward while the thumbnail is still settling:
+// some frame within linEndProbe (several, because repeated frames do not
+// move) has a step that is at least wipeEdge of the wipe's movement so far —
+// the same share of the movement that the bounds discard inside the
+// hypothesis — and at least linMinSpeedGain times the upper-quartile step of
+// the linFlank frames beyond it. The second condition stops the walk where
+// the movement is no longer falling away but has reached the level of the
+// scene itself. A walk never crosses a cut and never makes the wipe longer
+// than maxLen.
+func (s *shortScan) settleBounds(start, end, maxLen int, cutFrames []int) (int, int) {
+	lo, hi := 1, s.n-1
+	if ci := sort.SearchInts(cutFrames, start); ci > 0 {
+		lo = cutFrames[ci-1] + 1
+	}
+	if ci := sort.SearchInts(cutFrames, end+1); ci < len(cutFrames) {
+		hi = cutFrames[ci] - 1
+	}
+	var total float64
+	for j := start; j <= end; j++ {
+		total += s.sp[j]
+	}
+	// settling reports whether the step into frame j stands out from the
+	// frames beyond it, flank[0] … flank[len−1].
+	settling := func(j int, flank []float64) bool {
+		return len(flank) > 0 && s.sp[j] >= wipeEdge*total &&
+			s.sp[j] >= linMinSpeedGain*quantileOf(flank, 0.75)
+	}
+	for moved := true; moved; {
+		moved = false
+		for k := 1; k <= linEndProbe && end+k <= hi && end+k-start < maxLen; k++ {
+			j := end + k
+			f1 := j + 1 + linFlank
+			if f1 > s.n {
+				f1 = s.n
+			}
+			if settling(j, s.sp[j+1:f1]) {
+				for q := end + 1; q <= j; q++ {
+					total += s.sp[q]
+				}
+				end, moved = j, true
+				break
+			}
+		}
+	}
+	for moved := true; moved; {
+		moved = false
+		for k := 1; k <= linEndProbe && start-k >= lo && end-(start-k) < maxLen; k++ {
+			j := start - k
+			f0 := j - linFlank
+			if f0 < 0 {
+				f0 = 0
+			}
+			if settling(j, s.sp[f0:j]) {
+				for q := j; q < start; q++ {
+					total += s.sp[q]
+				}
+				start, moved = j, true
+				break
+			}
+		}
+	}
+	return start, end
+}
+
 // attachWeakWipes resolves the weak wipes in ts (sorted by start): one that
 // lies within wipeAttachGap frames of a gradual transition that stands alone
 // is merged into it — the animated lead-in or lead-out of a stinger — and
 // the merged span can in turn pick up the next weak piece. The rest are
-// dropped.
+// dropped. Other weak wipes may lie between a weak wipe and the transition
+// it joins (their settled bounds can overlap); a hard cut may not.
 func attachWeakWipes(ts []SceneTransition) []SceneTransition {
 	for changed := true; changed; {
 		changed = false
@@ -920,13 +1001,18 @@ func attachWeakWipes(ts []SceneTransition) []SceneTransition {
 			if !ts[i].weak {
 				continue
 			}
-			for _, j := range []int{i - 1, i + 1} {
-				if j < 0 || j >= len(ts) || ts[j].weak || ts[j].Type == TransitionHardCut {
+			for _, dir := range []int{-1, 1} {
+				// The nearest transition on this side that is not itself weak.
+				j := i + dir
+				for j >= 0 && j < len(ts) && ts[j].weak {
+					j += dir
+				}
+				if j < 0 || j >= len(ts) || ts[j].Type == TransitionHardCut {
 					continue
 				}
 				gap := ts[i].StartFrame - ts[j].EndFrame
-				if j > i {
-					gap = ts[j].StartFrame - ts[i].EndFrame
+				if g := ts[j].StartFrame - ts[i].EndFrame; g > gap {
+					gap = g
 				}
 				if gap > wipeAttachGap {
 					continue
