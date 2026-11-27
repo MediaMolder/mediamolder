@@ -94,14 +94,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   analysis.** Hard cuts are isolated spikes of the lag-1 inter/intra cost
   ratio, and dissolves and fades are runs in which a 32×18 thumbnail of
   the frame travels in a straight line from the old scene to the new one;
-  fast pans are recognised and ignored. A cut with one mixed frame, a
-  "stepped" dissolve on repeated-frame content, and a cut into a burst of
-  flash frames are each reported as one span. There is no score threshold
-  to tune for cuts. On 28 sports and drama clips with 132 hand-verified
-  scene markers, at default settings, the detector went from 52 markers
-  found with 9 other detections to 118 found with 2 other detections. A
-  marker counts as found when a transition starts within 2 frames of it
-  or spans it.
+  fast pans are recognised and ignored. Wipes are runs in which each
+  thumbnail cell changes once and stays changed. A cut with one mixed
+  frame, a "stepped" dissolve on repeated-frame content, a cut into a
+  burst of flash frames, and a graphic stinger (wipe on, hold, wipe off)
+  are each reported as one span. There is no score threshold to tune for
+  cuts. On 28 sports and drama clips with 132 hand-verified scene
+  markers, at default settings, the detector went from 52 markers found
+  with 9 other detections to 125 found with 2 other detections. A marker
+  counts as found when a transition starts within 2 frames of it or
+  spans it.
   See [docs/scene-detection.md](docs/scene-detection.md#the-motion-compensated-detector-scene_change_mc).
 - **`scene_change_mc` staged long-dissolve analysis is opt-in.** It runs
   when `coarse_prediction_distance`, `refined_prediction_distances` or

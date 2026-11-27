@@ -8,9 +8,9 @@ import (
 	"sort"
 )
 
-// Short-transition detection: hard cuts, cut bursts and short-to-medium
-// dissolves/fades, found from two per-frame signals that need no retained
-// frames:
+// Short-transition detection: hard cuts, cut bursts, short-to-medium
+// dissolves/fades and wipes, found from two per-frame signals that need no
+// retained frames:
 //
 //   - the lag-1 inter/intra cost ratio r1 (motion-compensated: "could this
 //     frame be predicted from the previous one?"), and
@@ -22,7 +22,8 @@ import (
 // failed prediction — and a per-frame "the ratio is high" test fires on
 // ordinary sports footage. Every rule here is therefore relative (a spike
 // against its own neighbourhood, a run against its own flanks) and every
-// gradual transition must pass the thumbnail linearity test. See
+// gradual transition must pass a thumbnail test: linearity for a blend, or
+// per-cell path efficiency for a wipe (see bestWipe). See
 // docs/scene-detection.md ("How it works") for the full description.
 
 // Thumbnail geometry. The grid is fixed so thresholds calibrated on it hold
@@ -60,6 +61,19 @@ const (
 	linEndProbe     = 3    // frames beyond each endpoint checked for continued travel
 	linDefaultMax   = 64   // longest blend searched when DissolveMaxLen unset
 	linMaxSearch    = 240  // hard cap on the searched blend length
+
+	// Wipe hypotheses (see bestWipe).
+	wipeMinEta    = 0.68 // per-cell net change / per-cell total variation
+	wipeWeakEta   = 0.50 // accepted only next to a transition that stands alone
+	wipeAttachGap = 15   // frames between a weak wipe and the transition it joins
+	wipeMinTravel = 15.0 // rms thumbnail distance between the endpoints
+	wipeMinSteps  = 3    // significant thumbnail steps inside
+	wipeEdge      = 0.02 // cumulative-movement fraction marking each bound
+
+	// A frozen picture between two gradual transitions (a full-screen
+	// graphic held between its wipe-on and wipe-off) is transition material.
+	frozenMaxStep = 0.5 // largest thumbnail step of a frozen picture
+	frozenMaxGap  = 64  // longest frozen hold bridged, frames
 
 	// Pan rejection (global thumbnail shift).
 	panMinRho    = 0.85 // residual after the best shift / unshifted residual
@@ -311,7 +325,7 @@ func (cfg LookaheadAnalyzer) detectShortTransitions(m *CostMatrix, maxBlend int)
 		}
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].StartFrame < out[j].StartFrame })
-	return out
+	return s.bridgeFrozenHolds(attachWeakWipes(out))
 }
 
 // blendStart is the first frame that differs from the old scene: the cut
@@ -493,6 +507,7 @@ type linearHyp struct {
 	s, e   int // first blended frame, first clean new-scene frame
 	key    float64
 	travel float64
+	weak   bool // a wipe below wipeMinEta (see attachWeakWipes)
 }
 
 // findLinear searches every candidate region for frame pairs (A, B) between
@@ -531,13 +546,21 @@ func (s *shortScan) findLinear(cuts []SceneTransition, maxLen int) []SceneTransi
 		}
 		h, ok := s.bestLinear(lo, hi, maxLen, cutFrames)
 		if !ok {
-			return
+			// No blend: look for a wipe, then for a weak one (kept only if
+			// it turns out to adjoin a transition that stands alone).
+			if h, ok = s.bestWipe(lo, hi, maxLen, cutFrames, wipeMinEta); !ok {
+				if h, ok = s.bestWipe(lo, hi, maxLen, cutFrames, wipeWeakEta); !ok {
+					return
+				}
+				h.weak = true
+			}
 		}
 		out = append(out, SceneTransition{
 			Type:       TransitionDissolve,
 			StartFrame: h.s - 1,
 			EndFrame:   h.e,
-			Score:      h.key / (h.travel + 1e-9), // 1 − residual
+			Score:      h.key / (h.travel + 1e-9), // 1 − residual, or η for a wipe
+			weak:       h.weak,
 		})
 		left, right := h.a, h.b
 		if h.s-1 < left {
@@ -553,6 +576,17 @@ func (s *shortScan) findLinear(cuts []SceneTransition, maxLen int) []SceneTransi
 		search(r[0], r[1])
 	}
 	return out
+}
+
+// speedGain compares how fast the thumbnail moves inside a wipe hypothesis
+// with how fast it moves on the flanks. Upper quartiles, not medians or means:
+// on repeated-frame content (30 fps in a 60 fps stream, slow-motion replays
+// at 2:2 or 3:3) most steps are zero, and the quartile reads the speed of
+// the frames that do move on both sides alike — so a slow pan in a replay,
+// whose steps are no larger inside the hypothesis than outside, shows no
+// gain, while one cut elsewhere in the flank does not hide a real one.
+func speedGain(inside, flank []float64) float64 {
+	return quantileOf(inside, 0.75) / math.Max(quantileOf(flank, 0.75), 0.3)
 }
 
 // bestLinear returns the best hypothesis in [lo, hi]: the longest travel
@@ -596,8 +630,7 @@ func (s *shortScan) bestLinear(lo, hi, maxLen int, cutFrames []int) (linearHyp, 
 			}
 			flankS = append(flankS[:0], s.sp[fl0:a+1]...)
 			flankS = append(flankS, s.sp[b+1:fl1]...)
-			speedGain := travel / float64(b-a) / math.Max(medianOf(flankS), 0.3)
-			if speedGain < linMinSpeedGain {
+			if travel/float64(b-a)/math.Max(medianOf(flankS), 0.3) < linMinSpeedGain {
 				continue
 			}
 			flankR = append(flankR[:0], s.r1[fl0:a]...)
@@ -695,6 +728,228 @@ func (s *shortScan) bestLinear(lo, hi, maxLen int, cutFrames []int) (linearHyp, 
 		}
 	}
 	return best, found
+}
+
+// bestWipe returns the best wipe hypothesis in [lo, hi].
+//
+// A wipe replaces the picture area by area: each thumbnail cell changes from
+// its old-scene value to its new one once, when the wipe's edge crosses it,
+// and then stays. The thumbnails do not travel in a straight line (cells
+// switch at different times), but every cell's path is efficient: the
+// distance it ends up from where it started is close to the total distance
+// it moved. Camera and subject motion are the opposite — cells churn as
+// content passes through them and end up little changed for all their
+// movement. The statistic is
+//
+//	η = Σ_cells |th[B] − th[A]| / Σ_cells Σ_steps |th[t] − th[t−1]|
+//
+// which is 1 for a cut, a dissolve or a clean wipe, and measured at
+// 0.7–0.95 on broadcast wipes against 0.1–0.3 on pans and camera moves and
+// 0.5–0.65 on close-up action with a moving camera. Hypotheses at or above
+// wipeMinEta stand alone. Those between wipeWeakEta and wipeMinEta are
+// "weak": an animated graphic's wipe-on often scores there (its own artwork
+// moves), and so does close-up action, so a weak wipe is kept only where it
+// adjoins a transition that stands alone (attachWeakWipes). The remaining gates are those of a blend (travel,
+// flank contrasts, coverage, not a pan), with a higher travel bound because
+// the test is less specific than linearity, and a minimum number of steps
+// because one- and two-step changes belong to the cut rules.
+//
+// The bounds are where the thumbnail's movement starts and stops: the first
+// frame past wipeEdge of the cumulative movement and the first frame at
+// 1 − wipeEdge of it.
+func (s *shortScan) bestWipe(lo, hi, maxLen int, cutFrames []int, minEta float64) (linearHyp, bool) {
+	var best linearHyp
+	found := false
+	cells := len(s.th[0]) / s.tc
+	// Per-cell step norms for the region.
+	steps := make([][]float32, hi-lo+1)
+	for j := lo + 1; j <= hi; j++ {
+		row := make([]float32, cells)
+		tp, tj := s.th[j-1], s.th[j]
+		for c := 0; c < cells; c++ {
+			var q float64
+			for k := 0; k < s.tc; k++ {
+				d := float64(tj[c*s.tc+k]) - float64(tp[c*s.tc+k])
+				q += d * d
+			}
+			row[c] = float32(math.Sqrt(q))
+		}
+		steps[j-lo] = row
+	}
+	tv := make([]float64, cells)
+	var flankR, flankS, inR []float64
+	for a := lo; a < hi; a++ {
+		bMax := hi
+		if a+maxLen < bMax {
+			bMax = a + maxLen
+		}
+		ci := sort.SearchInts(cutFrames, a+1)
+		if ci < len(cutFrames) && cutFrames[ci]-1 < bMax {
+			bMax = cutFrames[ci] - 1
+		}
+		for c := range tv {
+			tv[c] = 0
+		}
+		for b := a + 1; b <= bMax; b++ {
+			for c, v := range steps[b-lo] {
+				tv[c] += float64(v)
+			}
+			if b-a < wipeMinSteps {
+				continue
+			}
+			ta, tb := s.th[a], s.th[b]
+			var sumNet, sumNet2, sumTV float64
+			for c := 0; c < cells; c++ {
+				var q float64
+				for k := 0; k < s.tc; k++ {
+					d := float64(tb[c*s.tc+k]) - float64(ta[c*s.tc+k])
+					q += d * d
+				}
+				sumNet += math.Sqrt(q)
+				sumNet2 += q
+				sumTV += tv[c]
+			}
+			travel := math.Sqrt(sumNet2 / float64(cells*s.tc))
+			if travel < wipeMinTravel || sumTV <= 0 {
+				continue
+			}
+			eta := sumNet / sumTV
+			if eta < minEta {
+				continue
+			}
+			key := travel * eta
+			if found && key <= best.key {
+				continue
+			}
+			if sumNet*sumNet/(float64(cells)*sumNet2) < linMinCoverage {
+				continue
+			}
+			fl0, fl1 := a-linFlank, b+1+linFlank
+			if fl0 < 0 {
+				fl0 = 0
+			}
+			if fl1 > s.n {
+				fl1 = s.n
+			}
+			flankS = append(flankS[:0], s.sp[fl0:a+1]...)
+			flankS = append(flankS, s.sp[b+1:fl1]...)
+			if speedGain(s.sp[a+1:b+1], flankS) < linMinSpeedGain {
+				continue
+			}
+			flankR = append(flankR[:0], s.r1[fl0:a]...)
+			flankR = append(flankR, s.r1[b+1:fl1]...)
+			inR = append(inR[:0], s.r1[a+1:b+1]...)
+			if quantileOf(inR, 0.75)-medianOf(flankR) < linMinRatioGain {
+				continue
+			}
+			spMax := maxOf(s.sp[a+1 : b+1])
+			pan, sig := 0, 0
+			var total float64
+			for j := a + 1; j <= b; j++ {
+				total += s.sp[j]
+				if s.sp[j] >= 0.25*spMax {
+					sig++
+					if !s.notPan(j) {
+						pan++
+					}
+				}
+			}
+			if sig < wipeMinSteps || 2*pan > sig {
+				continue
+			}
+			h := linearHyp{a: a, b: b, s: b, e: b, key: key, travel: travel}
+			var cum float64
+			gotS := false
+			for j := a + 1; j <= b; j++ {
+				cum += s.sp[j]
+				if !gotS && cum > wipeEdge*total {
+					h.s, gotS = j, true
+				}
+				if cum >= (1-wipeEdge)*total {
+					h.e = j
+					break
+				}
+			}
+			best, found = h, true
+		}
+	}
+	return best, found
+}
+
+// attachWeakWipes resolves the weak wipes in ts (sorted by start): one that
+// lies within wipeAttachGap frames of a gradual transition that stands alone
+// is merged into it — the animated lead-in or lead-out of a stinger — and
+// the merged span can in turn pick up the next weak piece. The rest are
+// dropped.
+func attachWeakWipes(ts []SceneTransition) []SceneTransition {
+	for changed := true; changed; {
+		changed = false
+		for i := range ts {
+			if !ts[i].weak {
+				continue
+			}
+			for _, j := range []int{i - 1, i + 1} {
+				if j < 0 || j >= len(ts) || ts[j].weak || ts[j].Type == TransitionHardCut {
+					continue
+				}
+				gap := ts[i].StartFrame - ts[j].EndFrame
+				if j > i {
+					gap = ts[j].StartFrame - ts[i].EndFrame
+				}
+				if gap > wipeAttachGap {
+					continue
+				}
+				if ts[i].StartFrame < ts[j].StartFrame {
+					ts[j].StartFrame = ts[i].StartFrame
+				}
+				if ts[i].EndFrame > ts[j].EndFrame {
+					ts[j].EndFrame = ts[i].EndFrame
+				}
+				ts = append(ts[:i], ts[i+1:]...)
+				changed = true
+				break
+			}
+			if changed {
+				break
+			}
+		}
+	}
+	out := ts[:0]
+	for _, t := range ts {
+		if !t.weak {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+// bridgeFrozenHolds merges two consecutive gradual transitions separated by
+// a frozen picture — a full-screen graphic held between its wipe-on and its
+// wipe-off — into one span. A camera picture is never frozen: sensor noise
+// alone moves the thumbnail. The 90th percentile of the steps is used so
+// that the faint first and last frames of the wipes themselves, which fall
+// outside their measured bounds, do not break the hold. ts must be sorted by
+// start.
+func (s *shortScan) bridgeFrozenHolds(ts []SceneTransition) []SceneTransition {
+	if s.sp == nil || len(ts) < 2 {
+		return ts
+	}
+	out := ts[:1]
+	for _, t := range ts[1:] {
+		p := &out[len(out)-1]
+		gapLo, gapHi := p.EndFrame+1, t.StartFrame
+		if p.Type == TransitionHardCut || t.Type == TransitionHardCut ||
+			gapHi-gapLo < 0 || gapHi-gapLo+1 > frozenMaxGap ||
+			quantileOf(s.sp[gapLo:gapHi+1], 0.9) >= frozenMaxStep {
+			out = append(out, t)
+			continue
+		}
+		p.EndFrame = t.EndFrame
+		if t.Score > p.Score {
+			p.Score = t.Score
+		}
+	}
+	return out
 }
 
 // extendAlongLine follows a hypothesis's travel beyond its endpoints.

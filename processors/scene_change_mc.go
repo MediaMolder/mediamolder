@@ -13,8 +13,9 @@ package processors
 // with the x264-ported lowres lookahead, and a 32×18 Y,U,V thumbnail is kept
 // per frame. Hard cuts are isolated spikes of the lag-1 inter/intra cost
 // ratio; dissolves and fades are runs in which the thumbnails travel in a
-// straight line from the old scene to the new one; fast pans are recognised
-// (global thumbnail shift) and ignored. No frames are retained.
+// straight line from the old scene to the new one; wipes are runs in which
+// each thumbnail cell changes once and stays changed; fast pans are
+// recognised (global thumbnail shift) and ignored. No frames are retained.
 //
 // Staged long-dissolve analysis (opt-in via coarse_prediction_distance /
 // refined_prediction_distances / fullres_refine): the plateau method

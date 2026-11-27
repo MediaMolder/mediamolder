@@ -377,10 +377,11 @@ it motion-compensates frame *j* from frame *j−1* and forms the
 the frame fresh). Camera and subject motion keep that ratio low; a scene
 change makes prediction fail. Alongside it the detector keeps a tiny
 **thumbnail** of every frame (a 32×18 grid of cell means). The two signals
-together separate the three things that make prediction fail: a **cut** (one
+together separate the things that make prediction fail: a **cut** (one
 isolated failed frame), a **dissolve or fade** (the thumbnails travel in a
-straight line from the old scene to the new one), and a **fast pan** (the
-thumbnails slide sideways — not a transition).
+straight line from the old scene to the new one), a **wipe** (each part of
+the picture changes once and stays changed), and **camera or subject motion**
+(the thumbnails slide sideways or churn — not a transition).
 
 The detector is batch-only: it accumulates the whole input and reports at the
 end of the stream. With default settings it keeps no pictures, only the
@@ -395,12 +396,15 @@ resolution, so roughly 750 MB per hour of 30 fps video.
 | Cut with one mixed frame (frame-rate-converted sources) | `dissolve` spanning the mixed frame |
 | Dissolve / cross-fade, including "stepped" dissolves on repeated-frame content (30 fps material in a 60 fps stream) | `dissolve` from the last clean frame of the old scene to the first clean frame of the new one |
 | Fade to / from black or white | `fade_out` / `fade_in` |
+| Wipe | `dissolve` from the last clean frame of the old scene to the first clean frame of the new one |
+| Graphic "stinger": wipe to a full-screen graphic, hold, wipe to the new scene | one `dissolve` span covering all of it |
 | Cut into a burst of flash frames or a short graphic that ends with another cut | one `dissolve` span from the first cut to the last |
 | Long dissolves (seconds) with frame-accurate edges | `dissolve` — requires the [staged analysis](#staged-long-dissolve-analysis) |
 
-Not detected today: graphic "stinger" wipes that animate over the picture,
-dissolves between two shots that are both in fast motion (or into a panning
-shot), and cuts between two near-identical camera angles.
+Not reliably detected today: some dissolves between two shots that are both
+in fast motion (or into a panning shot), and cuts between two near-identical
+camera angles. A wipe's reported end can be several frames early when its
+last frames change only a sliver of the picture.
 
 ### Output
 
@@ -519,6 +523,23 @@ first indistinguishable from 1 give the reported bounds, where
 are moving only part of a blend is straight enough to pass; its ends are
 then extended along the same line for as long as the thumbnail keeps
 advancing and prediction keeps failing.
+
+**Wipes and stingers.** A wipe replaces the picture area by area, so the
+thumbnails do not move in a straight line — but every cell changes once,
+when the wipe's edge crosses it, and then stays. Camera and subject motion do
+the opposite: cells churn as content passes through and end up little changed
+for all their movement. Where no blend is found the detector measures, for a
+pair of frames *A*, *B*,
+`η = Σ_cells |thumb[B] − thumb[A]| / Σ_cells Σ_frames |thumb[t] − thumb[t−1]|`
+— the distance each cell ended up from where it started over the total
+distance it moved. It is 1 for a clean wipe; broadcast wipes measure
+0.7–0.95, pans and camera moves 0.1–0.3. A hypothesis at η ≥ 0.68 that also
+passes the travel, flank, coverage and pan gates is a transition. One at
+0.50–0.68 — typical of an animated graphic's lead-in, but also of close-up
+action — is kept only when it adjoins a transition that stands on its own,
+and is merged into it. Two gradual transitions separated by a **frozen**
+picture of up to 64 frames (a full-screen graphic held between its wipe-on
+and wipe-off; a camera picture is never frozen) are reported as one span.
 
 **Staged long-dissolve analysis.** When enabled: multi-scale coarse plateau
 detection → region seeding → reference-distance ladder refinement →

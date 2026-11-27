@@ -267,6 +267,108 @@ func TestShort_HardCutIgnoresThreshold(t *testing.T) {
 	}
 }
 
+// wipeMix returns a picture whose columns left of edge come from b and the
+// rest from a (edge in cells, fractional cells are mixed).
+func wipeMix(a, b []float32, edge float32) []float32 {
+	t := make([]float32, len(a))
+	for y := 0; y < ThumbH; y++ {
+		for x := 0; x < ThumbW; x++ {
+			c := edge - float32(x)
+			if c < 0 {
+				c = 0
+			} else if c > 1 {
+				c = 1
+			}
+			i := y*ThumbW + x
+			t[i] = (1-c)*a[i] + c*b[i]
+		}
+	}
+	return t
+}
+
+// A hard-edged wipe: cells switch one column band at a time, so the
+// thumbnails do not travel in a straight line, but every cell changes once.
+func TestShort_Wipe(t *testing.T) {
+	f := newShortFixture(160, 0.25)
+	a, b := scene(8), scene(9)
+	f.fill(0, 60, a)
+	for j := 60; j < 76; j++ {
+		f.m.Thumb[j] = wipeMix(a, b, float32(j-59)*2)
+		f.set(j, 0.6)
+	}
+	f.fill(76, 160, b)
+	wantOne(t, f.detect(), TransitionDissolve, 59, 75)
+}
+
+// A stinger: wipe to a full-screen graphic, a frozen hold longer than
+// MinSceneLen, wipe to the new scene. One span, from the last clean frame of
+// the old scene to the first clean frame of the new one.
+func TestShort_StingerIsOneSpan(t *testing.T) {
+	f := newShortFixture(240, 0.25)
+	a, g, b := scene(8), scene(10), scene(9)
+	f.fill(0, 60, a)
+	for j := 60; j < 76; j++ {
+		f.m.Thumb[j] = wipeMix(a, g, float32(j-59)*2)
+		f.set(j, 0.6)
+	}
+	f.fill(76, 116, g) // 40-frame hold
+	for j := 116; j < 132; j++ {
+		f.m.Thumb[j] = wipeMix(g, b, float32(j-115)*2)
+		f.set(j, 0.6)
+	}
+	f.fill(132, 240, b)
+	wantOne(t, f.detect(), TransitionDissolve, 59, 131)
+}
+
+// The same two wipes around a hold that is a moving picture, not a frozen
+// one, stay two transitions.
+func TestShort_WipesAroundLiveSceneStaySeparate(t *testing.T) {
+	const w = 200
+	f := newShortFixture(240, 0.25)
+	a, b := scene(8), scene(9)
+	field := wide(11, w)
+	g := window(field, w, 0)
+	f.fill(0, 60, a)
+	for j := 60; j < 76; j++ {
+		f.m.Thumb[j] = wipeMix(a, g, float32(j-59)*2)
+		f.set(j, 0.6)
+	}
+	for j := 76; j < 116; j++ { // live: drifts one cell every 4 frames
+		f.m.Thumb[j] = window(field, w, (j-76)/4)
+	}
+	g2 := f.m.Thumb[115]
+	for j := 116; j < 132; j++ {
+		f.m.Thumb[j] = wipeMix(g2, b, float32(j-115)*2)
+		f.set(j, 0.6)
+	}
+	f.fill(132, 240, b)
+	if got := f.detect(); len(got) != 2 {
+		t.Fatalf("want 2 transitions around a live scene, got %+v", got)
+	}
+}
+
+// Subject motion: an object crosses the picture and leaves. Cells change
+// and change back, so the movement is large and the net change small.
+func TestShort_ObjectCrossingNotATransition(t *testing.T) {
+	f := newShortFixture(160, 0.25)
+	a, obj := scene(8), scene(12)
+	f.fill(0, 160, a)
+	for j := 60; j < 80; j++ {
+		t2 := append([]float32(nil), a...)
+		x0 := (j - 60) * 2
+		for y := 0; y < ThumbH; y++ {
+			for x := x0; x < x0+12 && x < ThumbW; x++ {
+				t2[y*ThumbW+x] = obj[y*ThumbW+x-x0] // texture moves with the object
+			}
+		}
+		f.m.Thumb[j] = t2
+		f.set(j, 0.7)
+	}
+	if got := f.detect(); len(got) != 0 {
+		t.Fatalf("want no transitions for a crossing object, got %+v", got)
+	}
+}
+
 // An overlay graphic fading in is a perfect blend of a small area — not a
 // scene change.
 func TestShort_OverlayFadeNotATransition(t *testing.T) {
@@ -286,6 +388,29 @@ func TestShort_OverlayFadeNotATransition(t *testing.T) {
 	f.fill(46, 120, b)
 	if got := f.detect(); len(got) != 0 {
 		t.Fatalf("want no transitions for an overlay fade, got %+v", got)
+	}
+}
+
+// A weak wipe is kept only where it adjoins a gradual transition that
+// stands alone, and is merged into it.
+func TestAttachWeakWipes(t *testing.T) {
+	in := []SceneTransition{
+		{Type: TransitionDissolve, StartFrame: 100, EndFrame: 110, weak: true}, // alone: dropped
+		{Type: TransitionHardCut, StartFrame: 200, EndFrame: 200},
+		{Type: TransitionDissolve, StartFrame: 202, EndFrame: 212, weak: true}, // next to a cut only: dropped
+		{Type: TransitionDissolve, StartFrame: 300, EndFrame: 320, weak: true}, // lead-in of the stinger
+		{Type: TransitionDissolve, StartFrame: 322, EndFrame: 330, weak: true}, // chained
+		{Type: TransitionDissolve, StartFrame: 334, EndFrame: 350},
+	}
+	got := attachWeakWipes(in)
+	if len(got) != 2 {
+		t.Fatalf("want 2 transitions, got %+v", got)
+	}
+	if got[0].Type != TransitionHardCut || got[0].StartFrame != 200 {
+		t.Fatalf("got[0] = %+v", got[0])
+	}
+	if got[1].StartFrame != 300 || got[1].EndFrame != 350 || got[1].weak {
+		t.Fatalf("got[1] = %+v", got[1])
 	}
 }
 

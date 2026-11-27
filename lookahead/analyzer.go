@@ -32,6 +32,11 @@ type SceneTransition struct {
 	// suspect (mid-blend saturation) and the staged pass should re-measure
 	// the region with longer lags before trusting them.
 	underLagged bool
+
+	// weak marks a wipe hypothesis that is reported only if it adjoins a
+	// transition that stands alone (see attachWeakWipes); never set on a
+	// returned transition.
+	weak bool
 }
 
 // plateauEstimate is one per-lag measurement of a dissolve, derived from a
