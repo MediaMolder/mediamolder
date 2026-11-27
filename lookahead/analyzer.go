@@ -453,12 +453,16 @@ func (cfg LookaheadAnalyzer) detectBatchDigitalLumaFades(m *CostMatrix) []SceneT
 						break
 					}
 				}
-				out = append(out, SceneTransition{
-					Type:       TransitionFadeIn,
-					StartFrame: plateauEnd,
-					EndFrame:   plateauEnd,
-					Score:      score,
-				})
+				// A black/white run that lasts to the end of the stream has
+				// no fade-in to report.
+				if plateauEnd < m.N-1 {
+					out = append(out, SceneTransition{
+						Type:       TransitionFadeIn,
+						StartFrame: plateauEnd,
+						EndFrame:   plateauEnd,
+						Score:      score,
+					})
+				}
 				i = plateauEnd + 1
 				continue
 			}

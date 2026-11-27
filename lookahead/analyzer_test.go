@@ -1088,3 +1088,28 @@ func TestPlateauConsensus_FlagsUnderLagged(t *testing.T) {
 		t.Errorf("event not flagged underLagged; got %+v", out[0])
 	}
 }
+
+// A black run that lasts to the end of the stream has no fade-in.
+func TestDigitalLumaFades_NoFadeInAtEndOfStream(t *testing.T) {
+	const n = 60
+	m := &CostMatrix{N: n, L: 1, Lags: []int{1}}
+	for j := 0; j < n; j++ {
+		l := float32(30)
+		switch {
+		case j >= 40:
+			l = 0
+		case j >= 30:
+			l = 30 - 3*float32(j-30)
+		}
+		m.AvgLuma = append(m.AvgLuma, l)
+		m.IntraCost = append(m.IntraCost, 1000)
+		m.Ratio = append(m.Ratio, []float32{0.2})
+		m.InterCost = append(m.InterCost, []float32{0})
+	}
+	cfg := (&LookaheadAnalyzer{}).withDefaults(m.L)
+	for _, tr := range cfg.detectBatchDigitalLumaFades(m) {
+		if tr.Type == TransitionFadeIn {
+			t.Fatalf("fade-in reported at end of stream: %+v", tr)
+		}
+	}
+}
