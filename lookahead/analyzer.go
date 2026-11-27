@@ -74,9 +74,10 @@ type plateauEstimate struct {
 // Zero-value fields are replaced with documented defaults by Analyze.
 type LookaheadAnalyzer struct {
 	// FullresProvider, when non-nil, enables full-resolution edge
-	// measurement around each detected dissolve in AnalyzeStaged (phase 1:
-	// measurements are logged to the matrix/CSV only; edges are not
-	// changed). See fullres.go.
+	// measurement around each detected dissolve in AnalyzeStaged. The
+	// measurements are logged to the matrix/CSV, and the END of short and
+	// mid-length blends is refined from them; the start is never changed.
+	// See fullres.go.
 	FullresProvider FrameProvider
 
 	// HardCutThreshold is the minimum score surface value S[c] required to

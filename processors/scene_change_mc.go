@@ -121,7 +121,7 @@ type SceneChangeMC struct {
 	frameRate    float64
 	lookaheadLen int // max lag seen (used for documentation / future buffer sizing only)
 
-	// full-resolution edge measurement (phase 1: measure + log)
+	// full-resolution edge measurement (see lookahead/fullres.go)
 	fullresRefine bool
 	sourceURL     string
 	framePTS      []int64
