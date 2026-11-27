@@ -401,10 +401,11 @@ resolution, so roughly 750 MB per hour of 30 fps video.
 | Cut into a burst of flash frames or a short graphic that ends with another cut | one `dissolve` span from the first cut to the last |
 | Long dissolves (seconds) with frame-accurate edges | `dissolve` — requires the [staged analysis](#staged-long-dissolve-analysis) |
 
-Not reliably detected today: some dissolves between two shots that are both
-in fast motion (or into a panning shot), and cuts between two near-identical
-camera angles. A wipe's reported end can be several frames early when its
-last frames change only a sliver of the picture.
+Not reliably detected today: a transition between two takes from the same
+camera when the new take is panning or zooming (every signal reads as camera
+motion), and cuts between two near-identical camera angles. A wipe's reported
+end can be several frames early when its last frames change only a sliver of
+the picture.
 
 ### Output
 
@@ -534,7 +535,13 @@ pair of frames *A*, *B*,
 — the distance each cell ended up from where it started over the total
 distance it moved. It is 1 for a clean wipe; broadcast wipes measure
 0.7–0.95, pans and camera moves 0.1–0.3. A hypothesis at η ≥ 0.68 that also
-passes the travel, flank, coverage and pan gates is a transition. One at
+passes the travel, flank, coverage and pan gates is a transition. The same
+test catches a dissolve into a shot that is itself in fast motion, whose
+movement bends the blend off the straight line. There the new shot's
+thumbnail changes as fast as the transition does, so each flank is judged
+on its own: the thumbnail must move faster inside than on the calm side,
+and prediction must be worse inside than on the moving side — motion
+estimation follows a moving shot, but not frames that mix two shots. One at
 0.50–0.68 — typical of an animated graphic's lead-in, but also of close-up
 action — is kept only when it adjoins a transition that stands on its own,
 and is merged into it. Two gradual transitions separated by a **frozen**

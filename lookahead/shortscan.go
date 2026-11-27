@@ -589,6 +589,37 @@ func speedGain(inside, flank []float64) float64 {
 	return quantileOf(inside, 0.75) / math.Max(quantileOf(flank, 0.75), 0.3)
 }
 
+// oneSidedContrast is the flank test for a transition between a calm shot
+// and a shot that is itself in fast motion. The thumbnail of the moving shot
+// changes as fast as the transition does, so the pooled speed comparison
+// fails even though the transition is plain against the calm shot. Each
+// flank is then judged on its own: the thumbnail must move faster inside
+// than on at least one flank, and on a flank where it does not, prediction
+// must be worse inside than on that flank. That is what separates a
+// transition INTO motion from the onset of motion within one shot: motion
+// estimation follows a moving shot but not the frames that mix two shots,
+// while after an onset prediction stays as bad as it became. Upper quartiles
+// throughout, for the reason given at speedGain. inQ is the upper quartile
+// of r1 over (a, b]; the flanks are [fl0, a] and (b, fl1).
+func (s *shortScan) oneSidedContrast(a, b, fl0, fl1 int, inQ float64) bool {
+	if fl0 >= a || b+1 >= fl1 {
+		return false
+	}
+	in := s.sp[a+1 : b+1]
+	fastPre := speedGain(in, s.sp[fl0:a+1]) >= linMinSpeedGain
+	fastPost := speedGain(in, s.sp[b+1:fl1]) >= linMinSpeedGain
+	if !fastPre && !fastPost {
+		return false
+	}
+	if !fastPre && inQ-quantileOf(s.r1[fl0:a], 0.75) < linMinRatioGain {
+		return false
+	}
+	if !fastPost && inQ-quantileOf(s.r1[b+1:fl1], 0.75) < linMinRatioGain {
+		return false
+	}
+	return true
+}
+
 // bestLinear returns the best hypothesis in [lo, hi]: the longest travel
 // with the lowest residual among those passing every gate.
 func (s *shortScan) bestLinear(lo, hi, maxLen int, cutFrames []int) (linearHyp, bool) {
@@ -833,13 +864,14 @@ func (s *shortScan) bestWipe(lo, hi, maxLen int, cutFrames []int, minEta float64
 			}
 			flankS = append(flankS[:0], s.sp[fl0:a+1]...)
 			flankS = append(flankS, s.sp[b+1:fl1]...)
-			if speedGain(s.sp[a+1:b+1], flankS) < linMinSpeedGain {
-				continue
-			}
 			flankR = append(flankR[:0], s.r1[fl0:a]...)
 			flankR = append(flankR, s.r1[b+1:fl1]...)
 			inR = append(inR[:0], s.r1[a+1:b+1]...)
-			if quantileOf(inR, 0.75)-medianOf(flankR) < linMinRatioGain {
+			inQ := quantileOf(inR, 0.75)
+			if inQ-medianOf(flankR) < linMinRatioGain {
+				continue
+			}
+			if speedGain(s.sp[a+1:b+1], flankS) < linMinSpeedGain && !s.oneSidedContrast(a, b, fl0, fl1, inQ) {
 				continue
 			}
 			spMax := maxOf(s.sp[a+1 : b+1])

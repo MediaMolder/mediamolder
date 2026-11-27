@@ -347,6 +347,51 @@ func TestShort_WipesAroundLiveSceneStaySeparate(t *testing.T) {
 	}
 }
 
+// moving returns frame j of a shot in fast motion built on picture b: two
+// fifths of its content wanders through unrelated textures, a third of the
+// way to the next one per frame, so the thumbnail never settles.
+func moving(b []float32, j int) []float32 {
+	k := uint32(700 + j/3)
+	return mix(b, mix(scene(k), scene(k+1), float32(j%3)/3), 0.4)
+}
+
+// A dissolve from a calm shot into one in fast motion, between two views of
+// similar content. The new shot's own movement bends the blend off the
+// straight line, and its thumbnail moves as fast as the transition does, so
+// the pooled flank speed shows no gain. The transition still stands out
+// from the calm shot in speed and from the moving shot in prediction.
+func TestShort_DissolveIntoMovingShot(t *testing.T) {
+	f := newShortFixture(160, 0.30)
+	a := scene(8)
+	b := mix(a, scene(9), 0.15)
+	f.fill(0, 60, a)
+	for j := 60; j < 160; j++ {
+		f.m.Thumb[j] = moving(b, j)
+		f.set(j, 0.37)
+	}
+	for j := 60; j < 64; j++ {
+		f.m.Thumb[j] = mix(a, moving(b, j), float32(j-59)/5)
+		f.set(j, 0.62)
+	}
+	wantOne(t, f.detect(), TransitionDissolve, 59, 64)
+}
+
+// Motion starting within one shot: the thumbnail speeds up against the calm
+// side, but prediction stays as bad afterwards as it became, so nothing
+// separates the onset from the motion that follows.
+func TestShort_MotionOnsetNotATransition(t *testing.T) {
+	f := newShortFixture(160, 0.30)
+	a := scene(8)
+	f.fill(0, 60, a)
+	for j := 60; j < 160; j++ {
+		f.m.Thumb[j] = moving(a, j)
+		f.set(j, 0.62)
+	}
+	if got := f.detect(); len(got) != 0 {
+		t.Fatalf("want no transitions for a motion onset, got %+v", got)
+	}
+}
+
 // Subject motion: an object crosses the picture and leaves. Cells change
 // and change back, so the movement is large and the net change small.
 func TestShort_ObjectCrossingNotATransition(t *testing.T) {

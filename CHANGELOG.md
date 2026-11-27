@@ -98,10 +98,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   thumbnail cell changes once and stays changed. A cut with one mixed
   frame, a "stepped" dissolve on repeated-frame content, a cut into a
   burst of flash frames, and a graphic stinger (wipe on, hold, wipe off)
-  are each reported as one span. There is no score threshold to tune for
-  cuts. On 28 sports and drama clips with 132 hand-verified scene
-  markers, at default settings, the detector went from 52 markers found
-  with 9 other detections to 125 found with 2 other detections. A marker
+  are each reported as one span. A dissolve from a calm shot into one in
+  fast motion is found by comparing the transition with each flank
+  separately. There is no score threshold to tune for cuts. On 28 sports
+  and drama clips with 132 hand-verified scene markers, at default
+  settings, the detector went from 52 markers found with 9 other
+  detections to 126 found with 2 other detections. A marker
   counts as found when a transition starts within 2 frames of it or
   spans it.
   See [docs/scene-detection.md](docs/scene-detection.md#the-motion-compensated-detector-scene_change_mc).
