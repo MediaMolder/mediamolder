@@ -383,8 +383,9 @@ straight line from the old scene to the new one), and a **fast pan** (the
 thumbnails slide sideways — not a transition).
 
 The detector is batch-only: it accumulates the whole input and reports at the
-end of the stream. With default settings it keeps a few hundred bytes per
-frame, so memory does not grow with clip length.
+end of the stream. With default settings it keeps no pictures, only the
+thumbnail and a few numbers per frame — about 7 KB per frame at any input
+resolution, so roughly 750 MB per hour of 30 fps video.
 
 ### What it detects
 
@@ -407,15 +408,19 @@ Hard cuts emit a single frame; dissolves and fades emit a span. In JSONL,
 `frame_index` is the last fully-unblended frame **before** the transition and
 `dissolve_frames` is the inclusive length to the first fully-unblended frame
 **after** it (so a true *D*-frame blend reports `D + 2`). Both endpoints are
-clean frames suitable as encoder anchors. The first frame of the transition
-itself is therefore `frame_index + 1`.
+clean frames suitable as encoder anchors.
+
+| `transition_type` | `frame_index` | First frame that differs from the old scene | First clean frame of the new scene |
+|---|---|---|---|
+| `hard_cut` | first frame of the new scene | `frame_index` | `frame_index` |
+| `dissolve`, `fade_out`, `fade_in` with `dissolve_frames` | last clean frame of the old scene | `frame_index + 1` | `frame_index + dissolve_frames − 1` |
 
 ### Parameters
 
 | Param | Type | Default | Description |
 |-------|------|---------|-------------|
-| `min_scene_len` | int/float64/string | `15` | Minimum scene length in frames or as a duration (`"0.5s"`). Transitions closer together than this merge into **one span** from the first one's start to the last one's end — the material between them is treated as part of the transition, not as a scene. |
-| `dissolve_max_len` | int | `0` (= 64 frames) | Longest dissolve/fade searched by the default analysis. Also the maximum blend length of the staged analysis (there `0` = half the longest prediction distance). |
+| `min_scene_len` | int/float64/string | `15` | Minimum scene length in frames or as a duration (`"0.5s"`). Transitions closer together than this merge into **one span**, from the last clean frame before the first one to the first clean frame after the last one — the material between them is treated as part of the transition, not as a scene. |
+| `dissolve_max_len` | int | `0` | Longest dissolve/fade searched, in frames. `0` = auto: 64 frames for the default analysis, half the longest prediction distance for the staged analysis. A value you set applies to both. |
 | `fade_min_len` | int | `3` | Minimum ramp length for a fade to digital black/white. |
 | `frame_rate` | float64 | `25.0` | Stream frame rate, for timecode generation. |
 | `output_file` / `output_format` | string | — / `"jsonl"` | Write results (`jsonl`, `csv`, `timecodes`). |
@@ -508,8 +513,12 @@ also show that the endpoints differ, that the thumbnail moves faster and
 prediction is worse inside than on the flanks, that the change covers the
 frame (an overlay graphic fading in is a perfect blend of a small area), and
 that the steps are not global translations (a pan test at whole-cell and
-sub-cell shifts). The first frame with α > 0 and the first with α ≈ 1 give
-the reported bounds.
+sub-cell shifts). The first frame whose α is distinguishable from 0 and the
+first indistinguishable from 1 give the reported bounds, where
+"distinguishable" is half the blend's own per-frame step. When both shots
+are moving only part of a blend is straight enough to pass; its ends are
+then extended along the same line for as long as the thumbnail keeps
+advancing and prediction keeps failing.
 
 **Staged long-dissolve analysis.** When enabled: multi-scale coarse plateau
 detection → region seeding → reference-distance ladder refinement →

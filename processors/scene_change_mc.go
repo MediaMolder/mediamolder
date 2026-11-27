@@ -79,8 +79,8 @@ import (
 //	"fade_white_threshold": float64 — normalised luma [0–1] above which a frame is bright; default 0.90; >1.0 disables
 //	"fade_min_len":     int     — min dark/bright frames for a valid fade; default 3 (also min ramp frames to digital b/w)
 //	"fade_max_len":     int     — max dark/bright frames before treating as programme black/white; default 120
-//	"dissolve_max_len": int     — longest dissolve/fade searched (default analysis: 0 = 64 frames; staged
-//	                              analysis: 0 = L/2). Increase for long dissolves.
+//	"dissolve_max_len": int     — longest dissolve/fade searched, in frames. 0 = auto (default analysis:
+//	                              64 frames; staged analysis: L/2). A set value applies to both.
 //	"agg_window":       int     — frames for score-surface aggregation (larger aids slow dissolves); default 5.
 //	"prediction_failure_threshold": float64 — the inter/intra cost-ratio level (0–1, near 1.0) at which temporal prediction
 //	                              from a reference is treated as having completely failed (the frame looks like a different

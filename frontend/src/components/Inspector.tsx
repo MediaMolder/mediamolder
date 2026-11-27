@@ -2918,13 +2918,16 @@ const SCENE_DETECTOR_META: Record<string, SceneDetectorMeta> = {
         key: 'refined_prediction_distances',
         label: 'Refined prediction distances',
         type: 'number-list',
-        defaultValue: [5, 15, 30, 45, 60, 75, 90, 105, 120],
+        defaultValue: [],
         placeholder: 'e.g. 5 15 30 60 90',
         hint:
-          'Menu of prediction distances from which the staged refinement stage picks value(s) near ' +
-          'each detected dissolve’s estimated duration D, computed only inside a window (~±D) ' +
-          'around the candidate. This supplies accurate long-lag plateau data exactly where needed. ' +
-          'Comma- or space-separated. Default covers common dissolve lengths.',
+          'Leave empty unless you want the staged long-dissolve analysis. Setting this enables ' +
+          'it, and every half-resolution frame is then kept in memory until the end of the ' +
+          'stream. It is the menu of prediction distances the refinement stage picks from near ' +
+          'each candidate dissolve’s estimated duration, measured only in a window around the ' +
+          'candidate. When the staged analysis is enabled another way and this is empty, the ' +
+          'built-in menu 5, 8, 15, 21, 30, 45, 60, 75, 90, 105, 120, 135 is used. Comma- or ' +
+          'space-separated.',
       },
       {
         key: 'excess_threshold',
@@ -2935,8 +2938,8 @@ const SCENE_DETECTOR_META: Record<string, SceneDetectorMeta> = {
         max: 1,
         step: 0.01,
         hint:
-          'Minimum excess above the per-frame baseline that counts as transition activity [0–1]. ' +
-          'Distinguishes gradual transitions from ordinary inter-frame variation. Default 0.15.',
+          'Staged long-dissolve analysis only: minimum excess above the per-frame baseline that ' +
+          'counts as transition activity [0–1] when seeding candidate regions. Default 0.15.',
       },
       {
         key: 'dissolve_min_len',
@@ -2947,8 +2950,8 @@ const SCENE_DETECTOR_META: Record<string, SceneDetectorMeta> = {
         max: 40,
         step: 1,
         hint:
-          'Minimum measured blend duration (frames) to classify a transition as a dissolve/fade ' +
-          'rather than a hard cut. Default 2.',
+          'Staged long-dissolve analysis only: minimum measured blend duration (frames) it ' +
+          'reports as a dissolve. Default 2.',
       },
       {
         key: 'dissolve_max_len',
@@ -2959,8 +2962,8 @@ const SCENE_DETECTOR_META: Record<string, SceneDetectorMeta> = {
         max: 240,
         step: 1,
         hint:
-          'Maximum active-lag width for dissolve/fade classification. 0 = auto (L/2). Increase for ' +
-          'long dissolves (e.g. 30+ frames). Default 0.',
+          'Longest dissolve or fade searched, in frames. 0 = auto: 64 frames for the default ' +
+          'analysis, half the longest prediction distance for the staged analysis. Default 0.',
       },
       {
         key: 'agg_window',
@@ -2971,7 +2974,8 @@ const SCENE_DETECTOR_META: Record<string, SceneDetectorMeta> = {
         max: 60,
         step: 1,
         hint:
-          'Frames used for score-surface aggregation. A larger window aids slow dissolves. Default 5.',
+          'Staged long-dissolve analysis only: frames used for score-surface aggregation when ' +
+          'seeding candidate regions. A larger window aids slow dissolves. Default 5.',
       },
       {
         key: 'prediction_failure_threshold',
@@ -2982,9 +2986,9 @@ const SCENE_DETECTOR_META: Record<string, SceneDetectorMeta> = {
         max: 1,
         step: 0.005,
         hint:
-          'Inter/intra cost-ratio level (near 1.0) at which temporal prediction is treated as fully ' +
-          'failed (the plateau saturation level for extracting saturated runs). Higher = stricter; ' +
-          'lower captures more flanking ramp (noisier). Default 0.985.',
+          'Staged long-dissolve analysis only: inter/intra cost-ratio level (near 1.0) at which ' +
+          'temporal prediction is treated as fully failed (the plateau saturation level). ' +
+          'Higher = stricter; lower captures more flanking ramp (noisier). Default 0.985.',
       },
       {
         key: 'fade_threshold',
@@ -2995,8 +2999,8 @@ const SCENE_DETECTOR_META: Record<string, SceneDetectorMeta> = {
         max: 0.5,
         step: 0.01,
         hint:
-          'Normalised luma [0–1] below which a frame is considered dark (part of a fade to/from ' +
-          'black). Default 0.10.',
+          'Accepted for compatibility; currently unused. Fades are anchored on digital black ' +
+          '(luma ≤ 1).',
       },
       {
         key: 'fade_white_threshold',
@@ -3007,8 +3011,8 @@ const SCENE_DETECTOR_META: Record<string, SceneDetectorMeta> = {
         max: 1.1,
         step: 0.01,
         hint:
-          'Normalised luma [0–1] above which a frame is considered bright (part of a fade to/from ' +
-          'white). Set above 1.0 to disable white-fade detection. Default 0.90.',
+          'Accepted for compatibility; currently unused. Fades are anchored on digital white ' +
+          '(luma ≥ 254).',
       },
       {
         key: 'fade_min_len',
@@ -3019,8 +3023,8 @@ const SCENE_DETECTOR_META: Record<string, SceneDetectorMeta> = {
         max: 60,
         step: 1,
         hint:
-          'Minimum consecutive dark/bright frames required to classify a valley as a fade rather ' +
-          'than a single-frame flash or noise. Default 3.',
+          'Minimum length (frames) of the luma ramp into digital black or white for it to be ' +
+          'reported as a fade. Default 3.',
       },
       {
         key: 'fade_max_len',
@@ -3031,8 +3035,7 @@ const SCENE_DETECTOR_META: Record<string, SceneDetectorMeta> = {
         max: 1800,
         step: 5,
         hint:
-          'Maximum dark/bright-region length (frames) before the valley is treated as programme ' +
-          'black/white rather than a fade and suppressed. Default 120.',
+          'Accepted for compatibility; currently unused. The luma ramp is capped at 200 frames.',
       },
       {
         key: 'fullres_refine',
@@ -3040,9 +3043,10 @@ const SCENE_DETECTOR_META: Record<string, SceneDetectorMeta> = {
         type: 'checkbox',
         defaultValue: false,
         hint:
-          'Measure full-resolution inter-prediction ratios around each detected dissolve and refine ' +
-          'the END of short/mid blends (D≤25). Requires the source to be re-decoded (uses ' +
-          'source_url). Adds CSV ratio columns. Default off.',
+          'Enables the staged long-dissolve analysis (every half-resolution frame is kept in ' +
+          'memory) and measures full-resolution inter-prediction ratios around each dissolve it ' +
+          'finds, refining the END of short/mid blends (D≤25). Requires the source to be ' +
+          're-decoded (uses source_url). Adds CSV ratio columns. Default off.',
       },
       {
         key: 'lookahead',
@@ -3053,9 +3057,7 @@ const SCENE_DETECTOR_META: Record<string, SceneDetectorMeta> = {
         max: 80,
         step: 1,
         hint:
-          'Legacy / informational. The current staged implementation drives the coarse pass from ' +
-          'the coarse prediction distance(s); this value is accepted for compatibility but has ' +
-          'limited effect. Default 34.',
+          'Accepted for compatibility; has no effect.',
       },
     ],
   },

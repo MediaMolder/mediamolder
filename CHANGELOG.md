@@ -94,24 +94,27 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   analysis.** Hard cuts are isolated spikes of the lag-1 inter/intra cost
   ratio, and dissolves and fades are runs in which a 32×18 thumbnail of
   the frame travels in a straight line from the old scene to the new one;
-  fast pans are recognised and ignored. On 28 labelled sports and drama
-  clips at default settings the detector went from 50 of 124 transitions
-  found with 9 false detections to 113 found with 1. A cut with one
-  mixed frame, a "stepped" dissolve on repeated-frame content, and a cut
-  into a burst of flash frames are each reported as one span. There is no
-  score threshold to tune for cuts.
+  fast pans are recognised and ignored. A cut with one mixed frame, a
+  "stepped" dissolve on repeated-frame content, and a cut into a burst of
+  flash frames are each reported as one span. There is no score threshold
+  to tune for cuts. On 28 sports and drama clips with 132 hand-verified
+  scene markers, at default settings, the detector went from 52 markers
+  found with 9 other detections to 118 found with 2 other detections. A
+  marker counts as found when a transition starts within 2 frames of it
+  or spans it.
   See [docs/scene-detection.md](docs/scene-detection.md#the-motion-compensated-detector-scene_change_mc).
 - **`scene_change_mc` staged long-dissolve analysis is opt-in.** It runs
   when `coarse_prediction_distance`, `refined_prediction_distances` or
   `fullres_refine` is set. Without them the detector scans lag 1 only and
-  keeps no frames: a 5,355-frame 1080p clip went from about 21 GB to
-  190 MB of memory. `threshold`, `excess_threshold` and `agg_window` now
-  only seed the staged analysis; hard cuts always come from the default
-  analysis.
+  keeps no pictures, about 7 KB per frame at any resolution: a
+  5,355-frame 1080p clip went from about 21 GB to 190 MB of memory.
+  `threshold`, `excess_threshold` and `agg_window` now only seed the
+  staged analysis; hard cuts always come from the default analysis.
 - **`scene_change_mc` `min_scene_len` merges close transitions into one
-  span** from the first one's start to the last one's end. Events closer
-  than the minimum were previously emitted, and raising the value could
-  drop well-separated cuts.
+  span**, from the last clean frame before the first one to the first
+  clean frame after the last one. Events closer than the minimum were
+  previously emitted, and raising the value could drop well-separated
+  cuts.
 - **`scene_change_mc` computes frame costs on all CPU cores.** The same
   1080p clip takes 68 s instead of 327 s; costs are identical to the
   sequential scan.
