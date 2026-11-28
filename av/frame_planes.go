@@ -26,7 +26,12 @@ package av
 //     if (plane == 1 || plane == 2) return AV_CEIL_RSHIFT(f->width, d->log2_chroma_w);
 //     return f->width;
 // }
-// static uint8_t *mm_frame_plane_data(const AVFrame *f, int plane) { return f->data[plane]; }
+// static uint8_t *mm_frame_plane_data(const AVFrame *f, int plane) {
+//     const AVPixFmtDescriptor *d = av_pix_fmt_desc_get((enum AVPixelFormat)f->format);
+//     if (d && (d->flags & AV_PIX_FMT_FLAG_HWACCEL))
+//         return NULL;
+//     return f->data[plane];
+// }
 // static int mm_frame_linesize(const AVFrame *f, int plane) { return f->linesize[plane]; }
 import "C"
 
@@ -71,9 +76,9 @@ func (f *Frame) PlaneWidth(i int) int {
 // Plane returns plane i's pixel bytes as a Go slice aliasing the frame's C
 // buffer (length = Linesize(i) * PlaneHeight(i)). Writes through the slice edit
 // the frame in place. The slice is only valid until the frame is closed or
-// unref'd — do not retain it past that.
+// unref'd — do not retain it past that. Hardware frames return nil.
 func (f *Frame) Plane(i int) []byte {
-	if f == nil || f.p == nil {
+	if f == nil || f.p == nil || i < 0 || i >= C.AV_NUM_DATA_POINTERS {
 		return nil
 	}
 	data := C.mm_frame_plane_data(f.p, C.int(i))

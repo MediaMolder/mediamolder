@@ -72,24 +72,9 @@ MediaMolder supports hardware-accelerated video decoding, encoding, and filterin
 }
 ```
 
-### Zero-Copy Decode→Encode Path
+### CUDA Decode and Encode Without Host Transfers
 
-When both the decoder and encoder use the same hardware device, frames stay in GPU memory — no host↔device transfer overhead:
-
-```json
-{
-  "global_options": {
-    "hw_accel": "cuda",
-    "hw_device": "0"
-  }
-}
-```
-
-With `hw_accel` set, the graph:
-1. Opens a hardware device context (`av.OpenHWDevice`)
-2. Creates hardware-accelerated decoders where supported (`av.OpenHWDecoder`)
-3. Routes frames through hardware filters (e.g., `scale_cuda` instead of `scale`)
-4. Feeds frames to a hardware encoder (e.g., `h264_nvenc`)
+Set the input's `hwaccel_output_format` to `"cuda"` and use an explicit NVENC encoder node with `pix_fmt: "cuda"`. Both nodes must reference the same named CUDA device. The encoder opens with `sw_pix_fmt` as the surface layout and accepts frames with matching layout and dimensions. See the [CUDA Go processor example](go-processor-nodes.md#processing-cuda-frames) for a complete graph. You can also connect the decoder directly to the encoder.
 
 ### Hardware Filters — Auto-Mapping (Wave 10 #58)
 
@@ -249,15 +234,19 @@ live as you change the `hwaccel` field.
       ]
     }
   ],
-  "graph": { "nodes": [], "edges": [
-    {"from": "src:v:0", "to": "out:v", "type": "video"},
+  "graph": { "nodes": [
+    {"id": "enc", "type": "encoder", "device": "gpu0",
+     "params": {"codec": "h264_nvenc", "pix_fmt": "cuda", "sw_pix_fmt": "nv12"}}
+  ], "edges": [
+    {"from": "src:v:0", "to": "enc", "type": "video"},
+    {"from": "enc", "to": "out:v", "type": "video"},
     {"from": "src:a:0", "to": "out:a", "type": "audio"}
   ]},
-  "outputs": [{ "id": "out", "url": "output.mp4", "codec_video": "h264_nvenc", "codec_audio": "aac" }]
+  "outputs": [{ "id": "out", "url": "output.mp4", "codec_audio": "aac" }]
 }
 ```
 
-Setting `hwaccel_output_format` to `"cuda"` keeps decoded frames in GPU memory so a downstream `scale_cuda` or `h264_nvenc` encoder receives them without a host↔device round-trip.
+`nv12` is the CUDA surface layout for typical 8-bit 4:2:0 inputs. Set `sw_pix_fmt` to the layout your decoder or processor actually produces.
 
 **Example — VAAPI decode with auto CPU transfer (for software filters):**
 
