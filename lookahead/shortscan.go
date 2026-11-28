@@ -1079,8 +1079,11 @@ func (s *shortScan) bridgeFrozenHolds(ts []SceneTransition) []SceneTransition {
 // travel starts and stops, so each end is walked outward while some frame
 // within linEndProbe advances by more than half the blend's own step
 // (several frames, because repeated frames do not advance) and prediction
-// failed on the way. An end that does
-// not move keeps its blendBounds value; a walk never crosses a cut.
+// failed on the way. The end then moves to the last frame of that probe
+// which advanced by itself, not to the end of the probe: a probe can reach a
+// frame of the neighbouring shot's own motion by way of a real blend step,
+// and that frame only rode along. An end that does not move keeps its
+// blendBounds value; a walk never crosses a cut.
 func (s *shortScan) extendAlongLine(a, b, start, end int, d []float64, dn float64, alpha []float64, flankRatio float64, cutFrames []int) (int, int) {
 	var incs []float64
 	prev := 0.0
@@ -1127,7 +1130,16 @@ func (s *shortScan) extendAlongLine(a, b, start, end int, d []float64, dn float6
 		moved = false
 		for k := 1; k <= linEndProbe && f+k <= hi; k++ {
 			if along(f, f+k) > lim && failed(f, f+k) {
-				f += k
+				// Land on the last frame of the probe that advanced by
+				// itself; the frames beyond it only rode along.
+				q := f + k
+				for q > f+1 && along(q-1, q) <= lim {
+					q--
+				}
+				if along(q-1, q) <= lim {
+					q = f + k
+				}
+				f = q
 				moved = true
 				break
 			}
@@ -1141,7 +1153,14 @@ func (s *shortScan) extendAlongLine(a, b, start, end int, d []float64, dn float6
 		moved = false
 		for k := 1; k <= linEndProbe && g-k >= lo; k++ {
 			if along(g-k, g) > lim && failed(g-k, g) {
-				g -= k
+				q := g - k + 1
+				for q < g && along(q-1, q) <= lim {
+					q++
+				}
+				if along(q-1, q) <= lim {
+					q = g - k + 1
+				}
+				g = q - 1
 				moved = true
 				break
 			}

@@ -462,6 +462,44 @@ func TestShort_OverlayFadeNotATransition(t *testing.T) {
 
 // A weak wipe is kept only where it adjoins a gradual transition that
 // stands alone, and is merged into it.
+// The extension probes up to three frames at a time so that repeated frames
+// do not stop it. A probe can then reach a frame of the neighbouring shot's
+// own motion — barely along the line, but badly predicted — by way of a real
+// blend step that was not: the bound must land on the blend step, not on
+// the motion frame. Thumbnails here are two numbers, the position along the
+// blend and the shot's own movement off it.
+func TestExtendAlongLine_LandsOnAdvancingFrame(t *testing.T) {
+	type fr struct{ x, y, r1 float32 }
+	frames := []fr{
+		{-3.1, 0, .25}, {-3.1, 0, .25}, {-3.1, 0, .25}, {-3.1, 0, .25},
+		{-3, 4, .60},  // 4: old shot moves
+		{-3, 4, .05},  // 5: repeated frame
+		{-2, 4, .20},  // 6: first blended frame, faint
+		{-1, 4, .60},  // 7
+		{0, 4, .60},   // 8
+		{0, 4, .05},   // 9: repeated frame; a
+		{1, 4, .60},   // 10
+		{2, 4, .60},   // 11
+		{3, 4, .60},   // 12: b
+		{4, 4, .60},   // 13
+		{5, 4, .20},   // 14: last blend step, faint: first clean new frame
+		{5, 4, .05},   // 15: repeated frame
+		{5.1, 9, .60}, // 16: new shot moves
+		{5.1, 9, .25}, {5.1, 9, .25}, {5.1, 9, .25},
+	}
+	s := &shortScan{n: len(frames), tc: 1}
+	for _, f := range frames {
+		s.th = append(s.th, []float32{f.x, f.y})
+		s.r1 = append(s.r1, float64(f.r1))
+	}
+	const a, b = 9, 12
+	d := []float64{3, 0}
+	start, end := s.extendAlongLine(a, b, 10, 12, d, 9, []float64{1. / 3, 2. / 3}, 0.25, nil)
+	if start != 6 || end != 14 {
+		t.Fatalf("want blend 6–14, got %d–%d", start, end)
+	}
+}
+
 func TestAttachWeakWipes(t *testing.T) {
 	in := []SceneTransition{
 		{Type: TransitionDissolve, StartFrame: 100, EndFrame: 110, weak: true}, // alone: dropped
