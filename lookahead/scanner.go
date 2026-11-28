@@ -11,7 +11,10 @@ package lookahead
 
 import (
 	"fmt"
+	"runtime"
 	"sort"
+	"sync"
+	"sync/atomic"
 
 	imgmath "github.com/MediaMolder/MediaMolder/lookahead/internal"
 )
@@ -67,6 +70,14 @@ type CostMatrix struct {
 	AvgU []float32 // [N] when populated
 	AvgV []float32 // [N] when populated
 
+	// Thumb[j] is a coarse thumbnail of frame j: ThumbW×ThumbH grid cells
+	// (row-major), ThumbC channel means per cell. The scanner fills a
+	// luma-only thumbnail (ThumbC = 1); callers with colour frames may
+	// replace it with a Y,U,V one (ThumbC = 3). Consumed by the
+	// short-transition detector (shortscan.go).
+	Thumb  [][]float32
+	ThumbC int
+
 	// Backward-looking (reverse) prediction, populated only where dissolve-end
 	// refinement ran (zero elsewhere). RevRatio[j][i] is the inter/intra ratio
 	// for predicting frame j from the FUTURE reference j + RevLags[i]. Indexed by
@@ -109,7 +120,11 @@ func (m *CostMatrix) ensureRevCol(k int) int {
 // chosen temporal windows (the core of the staged/incremental strategy for
 // long-dissolve accuracy at low average cost).
 //
-// The scanner is not safe for concurrent use.
+// The scanner is not safe for concurrent use by callers. Internally AddFrame
+// computes each frame's costs on a bounded pool of goroutines (a frame's costs
+// depend only on its own and its references' immutable lowres planes, and are
+// cached on the frame itself), so results are identical to a sequential scan.
+// Matrix() waits for outstanding work before returning.
 type LookaheadScanner struct {
 	l         int                    // lookahead length (= matrix L)
 	lags      []int                  // configured lag schedule (fib or custom)
@@ -118,6 +133,77 @@ type LookaheadScanner struct {
 	m         *CostMatrix
 	retainAll bool                   // when true, every downscaled frame is also kept in all[]
 	all       []*imgmath.LowresFrame // retained lowres frames (only when retainAll)
+
+	noThumbs bool // caller supplies CostMatrix.Thumb itself
+
+	sem     chan struct{}  // bounds concurrent per-frame cost jobs
+	wg      sync.WaitGroup // outstanding per-frame cost jobs
+	pending []*scanJob     // jobs whose scalar results are not yet committed to m
+}
+
+// scanJob carries one frame's cost computation. The row slices are the ones
+// already appended to the matrix; intra/energy are committed by flush.
+type scanJob struct {
+	j           int
+	cur         *imgmath.LowresFrame
+	refs        []*imgmath.LowresFrame // per lag index; nil when no history
+	row, inter  []float32
+	intra       float32
+	energy      float32
+	lagSlotBase []int
+	done        atomic.Bool
+}
+
+// commitDone writes the scalar results of the finished jobs at the head of
+// the pending queue into the matrix, so a long scan does not accumulate jobs
+// (each of which pins its frame).
+func (s *LookaheadScanner) commitDone() {
+	i := 0
+	for i < len(s.pending) && s.pending[i].done.Load() {
+		jb := s.pending[i]
+		s.m.IntraCost[jb.j] = jb.intra
+		s.m.Energy[jb.j] = jb.energy
+		s.pending[i] = nil
+		i++
+	}
+	if i > 0 {
+		s.pending = s.pending[i:]
+	}
+}
+
+// flush waits for all outstanding per-frame jobs and commits their scalar
+// results to the matrix.
+func (s *LookaheadScanner) flush() {
+	if len(s.pending) == 0 {
+		return
+	}
+	s.wg.Wait()
+	for _, jb := range s.pending {
+		s.m.IntraCost[jb.j] = jb.intra
+		s.m.Energy[jb.j] = jb.energy
+	}
+	s.pending = s.pending[:0]
+}
+
+func (jb *scanJob) run() {
+	// Intra cost: pass lag=-1 so LowresFrameCost skips all inter work.
+	_, iCost := imgmath.LowresFrameCost(jb.cur, nil, -1)
+	for i, ref := range jb.refs {
+		if ref == nil {
+			continue
+		}
+		// lag-1 selects the MV-cache slot (0-based).
+		interCost, _ := imgmath.LowresFrameCost(jb.cur, ref, jb.lagSlotBase[i]-1)
+		jb.inter[i] = float32(interCost)
+		if iCost > 0 {
+			jb.row[i] = float32(interCost) / float32(iCost)
+		}
+		// iCost == 0 means a blank frame; row[i] stays 0.
+	}
+	jb.intra = float32(iCost)
+	jb.energy = float32(imgmath.LowresFrameACEnergy(jb.cur))
+	jb.cur, jb.refs = nil, nil
+	jb.done.Store(true)
 }
 
 // NewLookaheadScanner returns a scanner with the given lookahead length.
@@ -142,7 +228,7 @@ func NewLookaheadScanner(l int) (*LookaheadScanner, error) {
 // intra cost is computed, and inter costs are computed against all buffered
 // reference frames (up to l frames back).
 //
-// The CostMatrix returned by Matrix() is updated before AddFrame returns.
+// The frame's costs are computed asynchronously; Matrix() waits for them.
 func (s *LookaheadScanner) AddFrame(luma []byte, width, height, stride int) error {
 	lrFrame, err := imgmath.InitLowres(luma, width, height, stride)
 	if err != nil {
@@ -150,6 +236,10 @@ func (s *LookaheadScanner) AddFrame(luma []byte, width, height, stride int) erro
 	}
 
 	j := s.n // 0-based index of this frame
+	if !s.noThumbs {
+		s.m.Thumb = append(s.m.Thumb, lumaThumb(luma, width, height, stride))
+		s.m.ThumbC = 1
+	}
 
 	// Store in ring buffer (overwrites the slot that is now l+1 frames old).
 	s.buf[j%(s.l+1)] = lrFrame
@@ -158,43 +248,52 @@ func (s *LookaheadScanner) AddFrame(luma []byte, width, height, stride int) erro
 	}
 	s.n++
 
-	// Intra cost: pass lag=-1 so LowresFrameCost skips all inter work.
-	// ref is not accessed when lag < 0.
-	_, iCost := imgmath.LowresFrameCost(lrFrame, nil, -1)
-
-	// Build the ratio row for frame j using the Fibonacci lag schedule.
-	// numRefs is the maximum available history (limited by both j and l).
+	// Build the ratio row for frame j using the lag schedule. numRefs is the
+	// maximum available history (limited by both j and l). The references are
+	// resolved here, synchronously, because the ring slots are overwritten by
+	// later frames; the cost computation itself runs on the worker pool.
 	numRefs := j
 	if numRefs > s.l {
 		numRefs = s.l
 	}
-	row := make([]float32, len(s.lags))
-	interRow := make([]float32, len(s.lags))
+	jb := &scanJob{
+		j:           j,
+		cur:         lrFrame,
+		refs:        make([]*imgmath.LowresFrame, len(s.lags)),
+		row:         make([]float32, len(s.lags)),
+		inter:       make([]float32, len(s.lags)),
+		lagSlotBase: s.lags,
+	}
 	cap := s.l + 1
 	for i, lag := range s.lags {
 		if lag > numRefs {
 			break // lags are sorted; remaining lags exceed available history
 		}
-		// Reference frame is j−lag; lag-1 selects the MV-cache slot (0-based).
 		refSlot := (j - lag) % cap
 		if refSlot < 0 {
 			refSlot += cap
 		}
-		ref := s.buf[refSlot]
-		interCost, _ := imgmath.LowresFrameCost(lrFrame, ref, lag-1)
-		interRow[i] = float32(interCost)
-		if iCost > 0 {
-			row[i] = float32(interCost) / float32(iCost)
-		}
-		// iCost == 0 means a blank frame; row[i] stays 0.
+		jb.refs[i] = s.buf[refSlot]
 	}
 
-	s.m.IntraCost = append(s.m.IntraCost, float32(iCost))
-	s.m.InterCost = append(s.m.InterCost, interRow)
+	s.m.IntraCost = append(s.m.IntraCost, 0)
+	s.m.InterCost = append(s.m.InterCost, jb.inter)
 	s.m.AvgLuma = append(s.m.AvgLuma, lrFrame.AvgLuma)
-	s.m.Energy = append(s.m.Energy, float32(imgmath.LowresFrameACEnergy(lrFrame)))
-	s.m.Ratio = append(s.m.Ratio, row)
+	s.m.Energy = append(s.m.Energy, 0)
+	s.m.Ratio = append(s.m.Ratio, jb.row)
 	s.m.N = s.n
+
+	if s.sem == nil {
+		s.sem = make(chan struct{}, runtime.GOMAXPROCS(0))
+	}
+	s.commitDone()
+	s.pending = append(s.pending, jb)
+	s.sem <- struct{}{}
+	s.wg.Add(1)
+	go func() {
+		defer func() { <-s.sem; s.wg.Done() }()
+		jb.run()
+	}()
 	return nil
 }
 
@@ -234,9 +333,45 @@ func NewLookaheadScannerWithLags(lags []int) (*LookaheadScanner, error) {
 	}, nil
 }
 
-// Matrix returns the CostMatrix built so far.  The caller must not modify
-// the returned value; its contents are updated on every AddFrame call.
+// DisableThumbs stops the scanner from computing its luma-only thumbnails;
+// for callers that fill CostMatrix.Thumb themselves (e.g. with Y,U,V cell
+// means). Call before the first AddFrame.
+func (s *LookaheadScanner) DisableThumbs() {
+	if s.n == 0 {
+		s.noThumbs = true
+	}
+}
+
+// lumaThumb returns the ThumbW×ThumbH grid of cell means of a luma plane.
+func lumaThumb(luma []byte, width, height, stride int) []float32 {
+	var sum [ThumbW * ThumbH]uint64
+	var cnt [ThumbW * ThumbH]uint32
+	for y := 0; y < height; y++ {
+		cy := y * ThumbH / height
+		row := luma[y*stride : y*stride+width]
+		for cx := 0; cx < ThumbW; cx++ {
+			x0, x1 := cx*width/ThumbW, (cx+1)*width/ThumbW
+			var acc uint64
+			for _, v := range row[x0:x1] {
+				acc += uint64(v)
+			}
+			sum[cy*ThumbW+cx] += acc
+			cnt[cy*ThumbW+cx] += uint32(x1 - x0)
+		}
+	}
+	out := make([]float32, ThumbW*ThumbH)
+	for i := range out {
+		if cnt[i] > 0 {
+			out[i] = float32(float64(sum[i]) / float64(cnt[i]))
+		}
+	}
+	return out
+}
+
+// Matrix returns the CostMatrix built so far, after waiting for any frame
+// costs still being computed. The caller must not modify the returned value.
 func (s *LookaheadScanner) Matrix() *CostMatrix {
+	s.flush()
 	return s.m
 }
 
@@ -259,6 +394,7 @@ func (s *LookaheadScanner) AllLowres() []*imgmath.LowresFrame {
 	if !s.retainAll {
 		return nil
 	}
+	s.flush()
 	return s.all
 }
 
@@ -287,6 +423,7 @@ func (s *LookaheadScanner) AllLowres() []*imgmath.LowresFrame {
 // correspond to the rows 0..m.N-1 in the matrix (i.e. the value returned by
 // AllLowres() from the same scanner after the coarse accumulation).
 func (s *LookaheadScanner) Refine(m *CostMatrix, lowres []*imgmath.LowresFrame, lo, hi int, extraLags []int) error {
+	s.flush()
 	if m == nil || len(lowres) == 0 || len(extraLags) == 0 {
 		return nil
 	}
@@ -362,39 +499,47 @@ func (s *LookaheadScanner) Refine(m *CostMatrix, lowres []*imgmath.LowresFrame, 
 		jEnd = nLow - 1
 	}
 
+	// Rows are independent (each writes only its own frame's caches and its
+	// own matrix row), so compute them on a bounded pool.
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, runtime.GOMAXPROCS(0))
 	for j := jStart; j <= jEnd; j++ {
 		cur := lowres[j]
 		if cur == nil {
 			continue
 		}
-		intra := float64(m.IntraCost[j])
-
-		for _, k := range extraLags {
-			if k < 1 || k > j {
-				continue
+		sem <- struct{}{}
+		wg.Add(1)
+		go func(j int, cur *imgmath.LowresFrame) {
+			defer func() { <-sem; wg.Done() }()
+			intra := float64(m.IntraCost[j])
+			for _, k := range extraLags {
+				if k < 1 || k > j {
+					continue
+				}
+				col, ok := lagToCol[k]
+				if !ok {
+					continue
+				}
+				refIdx := j - k
+				if refIdx < 0 || refIdx >= nLow {
+					continue
+				}
+				ref := lowres[refIdx]
+				if ref == nil {
+					continue
+				}
+				interCost, _ := imgmath.LowresFrameCost(cur, ref, k-1)
+				m.InterCost[j][col] = float32(interCost)
+				if intra > 0 {
+					m.Ratio[j][col] = float32(float64(interCost) / intra)
+				} else {
+					m.Ratio[j][col] = 0
+				}
 			}
-			col, ok := lagToCol[k]
-			if !ok {
-				continue
-			}
-			refIdx := j - k
-			if refIdx < 0 || refIdx >= nLow {
-				continue
-			}
-			ref := lowres[refIdx]
-			if ref == nil {
-				continue
-			}
-
-			interCost, _ := imgmath.LowresFrameCost(cur, ref, k-1)
-			m.InterCost[j][col] = float32(interCost)
-			if intra > 0 {
-				m.Ratio[j][col] = float32(float64(interCost) / intra)
-			} else {
-				m.Ratio[j][col] = 0
-			}
-		}
+		}(j, cur)
 	}
+	wg.Wait()
 
 	return nil
 }

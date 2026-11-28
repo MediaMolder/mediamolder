@@ -90,6 +90,46 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Changed
 
+- **`scene_change_mc` detects cuts and dissolves with a new default
+  analysis.** Hard cuts are isolated spikes of the lag-1 inter/intra cost
+  ratio, and dissolves and fades are runs in which a 32×18 thumbnail of
+  the frame travels in a straight line from the old scene to the new one;
+  fast pans are recognised and ignored. Wipes are runs in which each
+  thumbnail cell changes once and stays changed. A cut with one mixed
+  frame, a "stepped" dissolve on repeated-frame content, and a cut into a
+  burst of flash frames are each reported as one span. A graphic stinger
+  (wipe on, hold, wipe off) is two transitions, into the held graphic and
+  out of it. A dissolve from a calm shot into one in
+  fast motion is found by comparing the transition with each flank
+  separately. A wipe's bounds extend to where the picture settles,
+  so a graphic that shrinks away slowly is covered to its last frame. There is no score threshold to tune for cuts. On 28 sports
+  and drama clips with 132 hand-verified scene markers, at default
+  settings, the detector went from 52 markers found with 9 other
+  detections to 126 found with 4 other detections. A marker
+  counts as found when a transition starts within 2 frames of it or
+  spans it.
+  See [docs/scene-detection.md](docs/scene-detection.md#the-motion-compensated-detector-scene_change_mc).
+- **`scene_change_mc` events carry `start_frame` and `end_frame`.**
+  `start_frame` is the first frame of the new scene for a hard cut, or the
+  first frame of the transition otherwise; `end_frame` is the first clean
+  frame of the new scene. `frame_index` and `dissolve_frames` are unchanged:
+  for a transition `frame_index` is still the last clean frame of the old
+  scene, one before `start_frame`.
+- **`scene_change_mc` staged long-dissolve analysis is opt-in.** It runs
+  when `coarse_prediction_distance`, `refined_prediction_distances` or
+  `fullres_refine` is set. Without them the detector scans lag 1 only and
+  keeps no pictures, about 7 KB per frame at any resolution: a
+  5,355-frame 1080p clip went from about 21 GB to 190 MB of memory.
+  `threshold`, `excess_threshold` and `agg_window` now only seed the
+  staged analysis; hard cuts always come from the default analysis.
+- **`scene_change_mc` `min_scene_len` merges close transitions into one
+  span**, from the last clean frame before the first one to the first
+  clean frame after the last one. Events closer than the minimum were
+  previously emitted, and raising the value could drop well-separated
+  cuts.
+- **`scene_change_mc` computes frame costs on all CPU cores.** The same
+  1080p clip takes 68 s instead of 327 s; costs are identical to the
+  sequential scan.
 - **Exported type `YOLOv8Detector` is now `YOLODetector`.** The ONNX
   detector lives in `processors/yolo_onnx.go`. `yolo` and `yolo_v8`
   both register it.
@@ -104,6 +144,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   `av.NewSinkFilterGraph` chain ending in a sink, such as
   `metadata=mode=print:file=…,nullsink`, processed no frames at all; it
   now processes each frame as it is pushed.
+- **`scene_change_mc` reports an analysis failure.** `Close` wrote no
+  events and returned no error when the analysis failed, so a failed run
+  looked like a clip with no transitions.
+- **`scene_change_mc` no longer reports a fade-in at the last frame** when
+  a black or white run lasts to the end of the stream.
+- **`scene_change_mc` accepts fades to white with a curved ramp.** The
+  ramp's straightness check squared R² twice, so the bound was about 0.775
+  rather than 0.60 and an accelerating fade to white was not reported.
 - **`smartcopy` keeps the source's colour description on the frames it
   re-encodes.** The boundary encoder opened with colour unspecified, so
   its parameter sets carried no colour range, primaries, transfer, or

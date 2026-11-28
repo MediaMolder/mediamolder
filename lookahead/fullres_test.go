@@ -19,8 +19,8 @@ func (s *stubProvider) FullresLuma(idx int) ([]byte, int, int, int, error) {
 
 // fullresEdgeMeasure must populate forward/reverse full-res columns with the
 // established edge geometry — narrow forward ratios rise at S, narrow
-// reverse ratios return to the floor at exactly E — and never change bounds
-// (phase 1 is measure-only).
+// reverse ratios return to the floor at exactly E. (End adoption is covered
+// by the tests below.)
 func TestFullresEdgeMeasure_GeometryAndColumns(t *testing.T) {
 	const w, h, S, D = 128, 96, 120, 8
 	E := S + D

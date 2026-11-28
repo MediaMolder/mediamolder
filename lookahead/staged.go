@@ -17,6 +17,7 @@
 package lookahead
 
 import (
+	"fmt"
 	"sort"
 )
 
@@ -214,8 +215,8 @@ func findRoughDissolveRegions(m *CostMatrix, cfg LookaheadAnalyzer) []dissolveRe
 // status updates (e.g. to a GUI log panel) during the otherwise-silent
 // post-frames refinement work. All frame fields are 0-based frame indices.
 type StagedProgress struct {
-	Phase   string // "coarse", "refine" (one region), "escalate", "energy", "final"
-	Current int    // refine: 1-based region index; coarse: number of regions found
+	Phase   string // "short", "coarse", "refine" (one region), "escalate", "energy", "final"
+	Current int    // refine: 1-based region index; coarse: number of regions found; short: detections
 	Total   int    // refine: total number of regions
 	Lo, Hi  int    // refine/escalate/energy: the dissolve region (frame indices)
 	EstD    int    // refine/energy: estimated dissolve length in frames
@@ -226,30 +227,25 @@ type StagedProgress struct {
 	FullresEndUsed bool    // fullres: the full-res reverse end-foot was adopted
 }
 
-// AnalyzeStaged implements the incremental / staged measurement strategy for
-// motion-compensated scene detection.
+// AnalyzeStaged is the detector's full analysis of a completed scan.
 //
-// It is designed to be called after the scanner has been fed the entire video
-// using a cheap small-lag schedule (e.g. lags {1,5}) **and** after
-// scanner.RetainAllLowres() was called so that AllLowres() can supply the
-// low-resolution frames for on-demand extra measurements.
+// Hard cuts, cut bursts and short-to-medium dissolves/fades come from the
+// short-transition detector (shortscan.go), which needs only the lag-1
+// column and the per-frame thumbnails.
 //
-// The refinementMenu (when non-empty) acts as the pool of "interesting" lag
-// values. For each rough dissolve region discovered on the cheap coarse data,
-// the implementation picks lag(s) near the estimated duration D from this menu
-// (plus a narrow 1-5 set for precise edge placement) and calls Refine only for
-// the relevant frame window around that region.
+// When the scanner retained its lowres frames (RetainAllLowres), the staged
+// long-dissolve measurement also runs: rough dissolve regions are discovered
+// on the coarse matrix, extra lags drawn from refinementMenu (plus a narrow
+// 1-5 set) are computed only inside windows around them, and the plateau
+// detector and edge refinement measure each blend's bounds. Its dissolves are
+// merged with the short detections (see mergeShortAndLegacy). Without
+// retained frames only the luma-fade detector runs alongside the short
+// detector.
 //
-// report, when non-nil, is invoked at each stage of the work (coarse-pass done,
-// each region being refined, final analysis) so the caller can emit progress /
-// log updates. It is called synchronously from this goroutine.
+// Transitions closer together than MinSceneLen are merged into one span.
 //
-// After the targeted refinements, the normal high-quality Analyze (including
-// plateau-based dissolve detection) is run on the now selectively augmented
-// matrix. The result is returned.
-//
-// If the scanner does not have retained lowres frames, AnalyzeStaged falls
-// back to ordinary Analyze(m) for compatibility.
+// report, when non-nil, is invoked synchronously at each stage so the caller
+// can emit progress / log updates.
 func (a *LookaheadAnalyzer) AnalyzeStaged(s *LookaheadScanner, refinementMenu []int, report func(StagedProgress)) ([]SceneTransition, error) {
 	if s == nil {
 		return nil, nil
@@ -258,14 +254,46 @@ func (a *LookaheadAnalyzer) AnalyzeStaged(s *LookaheadScanner, refinementMenu []
 	if m == nil || m.N == 0 {
 		return nil, nil
 	}
+	cfg := a.withDefaults(m.L)
 
-	lowres := s.AllLowres()
-	if len(lowres) == 0 {
-		// No retention — we cannot do targeted extra work. Fall back.
-		return a.Analyze(m)
+	// Hard cuts, cut bursts and short-to-medium dissolves/fades come from the
+	// short-transition detector, which needs only the lag-1 column and the
+	// per-frame thumbnails (no retained frames).
+	short := cfg.detectShortTransitions(m, a.DissolveMaxLen)
+	if report != nil {
+		report(StagedProgress{Phase: "short", Current: len(short)})
 	}
 
-	cfg := a.withDefaults(m.L)
+	var legacy []SceneTransition
+	if len(s.AllLowres()) == 0 {
+		// No retained frames: the staged long-dissolve refinement is off.
+		// Luma fades need only AvgLuma.
+		legacy = cfg.detectBatchDigitalLumaFades(m)
+		if short == nil {
+			// No lag-1 column either: fall back to the plain analysis.
+			return a.Analyze(m)
+		}
+	} else {
+		var err error
+		legacy, err = a.analyzeStagedLong(s, m, cfg, refinementMenu, report)
+		if err != nil {
+			// The short detections do not depend on the staged analysis:
+			// return them with the error rather than nothing.
+			return enforceMinSceneLen(short, cfg.MinSceneLen), err
+		}
+		if short == nil {
+			return legacy, nil
+		}
+	}
+	out := mergeShortAndLegacy(short, legacy)
+	return enforceMinSceneLen(out, cfg.MinSceneLen), nil
+}
+
+// analyzeStagedLong is the staged coarse→refine analysis for long dissolves
+// (plateau consensus, lag escalation, edge refinement). It requires retained
+// lowres frames.
+func (a *LookaheadAnalyzer) analyzeStagedLong(s *LookaheadScanner, m *CostMatrix, cfg LookaheadAnalyzer, refinementMenu []int, report func(StagedProgress)) ([]SceneTransition, error) {
+	lowres := s.AllLowres()
 
 	// First pass on the cheap coarse matrix. This already gives excellent
 	// hard cuts and short dissolves via the surface path.
@@ -317,7 +345,7 @@ func (a *LookaheadAnalyzer) AnalyzeStaged(s *LookaheadScanner, refinementMenu []
 	// narrow lags help produce tighter start/end for the refined events.
 	final, err := cfg.Analyze(m)
 	if err != nil {
-		return initial, nil
+		return nil, fmt.Errorf("lookahead: staged final analysis: %w", err)
 	}
 
 	// Lag escalation: a dissolve flagged underLagged had no two lags spanning
