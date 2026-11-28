@@ -301,10 +301,10 @@ func TestShort_Wipe(t *testing.T) {
 	wantOne(t, f.detect(), TransitionDissolve, 59, 75)
 }
 
-// A stinger: wipe to a full-screen graphic, a frozen hold longer than
-// MinSceneLen, wipe to the new scene. One span, from the last clean frame of
-// the old scene to the first clean frame of the new one.
-func TestShort_StingerIsOneSpan(t *testing.T) {
+// A stinger: wipe to a full-screen graphic, the graphic held, wipe to the new
+// scene. The held graphic is a scene, so there are two transitions: into it
+// and out of it.
+func TestShort_StingerIsTwoTransitions(t *testing.T) {
 	f := newShortFixture(240, 0.25)
 	a, g, b := scene(8), scene(10), scene(9)
 	f.fill(0, 60, a)
@@ -318,7 +318,20 @@ func TestShort_StingerIsOneSpan(t *testing.T) {
 		f.set(j, 0.6)
 	}
 	f.fill(132, 240, b)
-	wantOne(t, f.detect(), TransitionDissolve, 59, 131)
+	got := f.detect()
+	if len(got) != 2 {
+		t.Fatalf("want 2 transitions, got %+v", got)
+	}
+	for i, want := range [][2]int{{59, 75}, {115, 131}} {
+		if got[i].Type != TransitionDissolve || got[i].StartFrame != want[0] || got[i].EndFrame != want[1] {
+			t.Errorf("transition %d: want [%d,%d], got %+v", i, want[0], want[1], got[i])
+		}
+	}
+	// A graphic held for less than the minimum scene length is not a scene:
+	// the two transitions merge into one.
+	if m := enforceMinSceneLen(got, 60); len(m) != 1 || m[0].StartFrame != 59 || m[0].EndFrame != 131 {
+		t.Errorf("min scene length 60: want one span [59,131], got %+v", m)
+	}
 }
 
 // A full-screen graphic wiped off quickly at first and easing out at the
@@ -342,8 +355,8 @@ func TestShort_WipeTailSettles(t *testing.T) {
 	wantOne(t, f.detect(), TransitionDissolve, 59, 70)
 }
 
-// The same two wipes around a hold that is a moving picture, not a frozen
-// one, stay two transitions.
+// The same two wipes around a scene that is a moving picture are two
+// transitions as well.
 func TestShort_WipesAroundLiveSceneStaySeparate(t *testing.T) {
 	const w = 200
 	f := newShortFixture(240, 0.25)

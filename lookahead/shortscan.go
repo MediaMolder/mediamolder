@@ -71,11 +71,6 @@ const (
 	wipeEdge      = 0.02 // cumulative-movement fraction marking each bound
 	wipeEdgeSpan  = 0.35 // largest share of the picture a wipe's first or last step moves
 
-	// A frozen picture between two gradual transitions (a full-screen
-	// graphic held between its wipe-on and wipe-off) is transition material.
-	frozenMaxStep = 0.5 // largest thumbnail step of a frozen picture
-	frozenMaxGap  = 64  // longest frozen hold bridged, frames
-
 	// Pan rejection (global thumbnail shift).
 	panMinRho    = 0.85 // residual after the best shift / unshifted residual
 	panMinFlow   = 0.87 // same, for the first-order (sub-cell) fit
@@ -326,7 +321,7 @@ func (cfg LookaheadAnalyzer) detectShortTransitions(m *CostMatrix, maxBlend int)
 		}
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].StartFrame < out[j].StartFrame })
-	return s.bridgeFrozenHolds(attachWeakWipes(out))
+	return attachWeakWipes(out)
 }
 
 // blendStart is the first frame that differs from the old scene: the cut
@@ -1069,35 +1064,6 @@ func attachWeakWipes(ts []SceneTransition) []SceneTransition {
 	for _, t := range ts {
 		if !t.weak {
 			out = append(out, t)
-		}
-	}
-	return out
-}
-
-// bridgeFrozenHolds merges two consecutive gradual transitions separated by
-// a frozen picture — a full-screen graphic held between its wipe-on and its
-// wipe-off — into one span. A camera picture is never frozen: sensor noise
-// alone moves the thumbnail. The 90th percentile of the steps is used so
-// that the faint first and last frames of the wipes themselves, which fall
-// outside their measured bounds, do not break the hold. ts must be sorted by
-// start.
-func (s *shortScan) bridgeFrozenHolds(ts []SceneTransition) []SceneTransition {
-	if s.sp == nil || len(ts) < 2 {
-		return ts
-	}
-	out := ts[:1]
-	for _, t := range ts[1:] {
-		p := &out[len(out)-1]
-		gapLo, gapHi := p.EndFrame+1, t.StartFrame
-		if p.Type == TransitionHardCut || t.Type == TransitionHardCut ||
-			gapHi-gapLo < 0 || gapHi-gapLo+1 > frozenMaxGap ||
-			quantileOf(s.sp[gapLo:gapHi+1], 0.9) >= frozenMaxStep {
-			out = append(out, t)
-			continue
-		}
-		p.EndFrame = t.EndFrame
-		if t.Score > p.Score {
-			p.Score = t.Score
 		}
 	}
 	return out

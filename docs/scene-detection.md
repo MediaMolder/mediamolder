@@ -397,7 +397,7 @@ resolution, so roughly 750 MB per hour of 30 fps video.
 | Dissolve / cross-fade, including "stepped" dissolves on repeated-frame content (30 fps material in a 60 fps stream) | `dissolve` from the last clean frame of the old scene to the first clean frame of the new one |
 | Fade to / from black or white | `fade_out` / `fade_in` |
 | Wipe | `dissolve` from the last clean frame of the old scene to the first clean frame of the new one |
-| Graphic "stinger": wipe to a full-screen graphic, hold, wipe to the new scene | one `dissolve` span covering all of it |
+| Graphic "stinger": wipe to a full-screen graphic, hold, wipe to the new scene | two `dissolve` spans, into the graphic and out of it: the held graphic is a scene. If it is held for less than `min_scene_len` the two merge into one span |
 | Cut into a burst of flash frames or a short graphic that ends with another cut | one `dissolve` span from the first cut to the last |
 | Long dissolves (seconds) with frame-accurate edges | `dissolve` — requires the [staged analysis](#staged-long-dissolve-analysis) |
 
@@ -543,12 +543,12 @@ wipe's bounds are then walked outward for as long as the picture is still
 settling — each further step is confined to part of the picture and larger
 than the movement of the frames beyond it — so a graphic that shrinks away
 slowly is covered to its last frame, while camera movement next to the wipe
-is not taken for part of it. One at
+is not taken for part of it. A hypothesis at η of
 0.50–0.68 — typical of an animated graphic's lead-in, but also of close-up
 action — is kept only when it adjoins a transition that stands on its own,
-and is merged into it. Two gradual transitions separated by a **frozen**
-picture of up to 64 frames (a full-screen graphic held between its wipe-on
-and wipe-off; a camera picture is never frozen) are reported as one span.
+and is merged into it. A stinger whose graphic is held is two transitions,
+the wipe onto the graphic and the wipe off it, with the graphic as the scene
+between them; one whose graphic never stops moving is a single transition.
 
 **Staged long-dissolve analysis.** When enabled: multi-scale coarse plateau
 detection → region seeding → reference-distance ladder refinement →

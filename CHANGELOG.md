@@ -96,15 +96,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   the frame travels in a straight line from the old scene to the new one;
   fast pans are recognised and ignored. Wipes are runs in which each
   thumbnail cell changes once and stays changed. A cut with one mixed
-  frame, a "stepped" dissolve on repeated-frame content, a cut into a
-  burst of flash frames, and a graphic stinger (wipe on, hold, wipe off)
-  are each reported as one span. A dissolve from a calm shot into one in
+  frame, a "stepped" dissolve on repeated-frame content, and a cut into a
+  burst of flash frames are each reported as one span. A graphic stinger
+  (wipe on, hold, wipe off) is two transitions, into the held graphic and
+  out of it. A dissolve from a calm shot into one in
   fast motion is found by comparing the transition with each flank
   separately. A wipe's bounds extend to where the picture settles,
   so a graphic that shrinks away slowly is covered to its last frame. There is no score threshold to tune for cuts. On 28 sports
   and drama clips with 132 hand-verified scene markers, at default
   settings, the detector went from 52 markers found with 9 other
-  detections to 126 found with 2 other detections. A marker
+  detections to 126 found with 4 other detections. A marker
   counts as found when a transition starts within 2 frames of it or
   spans it.
   See [docs/scene-detection.md](docs/scene-detection.md#the-motion-compensated-detector-scene_change_mc).
