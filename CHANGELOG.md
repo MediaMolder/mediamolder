@@ -109,6 +109,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   counts as found when a transition starts within 2 frames of it or
   spans it.
   See [docs/scene-detection.md](docs/scene-detection.md#the-motion-compensated-detector-scene_change_mc).
+- **`scene_change_mc` events carry `start_frame` and `end_frame`.**
+  `start_frame` is the first frame of the new scene for a hard cut, or the
+  first frame of the transition otherwise; `end_frame` is the first clean
+  frame of the new scene. `frame_index` and `dissolve_frames` are unchanged:
+  for a transition `frame_index` is still the last clean frame of the old
+  scene, one before `start_frame`.
 - **`scene_change_mc` staged long-dissolve analysis is opt-in.** It runs
   when `coarse_prediction_distance`, `refined_prediction_distances` or
   `fullres_refine` is set. Without them the detector scans lag 1 only and

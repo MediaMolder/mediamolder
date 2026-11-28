@@ -94,6 +94,14 @@ import (
 //	                              (Deprecated alias: "high_ratio_thresholds".)
 //	"frame_rate":       float64 — stream frame rate (for timecode generation); default 25.0
 //	"output_file":      string  — path to write results (jsonl/csv/timecodes)
+//
+// Each event carries start_frame (the first frame of the new scene for a hard
+// cut, the first frame of the transition otherwise) and end_frame (the first
+// clean frame of the new scene; equal to start_frame for a hard cut).
+// frame_index and dissolve_frames are the earlier form of the same span:
+// for a transition frame_index is start_frame − 1, the last clean frame of
+// the old scene, and dissolve_frames is end_frame − frame_index + 1.
+//
 //	"output_format":    string  — "jsonl" (default), "csv", "timecodes"
 //	"fullres_refine":   bool    — measure full-resolution H.264-style inter-prediction ratios around each
 //	                              detected dissolve's edges and refine the END of short/mid blends (D<=25)
@@ -785,6 +793,20 @@ func (p *SceneChangeMC) transitionMetadata(tr lookahead.SceneTransition) *Metada
 		"timecode":        tc.Timecode(),
 		"transition_type": ttype,
 		"score":           tr.Score,
+	}
+	// start_frame is the first frame of the new scene (hard cut) or the
+	// first frame of the transition; end_frame is the first clean frame of
+	// the new scene. A transition is reported internally from the last
+	// clean frame before it, so its first frame is one later. end_frame is
+	// omitted when the end was not measured (a fade-in found only as the
+	// end of a black or white run).
+	switch {
+	case tr.Type == lookahead.TransitionHardCut:
+		meta["start_frame"], meta["end_frame"] = tr.StartFrame, tr.StartFrame
+	case tr.EndFrame > tr.StartFrame:
+		meta["start_frame"], meta["end_frame"] = tr.StartFrame+1, tr.EndFrame
+	default:
+		meta["start_frame"] = tr.StartFrame + 1
 	}
 	var logMsg string
 	timecodeStr := tc.Timecode()

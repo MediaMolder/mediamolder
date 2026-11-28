@@ -248,3 +248,32 @@ func TestSceneChangeMC_DefaultRetainsNoFrames(t *testing.T) {
 		t.Fatalf("default path retained %d lowres frames", got)
 	}
 }
+
+// Every event states the scene change as start_frame and end_frame: the
+// first frame of the new scene or of the transition, and the first clean
+// frame of the new scene. frame_index keeps its earlier meaning.
+func TestSceneChangeMC_StartAndEndFrame(t *testing.T) {
+	p := &SceneChangeMC{}
+	cases := []struct {
+		name       string
+		tr         lookahead.SceneTransition
+		frameIndex int
+		start      int
+		end        any // nil when the end is not measured
+	}{
+		{"hard cut", lookahead.SceneTransition{Type: lookahead.TransitionHardCut, StartFrame: 50, EndFrame: 50}, 50, 50, 50},
+		{"dissolve", lookahead.SceneTransition{Type: lookahead.TransitionDissolve, StartFrame: 59, EndFrame: 75}, 59, 60, 75},
+		{"one mixed frame", lookahead.SceneTransition{Type: lookahead.TransitionDissolve, StartFrame: 49, EndFrame: 51}, 49, 50, 51},
+		{"fade out", lookahead.SceneTransition{Type: lookahead.TransitionFadeOut, StartFrame: 29, EndFrame: 40}, 29, 30, 40},
+		{"fade in after a black run", lookahead.SceneTransition{Type: lookahead.TransitionFadeIn, StartFrame: 80, EndFrame: 80}, 80, 81, nil},
+	}
+	for _, c := range cases {
+		m := p.transitionMetadata(c.tr).Custom
+		if m["frame_index"] != c.frameIndex || m["start_frame"] != c.start {
+			t.Errorf("%s: frame_index %v start_frame %v, want %d and %d", c.name, m["frame_index"], m["start_frame"], c.frameIndex, c.start)
+		}
+		if got, ok := m["end_frame"]; (c.end == nil) == ok || (ok && got != c.end) {
+			t.Errorf("%s: end_frame %v (present %v), want %v", c.name, got, ok, c.end)
+		}
+	}
+}

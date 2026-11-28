@@ -406,16 +406,38 @@ previous frame still predicts the next one.
 
 ### Output
 
-Hard cuts emit a single frame; dissolves and fades emit a span. In JSONL,
-`frame_index` is the last fully-unblended frame **before** the transition and
-`dissolve_frames` is the inclusive length to the first fully-unblended frame
-**after** it (so a true *D*-frame blend reports `D + 2`). Both endpoints are
-clean frames suitable as encoder anchors.
+Every event states the scene change as two frame numbers (0-based):
 
-| `transition_type` | `frame_index` | First frame that differs from the old scene | First clean frame of the new scene |
+- **`start_frame`** — the first frame of the new scene for a hard cut, or
+  the first frame of the transition otherwise. A transition is a scene
+  change that takes one or more frames to complete: a dissolve, fade or
+  wipe.
+- **`end_frame`** — the first clean frame of the new scene. For a hard cut
+  it equals `start_frame`.
+
+The transition itself is frames `start_frame` to `end_frame − 1`.
+
+```json
+{"scene_change": true, "detector": "mc", "transition_type": "dissolve",
+ "start_frame": 60, "end_frame": 75,
+ "frame_index": 59, "dissolve_frames": 17, "timecode": "00:00:02.360", "score": 0.93}
+```
+
+`frame_index`, `dissolve_frames` and `timecode` are the earlier form of the
+same span and are kept for existing readers. For a hard cut `frame_index` is
+`start_frame`. For a transition it is the last clean frame of the old scene,
+one before `start_frame`, and `dissolve_frames` is the inclusive length from
+there to `end_frame` (so a true *D*-frame blend reports `D + 2`). `timecode`
+is the timecode of `frame_index`.
+
+| `transition_type` | `start_frame` | `end_frame` | `frame_index` |
 |---|---|---|---|
-| `hard_cut` | first frame of the new scene | `frame_index` | `frame_index` |
-| `dissolve`, `fade_out`, `fade_in` with `dissolve_frames` | last clean frame of the old scene | `frame_index + 1` | `frame_index + dissolve_frames − 1` |
+| `hard_cut` | first frame of the new scene | same frame | `start_frame` |
+| `dissolve`, `fade_out`, `fade_in` | first frame of the transition | first clean frame of the new scene | `start_frame − 1` |
+
+A `fade_in` found only as the end of a black or white run has no measured
+end: it carries `start_frame` (the first frame after the run) and no
+`end_frame`.
 
 ### Parameters
 
