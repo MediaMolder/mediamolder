@@ -402,8 +402,7 @@ resolution, so roughly 750 MB per hour of 30 fps video.
 | Long dissolves (seconds) with frame-accurate edges | `dissolve` — requires the [staged analysis](#staged-long-dissolve-analysis) |
 
 Not detected: a cut or dissolve between two pictures so alike that the
-previous frame still predicts the next one. A wipe's reported end can be a
-frame or two early when its last frames change only a sliver of the picture.
+previous frame still predicts the next one.
 
 ### Output
 
@@ -541,9 +540,10 @@ on its own: the thumbnail must move faster inside than on the calm side,
 and prediction must be worse inside than on the moving side — motion
 estimation follows a moving shot, but not frames that mix two shots. A
 wipe's bounds are then walked outward for as long as the picture is still
-settling — each further step is larger than the movement of the frames
-beyond it — so a graphic that shrinks away slowly is covered to its last
-frame. One at
+settling — each further step is confined to part of the picture and larger
+than the movement of the frames beyond it — so a graphic that shrinks away
+slowly is covered to its last frame, while camera movement next to the wipe
+is not taken for part of it. One at
 0.50–0.68 — typical of an animated graphic's lead-in, but also of close-up
 action — is kept only when it adjoins a transition that stands on its own,
 and is merged into it. Two gradual transitions separated by a **frozen**

@@ -69,6 +69,7 @@ const (
 	wipeMinTravel = 15.0 // rms thumbnail distance between the endpoints
 	wipeMinSteps  = 3    // significant thumbnail steps inside
 	wipeEdge      = 0.02 // cumulative-movement fraction marking each bound
+	wipeEdgeSpan  = 0.35 // largest share of the picture a wipe's first or last step moves
 
 	// A frozen picture between two gradual transitions (a full-screen
 	// graphic held between its wipe-on and wipe-off) is transition material.
@@ -924,15 +925,22 @@ func (s *shortScan) bestWipe(lo, hi, maxLen int, cutFrames []int, minEta float64
 // falls and a shorter pair scores higher. The frames left out can still move
 // a large part of the picture — a full-screen graphic shrinking to nothing.
 //
-// Each bound therefore moves outward while the thumbnail is still settling:
-// some frame within linEndProbe (several, because repeated frames do not
-// move) has a step that is at least wipeEdge of the wipe's movement so far —
-// the same share of the movement that the bounds discard inside the
-// hypothesis — and at least linMinSpeedGain times the upper-quartile step of
-// the linFlank frames beyond it. The second condition stops the walk where
-// the movement is no longer falling away but has reached the level of the
-// scene itself. A walk never crosses a cut and never makes the wipe longer
-// than maxLen.
+// Each bound therefore moves outward while the thumbnail is still settling.
+// Some frame within linEndProbe (several, because repeated frames do not
+// move) must have a step that
+//
+//   - is confined to part of the picture (stepSpan below wipeEdgeSpan). A
+//     wipe's first and last frames change a sliver of it; a step that moves
+//     the whole picture a little is the camera, and
+//   - stands out from the linFlank frames beyond it: either it is at least
+//     wipeEdge of the wipe's movement so far (the share the bounds discard
+//     inside the hypothesis) and linMinSpeedGain times the upper-quartile
+//     step beyond, or — however small — it is linMinSpeedGain times every
+//     step beyond.
+//
+// The comparison with the frames beyond stops the walk where the movement
+// is no longer falling away but has reached the level of the scene itself.
+// A walk never crosses a cut and never makes the wipe longer than maxLen.
 func (s *shortScan) settleBounds(start, end, maxLen int, cutFrames []int) (int, int) {
 	lo, hi := 1, s.n-1
 	if ci := sort.SearchInts(cutFrames, start); ci > 0 {
@@ -948,8 +956,12 @@ func (s *shortScan) settleBounds(start, end, maxLen int, cutFrames []int) (int, 
 	// settling reports whether the step into frame j stands out from the
 	// frames beyond it, flank[0] … flank[len−1].
 	settling := func(j int, flank []float64) bool {
-		return len(flank) > 0 && s.sp[j] >= wipeEdge*total &&
-			s.sp[j] >= linMinSpeedGain*quantileOf(flank, 0.75)
+		if len(flank) == 0 || s.stepSpan(j) >= wipeEdgeSpan {
+			return false
+		}
+		v := s.sp[j]
+		return v >= wipeEdge*total && v >= linMinSpeedGain*quantileOf(flank, 0.75) ||
+			v >= linMinSpeedGain*math.Max(maxOf(flank), 0.3)
 	}
 	for moved := true; moved; {
 		moved = false
@@ -986,6 +998,27 @@ func (s *shortScan) settleBounds(start, end, maxLen int, cutFrames []int) (int, 
 		}
 	}
 	return start, end
+}
+
+// stepSpan is the share of the picture that moves in the step into frame j:
+// the participation ratio of the per-cell movement, 1 when every cell moves
+// alike and 1/cells when a single cell moves.
+func (s *shortScan) stepSpan(j int) float64 {
+	cells := len(s.th[0]) / s.tc
+	var s1, s2 float64
+	for c := 0; c < cells; c++ {
+		var q float64
+		for i := 0; i < s.tc; i++ {
+			d := float64(s.th[j][c*s.tc+i]) - float64(s.th[j-1][c*s.tc+i])
+			q += d * d
+		}
+		s1 += math.Sqrt(q)
+		s2 += q
+	}
+	if s2 <= 0 {
+		return 1
+	}
+	return s1 * s1 / (float64(cells) * s2)
 }
 
 // attachWeakWipes resolves the weak wipes in ts (sorted by start): one that

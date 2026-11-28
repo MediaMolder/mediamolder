@@ -4,6 +4,7 @@
 package lookahead
 
 import (
+	"math"
 	"testing"
 )
 
@@ -497,6 +498,57 @@ func TestExtendAlongLine_LandsOnAdvancingFrame(t *testing.T) {
 	start, end := s.extendAlongLine(a, b, 10, 12, d, 9, []float64{1. / 3, 2. / 3}, 0.25, nil)
 	if start != 6 || end != 14 {
 		t.Fatalf("want blend 6–14, got %d–%d", start, end)
+	}
+}
+
+// settleBounds walks a wipe's bounds outward onto steps that are confined to
+// part of the picture. A step that moves the whole picture a little is the
+// camera, however much it stands out; a faint last step of the wipe counts
+// when it stands above every step that follows, even below the share of the
+// wipe's movement that otherwise applies. Thumbnails here have 16 cells.
+func TestSettleBounds_ConfinedSteps(t *testing.T) {
+	const cells = 16
+	pic := make([]float32, cells)
+	var th [][]float32
+	add := func(change func(p []float32)) {
+		if change != nil {
+			change(pic)
+		}
+		th = append(th, append([]float32(nil), pic...))
+	}
+	for j := 0; j < 20; j++ {
+		add(nil) // 0–19: old scene, still
+	}
+	add(func(p []float32) { // 20: the camera moves, every cell a little
+		for c := range p {
+			p[c] += 10
+		}
+	})
+	for w := 0; w < 3; w++ { // 21–23: the wipe, 4 cells a frame
+		add(func(p []float32) {
+			for c := 4 * w; c < 4*w+4; c++ {
+				p[c] = 200
+			}
+		})
+	}
+	add(func(p []float32) { p[12], p[13], p[14] = 200, 200, 200 }) // 24
+	add(func(p []float32) { p[15] += 12 })                         // 25: last sliver, faint
+	for j := 26; j < 46; j++ {
+		add(nil) // new scene, still
+	}
+	s := &shortScan{n: len(th), th: th, tc: 1, sp: make([]float64, len(th))}
+	for j := 1; j < s.n; j++ {
+		s.sp[j] = math.Sqrt(sqDist(th[j], th[j-1]) / cells)
+	}
+	if v := s.sp[25]; v >= wipeEdge*(s.sp[21]+s.sp[22]+s.sp[23]+s.sp[24]) {
+		t.Fatalf("fixture: the last step (%.2f) must be below the movement share", v)
+	}
+	start, end := s.settleBounds(21, 24, 64, nil)
+	if start != 21 {
+		t.Errorf("start walked onto a whole-picture step: %d", start)
+	}
+	if end != 25 {
+		t.Errorf("end = %d, want 25 (the faint last step)", end)
 	}
 }
 
