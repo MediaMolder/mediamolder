@@ -229,8 +229,25 @@ func (fg *FilterGraph) PushFrameAt(idx int, f *Frame) error {
 		return fmt.Errorf("filter input index %d out of range [0, %d)", idx, len(fg.bufSrcs))
 	}
 	ret := C.av_buffersrc_add_frame_flags(fg.bufSrcs[idx], f.raw(),
-		C.AV_BUFFERSRC_FLAG_KEEP_REF)
+		C.AV_BUFFERSRC_FLAG_KEEP_REF|fg.pushFlag())
 	return newErr(ret)
+}
+
+// pushFlag returns AV_BUFFERSRC_FLAG_PUSH for a graph with no buffer sinks.
+//
+// Without the flag av_buffersrc_add_frame_flags only queues the frame on the
+// source's output link; the graph runs when a buffer sink is pulled
+// (av_buffersink_get_frame). A sink-only graph has nothing to pull, so every
+// frame of the stream would stay queued until the graph is freed and its
+// sink filters would do no work until then. With the flag the call runs the
+// graph until it has nothing left to do (push_frame in
+// libavfilter/buffersrc.c), which is how fftools feeds every graph
+// (ffmpeg_filter.c: send_frame and send_eof).
+func (fg *FilterGraph) pushFlag() C.int {
+	if len(fg.bufSinks) == 0 {
+		return C.AV_BUFFERSRC_FLAG_PUSH
+	}
+	return 0
 }
 
 // PullFrame receives a filtered frame from the first (index 0) buffer sink.
@@ -258,7 +275,7 @@ func (fg *FilterGraph) FlushAt(idx int) error {
 	if idx < 0 || idx >= len(fg.bufSrcs) {
 		return fmt.Errorf("filter input index %d out of range [0, %d)", idx, len(fg.bufSrcs))
 	}
-	ret := C.av_buffersrc_add_frame_flags(fg.bufSrcs[idx], nil, 0)
+	ret := C.av_buffersrc_add_frame_flags(fg.bufSrcs[idx], nil, fg.pushFlag())
 	return newErr(ret)
 }
 

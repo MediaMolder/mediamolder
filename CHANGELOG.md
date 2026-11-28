@@ -136,6 +136,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- **A graph ending in a `filter_sink` no longer holds every frame in
+  memory.** Frames sent to a sink-only filter graph (`nullsink`,
+  `anullsink`) were queued and never processed, about 3 MB per 1080p
+  frame for the whole run. A 522-frame 1080p clip through `nullsink`
+  peaked at 1.3 GB; it now peaks at 61 MB. For the same reason an
+  `av.NewSinkFilterGraph` chain ending in a sink, such as
+  `metadata=mode=print:file=…,nullsink`, processed no frames at all; it
+  now processes each frame as it is pushed.
 - **`scene_change_mc` reports an analysis failure.** `Close` wrote no
   events and returned no error when the analysis failed, so a failed run
   looked like a clip with no transitions.
