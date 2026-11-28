@@ -170,3 +170,110 @@ func bytesRepeat(px []byte, n int) []byte {
 	}
 	return out
 }
+
+func TestBgrThumbYUV_UniformAndMeans(t *testing.T) {
+	const w, h = 64, 36
+	bgr := make([]byte, w*h*3)
+	for i := 0; i < w*h; i++ {
+		bgr[i*3], bgr[i*3+1], bgr[i*3+2] = 30, 120, 200
+	}
+	th, u, v := bgrThumbYUV(bgr, w, h)
+	if len(th) != lookahead.ThumbW*lookahead.ThumbH*3 {
+		t.Fatalf("thumb len %d", len(th))
+	}
+	wantU, wantV := bgrMeanUV(bgr, w*h)
+	if d := u - wantU; d > 1e-3 || d < -1e-3 {
+		t.Fatalf("mean U %v, want %v", u, wantU)
+	}
+	if d := v - wantV; d > 1e-3 || d < -1e-3 {
+		t.Fatalf("mean V %v, want %v", v, wantV)
+	}
+	wantY := float32(0.299*200 + 0.587*120 + 0.114*30)
+	for c := 0; c < lookahead.ThumbW*lookahead.ThumbH; c++ {
+		if d := th[c*3] - wantY; d > 1e-3 || d < -1e-3 {
+			t.Fatalf("cell %d Y %v, want %v", c, th[c*3], wantY)
+		}
+		if d := th[c*3+1] - wantU; d > 1e-3 || d < -1e-3 {
+			t.Fatalf("cell %d U %v, want %v", c, th[c*3+1], wantU)
+		}
+	}
+}
+
+// The staged long-dissolve analysis — and with it the retention of every
+// lowres frame until Close — is opt-in.
+func TestSceneChangeMC_StagedIsOptIn(t *testing.T) {
+	p := &SceneChangeMC{}
+	if err := p.Init(map[string]any{}); err != nil {
+		t.Fatal(err)
+	}
+	if p.staged {
+		t.Fatal("default configuration must not enable staged analysis")
+	}
+	if got := p.scanner.Matrix().Lags; len(got) != 1 || got[0] != 1 {
+		t.Fatalf("default scan lags = %v, want [1]", got)
+	}
+	q := &SceneChangeMC{}
+	if err := q.Init(map[string]any{"coarse_prediction_distance": []any{30, 90}}); err != nil {
+		t.Fatal(err)
+	}
+	if !q.staged {
+		t.Fatal("coarse_prediction_distance must enable staged analysis")
+	}
+	if got := q.scanner.Matrix().Lags; len(got) != 3 {
+		t.Fatalf("staged scan lags = %v, want [1 30 90]", got)
+	}
+}
+
+// The default configuration retains no lowres frames, however many frames
+// are scanned.
+func TestSceneChangeMC_DefaultRetainsNoFrames(t *testing.T) {
+	p := &SceneChangeMC{}
+	if err := p.Init(map[string]any{}); err != nil {
+		t.Fatal(err)
+	}
+	const w, h = 64, 64
+	luma := make([]byte, w*h)
+	for i := 0; i < 20; i++ {
+		for j := range luma {
+			luma[j] = byte((j*7 + i*13) % 251)
+		}
+		if err := p.scanner.AddFrame(luma, w, h, w); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := p.scanner.Matrix().N; got != 20 {
+		t.Fatalf("scanned %d frames, want 20", got)
+	}
+	if got := len(p.scanner.AllLowres()); got != 0 {
+		t.Fatalf("default path retained %d lowres frames", got)
+	}
+}
+
+// Every event states the scene change as start_frame and end_frame: the
+// first frame of the new scene or of the transition, and the first clean
+// frame of the new scene. frame_index keeps its earlier meaning.
+func TestSceneChangeMC_StartAndEndFrame(t *testing.T) {
+	p := &SceneChangeMC{}
+	cases := []struct {
+		name       string
+		tr         lookahead.SceneTransition
+		frameIndex int
+		start      int
+		end        any // nil when the end is not measured
+	}{
+		{"hard cut", lookahead.SceneTransition{Type: lookahead.TransitionHardCut, StartFrame: 50, EndFrame: 50}, 50, 50, 50},
+		{"dissolve", lookahead.SceneTransition{Type: lookahead.TransitionDissolve, StartFrame: 59, EndFrame: 75}, 59, 60, 75},
+		{"one mixed frame", lookahead.SceneTransition{Type: lookahead.TransitionDissolve, StartFrame: 49, EndFrame: 51}, 49, 50, 51},
+		{"fade out", lookahead.SceneTransition{Type: lookahead.TransitionFadeOut, StartFrame: 29, EndFrame: 40}, 29, 30, 40},
+		{"fade in after a black run", lookahead.SceneTransition{Type: lookahead.TransitionFadeIn, StartFrame: 80, EndFrame: 80}, 80, 81, nil},
+	}
+	for _, c := range cases {
+		m := p.transitionMetadata(c.tr).Custom
+		if m["frame_index"] != c.frameIndex || m["start_frame"] != c.start {
+			t.Errorf("%s: frame_index %v start_frame %v, want %d and %d", c.name, m["frame_index"], m["start_frame"], c.frameIndex, c.start)
+		}
+		if got, ok := m["end_frame"]; (c.end == nil) == ok || (ok && got != c.end) {
+			t.Errorf("%s: end_frame %v (present %v), want %v", c.name, got, ok, c.end)
+		}
+	}
+}

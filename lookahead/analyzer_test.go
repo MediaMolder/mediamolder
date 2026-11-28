@@ -1088,3 +1088,64 @@ func TestPlateauConsensus_FlagsUnderLagged(t *testing.T) {
 		t.Errorf("event not flagged underLagged; got %+v", out[0])
 	}
 }
+
+// A black run that lasts to the end of the stream has no fade-in.
+func TestDigitalLumaFades_NoFadeInAtEndOfStream(t *testing.T) {
+	const n = 60
+	m := &CostMatrix{N: n, L: 1, Lags: []int{1}}
+	for j := 0; j < n; j++ {
+		l := float32(30)
+		switch {
+		case j >= 40:
+			l = 0
+		case j >= 30:
+			l = 30 - 3*float32(j-30)
+		}
+		m.AvgLuma = append(m.AvgLuma, l)
+		m.IntraCost = append(m.IntraCost, 1000)
+		m.Ratio = append(m.Ratio, []float32{0.2})
+		m.InterCost = append(m.InterCost, []float32{0})
+	}
+	cfg := (&LookaheadAnalyzer{}).withDefaults(m.L)
+	for _, tr := range cfg.detectBatchDigitalLumaFades(m) {
+		if tr.Type == TransitionFadeIn {
+			t.Fatalf("fade-in reported at end of stream: %+v", tr)
+		}
+	}
+}
+
+// TestDigitalLumaFades_RampFitUsesRSquared: the ramp into digital white is
+// accepted when its linear fit reaches R² 0.60. An accelerating ramp (R² 0.70)
+// was rejected while the check squared R² a second time.
+func TestDigitalLumaFades_RampFitUsesRSquared(t *testing.T) {
+	ramp := []float32{225, 225, 226, 226, 227, 229, 233, 241, 255}
+	const pre, post = 30, 10
+	m := &CostMatrix{L: 1, Lags: []int{1}}
+	add := func(l float32) {
+		m.AvgLuma = append(m.AvgLuma, l)
+		m.IntraCost = append(m.IntraCost, 1000)
+		m.Ratio = append(m.Ratio, []float32{0.2})
+		m.InterCost = append(m.InterCost, []float32{0})
+		m.N++
+	}
+	for j := 0; j < pre; j++ {
+		add(120)
+	}
+	for _, l := range ramp {
+		add(l)
+	}
+	for j := 0; j < post; j++ {
+		add(255)
+	}
+	for j := 0; j < pre; j++ {
+		add(120)
+	}
+	firstWhite := pre + len(ramp) - 1
+	cfg := (&LookaheadAnalyzer{}).withDefaults(m.L)
+	for _, tr := range cfg.detectBatchDigitalLumaFades(m) {
+		if tr.Type == TransitionFadeOut && tr.EndFrame == firstWhite {
+			return
+		}
+	}
+	t.Fatalf("fade to white ending at frame %d not reported", firstWhite)
+}

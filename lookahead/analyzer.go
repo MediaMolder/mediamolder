@@ -32,6 +32,11 @@ type SceneTransition struct {
 	// suspect (mid-blend saturation) and the staged pass should re-measure
 	// the region with longer lags before trusting them.
 	underLagged bool
+
+	// weak marks a wipe hypothesis that is reported only if it adjoins a
+	// transition that stands alone (see attachWeakWipes); never set on a
+	// returned transition.
+	weak bool
 }
 
 // plateauEstimate is one per-lag measurement of a dissolve, derived from a
@@ -69,9 +74,10 @@ type plateauEstimate struct {
 // Zero-value fields are replaced with documented defaults by Analyze.
 type LookaheadAnalyzer struct {
 	// FullresProvider, when non-nil, enables full-resolution edge
-	// measurement around each detected dissolve in AnalyzeStaged (phase 1:
-	// measurements are logged to the matrix/CSV only; edges are not
-	// changed). See fullres.go.
+	// measurement around each detected dissolve in AnalyzeStaged. The
+	// measurements are logged to the matrix/CSV, and the END of short and
+	// mid-length blends is refined from them; the start is never changed.
+	// See fullres.go.
 	FullresProvider FrameProvider
 
 	// HardCutThreshold is the minimum score surface value S[c] required to
@@ -401,8 +407,7 @@ func (cfg LookaheadAnalyzer) detectBatchDigitalLumaFades(m *CostMatrix) []SceneT
 			}
 		}
 		if len(seqL) >= minL {
-			slope, _, rr := linReg(seqF, seqL)
-			r2 := rr * rr
+			slope, _, r2 := linReg(seqF, seqL)
 			endL := seqL[len(seqL)-1]
 			goodEnd := (toWhite && endL >= 254.0) || (!toWhite && endL <= 1.0)
 			goodSlope := (toWhite && slope > 0) || (!toWhite && slope < 0)
@@ -453,12 +458,16 @@ func (cfg LookaheadAnalyzer) detectBatchDigitalLumaFades(m *CostMatrix) []SceneT
 						break
 					}
 				}
-				out = append(out, SceneTransition{
-					Type:       TransitionFadeIn,
-					StartFrame: plateauEnd,
-					EndFrame:   plateauEnd,
-					Score:      score,
-				})
+				// A black/white run that lasts to the end of the stream has
+				// no fade-in to report.
+				if plateauEnd < m.N-1 {
+					out = append(out, SceneTransition{
+						Type:       TransitionFadeIn,
+						StartFrame: plateauEnd,
+						EndFrame:   plateauEnd,
+						Score:      score,
+					})
+				}
 				i = plateauEnd + 1
 				continue
 			}

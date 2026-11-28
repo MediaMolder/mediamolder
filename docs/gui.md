@@ -1381,7 +1381,7 @@ a free-text search (type `goscenedetect`, `cuts`, `fade`, `hash`, `histogram`,
 | `scene_change_hash` | DCT perceptual hash — normalised Hamming distance (HashDetector) | `threshold` 0–1 (default 0.395), `size`, `lowpass` | [54](../testdata/examples/54_scene_change_hash.json) |
 | `scene_change_histogram` | Pearson correlation on luma histograms (HistogramDetector) | `threshold` 0–1 (default 0.05), `bins` | [55](../testdata/examples/55_scene_change_histogram.json) |
 | `scene_change_threshold` | Average-brightness fade-in/out tracking (ThresholdDetector) | `threshold` 0–255 (default 12.0), `method` (`floor`/`ceiling`), `fade_bias` | [56](../testdata/examples/56_scene_change_threshold.json) |
-| `scene_change_mc` | Motion-compensated x264-style lookahead — dissolves & fades with frame-accurate bounds, plus hard cuts (batch, graph/GUI only) | `threshold` (default 0.50), `coarse_prediction_distance`, `refined_prediction_distances`, `dissolve_max_len`, `fullres_refine` — [full reference](scene-detection.md#parameters) | [guide](scene-detection.md#the-motion-compensated-detector-scene_change_mc) |
+| `scene_change_mc` | Motion-compensated x264-style lookahead — hard cuts, dissolves & fades with start/end bounds; robust to fast pans (batch, graph/GUI only) | `min_scene_len`, `dissolve_max_len`; optional staged long-dissolve analysis via `coarse_prediction_distance`, `refined_prediction_distances`, `fullres_refine` — [full reference](scene-detection.md#parameters) | [guide](scene-detection.md#the-motion-compensated-detector-scene_change_mc) |
 
 The five PySceneDetect processors (and `scene_change_mc`) share:
 

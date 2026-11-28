@@ -1,7 +1,7 @@
 // Copyright (C) 2025-2026 MediaMolder contributors.
 // SPDX-License-Identifier: LGPL-2.1-or-later
 
-// Full-resolution edge measurement (phase 1: measure + log only).
+// Full-resolution edge measurement.
 //
 // For each detected dissolve, a handful of frames around the refined edges
 // are re-measured with H.264-style inter prediction at NATIVE resolution
@@ -22,9 +22,10 @@
 //     kW), so a large kW costs no extra decode.
 //
 // Frames come from a FrameProvider (windowed re-decode — full-res retention
-// is impossible at ~9 MB/frame). Phase 1 only logs the measurements into
-// the matrix (and therefore the cost-matrix CSV) for offline calibration;
-// no edges are adopted.
+// is impossible at ~9 MB/frame). Every measurement is logged into the
+// matrix (and therefore the cost-matrix CSV). The END of a blend of at most
+// fullresMaxAdoptD frames is refined from the reverse narrow-lag ratios
+// (fullresEndFoot); longer blends and every start keep their lowres bounds.
 package lookahead
 
 import (
