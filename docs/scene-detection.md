@@ -401,11 +401,9 @@ resolution, so roughly 750 MB per hour of 30 fps video.
 | Cut into a burst of flash frames or a short graphic that ends with another cut | one `dissolve` span from the first cut to the last |
 | Long dissolves (seconds) with frame-accurate edges | `dissolve` — requires the [staged analysis](#staged-long-dissolve-analysis) |
 
-Not reliably detected today: a transition between two takes from the same
-camera when the new take is panning or zooming (every signal reads as camera
-motion), and cuts between two near-identical camera angles. A wipe's reported
-end can be a frame or two early when its last frames change only a sliver of
-the picture.
+Not detected: a cut or dissolve between two pictures so alike that the
+previous frame still predicts the next one. A wipe's reported end can be a
+frame or two early when its last frames change only a sliver of the picture.
 
 ### Output
 
