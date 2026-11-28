@@ -2,6 +2,9 @@ package av
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -210,5 +213,81 @@ func TestNewSinkFilterGraph_RejectsBadFilterSpec(t *testing.T) {
 	// Sanity: error must surface as something we recognise.
 	if errors.Is(err, nil) {
 		t.Fatalf("nil-wrapped error: %v", err)
+	}
+}
+
+// A sink-only graph has no buffer sink for anyone to pull from, so nothing
+// drives it unless the push itself does. Each pushed frame must reach the
+// sink filters before the next one arrives: otherwise every frame of the
+// stream is queued on the buffer source's link until the graph is freed
+// (about 3 MB per 1080p frame), and side-effect filters do nothing until
+// then. The metadata filter's unbuffered print makes the arrival visible.
+func TestSinkFilterGraph_ConsumesFramesAsPushed(t *testing.T) {
+	log := filepath.Join(t.TempDir(), "frames.log")
+	fg, err := NewSinkFilterGraph(SinkFilterGraphConfig{
+		Inputs: []FilterPadConfig{{
+			Label:     "in0",
+			MediaType: MediaTypeVideo,
+			Width:     64, Height: 48,
+			PixFmt: 0, // AV_PIX_FMT_YUV420P
+			TBNum:  1, TBDen: 25,
+			SARNum: 1, SARDen: 1,
+		}},
+		FilterSpec: "[in0]metadata=mode=add:key=seen:value=1," +
+			"metadata=mode=print:file=" + log + ":direct=1,nullsink",
+	})
+	if err != nil {
+		t.Fatalf("NewSinkFilterGraph: %v", err)
+	}
+	defer fg.Close()
+
+	srcGraph, err := NewSourceFilterGraph(SourceFilterGraphConfig{
+		Outputs:    []FilterOutputConfig{{Label: "out0", MediaType: MediaTypeVideo}},
+		FilterSpec: "testsrc2=size=64x48:rate=25:duration=0.2[out0]",
+	})
+	if err != nil {
+		t.Fatalf("source graph: %v", err)
+	}
+	defer srcGraph.Close()
+
+	frame, err := AllocFrame()
+	if err != nil {
+		t.Fatalf("AllocFrame: %v", err)
+	}
+	defer frame.Close()
+
+	logged := func() int {
+		b, err := os.ReadFile(log)
+		if err != nil {
+			return 0
+		}
+		return strings.Count(string(b), "frame:")
+	}
+	pushed := 0
+	for {
+		perr := srcGraph.PullFrameAt(0, frame)
+		if IsEOF(perr) {
+			break
+		}
+		if IsEAgain(perr) {
+			continue
+		}
+		if perr != nil {
+			t.Fatalf("source pull: %v", perr)
+		}
+		if err := fg.PushFrameAt(0, frame); err != nil {
+			t.Fatalf("PushFrameAt: %v", err)
+		}
+		frame.Unref()
+		pushed++
+		if got := logged(); got != pushed {
+			t.Fatalf("after pushing %d frame(s) the sink had consumed %d", pushed, got)
+		}
+	}
+	if pushed != 5 {
+		t.Fatalf("pushed %d frames, want 5", pushed)
+	}
+	if err := fg.FlushAt(0); err != nil && !IsEOF(err) {
+		t.Fatalf("FlushAt: %v", err)
 	}
 }
